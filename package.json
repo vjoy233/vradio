@@ -1,0 +1,21 @@
+{
+  "name": "vradio",
+  "version": "0.1.0",
+  "description": "VRadio — 零依赖的本地网络电台 Web 播放器，国内电台为主、海外为辅，无需翻墙",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [
+    "radio",
+    "internet-radio",
+    "web-player",
+    "hls",
+    "china-radio"
+  ],
+  "engines": {
+    "node": ">=14"
+  },
+  "license": "MIT",
+  "private": true
+}

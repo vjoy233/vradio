@@ -4,7 +4,8 @@
   "description": "VRadio — 零依赖的本地网络电台 Web 播放器，国内电台为主、海外为辅，无需翻墙",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "sync": "node update-sources.js"
   },
   "keywords": [
     "radio",

@@ -1,6 +1,7 @@
 // VRadio — 最简静态服务器 + 流媒体代理：node server.js（或 npm start）后访问 http://localhost:8137
 // /proxy?url=...  同源转发远端音频流/HLS，绕开浏览器 CORS 限制（配合 index.html 的 hls.js 使用）
 const http = require('http'), https = require('https'), fs = require('fs'), path = require('path');
+const { syncSources, checkStream } = require('./update-sources');
 const ROOT = __dirname, PORT = process.env.PORT || 8137;
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.txt': 'text/plain; charset=utf-8' };
 
@@ -17,6 +18,15 @@ function proxy(target, req, res, depth = 0) {
 }
 
 http.createServer((req, res) => {
+  const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(obj)); };
+  if (req.method === 'POST' && req.url === '/api/sync') {          // 一键同步最新源（约1分钟，含欧美台实测）
+    syncSources(m => console.log('[sync]', m)).then(s => json(200, s)).catch(e => json(500, { error: String(e.message || e) }));
+    return;
+  }
+  if (req.url.startsWith('/api/check?url=')) {                     // 单台可用性探测（体检用，服务端无 CORS 限制）
+    checkStream(decodeURIComponent(req.url.slice('/api/check?url='.length))).then(r => json(200, r));
+    return;
+  }
   if (req.url.startsWith('/proxy?url=')) {
     const target = decodeURIComponent(req.url.slice('/proxy?url='.length));
     if (!/^https?:\/\//.test(target)) return res.writeHead(403).end('http(s) only');

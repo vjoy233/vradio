@@ -27,6 +27,10 @@
   .srcs { font-size:11px; color:var(--dim); white-space:nowrap; }
   .fav { color:var(--dim); font-size:16px; padding:0 4px; }
   .fav.on { color:#f5c542; }
+  .row.dead .name { text-decoration:line-through; opacity:.45; }
+  .health { font-size:12px; white-space:nowrap; }
+  .health.ok { color:var(--acc); } .health.bad { color:var(--warn); }
+  .btn:disabled { opacity:.5; cursor:wait; }
   footer { position:fixed; left:0; right:0; bottom:0; background:var(--panel); border-top:1px solid var(--line); padding:10px 14px; display:flex; gap:12px; align-items:center; }
   footer #now { flex:1; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   footer #status { font-size:12px; color:var(--dim); }
@@ -38,6 +42,8 @@
 <header>
   <h1><span class="live">●</span> VRadio</h1>
   <input id="q" placeholder="搜索电台名，如：中国之声 / Love / NHK">
+  <button class="btn" id="syncBtn" title="同步上游国内源 + 实测重建欧美音乐台">同步源</button>
+  <button class="btn" id="healthBtn" title="体检当前列表的电台可用性">体检</button>
   <button class="btn" id="importBtn">导入列表</button>
   <input type="file" id="file" accept=".txt,.csv,.m3u" hidden>
 </header>
@@ -168,22 +174,27 @@ $('vol').oninput = e => audio.volume = e.target.value / 100;
 audio.volume = 0.9;
 
 /* ---------- 渲染 ---------- */
+const CAT_ORDER = ['音乐', '欧美音乐']; // 音乐场景置顶
 function buildCats() {
-  const cats = ['全部', '★收藏', ...new Set(stations.map(s => s.c))];
+  const present = new Set(stations.map(s => s.c));
+  const cats = ['全部', '★收藏', ...CAT_ORDER.filter(c => present.has(c)), ...[...present].filter(c => !CAT_ORDER.includes(c))];
   $('cats').innerHTML = cats.map(c => `<span class="chip${c === cat ? ' on' : ''}" data-c="${c}">${c}</span>`).join('');
 }
 $('cats').onclick = e => { if (e.target.dataset.c) { cat = e.target.dataset.c; buildCats(); render(); } };
 
-function render() {
+function visible() {
   const kw = keyword.toLowerCase();
-  const list = stations.filter(s =>
+  return stations.filter(s =>
     (cat === '全部' || (cat === '★收藏' ? favs.has(keyOf(s)) : s.c === cat)) &&
     (!kw || s.n.toLowerCase().includes(kw)));
-  $('list').innerHTML = list.map(s => {
+}
+function render() {
+  $('list').innerHTML = visible().map(s => {
     const k = keyOf(s), on = favs.has(k);
-    return `<div class="row${k === playingKey ? ' playing' : ''}" data-k="${k}">
+    const hp = s.health ? `<span class="health ${s.health === 'ok' ? 'ok' : 'bad'}">${s.health === 'ok' ? '✓' : '✗'}</span>` : '';
+    return `<div class="row${k === playingKey ? ' playing' : ''}${s.health === 'dead' ? ' dead' : ''}" data-k="${k}">
       <span class="fav${on ? ' on' : ''}" data-fav="${k}">${on ? '★' : '☆'}</span>
-      <span class="name">${s.n}</span>
+      <span class="name">${s.n}</span>${hp}
       <span class="badge">${s.c}</span><span class="srcs">${s.u.length}源</span></div>`;
   }).join('') || '<div style="padding:30px;color:var(--dim)">无匹配电台</div>';
 }
@@ -195,10 +206,40 @@ $('list').onclick = e => {
 };
 $('q').oninput = e => { keyword = e.target.value.trim(); render(); };
 
-/* ---------- 列表加载：优先 fetch radio.txt，file:// 下回退内置 + 手动导入 ---------- */
+/* ---------- 一键同步最新源（国内上游 + 欧美台实测重建，约1分钟） ---------- */
+$('syncBtn').onclick = async () => {
+  const b = $('syncBtn'); b.disabled = true; b.textContent = '同步中…';
+  $('status').textContent = '同步中：国内上游 + 欧美台逐个实测，约 1 分钟…';
+  try {
+    const r = await fetch('/api/sync', { method: 'POST' }).then(x => x.json());
+    if (r.error) throw new Error(r.error);
+    const t = await fetch('radio.txt?t=' + Date.now()).then(x => x.text());
+    setData(parse(t), false);
+    $('status').textContent = `同步完成：共 ${r.total} 台（${r.delta >= 0 ? '+' : ''}${r.delta}；欧美音乐 ${r.euKept || 0} 个实测可用）`;
+  } catch (e) { $('status').textContent = '同步失败（file:// 或无后端时请在项目目录跑 node update-sources.js）：' + e.message; }
+  b.disabled = false; b.textContent = '同步源';
+};
+
+/* ---------- 体检：当前列表逐台探测（服务端检测，无 CORS 限制），标 ✓/✗ ---------- */
+$('healthBtn').onclick = async () => {
+  const b = $('healthBtn'); b.disabled = true; b.textContent = '体检中…';
+  const list = visible(); let done = 0, alive = 0;
+  const q = list.slice();
+  const upd = () => { $('status').textContent = `体检 ${done}/${list.length}，可用 ${alive}`; render(); };
+  const worker = async () => { while (q.length) { const s = q.shift();
+    try { const r = await fetch('/api/check?url=' + encodeURIComponent(s.u[0])).then(x => x.json()); s.health = r.ok ? 'ok' : 'dead'; if (r.ok) alive++; } catch (_) { s.health = 'dead'; }
+    done++; if (done % 5 === 0 || !q.length) upd(); } };
+  await Promise.all(Array.from({ length: 5 }, worker));
+  $('status').textContent = `体检完成：${alive}/${list.length} 可用（✗ 台建议换源或点「同步源」重建）`;
+  b.disabled = false; b.textContent = '体检';
+};
+
+/* ---------- 列表加载：radio.txt + 个人补充 my-radio.txt，file:// 下回退内置 + 手动导入 ---------- */
 fetch('radio.txt').then(r => r.ok ? r.text() : Promise.reject())
   .then(t => setData(parse(t), true))
   .catch(() => { $('hint').style.display = 'block'; });
+fetch('my-radio.txt').then(r => r.ok ? r.text() : Promise.reject())  // 个人自建列表（已 gitignore，不会被同步覆盖）
+  .then(t => setData(parse(t), true)).catch(() => {});
 $('importBtn').onclick = () => $('file').click();
 $('file').onchange = e => {
   const f = e.target.files[0]; if (!f) return;

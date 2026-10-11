@@ -1,0 +1,9 @@
+# 运行产物 / 本地杂项
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
+.playwright-mcp/
+
+# 个人自建电台列表（如不想公开可放这里）
+my-radio.txt

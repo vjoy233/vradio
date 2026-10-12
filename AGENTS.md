@@ -28,7 +28,7 @@ npm run sync     # = node update-sources.js，同步电台源（约 1 分钟，�
 - **播放三级策略**（`index.html` 的 `variants()`/`load()`，顺序不能乱）：① mp3/AAC 直流（`<audio>` 原生跨域；蜻蜓 `ls.qingting.fm/live/{id}.m3u8` 自动换算成同 id 的 `lhttp.../64k.mp3`）→ ② m3u8 直连 hls.js → ③ 本地 `/proxy` 兜底。央广 ngcdn 系 CDN 锁了 CORS，只走得通第 ③ 级。
 - **代理分片重写**：走代理播 m3u8 时，hls.js 的 `xhrSetup` 必须把相对分片 URL 拼回远端 base 再包 `/proxy`，否则分片会被解析到 localhost。
 - **同步双上游**（`update-sources.js`）：国内源原样拉取 gaotianliuyun/gao 的 radio.txt；欧美台从 AlonDrilich/radio-playlists（Radio Browser 镜像，官方 API 国内不可达）top-500 过滤欧美国家后**逐个实测重建**。`欧美音乐` 分类每次同步整体重建，手工编辑会被覆盖。
-- GitHub 取文件：api.github.com 直连，失败回退 `gh` CLI（`execFileSync`）。
+- GitHub 取文件：api.github.com 直连，失败回退 `gh` CLI（异步 `execFile`，不阻塞事件循环）。
 
 ## radio.txt 格式
 

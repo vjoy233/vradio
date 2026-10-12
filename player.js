@@ -14,6 +14,7 @@ const Player = {
   curSi: -1,      // 正在试的源序号（variants 展开前的 s.u 下标；playing 时记忆）
   curPlay: '',    // 当前装载的 variant URL（stall/ended 重连当前源用）
   curUrl: '',     // 正在播的远端原始 URL（app 曲讯轮询用；/proxy 形态已还原回远端）
+  bc: null,       // BroadcastChannel('vradio')：多标签页防双播（N3/r2 ⑤）；null = 不支持/异常，静默降级各自独立
   onstate: null,    // (full) 播放态变化回调；full=true 时 app 需整表重渲
   onstatus: null,   // (text) 底部状态栏文案
   onfail: null,     // 全部源失败的善后回调（footer 复位）；⚠ 提示文案由本引擎 say，不依赖回调方
@@ -24,7 +25,10 @@ const Player = {
 
   init(el, vol0) {
     this.audio = el; this.vol = vol0; el.volume = vol0;
-    el.addEventListener('playing', () => { this.connecting = null; this.stopWatchdog(); this.onAir(); this.say('直播中'); this.emit(true); });
+    el.addEventListener('playing', () => {
+      this.connecting = null; this.stopWatchdog(); this.onAir(); this.say('直播中'); this.emit(true);
+      if (this.bc) this.bc.postMessage('on'); // 多标签页防双播（N3）：建流成功即广播，旧标签页让位
+    });
     el.addEventListener('play', () => this.emit(false));
     el.addEventListener('pause', () => { if (!this.connecting) { this.emit(false); if (this.station) this.say('已暂停'); } });
     // 断流自愈（A-1）：error 级联已覆盖「显式失败」，这里补「静默挂起」——
@@ -34,6 +38,17 @@ const Player = {
     el.addEventListener('waiting', () => this.armWatchdog());
     el.addEventListener('ended', () => { if (this.station && !this.connecting) this.retryOrNext(); });
     try { this.srcMem = JSON.parse(localStorage.getItem('radio.srcmem') || '{}'); } catch (_) { this.srcMem = {}; }
+    // 多标签页防双播（N3/r2 ⑤）：后来者赢——新标签开播广播，旧标签正在播/建流中则让位暂停（非 stop，保留台位可续播）。
+    // 规范保证不回发发送者自身，无需自过滤；消息只发一个字面量
+    try {
+      this.bc = new BroadcastChannel('vradio');
+      this.bc.onmessage = () => {
+        if (this.isPaused()) return;
+        this.connecting = null; // 建流期让位：清连接中指示，pause 事件才能走正常 UI 复位（否则 footer 卡在连接中）
+        this.pause(); this.emit(true);
+        setTimeout(() => this.say('另一标签页已开播，本页已自动暂停'), 0); // 等 pause 事件的「已暂停」先落地再覆盖成带原因的文案
+      };
+    } catch (_) { this.bc = null; } // 不支持/file:// 异常即静默降级
     // MediaSession（Tier 1 E1）：锁屏/蓝牙耳机/键盘媒体键控制 + 台名元数据
     if ('mediaSession' in navigator) {
       const ms = navigator.mediaSession;

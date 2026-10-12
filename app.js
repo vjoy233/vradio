@@ -648,6 +648,7 @@ const App = {
     Player.onstate = full => { this.playerNow(); if (full) this.render(); };
     Player.onstatus = t => { $('status').textContent = t; };
     Player.onfail = () => this.showLast();
+    Player.onlogo = s => Logos.get(s); // 锁屏 artwork 台标（r2 ⑩）：同步窥探绝不发请求，无台标回空数组静默缺省
     // 睡眠定时（E2 + UI 审计 P3-7）：菜单一次点选 15/30/60（循环模式要点三下才到 60）；进行中点击按钮直接取消
     $('sleepBtn').onclick = () => {
       if (Player.sleepId) { Player.sleep(0); return; }

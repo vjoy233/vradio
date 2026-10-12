@@ -210,6 +210,13 @@ const App = {
       || (entry.u && entry.u.length && this.state.stations.find(s => s.u.some(u => entry.u.includes(u))))
       || null;
   },
+  scopeFavRecent(max = 30) { // 静默体检范围（B-10，Sync 调用）：收藏 + 最近播放（键/URL 回绑解析、去重、上限）；手动隐藏的台不测——隐藏是明确意图
+    const seen = new Set(), list = [];
+    const push = e => { const s = this.resolve(e); if (s && !s.hidden && !seen.has(keyOf(s))) { seen.add(keyOf(s)); list.push(s); } };
+    for (const f of this.favs) push(f);
+    for (const r of this.recents) push(r);
+    return list.slice(0, max);
+  },
   showLast() {
     const s = this.recents[0] && this.resolve(this.recents[0]);
     $('nowline').textContent = s ? '上次收听：' + s.n : '未在播放';
@@ -774,7 +781,12 @@ const App = {
     };
 
     // 初始数据：radio.txt + my-radio.txt（http 下），file:// 下回退内置精选 + 手动导入
-    this.reloadMain().then(ok => { if (!ok) $('hint').style.display = 'block'; this.logosEnsure(); });
+    this.reloadMain().then(ok => {
+      if (!ok) $('hint').style.display = 'block';
+      this.logosEnsure();
+      // 开机静默体检（B-10）：首屏渲染/台标补全之后 4s 再跑收藏+最近范围，死台自动隐藏无需手动点「体检」
+      if (ok) setTimeout(() => Sync.silentHealth(), 4000);
+    });
     this.buildCats(); this.render(); this.showLast(); // file:// 降级模式下也补齐「上次收听」提示
   },
 };

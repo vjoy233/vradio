@@ -7,7 +7,7 @@ const Sync = {
 
   /* ---------- 一键同步最新源（国内上游 + 欧美台逐个实测重建，约1分钟） ---------- */
   async doSync() {
-    const b = $('syncBtn'); b.disabled = true; b.textContent = '同步中…';
+    const b = $('syncBtn'), lab = b.querySelector('span'); b.disabled = true; lab.textContent = '同步中…'; $('prog').hidden = false;
     $('status').textContent = '同步中：国内上游 + 欧美台逐个实测，约 1 分钟…';
     try {
       const r = await fetch('/api/sync', { method: 'POST' }).then(x => x.json());
@@ -23,7 +23,7 @@ const Sync = {
       const msg = String(e.message || e);
       $('status').textContent = msg.includes('同步已在进行中') ? msg : '同步失败（file:// 或无后端时请在项目目录跑 node update-sources.js）：' + msg;
     }
-    b.disabled = false; b.textContent = '同步源';
+    b.disabled = false; lab.textContent = '同步源'; $('prog').hidden = true;
   },
 
   /* ---------- 手动体检：当前列表逐台探测（UI 态编排：按钮/状态栏/ETA） ---------- */
@@ -32,10 +32,10 @@ const Sync = {
       $('status').textContent = 'file:// 降级模式无后端，体检不可用——npm start 后再试';
       return;
     }
-    const b = $('healthBtn');
-    if (b.textContent.includes('取消')) { this.abort = true; return; }
+    const b = $('healthBtn'), lab = () => b.querySelector('span');
+    if (lab().textContent === '取消体检') { this.abort = true; return; }
     if (this.busy === 'silent') this.silentAbort = true; // 静默让位（手动优先）
-    this.busy = 'manual'; this.abort = false; b.textContent = '取消体检';
+    this.busy = 'manual'; this.abort = false; lab().textContent = '取消体检'; $('prog').hidden = false;
     try {
       const list = App.visible(true); let done = 0, alive = 0; // visible(true)：连默认隐藏的死台一起复查，复活即自动回归列表
       const stamp = App.state.stamp, q = list.slice(), t0 = Date.now();
@@ -59,7 +59,7 @@ const Sync = {
       App.saveHealth(); // patchHealth 只改内存，收尾统一落盘一次（正常结束/取消都走这里）
       App.render(); // P3-13：途中若发生过整表重渲，结束时兜底一次，标记不丢
       $('status').textContent = this.abort ? `体检已取消：完成 ${done}/${list.length}` : `体检完成：${alive}/${list.length} 可用（✗ 台建议换源或点「同步源」重建）`;
-    } finally { b.textContent = '体检'; this.busy = ''; }
+    } finally { lab().textContent = '体检'; this.busy = ''; $('prog').hidden = true; }
   },
 
   /* ---------- 开机静默体检（B-10 便宜变体）：收藏+最近范围，不碰按钮/状态栏，零服务端改动 ---------- */
@@ -91,5 +91,5 @@ const Sync = {
 $('syncBtn').onclick = () => Sync.doSync();
 $('healthBtn').onclick = () => Sync.health().catch(e => { // health() 内部只兜了探活失败，其余异常不兜底会把按钮永久卡在「取消体检」
   $('status').textContent = '体检异常：' + (e && e.message || e);
-  $('healthBtn').textContent = '体检';
+  $('healthBtn').querySelector('span').textContent = '体检';
 });

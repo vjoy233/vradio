@@ -8,7 +8,7 @@
   :root { --bg:#101418; --panel:#1a2027; --line:#2a323c; --tx:#e8ecf1; --dim:#8b97a5; --acc:#4fc08d; --warn:#e07a5f; color-scheme:dark; }
   * { box-sizing:border-box; margin:0; }
   body { background:var(--bg); color:var(--tx); font:14px/1.6 system-ui,"Microsoft YaHei",sans-serif; display:flex; flex-direction:column; height:100vh; }
-  :focus-visible { outline:2px solid var(--acc); outline-offset:1px; border-radius:6px; } /* 键盘焦点可见（不删 outline） */
+  :focus-visible { outline:2px solid var(--acc); outline-offset:1px; } /* 键盘焦点可见（不删 outline；outline 自动跟随元素圆角） */
   header { display:flex; gap:10px; align-items:center; padding:10px 14px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
   header h1 { font-size:16px; font-weight:600; white-space:nowrap; }
   header h1 .live { color:var(--acc); }
@@ -87,7 +87,8 @@ const STARTER = [
 
 /* ---------- 状态 ---------- */
 let stations = STARTER.slice();          // [{c,n,u:[...]}]
-let favs = new Set(JSON.parse(localStorage.getItem('radio.favs') || '[]'));
+// localStorage 可能被外部改坏，全部容错读取（favs 解析失败回退空集）
+let favs; try { favs = new Set(JSON.parse(localStorage.getItem('radio.favs') || '[]')); } catch (_) { favs = new Set(); }
 let cat = '全部', keyword = '', playingKey = null, connectingKey = null, playToken = 0, hls = null;
 let lastKey = localStorage.getItem('radio.last') || null; // 上次收听的电台，未播放时点 ▶ 续播
 
@@ -121,9 +122,8 @@ function setData(list, merge) {
     }
     stations = [...byKey.values()];
   }
-buildCats(); render(); showLast();
-
-  if (!playingKey) showLast(); // 数据刷新后未播放则提示上次收听
+  buildCats(); render();
+  if (!playingKey) showLast(); // 数据刷新后未播放则提示上次收听（播放中不动，避免覆盖「▶ 台名」）
 }
 function showLast() {
   const s = lastKey && stations.find(x => keyOf(x) === lastKey);
@@ -149,11 +149,12 @@ function play(s) {
 
   const next = () => {
     if (token !== playToken) return;
-    if (i >= urls.length) { // 全部源失败：复位按钮态与行高亮，引导体检/换源
+    if (i >= urls.length) { // 全部源失败：播放态、按钮、行高亮、底部文案一起复位
       playingKey = connectingKey = null; render();
-      $('pp').textContent = '▶';
+      $('pp').textContent = '▶'; showLast();
       $('status').textContent = '⚠ 全部源失败，建议点「体检」或「同步源」'; return;
     }
+    connectingKey = playingKey; render(); // 换源重试期间保持连接中指示，并抑制 pause 改图标
     const u = urls[i++]; $('status').textContent = '连接中… 源' + i + '/' + urls.length;
     load(u, token, next);
   };
@@ -193,22 +194,37 @@ audio.addEventListener('playing', () => { connectingKey = null; $('status').text
 audio.addEventListener('play', () => $('pp').textContent = '⏸');
 audio.addEventListener('pause', () => { if (!connectingKey) { $('pp').textContent = '▶'; if (playingKey) $('status').textContent = '已暂停'; } });
 // 未播放时 ▶ = 续播上次收听；播放中 = 暂停；暂停 = 继续（直播流由 hls.js/浏览器自行追平）
+// 续播若 src 已死，会由上一次 load() 遗留的 audio.onerror 闭包接管继续走备选源链（token 仍相等）
 $('pp').onclick = () => {
-  if (!playingKey) { const s = lastKey && stations.find(x => keyOf(x) === lastKey); if (s) play(s); return; }
-  if (audio.paused) audio.play().catch(() => {}); else audio.pause();
+  if (!playingKey) {
+    const s = lastKey && stations.find(x => keyOf(x) === lastKey);
+    if (s) play(s); else $('status').textContent = '上次收听的电台已不在列表中，请直接点播';
+    return;
+  }
+  if (audio.paused) resume(); else audio.pause();
 };
-// 音量持久化
-const savedVol = localStorage.getItem('radio.vol');
-if (savedVol !== null) { $('vol').value = savedVol; audio.volume = savedVol / 100; } else audio.volume = 0.9;
+// 音量持久化（读取夹取 0-100，坏值回退 90）
+const savedVol = localStorage.getItem('radio.vol'), vol0 = +savedVol;
+if (savedVol !== null && Number.isFinite(vol0) && vol0 >= 0 && vol0 <= 100) { $('vol').value = vol0; audio.volume = vol0 / 100; } else audio.volume = 0.9;
 $('vol').oninput = e => { audio.volume = e.target.value / 100; localStorage.setItem('radio.vol', e.target.value); };
 
 /* ---------- 渲染 ---------- */
 const CAT_ORDER = ['音乐', '欧美音乐']; // 音乐场景置顶
+// innerHTML 整表重建会把键盘焦点弹回 body：重建前记下焦点节点的 data 键，重建后找回同节点
+function keepFocus(box, ...attrs) {
+  const ae = document.activeElement;
+  if (!box.contains(ae) || !ae.dataset) return () => {};
+  const pair = attrs.map(a => [a, ae.dataset[a]]).find(([, v]) => v != null);
+  return () => { if (pair) box.querySelector(`[data-${pair[0]}="${CSS.escape(pair[1])}"]`)?.focus({ preventScroll: true }); };
+}
 function buildCats() {
+  const restore = keepFocus($('cats'), 'c');
   const present = new Set(stations.map(s => s.c));
   const cats = ['全部', '★收藏', ...CAT_ORDER.filter(c => present.has(c)), ...[...present].filter(c => !CAT_ORDER.includes(c))];
   if (!cats.includes(cat)) cat = '全部'; // 数据更新后分类可能消失，回退全部
-  $('cats').innerHTML = cats.map(c => `<button type="button" class="chip${c === cat ? ' on' : ''}" data-c="${esc(c)}" aria-pressed="${c === cat}">${esc(c)}</button>`).join('');
+  // 互斥单选语义用 aria-current（aria-pressed 是独立开关语义，不适用）
+  $('cats').innerHTML = cats.map(c => `<button type="button" class="chip${c === cat ? ' on' : ''}" data-c="${esc(c)}"${c === cat ? ' aria-current="true"' : ''}>${esc(c)}</button>`).join('');
+  restore();
 }
 $('cats').onclick = e => { const c = e.target.closest('.chip'); if (c) { cat = c.dataset.c; buildCats(); render(); } };
 
@@ -227,6 +243,7 @@ function emptyHtml() { // 空态给出原因和下一步动作
   return `<div class="empty">${msg}</div>`;
 }
 function render() {
+  const restore = keepFocus($('list'), 'k', 'fav'); // 焦点在行或收藏按钮上都找回
   const list = visible(); renderOrder = list; renderStamp++;
   $('list').innerHTML = list.map((s, i) => {
     const k = keyOf(s), on = favs.has(k), playing = k === playingKey;
@@ -236,10 +253,15 @@ function render() {
       <span class="name">${esc(s.n)}</span>${hp}
       <span class="badge">${esc(s.c)}</span><span class="srcs" title="备选源数量">${s.u.length}源</span></div>`;
   }).join('') || emptyHtml();
+  restore();
+}
+function resume() { // 暂停恢复：蜻蜓建流要 5-10s，先给连接中提示；失败由遗留 onerror 闭包接管换源
+  $('status').textContent = '连接中…'; connectingKey = playingKey;
+  audio.play().catch(() => {});
 }
 function togglePlay(k) { // 再点当前台 = 暂停/继续；点其他台 = 切换
   const s = stations.find(x => keyOf(x) === k); if (!s) return;
-  if (k === playingKey) { if (audio.paused) audio.play().catch(() => {}); else audio.pause(); return; }
+  if (k === playingKey) { if (audio.paused) resume(); else audio.pause(); return; }
   play(s);
 }
 $('list').onclick = e => {
@@ -256,8 +278,8 @@ $('list').onkeydown = e => { // 行可用键盘操作：Enter/Space 播放（收
 let searchTimer = 0;
 $('q').oninput = e => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { keyword = e.target.value.trim(); render(); }, 120); };
 $('q').onkeydown = e => { if (e.key === 'Escape') { e.target.value = ''; clearTimeout(searchTimer); keyword = ''; render(); } };
-document.addEventListener('keydown', e => {
-  if (e.key === '/' && !/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) { e.preventDefault(); $('q').focus(); }
+document.addEventListener('keydown', e => { // 排除修饰键组合，避免误抢 Ctrl+/ 等
+  if (e.key === '/' && !e.ctrlKey && !e.altKey && !e.metaKey && !/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) { e.preventDefault(); $('q').focus(); }
 });
 
 /* ---------- 一键同步最新源（国内上游 + 欧美台实测重建，约1分钟） ---------- */
@@ -327,7 +349,7 @@ $('file').onchange = e => {
   r.readAsText(f, 'utf-8');
 };
 
-buildCats(); render();
+buildCats(); render(); showLast(); // file:// 降级模式下也补齐「上次收听」提示
 </script>
 </body>
 </html>

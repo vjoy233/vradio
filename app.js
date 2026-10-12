@@ -899,21 +899,21 @@ const App = {
       if (!Player.station) return resumeLast();
       Player.isPaused() ? Player.resume() : Player.pause();
     };
-    // 音量：静音键 + 拖动百分比反馈（UI 审计 P3-6）；静音记忆恢复值，radio.vol 只存非静音音量
+    // 音量：静音键 + 拖动百分比反馈（UI 审计 P3-6）；每台音量记忆（A3/r2 ②语义①）——
+    // 拖动经 rememberVol 分流（正在播写台记忆、台首调全局锚点随行、无台写全局），0 与静音同为瞬态不入记忆
     const syncMute = () => {
       const muted = !+$('vol').value;
       $('muteBtn').innerHTML = muted ? '<svg class="ic"><use href="#i-mute"/></svg>' : '<svg class="ic"><use href="#i-vol"/></svg>';
       $('muteBtn').setAttribute('aria-label', muted ? '取消静音' : '静音');
     };
-    let lastVol = vol / 100;
+    Player.onvol = v => { $('vol').value = Math.round(v * 100); syncMute(); }; // 点播套用每台音量后回写滑杆（r2 ②）
     $('muteBtn').onclick = () => {
-      const v = +$('vol').value;
-      if (v > 0) { lastVol = v / 100; Player.setVolume(0); $('vol').value = 0; $('status').textContent = '已静音'; }
-      else { const r = lastVol > 0 ? lastVol : 0.9; Player.setVolume(r); $('vol').value = Math.round(r * 100); $('status').textContent = '音量 ' + Math.round(r * 100) + '%'; }
+      if (+$('vol').value > 0) { Player.setVolume(0); $('vol').value = 0; $('status').textContent = '已静音'; }
+      else { const r = Player.restoreVol(); Player.setVolume(r); $('vol').value = Math.round(r * 100); $('status').textContent = '音量 ' + Math.round(r * 100) + '%'; }
       syncMute();
     };
     syncMute();
-    $('vol').oninput = e => { Player.setVolume(e.target.value / 100); localStorage.setItem('radio.vol', e.target.value); $('status').textContent = '音量 ' + e.target.value + '%'; syncMute(); };
+    $('vol').oninput = e => { const v = +e.target.value; Player.setVolume(v / 100); Player.rememberVol(v); $('status').textContent = '音量 ' + v + '%'; syncMute(); };
 
     // 导入列表：csv 风格 txt 与标准 m3u 双格式（P1-1）；本项目导出的收藏备份（#VRADIO:FAV 标记）另恢复收藏态（E4）
     $('importBtn').onclick = () => $('file').click();

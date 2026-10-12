@@ -5,7 +5,9 @@ const Player = {
   audio: null, hls: null, token: 0,
   station: null,    // 当前台（引用 app 数据里的 station 对象）
   connecting: null, // 连接中/换源重试中的台（抑制 pause 改图标的闪烁）
-  vol: 0.9,         // 逻辑音量（睡眠渐弱后恢复的基准）
+  vol: 0.9,         // 逻辑音量（睡眠渐弱后恢复的基准；点播时按台记忆重设，见 play）
+  gvol: 0.9,        // 全局默认音量（radio.vol 装载；无记忆台点播用它，「无记忆台首调」时随行更新——r2 ②语义①）
+  volMem: null,     // 每台音量记忆（radio.volperst，A3/r2 ②）：台主 URL → 0-100 整数，FIFO 300（插入序，URL 键不退化数组索引）
   sleepId: 0, sleepEnd: 0,
   srcMem: null,   // 成功源记忆（radio.srcmem，A-1）：台主 URL → {i,t}；多源台点播从上次试通的源先行
   pctx: null,     // 本次 play 的级联上下文 {urls:[{u,si}], i, my}（世代令牌防串台）
@@ -19,12 +21,18 @@ const Player = {
   onstatus: null,   // (text) 底部状态栏文案
   onfail: null,     // 全部源失败的善后回调（footer 复位）；⚠ 提示文案由本引擎 say，不依赖回调方
   ontick: null,     // (msLeft) 睡眠定时倒计时回调（0 = 已关）
+  onvol: null,      // (v 0-1) 每台音量套用后回写滑杆 UI（A3/r2 ②）；由 app 注入，player 不碰 DOM
   onplaylast: null, // 媒体键 play 但当前无台时，转交 app 走「续播上次收听」（与 pp 按钮同语义）
   onlogo: null,     // (station) → 台标 URL（锁屏 artwork 大图，r2 ⑩）；由 app 注入 Logos.get，player 不伸手进台标模块
   onstepfav: null,  // (±1) 锁屏/媒体键 ⏮⏭ = 收藏间切台（A2/r2 ①）；由 app 注入 stepFav
 
   init(el, vol0) {
-    this.audio = el; this.vol = vol0; el.volume = vol0;
+    this.audio = el; this.vol = this.gvol = vol0; el.volume = vol0;
+    // 每台音量记忆（A3/r2 ②）：容错读取 + 形状清洗（键须 URL、值须 0-100 数值，坏形状丢弃）
+    let vm; try { vm = JSON.parse(localStorage.getItem('radio.volperst') || '{}'); } catch (_) { vm = {}; }
+    this.volMem = {};
+    if (vm && typeof vm === 'object' && !Array.isArray(vm))
+      for (const k of Object.keys(vm)) { const v = +vm[k]; if (/^https?:\/\//.test(k) && Number.isFinite(v) && v >= 0 && v <= 100) this.volMem[k] = Math.round(v); }
     el.addEventListener('playing', () => {
       this.connecting = null; this.stopWatchdog(); this.onAir(); this.say('直播中'); this.emit(true);
       if (this.bc) this.bc.postMessage('on'); // 多标签页防双播（N3）：建流成功即广播，旧标签页让位
@@ -67,6 +75,22 @@ const Player = {
   say(t) { if (this.onstatus) this.onstatus(t); },
   isPaused() { return !this.audio || this.audio.paused; },
   setVolume(v) { this.vol = v; if (this.audio) this.audio.volume = v; },
+  rememberVol(pct) { // 调音量分流（A3/r2 ②语义①，app 滑杆 oninput 调用）：正在播 → 只写当前台记忆（台首调时全局锚点随行，
+    // 锚点稳定后不再被有记忆台牵动）；无台 → 写全局。0 视为静音瞬态，同静音按钮一律不入记忆
+    if (!(pct > 0)) return;
+    const s = this.station;
+    if (!s) { this.gvol = pct / 100; try { localStorage.setItem('radio.vol', String(pct)); } catch (_) {} return; }
+    const fresh = this.volMem[s.u[0]] == null;
+    this.volMem[s.u[0]] = Math.round(pct);
+    if (fresh) { this.gvol = pct / 100; try { localStorage.setItem('radio.vol', String(pct)); } catch (_) {} }
+    const ks = Object.keys(this.volMem);
+    while (ks.length > 300) delete this.volMem[ks.shift()];
+    try { localStorage.setItem('radio.volperst', JSON.stringify(this.volMem)); } catch (_) {}
+  },
+  restoreVol() { // 取消静音的恢复值：当前台记忆 → 全局默认 → 0.9（坑①：有记忆时取记忆而非旧全局；切台后旧 lastVol 语义废除）
+    const s = this.station, pv = s && this.volMem[s.u[0]];
+    return pv > 0 ? pv / 100 : this.gvol > 0 ? this.gvol : 0.9;
+  },
 
   /* 三级播放策略（顺序不能乱，见 AGENTS.md）：
      ① mp3/AAC 直流（<audio> 原生跨域；蜻蜓 ls.qingting.fm/live/{id}.m3u8 自动换算同 id 的 lhttp 64k mp3）
@@ -90,6 +114,12 @@ const Player = {
     for (const si of order) for (const v of this.variants(s.u[si])) urls.push({ u: v, si });
     this.pctx = { urls, i: 0, my: ++this.token }; // 世代令牌：快速连续点播时旧链路回调全部失效，防串台
     this.station = this.connecting = s; this.emit(true);
+    // 每台音量记忆（A3/r2 ②）：有记忆用记忆、无记忆用全局默认；静音态切台保持静音（恢复值由 restoreVol 按新台取）。
+    // setVolume 同步 this.vol 基准——睡眠渐弱/中途取消的恢复都锚在它上
+    const pv = this.volMem[s.u[0]];
+    const want = pv != null ? pv / 100 : this.gvol;
+    if (this.vol > 0) this.setVolume(want);
+    if (this.onvol) this.onvol(this.vol > 0 ? want : 0);
     if ('mediaSession' in navigator) { // 锁屏/媒体键显示当前台（E1）+ 台标大图（r2 ⑩）
       this.meta(s.n);
       navigator.mediaSession.playbackState = 'playing';

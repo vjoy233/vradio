@@ -361,6 +361,28 @@ const App = {
     if (t) { $('song').textContent = '♪ ' + t; $('song').hidden = false; Player.setSong(t); }
   },
 
+  /* ---------- 歌曲历史（B-7）：换歌时旧歌入史（当前曲只显示不入史），按台存 localStorage（radio.songs） ---------- */
+  pushSongHist(k, title) {
+    if (!title) return;
+    let songs; try { songs = JSON.parse(localStorage.getItem('radio.songs') || '{}'); } catch (_) { songs = {}; }
+    const list = songs[k] || [];
+    if (!list.length || list[0].t !== title) { list.unshift({ t: title, at: Date.now() }); songs[k] = list.slice(0, 12); } // 每台 12 首封顶
+    const ks = Object.keys(songs).sort((a, b) => (songs[b][0] ? songs[b][0].at : 0) - (songs[a][0] ? songs[a][0].at : 0));
+    for (const x of ks.slice(50)) delete songs[x]; // 台数 50 FIFO（按最近有歌活动排序砍最旧）
+    try { localStorage.setItem('radio.songs', JSON.stringify(songs)); } catch (_) {}
+  },
+  toggleSongHist() { // 点击曲名行：本台最近播放浮层（当前曲在曲名行本身，不入列）
+    const el = $('songhist');
+    if (!el.hidden) { el.hidden = true; return; }
+    if (!Player.station) return;
+    let songs; try { songs = JSON.parse(localStorage.getItem('radio.songs') || '{}'); } catch (_) { songs = {}; }
+    const list = (songs[this.songFor] || []).slice(0, 12);
+    el.innerHTML = '<b>本台最近播放</b>' + (list.length
+      ? list.map(x => `<div class="shrow">${this.esc(x.t)}</div>`).join('')
+      : '<div class="shrow" style="color:var(--dim)">暂无历史（换歌后自动记录）</div>');
+    el.hidden = false;
+  },
+
   /* ---------- 收藏导出/导入（Tier 1 E4）：导出 = 带 #VRADIO:FAV 标记的 m3u（通用播放器可读），
      导回同文件时恢复收藏态；round-trip 即天然回归用例（docs/review.md G 组） ---------- */
   exportFavs() {
@@ -566,6 +588,9 @@ const App = {
     // 曲讯轮询（B-6）：15s 常驻轮（条件不满足时空转不发包）；页面重新可见时立刻补一轮
     setInterval(() => this.tickSong(), 15000);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) this.tickSong(); });
+    // 歌曲历史浮层（B-7）：点曲名行开关；点别处收起
+    $('song').onclick = () => this.toggleSongHist();
+    document.addEventListener('click', e => { if (!e.target.closest('#songhist,#song')) $('songhist').hidden = true; });
 
     // 搜索：120ms 防抖，避免 1600+ 行列表每键整表重渲；Esc 清空；任意位置按 / 聚焦
     let timer = 0;

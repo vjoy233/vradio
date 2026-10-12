@@ -144,6 +144,7 @@ const Player = {
     this.wd = setTimeout(() => {
       this.wd = 0;
       if (my !== this.token || !this.station) return; // 级联已终结（全部源失败/切台）：残留看门狗不说话不动作
+      if (this.isPaused()) return; // 武装后用户按了暂停：不强制起播（pause() 亦会撤表，此处双保险——AIbot P2-3）
       this.say('流卡住，自动恢复…'); this.retryOrNext();
     }, 12000);
   },
@@ -175,6 +176,7 @@ const Player = {
     this.audio.play().catch(() => {});
   },
   pause() {
+    this.stopWatchdog(); // 用户主动暂停是明确意图：武装中的看门狗一并撤（否则 12s 后 retryOrNext 会把流强拉起来——AIbot P2-3）
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
     this.audio.pause();
   },

@@ -312,6 +312,14 @@ const App = {
     if (this.state.cat === '最近') this.render(); // 最近队列头插后刷新顺序
     Player.play(s);
   },
+  stepFav(d) { // ←/→ 在收藏间切台（A-5）：顺序取当前可见列表内的收藏台；当前台不在收藏则从队首/队尾起步
+    const favs = this.favKeys();
+    const list = this.visible().filter(s => favs.has(keyOf(s)));
+    if (!list.length) { $('status').textContent = '还没有收藏电台——点电台左侧 ☆ 收藏后可用 ←/→ 键切换'; return; }
+    const cur = Player.station ? list.findIndex(s => keyOf(s) === keyOf(Player.station)) : -1;
+    const nx = cur < 0 ? (d > 0 ? 0 : list.length - 1) : (cur + d + list.length) % list.length;
+    this.togglePlay(keyOf(list[nx]));
+  },
   /* 台标补全（收藏 + 正在播优先，请求量可控）：Logos.ensure 落库后回调重渲一次展示 */
   logosEnsure() {
     if (!location.protocol.startsWith('http')) return;
@@ -534,8 +542,14 @@ const App = {
     let timer = 0;
     $('q').oninput = e => { clearTimeout(timer); timer = setTimeout(() => { this.state.keyword = e.target.value.trim(); this.render(); }, 120); };
     $('q').onkeydown = e => { if (e.key === 'Escape') { e.target.value = ''; clearTimeout(timer); this.state.keyword = ''; this.render(); } };
-    document.addEventListener('keydown', e => { // 排除修饰键组合，避免误抢 Ctrl+/ 等
-      if (e.key === '/' && !e.ctrlKey && !e.altKey && !e.metaKey && !/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) { e.preventDefault(); $('q').focus(); }
+    document.addEventListener('keydown', e => { // 全局快捷键（A-5）：/ 聚焦搜索、空格 播放/暂停、←/→ 收藏间切台
+      if (e.ctrlKey || e.altKey || e.metaKey) return; // 不抢组合键（Ctrl+/ 等）
+      const t = e.target, tag = t && t.tagName;
+      // 焦点在交互件/列表行/维护面板/歌曲浮层上：让位原生行为（行内 Enter/Space 已有处理、面板有自己的 Esc 语义、按钮空格原生触发 click）
+      if (/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(tag) || t.isContentEditable || (t.closest && t.closest('#list,#manage,#songhist'))) return;
+      if (e.key === '/') { e.preventDefault(); $('q').focus(); return; }
+      if (e.key === ' ') { e.preventDefault(); $('pp').click(); return; }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); this.stepFav(e.key === 'ArrowRight' ? 1 : -1); }
     });
 
     // 分类与列表（行/卡片可用键盘操作：Enter/Space 播放；收藏按钮由原生 button 处理）

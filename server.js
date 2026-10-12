@@ -39,7 +39,7 @@ function proxy(target, req, res, depth = 0) {
     res.on('close', () => r.destroy()); // 浏览器侧断开（换源/暂停/关页）：销毁上游，直播流不再泄漏连接（P2-2）
     r.pipe(res);
   });
-  creq.on('timeout', () => creq.destroy()); // 建连/响应超时：destroy 触发 error 走 502
+  creq.on('timeout', () => creq.destroy(new Error('upstream timeout'))); // 带错误对象 destroy：各版本 Node 都保证触发 error → 502
   creq.on('error', () => { if (res.headersSent) res.destroy(); else res.writeHead(502).end('upstream error'); });
 }
 

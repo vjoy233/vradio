@@ -15,7 +15,10 @@ const Sync = {
         const eu = r.euKept != null ? `欧美音乐 ${r.euKept} 个实测可用` : '欧美音乐未更新（已保留旧列表）';
         $('status').textContent = `同步完成：共 ${r.total} 台（${r.delta >= 0 ? '+' : ''}${r.delta}；${eu}）`;
       }
-    } catch (e) { $('status').textContent = '同步失败（file:// 或无后端时请在项目目录跑 node update-sources.js）：' + e.message; }
+    } catch (e) {
+      const msg = String(e.message || e);
+      $('status').textContent = msg.includes('同步已在进行中') ? msg : '同步失败（file:// 或无后端时请在项目目录跑 node update-sources.js）：' + msg;
+    }
     b.disabled = false; b.textContent = '同步源';
   },
 

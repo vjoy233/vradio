@@ -387,6 +387,25 @@ const App = {
     const nx = cur < 0 ? (d > 0 ? 0 : list.length - 1) : (cur + d + list.length) % list.length;
     this.togglePlay(keyOf(list[nx]));
   },
+  /* 回到正在播（N5/r2 ⑦）：点 footer 台名定位列表行——当前分类/搜索词下不可见则先切「全部」+清搜索；
+     台被手动隐藏/死台隐藏时行不存在，静默不跳（与 visible() 口径一致，不报错） */
+  locatePlaying() {
+    const s = Player.station;
+    if (!s) return;
+    const k = keyOf(s);
+    if (!this.visible().some(x => keyOf(x) === k)) {
+      this.state.cat = '全部'; this.state.keyword = ''; $('q').value = '';
+    }
+    this.render(); // 整表重建：定位必须放在 render 之后
+    const row = $('list').querySelector(`[data-k="${CSS.escape(k)}"]`);
+    if (!row) return;
+    const rm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    row.scrollIntoView({ block: 'center', behavior: rm ? 'auto' : 'smooth' });
+    row.classList.add('flash');
+    clearTimeout(this._flashT);
+    this._flashT = setTimeout(() => row.classList.remove('flash'), 1000);
+  },
+
   /* 台标补全（收藏 + 正在播优先，请求量可控）：Logos.ensure 落库后回调重渲一次展示 */
   logosEnsure() {
     if (!location.protocol.startsWith('http')) return;
@@ -404,8 +423,10 @@ const App = {
         this.songFor = k; this.lastSong = '';
         $('song').hidden = true; $('song').textContent = '';
       }
-      $('nowline').textContent = s.n; $('pp').innerHTML = (Player.connecting || !Player.isPaused()) ? '<svg class="ic"><use href="#i-pause"/></svg>' : '<svg class="ic"><use href="#i-play"/></svg>'; // 台名不再带 ▶（UI 审计 P3-4）：与列表行的 ▶ 前缀重复，footer 已有按钮+均衡器表达状态
-    } else { $('pp').innerHTML = '<svg class="ic"><use href="#i-play"/></svg>'; this.showLast(); $('song').hidden = true; }
+      $('nowline').textContent = s.n;
+      $('nowline').classList.add('canfind'); $('nowline').title = '点击回到正在播的电台（N5）'; // 台名可点定位（r2 ⑦）
+      $('pp').innerHTML = (Player.connecting || !Player.isPaused()) ? '<svg class="ic"><use href="#i-pause"/></svg>' : '<svg class="ic"><use href="#i-play"/></svg>'; // 台名不再带 ▶（UI 审计 P3-4）：与列表行的 ▶ 前缀重复，footer 已有按钮+均衡器表达状态
+    } else { $('pp').innerHTML = '<svg class="ic"><use href="#i-play"/></svg>'; this.showLast(); $('song').hidden = true; $('nowline').classList.remove('canfind'); $('nowline').title = ''; }
     $('eq').classList.toggle('on', !!s && !Player.isPaused()); // 均衡器动画（E6）：活着且在播
   },
 
@@ -674,6 +695,8 @@ const App = {
     // 歌曲历史浮层（B-7）：点曲名行开关；点别处收起
     $('song').onclick = () => this.toggleSongHist();
     document.addEventListener('click', e => { if (!e.target.closest('#songhist,#song')) $('songhist').hidden = true; });
+    // footer 台名可点（N5/r2 ⑦）：回到正在播行并高亮一闪
+    $('nowline').onclick = () => this.locatePlaying();
 
     // 搜索：120ms 防抖，避免 1600+ 行列表每键整表重渲；Esc 清空；任意位置按 / 聚焦；↓ 接力列表首行（P2-5）
     let timer = 0;

@@ -44,7 +44,7 @@
   .row.playing .name::before { content:'▶ '; color:var(--acc); }
   .row.connecting .name::before { content:'● '; animation:pulse 1s infinite; } /* 连接中脉冲提示等待 */
   @keyframes pulse { 50% { opacity:.25; } }
-  @media (prefers-reduced-motion: reduce) { .row.connecting .name::before, .card.connecting .cname::before, #eq.on i, .card.playing::after { animation:none; } #prog { display:none; } #list.swap .row, #list.swap .card { animation:none; } * { transition:none !important; } }
+  @media (prefers-reduced-motion: reduce) { .row.connecting .name::before, .card.connecting .cname::before, #eq.on i, .card.playing::after { animation:none; } #prog { display:none; } #list.swap .row, #list.swap .card, .row.flash, .card.flash { animation:none; } * { transition:none !important; } }
   .row .name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .badge { font-size:12px; color:var(--dim); border:1px solid var(--line); border-radius:4px; padding:0 6px; white-space:nowrap; }
   .srcs { font-size:12px; color:var(--dim); white-space:nowrap; }
@@ -61,6 +61,9 @@
   footer { position:fixed; left:0; right:0; bottom:0; background:var(--panel); border-top:1px solid var(--line); padding:10px 14px; padding-bottom:calc(10px + env(safe-area-inset-bottom)); display:flex; gap:12px; align-items:center; flex-wrap:wrap; } /* safe-area：全面屏底部不被遮挡（P3-9） */
   footer #now { flex:1; min-width:120px; overflow:hidden; display:flex; flex-direction:column; line-height:1.45; } /* 两行：台名 + 曲讯（B-6） */
   footer #nowline { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  footer #nowline.canfind { cursor:pointer; } /* 有正在播台时可点定位（N5/r2 ⑦） */
+  .row.flash, .card.flash { animation:flashrow 1s ease-out; } /* 定位高亮一闪（N5） */
+  @keyframes flashrow { 0%,70% { outline:2px solid var(--acc); outline-offset:-2px; } }
   #song { font-size:12px; color:var(--dim); cursor:pointer; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   #song:hover { color:var(--acc); }
   #songhist { position:fixed; right:14px; bottom:72px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 14px; max-width:min(380px, 82vw); max-height:38vh; overflow-y:auto; z-index:9; font-size:12px; } /* 歌曲历史浮层（B-7） */

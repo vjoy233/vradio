@@ -33,7 +33,7 @@ const Sync = {
     const b = $('healthBtn');
     if (b.textContent.includes('取消')) { this.abort = true; return; }
     this.abort = false; b.textContent = '取消体检';
-    const list = App.visible(); let done = 0, alive = 0;
+    const list = App.visible(true); let done = 0, alive = 0; // visible(true)：连默认隐藏的死台一起复查，复活即自动回归列表
     const stamp = App.state.stamp, q = list.slice(), t0 = Date.now();
     const worker = async () => {
       while (q.length && !this.abort) {
@@ -59,4 +59,7 @@ const Sync = {
 };
 
 $('syncBtn').onclick = () => Sync.doSync();
-$('healthBtn').onclick = () => Sync.health();
+$('healthBtn').onclick = () => Sync.health().catch(e => { // health() 内部只兜了探活失败，其余异常不兜底会把按钮永久卡在「取消体检」
+  $('status').textContent = '体检异常：' + (e && e.message || e);
+  $('healthBtn').textContent = '体检';
+});

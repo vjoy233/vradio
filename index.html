@@ -42,7 +42,14 @@
   .health.ok { color:var(--acc); } .health.bad { color:var(--warn); }
   .btn:disabled { opacity:.5; cursor:wait; }
   footer { position:fixed; left:0; right:0; bottom:0; background:var(--panel); border-top:1px solid var(--line); padding:10px 14px; padding-bottom:calc(10px + env(safe-area-inset-bottom)); display:flex; gap:12px; align-items:center; flex-wrap:wrap; } /* safe-area：全面屏底部不被遮挡（P3-9） */
-  footer #now { flex:1; min-width:120px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  footer #now { flex:1; min-width:120px; overflow:hidden; display:flex; flex-direction:column; line-height:1.45; } /* 两行：台名 + 曲讯（B-6） */
+  footer #nowline { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  #song { font-size:12px; color:var(--dim); cursor:pointer; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  #song:hover { color:var(--acc); }
+  #songhist { position:fixed; right:14px; bottom:72px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 14px; max-width:min(380px, 82vw); max-height:38vh; overflow-y:auto; z-index:9; font-size:12px; } /* 歌曲历史浮层（B-7） */
+  #songhist[hidden] { display:none; }
+  #songhist b { display:block; margin-bottom:4px; color:var(--dim); font-weight:500; }
+  .shrow { padding:2px 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   footer #status { font-size:12px; color:var(--dim); }
   #vol { width:110px; accent-color:var(--acc); }
   #eq { display:inline-flex; align-items:flex-end; gap:2px; height:14px; } /* 均衡器动画（E6）：一眼可辨「活着且在播」 */
@@ -100,6 +107,11 @@
   #mq { width:100%; margin:10px 0 4px; background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:8px; padding:7px 12px; outline:none; font:inherit; }
   #mq:focus { border-color:var(--acc); }
   .mrow select { background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:4px 6px; font:inherit; font-size:12px; max-width:9em; }
+  /* 添加自定义电台（A-2）：面板电台页顶部表单，先探活（拒绝假流/死链）再写入 my-radio.txt（持久层，区别于 cfg 显示层） */
+  #mAdd { display:flex; gap:6px; padding:10px 14px 0; flex-wrap:wrap; }
+  #mAdd input { flex:1; min-width:110px; background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:6px 8px; outline:none; font:inherit; font-size:12px; }
+  #mAdd input:focus { border-color:var(--acc); }
+  #mAdd select { background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:6px; font:inherit; font-size:12px; max-width:9em; }
   .mfoot { display:flex; gap:8px; justify-content:flex-end; padding:10px 14px; border-top:1px solid var(--line); }
 </style>
 </head>
@@ -126,12 +138,13 @@
 <footer>
   <button class="btn" id="pp" aria-label="播放 / 暂停">▶</button>
   <span id="eq" aria-hidden="true"><i></i><i></i><i></i></span>
-  <div id="now" aria-live="polite">未在播放</div>
+  <div id="now" aria-live="polite"><div id="nowline">未在播放</div><div id="song" hidden></div></div>
   <button class="btn" id="sleepBtn" title="睡眠定时：点击设置 15/30/60 分钟" aria-label="睡眠定时">😴</button>
   <span id="status" role="status" aria-live="polite"></span>
   <input type="range" id="vol" min="0" max="100" value="90" aria-label="音量">
 </footer>
 <audio id="audio" preload="none"></audio>
+<div id="songhist" hidden></div>
 <!-- 维护面板：个人分类/电台调整（localStorage 覆盖层，同步重跑后按 URL 回绑自动复用）；逻辑在 app.js -->
 <div id="manage" hidden>
   <div class="mbox" role="dialog" aria-modal="true" aria-label="分类与电台维护">
@@ -143,6 +156,12 @@
     <div id="mMiss"></div>
     <div id="mCats"></div>
     <div id="mStations" hidden>
+      <div id="mAdd">
+        <input id="mAName" type="text" maxlength="40" placeholder="电台名（如：我的私藏台）" aria-label="电台名">
+        <input id="mAUrl" type="url" placeholder="流地址 http(s)://…（mp3/aac 直流）" aria-label="流地址">
+        <select id="mACat" aria-label="分类"></select>
+        <button class="btn" id="mAddBtn">＋ 添加</button>
+      </div>
       <input id="mq" type="search" placeholder="搜索要维护的电台（含已隐藏），如：动感 / CNN / 戏曲" aria-label="搜索电台">
       <div id="mlist" role="list"></div>
     </div>

@@ -464,10 +464,29 @@ const App = {
     if (!Player.station) return;
     let songs; try { songs = JSON.parse(localStorage.getItem('radio.songs') || '{}'); } catch (_) { songs = {}; }
     const list = (songs[Player.station.u[0]] || []).slice(0, 12); // 同 pushSongHist 的 URL 键
-    el.innerHTML = '<b>本台最近播放</b>' + (list.length
+    el.innerHTML = '<div class="shhead"><b>本台最近播放</b><button type="button" class="btn mbtn" data-act="exportsongs" title="导出所有台的收听历史为 txt（拿去音乐 App 搜）">导出全部</button></div>' + (list.length
       ? list.map(x => `<div class="shrow">${this.esc(x.t)}</div>`).join('')
       : '<div class="shrow" style="color:var(--dim)">暂无历史（换歌后自动记录）</div>');
     el.hidden = false;
+    el.querySelector('[data-act="exportsongs"]').onclick = () => this.exportSongs();
+  },
+  exportSongs() { // 歌曲历史导出（N2/r2 ④）：全部台历史按时间倒序拼 txt；台名按台主 URL 反解，休眠台用 URL 截断兜底
+    let songs; try { songs = JSON.parse(localStorage.getItem('radio.songs') || '{}'); } catch (_) { songs = {}; }
+    const rows = [];
+    for (const u0 of Object.keys(songs)) {
+      const st = this.state.stations.find(s => s.u.includes(u0));
+      const nm = st ? st.n : u0.replace(/^https?:\/\//, '').slice(0, 40);
+      for (const it of songs[u0] || []) rows.push({ t: it.t, at: it.at, nm });
+    }
+    if (!rows.length) { $('status').textContent = '暂无歌曲历史（换歌后自动记录）'; return; }
+    rows.sort((a, b) => b.at - a.at);
+    const p = n => String(n).padStart(2, '0'), fmt = ts => { const d = new Date(ts); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+    const lines = rows.map(r => `${r.t}（${r.nm} · ${fmt(r.at)}）`); // 纯文本文件不过 HTML 转义（exportFavs 同口径）
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/plain' }));
+    a.download = 'vradio-songs.txt';
+    a.click(); URL.revokeObjectURL(a.href);
+    $('status').textContent = `已导出 ${rows.length} 条收听历史（vradio-songs.txt）`;
   },
 
   /* ---------- 收藏导出/导入（Tier 1 E4）：导出 = 带 #VRADIO:FAV 标记的 m3u（通用播放器可读），

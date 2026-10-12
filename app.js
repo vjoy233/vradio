@@ -233,11 +233,12 @@ const App = {
     restore();
   },
   /* 体检增量落库（sync.js 调用）：stamp 未变时顺手更新该行 DOM，否则只落数据由结束时的兜底 render 收口（P3-13）。
-     死台标记同步持久化（radio.health）；复活即撤销标记，体检结束的兜底 render 会让它回归列表 */
+     healthMarks 只改内存，落盘由 Sync.health 收尾统一一次——全量体检标死几百台时逐台全量写 localStorage 会卡主线程；
+     复活即撤销标记，体检结束的兜底 render 会让它回归列表 */
   patchHealth(s, ok, stamp) {
     s.health = ok ? 'ok' : 'dead';
-    if (ok) { if (this.healthMarks[keyOf(s)]) { delete this.healthMarks[keyOf(s)]; this.saveHealth(); } }
-    else { this.healthMarks[keyOf(s)] = { u: s.u.slice(0, 6), t: Date.now() }; this.saveHealth(); $('deadBtn').hidden = false; } // 首个死台出现即亮开关
+    if (ok) delete this.healthMarks[keyOf(s)];
+    else { this.healthMarks[keyOf(s)] = { u: s.u.slice(0, 6), t: Date.now() }; $('deadBtn').hidden = false; } // 首个死台出现即亮开关
     if (this.state.stamp !== stamp) return;
     const row = $('list').querySelector(`[data-i="${this.state.index.get(s)}"]`); // 行/卡片通用
     if (!row) return;

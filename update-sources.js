@@ -6,7 +6,8 @@
 //      过滤欧美国家后按类型榜(news/talk/sports/religious)拆成 欧美音乐 + 国际新闻·谈话，
 //      逐个实测可用性，只保留能持续吐数据的流（自动感知下线源）
 //   3. 合并写入 radio.txt（temp+rename 原子替换，旧文件备份为 radio.txt.bak），分类顺序 = CAT_ORDER；
-//      欧美获取失败时保留旧分类；合并结果低于下限时中止写盘
+//      欧美获取失败时保留旧分类；合并结果低于下限时中止写盘；
+//      随行产出 radio-data.js（radio.txt 全文包成 window.RADIO_DATA 经典 script，file:// 降级直读全库，N1/r2 ③）
 // 用法：node update-sources.js  或 页面上点「同步源」(POST /api/sync)
 const http = require('http'), https = require('https'), fs = require('fs'), path = require('path');
 const dns = require('dns');
@@ -14,6 +15,7 @@ const { execFile } = require('child_process');
 
 const ROOT = __dirname;
 const RADIO = path.join(ROOT, 'radio.txt');
+const RADIODATA = path.join(ROOT, 'radio-data.js'); // radio.txt 的经典 script 包装（N1/r2 ③）：file:// 下 fetch 必被拦、script 加载不会（hls.min.js 先例）
 const LOGOS = path.join(ROOT, 'logos.txt');
 const LOGOS_HEADER = '# 由 npm run sync 自动生成：欧美系台标（欧美音乐/国际新闻·谈话，源：Radio Browser 镜像 m3u 的 tvg-logo，按流 URL 匹配）。手工编辑会被覆盖。';
 const CN_REPO = 'gaotianliuyun/gao';                 // 国内直播源上游
@@ -346,8 +348,16 @@ async function syncSources(log = () => {}) {
     return summary;
   }
   if (fs.existsSync(RADIO)) fs.copyFileSync(RADIO, RADIO + '.bak');
-  fs.writeFileSync(RADIO + '.tmp', merged.join('\r\n') + '\r\n', 'utf8');
+  const outText = merged.join('\r\n') + '\r\n';
+  fs.writeFileSync(RADIO + '.tmp', outText, 'utf8');
   fs.renameSync(RADIO + '.tmp', RADIO);
+  // radio-data.js（N1/r2 ③）：JSON.stringify 产物即合法 JS 字符串字面量（ES2019 起 U+2028/2029 亦安全），
+  // </script> 序列只威胁内联脚本、外链 .js 无此面；与 radio.txt 同为 git 跟踪的生成物（clone 即用）。失败不影响主流程
+  try {
+    const js = 'window.RADIO_DATA=' + JSON.stringify(outText) + ';\r\n';
+    fs.writeFileSync(RADIODATA + '.tmp', js, 'utf8');
+    fs.renameSync(RADIODATA + '.tmp', RADIODATA);
+  } catch (e) { log('radio-data.js 写入失败（不影响电台列表）：' + (e.message || e)); }
 
   // 5) 台标（欧美成功重建时随行重写 logos.txt，双分类前缀；失败时保留旧文件不动）
   if (euLines) {

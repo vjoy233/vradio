@@ -11,6 +11,8 @@ const { execFile } = require('child_process');
 
 const ROOT = __dirname;
 const RADIO = path.join(ROOT, 'radio.txt');
+const LOGOS = path.join(ROOT, 'logos.txt');
+const LOGOS_HEADER = '# 由 npm run sync 自动生成：欧美音乐分类台标（源：Radio Browser 镜像 m3u 的 tvg-logo，按流 URL 匹配）。手工编辑会被覆盖。';
 const CN_REPO = 'gaotianliuyun/gao';                 // 国内直播源上游
 const EU_REPO = 'AlonDrilich/radio-playlists';       // Radio Browser 镜像
 const EU_FILE = 'top/top-500.m3u';                   // 全球票数前500 = 最稳定
@@ -122,9 +124,10 @@ function parseM3u(text, log) {
   let noGroup = 0;
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(/^#EXTINF:.*group-title="([^"]*)"[^,]*,(.+)$/);
-    if (m && lines[i + 1] && /^https?:/.test(lines[i + 1].trim()))
-      out.push({ country: m[1].trim(), name: m[2].trim(), url: lines[i + 1].trim() });
-    else if (/^#EXTINF:/.test(lines[i])) noGroup++;
+    if (m && lines[i + 1] && /^https?:/.test(lines[i + 1].trim())) {
+      const lg = lines[i].match(/tvg-logo="([^"]*)"/); // 台标属性可缺省
+      out.push({ country: m[1].trim(), name: m[2].trim(), url: lines[i + 1].trim(), logo: lg ? lg[1].trim() : '' });
+    } else if (/^#EXTINF:/.test(lines[i])) noGroup++;
   }
   if (noGroup) log(`跳过 ${noGroup} 条无 group-title/格式异常的条目`);
   return out;
@@ -148,14 +151,19 @@ async function buildEuLines(log) {
   log(`欧美候选 ${cand.length} 个，开始实测（约40s）…`);
   await mapLimit(cand, 18, async s => { const r = await checkStream(s.url); s.ok = r.ok; });
   const ok = cand.filter(s => s.ok);
-  // 按国家分组排序，名字挂中文国名
+  // 按国家分组排序，名字挂中文国名；台标随行带走（logos.txt 用，按 URL 与 radio.txt 严格一一对应）
   const byC = {}; ok.forEach(s => (byC[s.country] = byC[s.country] || []).push(s));
   const lines = [`${EU_CAT},#genre#`];
+  const logoLines = [LOGOS_HEADER];
   Object.keys(byC).sort((a, b) => byC[b].length - byC[a].length).forEach(c => {
-    byC[c].sort((a, b) => a.name.localeCompare(b.name)).forEach(s => lines.push(`${s.name.replace(/,/g, ' ')} [${EU_COUNTRIES[s.country]}],${s.url}`));
+    byC[c].sort((a, b) => a.name.localeCompare(b.name)).forEach(s => {
+      const name = `${s.name.replace(/,/g, ' ')} [${EU_COUNTRIES[s.country]}]`;
+      lines.push(`${name},${s.url}`);
+      if (s.logo) logoLines.push(`${EU_CAT}|${name},${s.logo}`);
+    });
   });
-  log(`欧美实测通过 ${ok.length}/${cand.length}`);
-  return { lines, kept: ok.length, total: cand.length };
+  log(`欧美实测通过 ${ok.length}/${cand.length}，台标 ${logoLines.length - 1} 个`);
+  return { lines, kept: ok.length, total: cand.length, logoLines };
 }
 
 function splitSections(text) {
@@ -171,6 +179,27 @@ function splitSections(text) {
   return sections;
 }
 const countEntries = lines => lines.filter(l => l && !l.endsWith('#genre#')).length;
+
+/* ---------- 台标独立生成（node update-sources.js --logos）：只取镜像 m3u 的 tvg-logo 按当前
+   radio.txt 的欧美台 URL 匹配写 logos.txt，不做实测、不改 radio.txt —— 免费台标，随时可重跑 ---------- */
+async function buildLogoFile() {
+  if (!fs.existsSync(RADIO)) throw new Error('radio.txt 缺失：--logos 按其欧美台 URL 匹配台标，请先完整同步（npm run sync）'); // 缺失时宁可报错退出，不能把 logos.txt 清成只剩表头
+  const all = parseM3u(await ghFile(EU_REPO, EU_FILE), () => {});
+  const byUrl = new Map(all.filter(s => s.logo).map(s => [s.url, s.logo]));
+  const rt = fs.readFileSync(RADIO, 'utf8');
+  const sec = splitSections(rt).find(s => s.cat === EU_CAT);
+  const out = [LOGOS_HEADER]; let n = 0;
+  for (const l of (sec ? sec.lines : [])) {
+    const i = l.lastIndexOf(','); if (i < 0) continue;
+    const logo = byUrl.get(l.slice(i + 1).trim());
+    if (logo) { out.push(`${EU_CAT}|${l.slice(0, i).trim()},${logo}`); n++; }
+  }
+  return { text: out.join('\r\n') + '\r\n', count: n };
+}
+function writeLogos(text) { // temp + rename 原子替换
+  fs.writeFileSync(LOGOS + '.tmp', text, 'utf8');
+  fs.renameSync(LOGOS + '.tmp', LOGOS);
+}
 
 /* ---------- 主流程 ---------- */
 async function syncSources(log = () => {}) {
@@ -213,6 +242,12 @@ async function syncSources(log = () => {}) {
   fs.writeFileSync(RADIO + '.tmp', merged.join('\r\n') + '\r\n', 'utf8');
   fs.renameSync(RADIO + '.tmp', RADIO);
 
+  // 5) 台标（欧美成功重建时随行重写 logos.txt；失败时保留旧文件不动）
+  if (euLines) {
+    try { writeLogos(euLines.logoLines.join('\r\n') + '\r\n'); summary.logos = euLines.logoLines.length - 1; }
+    catch (e) { log('logos.txt 写入失败（不影响电台列表）：' + (e.message || e)); }
+  }
+
   summary.total = after; summary.delta = after - before;
   log(`完成：共 ${after} 台（${summary.delta >= 0 ? '+' : ''}${summary.delta}）`);
   return summary;
@@ -220,7 +255,12 @@ async function syncSources(log = () => {}) {
 
 /* ---------- 入口 ---------- */
 if (require.main === module) {
-  syncSources(m => console.log('[vradio]', m)).then(s => { console.log(JSON.stringify(s, null, 2)); })
-    .catch(e => { console.error('同步失败:', e); process.exit(1); });
+  if (process.argv.includes('--logos')) { // 只重建台标数据：node update-sources.js --logos
+    buildLogoFile().then(({ text, count }) => { writeLogos(text); console.log(`[vradio] logos.txt：${count} 个台标`); })
+      .catch(e => { console.error('台标生成失败:', e); process.exit(1); });
+  } else {
+    syncSources(m => console.log('[vradio]', m)).then(s => { console.log(JSON.stringify(s, null, 2)); })
+      .catch(e => { console.error('同步失败:', e); process.exit(1); });
+  }
 }
-module.exports = { syncSources, checkStream, safeTarget, guardLookup };
+module.exports = { syncSources, checkStream, safeTarget, guardLookup, buildLogoFile };

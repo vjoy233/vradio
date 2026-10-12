@@ -1,19 +1,19 @@
 /* VRadio 应用层 —— 列表/搜索/分类/收藏/最近播放/导入导出/渲染的唯一所有者（模块契约见 docs/review.md 十一节债务 2）。
-   播放一律经 Player 接口；同步/体检由 sync.js 编排本文件暴露的方法。
+   播放一律经 Player 接口；同步/体检由 sync.js 编排本文件暴露的方法；台标数据经 Logos 模块获取（本文件只拼渲染片段）。
    身份公理（债务 1）：URL = 持久身份（收藏/最近记录源 URL，名字漂移后按 URL 回绑），名字 = 显示层。 */
 
-/* ---------- 内置精选（地址已实测直连可用；含同一电台的多个备选源） ---------- */
+/* ---------- 内置精选（地址已实测直连可用；含同一电台的多个备选源。l = 台标，蜻蜓频道页封面实测可直连） ---------- */
 const STARTER = [
-  { c:'常听', n:'Love Radio FM103.7 经典金曲', u:['http://lhttp.qingting.fm/live/273/64k.mp3','http://ls.qingting.fm/live/273.m3u8'] },
-  { c:'常听', n:'动感101 FM101.7', u:['http://lhttp.qingting.fm/live/274/64k.mp3','http://live.xmcdn.com/live/53/64.m3u8'] },
-  { c:'常听', n:'经典947 FM94.7', u:['http://lhttp.qingting.fm/live/267/64k.mp3','http://live.xmcdn.com/live/54/64.m3u8'] },
-  { c:'常听', n:'上海东广新闻台', u:['http://lhttp.qingting.fm/live/275/64k.mp3'] },
-  { c:'常听', n:'上海交通台 FM105.7', u:['http://lhttp.qingting.fm/live/266/64k.mp3','http://ls.qingting.fm/live/266.m3u8'] },
+  { c:'常听', n:'Love Radio FM103.7 经典金曲', u:['http://lhttp.qingting.fm/live/273/64k.mp3','http://ls.qingting.fm/live/273.m3u8'], l:'http://pic.qtfm.cn/2014/0909/20140909125130474.jpg!200' },
+  { c:'常听', n:'动感101 FM101.7', u:['http://lhttp.qingting.fm/live/274/64k.mp3','http://live.xmcdn.com/live/53/64.m3u8'], l:'http://pic.qtfm.cn/2014/0909/20140909123511693.jpg!200' },
+  { c:'常听', n:'经典947 FM94.7', u:['http://lhttp.qingting.fm/live/267/64k.mp3'], l:'http://pic.qtfm.cn/sso/48/1641437907698_k0NNOUP54.jpeg!200' },
+  { c:'常听', n:'上海东广新闻台', u:['http://lhttp.qingting.fm/live/275/64k.mp3'], l:'http://pic.qtfm.cn/sso/198/1606449636209_K8-0Zavn2.png!200' },
+  { c:'常听', n:'上海交通台 FM105.7', u:['http://lhttp.qingting.fm/live/266/64k.mp3','http://ls.qingting.fm/live/266.m3u8'], l:'http://pic.qtfm.cn/sso/48/1641437453117_JxQnTn1vv.jpeg!200' },
   { c:'常听', n:'CNR 中国之声', u:['http://ngcdn001.cnr.cn/live/zgzs/index.m3u8'] },
   { c:'常听', n:'CNR 音乐之声', u:['http://ngcdn003.cnr.cn/live/yyzs/index.m3u8'] },
   { c:'常听', n:'CRI 环球资讯广播 FM90.5', u:['http://sk.cri.cn/905.m3u8'] },
-  { c:'常听', n:'CRI 怀旧金曲频道', u:['https://lhttp.qingting.fm/live/5022038/64k.mp3'] },
-  { c:'常听', n:'Asia FM 亚洲经典台', u:['https://lhttp.qingting.fm/live/5021912/64k.mp3'] },
+  { c:'常听', n:'CRI 怀旧金曲频道', u:['https://lhttp.qingting.fm/live/5022038/64k.mp3'], l:'http://pic.qtfm.cn/2024/0726/20240726111933.png!200' },
+  { c:'常听', n:'Asia FM 亚洲经典台', u:['https://lhttp.qingting.fm/live/5021912/64k.mp3'], l:'http://pic.qtfm.cn/2022/0712/20220712122112.jpeg!200' },
   { c:'世界', n:'YES 933 (新加坡)', u:['http://playerservices.streamtheworld.com/api/livestream-redirect/YES933AAC.aac'] },
   { c:'世界', n:'Class 95 (新加坡)', u:['http://playerservices.streamtheworld.com/api/livestream-redirect/CLASS95AAC.aac'] },
   { c:'世界', n:'Listen.Moe JPop', u:['https://listen.moe/stream'] },
@@ -24,8 +24,11 @@ const $ = id => document.getElementById(id);
 const keyOf = s => s.c + '|' + s.n;
 
 const App = {
-  /* 集中状态（docs/review.md 架构-风险 2）：stations 数据 + 渲染哨兵 + 行索引（体检增量更新用，去 O(n²)） */
-  state: { stations: STARTER.slice(), cat: '全部', keyword: '', stamp: 0, index: new Map() },
+  /* 集中状态（docs/review.md 架构-风险 2）：stations 数据 + 渲染哨兵 + 行索引（体检增量更新用，去 O(n²)）
+     view：网格/列表视图（boot 从 localStorage 恢复，网格为默认——单列长列表浪费纵向空间）
+     showDead：无效源（体检 ✗）台是否显示，默认隐藏（boot 从 localStorage 恢复）
+     theme：auto/light/dark，默认跟随系统（boot 从 localStorage 恢复，写 <html data-theme>） */
+  state: { stations: STARTER.slice(), cat: '全部', keyword: '', view: 'grid', showDead: false, theme: 'auto', stamp: 0, index: new Map() },
   favs: [],    // [{k, u:[源URL…]}] —— 带 URL 的条目永不回收（休眠待回绑），旧名字键回绑失败即刻回收
   recents: [], // [{k, n, u:[…]}] 最近在前、≤20；队首即「上次收听」（E3 与 lastKey 合并为单一队列）
 
@@ -39,9 +42,19 @@ const App = {
     if (last && !rec.some(r => r.k === last)) rec.unshift({ k: last, n: '', u: [] });
     localStorage.removeItem('radio.last');
     this.recents = rec.slice(0, 20).map(r => ({ k: String(r.k), n: r.n || String(r.k).split('|').pop() || '', u: Array.isArray(r.u) ? r.u : [] }));
+    // 死台标记持久化（radio.health）：键 → { u:[源URL快照], t }。TTL 7 天对齐 Logos 负缓存——流地址天然漂移，
+    // 陈年死标不值得永久埋台；✓ 标记不持久化（会话级反馈即可，隐藏只关心死台）
+    let hp; try { hp = JSON.parse(localStorage.getItem('radio.health') || '{}'); } catch (_) { hp = {}; }
+    this.healthMarks = {};
+    for (const k of Object.keys(hp || {})) { const e = hp[k]; if (e && Array.isArray(e.u) && Date.now() - (e.t || 0) < 7 * 86400000) this.healthMarks[k] = e; }
   },
   saveFavs() { localStorage.setItem('radio.favs', JSON.stringify(this.favs)); },
   saveRecents() { localStorage.setItem('radio.recents', JSON.stringify(this.recents)); },
+  saveHealth() { // FIFO 500 封顶防膨胀（全量体检标死几百台的场景）
+    const keys = Object.keys(this.healthMarks).sort((a, b) => (this.healthMarks[a].t || 0) - (this.healthMarks[b].t || 0));
+    while (keys.length > 500) delete this.healthMarks[keys.shift()];
+    try { localStorage.setItem('radio.health', JSON.stringify(this.healthMarks)); } catch (_) {}
+  },
 
   /* ---------- 列表解析：radio.txt（"分类,#genre#" 分节 + 名字,地址 行）与 m3u（#EXTINF + URL 行）双格式 ---------- */
   parse(text) {
@@ -78,7 +91,7 @@ const App = {
     const byKey = new Map(), byName = new Set();
     for (const s of mainList) { byKey.set(keyOf(s), s); byName.add(s.n); }
     for (const st of STARTER) if (!byName.has(st.n)) { // 决策 C：与主列表精确重名的精选台不再并入（http 模式下常听=纯重复）
-      byKey.set(keyOf(st), { c: st.c, n: st.n, u: st.u.slice() }); byName.add(st.n);
+      byKey.set(keyOf(st), { c: st.c, n: st.n, u: st.u.slice(), l: st.l }); byName.add(st.n);
     }
     for (const s of myList || []) {
       const cur = byKey.get(keyOf(s));
@@ -118,13 +131,24 @@ const App = {
     this.recents = this.recents.map(r => { const st = find(r); return st ? { k: keyOf(st), n: st.n, u: st.u.slice(0, 6) } : r; })
       .filter(r => { if (seen.has(r.k)) return false; seen.add(r.k); return r.u.length || this.state.stations.some(s => keyOf(s) === r.k); })
       .slice(0, 20);
+    // 死台标记按 URL 身份回绑（上游改名/换分类后仍对得上）：命中即 s.health='dead'（刷新后依然默认隐藏），
+    // 键与 URL 快照随之刷新；对不上当前列表的休眠保留待 TTL 过期
+    const hm = {};
+    for (const k of Object.keys(this.healthMarks)) {
+      const e = this.healthMarks[k];
+      const st = this.state.stations.find(s => keyOf(s) === k)
+        || (e.u.length && this.state.stations.find(s => s.u.some(u => e.u.includes(u))));
+      if (st) { st.health = 'dead'; hm[keyOf(st)] = { u: st.u.slice(0, 6), t: e.t }; }
+      else hm[k] = e;
+    }
+    this.healthMarks = hm; this.saveHealth();
     this.saveFavs(); this.saveRecents();
   },
   favKeys() { return new Set(this.favs.map(f => f.k)); },
   toggleFav(s) {
     const k = keyOf(s);
     const i = this.favs.findIndex(f => f.k === k);
-    if (i >= 0) this.favs.splice(i, 1); else this.favs.push({ k, u: s.u.slice(0, 6) });
+    if (i >= 0) this.favs.splice(i, 1); else { this.favs.push({ k, u: s.u.slice(0, 6) }); this.logosEnsure(); } // 新收藏优先补台标
     this.saveFavs(); this.render();
   },
   remember(s) { // 播放即记入最近（队首 = 上次收听）
@@ -146,12 +170,15 @@ const App = {
     $('now').textContent = s ? '上次收听：' + s.n : '未在播放';
   },
 
-  /* ---------- 渲染（唯一入口） ---------- */
+  /* ---------- 渲染（唯一入口）：网格 = 精简卡片 / 列表 = 两行详情（元信息行含「正在播」节目） ---------- */
   keepFocus(box, ...attrs) { // innerHTML 整表重建会把键盘焦点弹回 body：重建前后找回同节点
     const ae = document.activeElement;
     if (!box.contains(ae) || !ae.dataset) return () => {};
     const pair = attrs.map(a => [a, ae.dataset[a]]).find(([, v]) => v != null);
     return () => { if (pair) box.querySelector(`[data-${pair[0]}="${CSS.escape(pair[1])}"]`)?.focus({ preventScroll: true }); };
+  },
+  favBtn(k, on, s) {
+    return `<button type="button" class="fav${on ? ' on' : ''}" data-fav="${this.esc(k)}" aria-pressed="${on}" aria-label="${on ? '取消收藏' : '收藏'}：${this.esc(s.n)}" title="${on ? '取消收藏' : '收藏'}">${on ? '★' : '☆'}</button>`;
   },
   buildCats() {
     const restore = this.keepFocus($('cats'), 'c');
@@ -163,52 +190,66 @@ const App = {
     $('cats').innerHTML = cats.map(c => `<button type="button" class="chip${c === this.state.cat ? ' on' : ''}" data-c="${this.esc(c)}"${c === this.state.cat ? ' aria-current="true"' : ''}>${this.esc(c)}</button>`).join('');
     restore();
   },
-  visible() {
+  visible(all) {
     const st = this.state, kw = st.keyword.toLowerCase(), favs = this.favKeys();
+    // 无效源默认隐藏（体检 ✗ 的台）；正在播/连接中的台例外——明明活着不该消失。all=true 供空态判断「只是被隐藏」
+    const show = s => all || st.showDead || s.health !== 'dead'
+      || (Player.station && keyOf(Player.station) === keyOf(s)) || (Player.connecting && keyOf(Player.connecting) === keyOf(s));
     if (st.cat === '最近') { // 最近播放（E3）：按 recents 队序（键或 URL 回绑解析），上限 20
       const hits = [];
-      for (const r of this.recents.slice(0, 20)) { const s = this.resolve(r); if (s && (!kw || s.n.toLowerCase().includes(kw))) hits.push(s); }
+      for (const r of this.recents.slice(0, 20)) { const s = this.resolve(r); if (s && (!kw || s.n.toLowerCase().includes(kw)) && show(s)) hits.push(s); }
       return hits;
     }
     return st.stations.filter(s =>
       (st.cat === '全部' || (st.cat === '★收藏' ? favs.has(keyOf(s)) : s.c === st.cat)) &&
-      (!kw || s.n.toLowerCase().includes(kw)));
+      (!kw || s.n.toLowerCase().includes(kw)) && show(s));
   },
   // 电台名/分类来自远程上游仓库，渲染前必须转义（防注入）
   esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); },
   emptyHtml() { // 空态给出原因和下一步动作
     const msg = this.state.cat === '★收藏' && !this.favs.length ? '还没有收藏电台——点电台左侧 ☆ 即可收藏'
       : this.state.cat === '最近' && !this.recents.length ? '还没有播放记录——点任意电台即开始收听'
+      : this.visible(true).length ? '当前筛选的电台均已体检不可用（默认隐藏）——点上方「✗ 无效源」开关显示它们'
       : this.state.keyword ? `没有匹配「${this.esc(this.state.keyword)}」的电台，换个关键词试试` : '该分类暂无电台';
     return `<div class="empty">${msg}</div>`;
   },
   render() {
-    const restore = this.keepFocus($('list'), 'k', 'fav'); // 焦点在行或收藏按钮上都找回
+    const restore = this.keepFocus($('list'), 'k', 'fav'); // 焦点在行/卡片或按钮上都找回
     const list = this.visible();
+    $('deadBtn').hidden = !this.state.stations.some(s => s.health === 'dead'); // 出现过死台才亮「无效源」开关
     this.state.stamp++;
     this.state.index = new Map(list.map((s, i) => [s, i])); // 行索引（体检增量更新用，替代 indexOf 的 O(n²)）
     const pk = Player.station && keyOf(Player.station), ck = Player.connecting && keyOf(Player.connecting);
-    const favs = this.favKeys();
+    const favs = this.favKeys(), grid = this.state.view === 'grid';
+    $('list').className = grid ? 'grid' : '';
     $('list').innerHTML = list.map((s, i) => {
       const k = keyOf(s), on = favs.has(k), playing = k === pk;
+      const base = `${playing ? ' playing' : ''}${k === ck ? ' connecting' : ''}${s.health === 'dead' ? ' dead' : ''}`;
+      const attrs = `data-k="${this.esc(k)}" data-i="${i}" role="listitem" tabindex="0" aria-label="${this.esc(s.n)}${playing ? '（播放中）' : ''}"${playing ? ' aria-current="true"' : ''}${s.health === 'dead' ? ' title="体检不可用，点击仍可尝试播放"' : ''}`;
       const hp = s.health ? `<span class="health ${s.health === 'ok' ? 'ok' : 'bad'}" title="体检${s.health === 'ok' ? '可用' : '不可用'}">${s.health === 'ok' ? '✓' : '✗'}</span>` : '';
-      return `<div class="row${playing ? ' playing' : ''}${k === ck ? ' connecting' : ''}${s.health === 'dead' ? ' dead' : ''}" data-k="${this.esc(k)}" data-i="${i}" role="listitem" tabindex="0" aria-label="${this.esc(s.n)}${playing ? '（播放中）' : ''}"${playing ? ' aria-current="true"' : ''}${s.health === 'dead' ? ' title="体检不可用，点击仍可尝试播放"' : ''}>
-        <button type="button" class="fav${on ? ' on' : ''}" data-fav="${this.esc(k)}" aria-pressed="${on}" aria-label="${on ? '取消收藏' : '收藏'}：${this.esc(s.n)}" title="${on ? '取消收藏' : '收藏'}">${on ? '★' : '☆'}</button>
-        <span class="name">${this.esc(s.n)}</span>${hp}
-        <span class="badge">${this.esc(s.c)}</span><span class="srcs" title="备选源数量">${s.u.length}源</span></div>`;
+      if (grid) return `<div class="card${base}" ${attrs}><div class="chead">${Logos.img(s)}<span class="cname">${this.esc(s.n)}</span>${this.favBtn(k, on, s)}</div><div class="cfoot"><span class="badge">${this.esc(s.c)}</span><span class="srcs" title="备选源数量">${s.u.length}源</span>${hp}</div></div>`;
+      return `<div class="row${base}" ${attrs}>${this.favBtn(k, on, s)}<div class="col"><div class="l1">${Logos.img(s)}<span class="name">${this.esc(s.n)}</span>${hp}</div><div class="meta"><span class="badge">${this.esc(s.c)}</span><span class="srcs" title="备选源数量">${s.u.length}源</span></div></div></div>`;
     }).join('') || this.emptyHtml();
     restore();
   },
-  /* 体检增量落库（sync.js 调用）：stamp 未变时顺手更新该行 DOM，否则只落数据由结束时的兜底 render 收口（P3-13） */
+  /* 体检增量落库（sync.js 调用）：stamp 未变时顺手更新该行 DOM，否则只落数据由结束时的兜底 render 收口（P3-13）。
+     healthMarks 只改内存，落盘由 Sync.health 收尾统一一次——全量体检标死几百台时逐台全量写 localStorage 会卡主线程；
+     复活即撤销标记，体检结束的兜底 render 会让它回归列表 */
   patchHealth(s, ok, stamp) {
     s.health = ok ? 'ok' : 'dead';
+    if (ok) delete this.healthMarks[keyOf(s)];
+    else { this.healthMarks[keyOf(s)] = { u: s.u.slice(0, 6), t: Date.now() }; $('deadBtn').hidden = false; } // 首个死台出现即亮开关
     if (this.state.stamp !== stamp) return;
-    const row = $('list').querySelector(`.row[data-i="${this.state.index.get(s)}"]`);
+    const row = $('list').querySelector(`[data-i="${this.state.index.get(s)}"]`); // 行/卡片通用
     if (!row) return;
+    if (!ok && !this.state.showDead
+      && !(Player.station && keyOf(Player.station) === keyOf(s)) && !(Player.connecting && keyOf(Player.connecting) === keyOf(s))) {
+      row.remove(); return; // 默认隐藏：死台行当场消失，与 visible() 口径一致（正在播/连接中的台不消失）
+    }
     row.classList.toggle('dead', !ok);
     const old = row.querySelector('.health'); if (old) old.remove();
     const sp = document.createElement('span'); sp.className = 'health ' + (ok ? 'ok' : 'bad'); sp.textContent = ok ? '✓' : '✗';
-    row.insertBefore(sp, row.querySelector('.badge'));
+    row.querySelector('.l1, .cfoot').appendChild(sp);
   },
 
   togglePlay(k) { // 再点当前台 = 暂停/继续；点其他台 = 切换
@@ -218,8 +259,24 @@ const App = {
       return;
     }
     this.remember(s);
+    this.logosEnsure(); // 正在播的台也优先补台标
     if (this.state.cat === '最近') this.render(); // 最近队列头插后刷新顺序
     Player.play(s);
+  },
+  /* 台标补全（收藏 + 正在播优先，请求量可控）：Logos.ensure 落库后回调重渲一次展示 */
+  logosEnsure() {
+    if (!location.protocol.startsWith('http')) return;
+    const seen = new Set(), list = [];
+    for (const f of this.favs) { const s = this.resolve(f); if (s && !seen.has(keyOf(s))) { seen.add(keyOf(s)); list.push(s); } }
+    if (Player.station && !seen.has(keyOf(Player.station))) list.push(Player.station);
+    Logos.ensure(list, () => this.render());
+  },
+  /* 底部栏刷新（Player.onstate 用）：当前台名 + 播放/暂停态 + 均衡器动画 */
+  playerNow() {
+    const s = Player.station;
+    if (s) { $('now').textContent = '▶ ' + s.n; $('pp').textContent = (Player.connecting || !Player.isPaused()) ? '⏸' : '▶'; }
+    else { $('pp').textContent = '▶'; this.showLast(); }
+    $('eq').classList.toggle('on', !!s && !Player.isPaused()); // 均衡器动画（E6）：活着且在播
   },
 
   /* ---------- 收藏导出/导入（Tier 1 E4）：导出 = 带 #VRADIO:FAV 标记的 m3u（通用播放器可读），
@@ -240,6 +297,7 @@ const App = {
 
   boot() {
     this.loadStore();
+    localStorage.removeItem('radio.epg'); // 节目单（EPG）功能已移除：顺手清掉旧版留下的缓存（不存在则 no-op）
     // 音量持久化（读取夹取 0-100，坏值回退 90）
     const savedVol = localStorage.getItem('radio.vol'), vol0 = +savedVol;
     const vol = savedVol !== null && Number.isFinite(vol0) && vol0 >= 0 && vol0 <= 100 ? vol0 : 90;
@@ -247,13 +305,7 @@ const App = {
     Player.init($('audio'), vol / 100);
 
     // Player 状态回调：full=true 需整表重渲（行高亮/连接中变化），否则只轻量更新底部
-    Player.onstate = full => {
-      const s = Player.station;
-      if (s) { $('now').textContent = '▶ ' + s.n; $('pp').textContent = (Player.connecting || !Player.isPaused()) ? '⏸' : '▶'; }
-      else { $('pp').textContent = '▶'; this.showLast(); }
-      $('eq').classList.toggle('on', !!s && !Player.isPaused()); // 均衡器动画（E6）：活着且在播
-      if (full) this.render();
-    };
+    Player.onstate = full => { this.playerNow(); if (full) this.render(); };
     Player.onstatus = t => { $('status').textContent = t; };
     Player.onfail = () => this.showLast();
     // 睡眠定时（E2）：未设置时点击循环 15→30→60 分钟；进行中点击直接取消
@@ -276,7 +328,7 @@ const App = {
       if (e.key === '/' && !e.ctrlKey && !e.altKey && !e.metaKey && !/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) { e.preventDefault(); $('q').focus(); }
     });
 
-    // 分类与列表（行可用键盘操作：Enter/Space 播放；收藏按钮由原生 button 处理）
+    // 分类与列表（行/卡片可用键盘操作：Enter/Space 播放；收藏按钮由原生 button 处理）
     $('cats').onclick = e => { const c = e.target.closest('.chip'); if (c) { this.state.cat = c.dataset.c; this.buildCats(); this.render(); } };
     $('list').onclick = e => {
       const fav = e.target.closest('.fav');
@@ -285,13 +337,51 @@ const App = {
         if (s) this.toggleFav(s);
         return;
       }
-      const row = e.target.closest('.row'); if (row) this.togglePlay(row.dataset.k);
+      const row = e.target.closest('.row,.card'); if (row) this.togglePlay(row.dataset.k);
     };
     $('list').onkeydown = e => {
       if (e.key !== 'Enter' && e.key !== ' ') return;
-      const row = e.target.closest('.row');
+      const row = e.target.closest('.row,.card');
       if (row && e.target === row) { e.preventDefault(); this.togglePlay(row.dataset.k); }
     };
+
+    // 视图切换（网格=精简卡片 / 列表=两行详情）与无效源显隐，均持久化到 localStorage
+    const syncView = () => {
+      $('gridBtn').classList.toggle('on', this.state.view === 'grid'); $('gridBtn').setAttribute('aria-pressed', String(this.state.view === 'grid'));
+      $('listBtn').classList.toggle('on', this.state.view === 'list'); $('listBtn').setAttribute('aria-pressed', String(this.state.view === 'list'));
+    };
+    const setView = v => { if (this.state.view === v) return; this.state.view = v; localStorage.setItem('radio.view', v); syncView(); this.render(); };
+    $('gridBtn').onclick = () => setView('grid');
+    $('listBtn').onclick = () => setView('list');
+    this.state.view = localStorage.getItem('radio.view') === 'list' ? 'list' : 'grid'; // 网格为默认
+    syncView();
+    const syncDead = () => {
+      $('deadBtn').classList.toggle('on', this.state.showDead); $('deadBtn').setAttribute('aria-pressed', String(this.state.showDead));
+    };
+    $('deadBtn').onclick = () => { this.state.showDead = !this.state.showDead; localStorage.setItem('radio.showdead', this.state.showDead ? '1' : '0'); syncDead(); this.render(); };
+    this.state.showDead = localStorage.getItem('radio.showdead') === '1'; // 默认隐藏无效台
+    syncDead();
+
+    // 主题：🌓 跟随系统（默认）→ ☀️ 浅色 → 🌙 深色 循环，持久化 radio.theme；
+    // 生效值写 <html data-theme>，浅色变量只认它（auto 由 matchMedia 实时换算，系统切换即时跟随）
+    const mq = matchMedia('(prefers-color-scheme: light)');
+    const themeName = { auto: '跟随系统', light: '浅色', dark: '深色' };
+    const applyTheme = () => {
+      document.documentElement.dataset.theme = this.state.theme === 'auto' ? (mq.matches ? 'light' : 'dark') : this.state.theme;
+      $('themeBtn').textContent = { auto: '🌓', light: '☀️', dark: '🌙' }[this.state.theme];
+      $('themeBtn').setAttribute('aria-label', '主题：' + themeName[this.state.theme] + '，点击切换');
+      $('themeBtn').title = '主题：' + themeName[this.state.theme] + '（点击循环：跟随系统 → 浅色 → 深色）';
+    };
+    this.state.theme = ['auto', 'light', 'dark'].includes(localStorage.getItem('radio.theme')) ? localStorage.getItem('radio.theme') : 'auto';
+    $('themeBtn').onclick = () => { this.state.theme = { auto: 'light', light: 'dark', dark: 'auto' }[this.state.theme]; localStorage.setItem('radio.theme', this.state.theme); applyTheme(); };
+    mq.addEventListener('change', () => { if (this.state.theme === 'auto') applyTheme(); });
+    applyTheme();
+
+    // 台标：缓存 + 数据文件（http 下才有后端/代理）
+    Logos.load();
+    if (location.protocol.startsWith('http')) {
+      fetch('logos.txt').then(r => r.ok ? r.text() : '').then(t => { Logos.loadFile(t); this.render(); this.logosEnsure(); }).catch(() => this.logosEnsure());
+    }
 
     // 底部控制：未播放时 ▶ = 续播上次收听（按键或 URL 回绑解析）；播放中 = 暂停；暂停 = 继续
     const resumeLast = () => {
@@ -336,7 +426,7 @@ const App = {
     };
 
     // 初始数据：radio.txt + my-radio.txt（http 下），file:// 下回退内置精选 + 手动导入
-    this.reloadMain().then(ok => { if (!ok) $('hint').style.display = 'block'; });
+    this.reloadMain().then(ok => { if (!ok) $('hint').style.display = 'block'; this.logosEnsure(); });
     this.buildCats(); this.render(); this.showLast(); // file:// 降级模式下也补齐「上次收听」提示
   },
 };

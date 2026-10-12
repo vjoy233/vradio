@@ -9,8 +9,9 @@ const Player = {
   sleepId: 0, sleepEnd: 0,
   onstate: null,    // (full) 播放态变化回调；full=true 时 app 需整表重渲
   onstatus: null,   // (text) 底部状态栏文案
-  onfail: null,     // 全部源失败的善后回调
+  onfail: null,     // 全部源失败的善后回调（footer 复位）；⚠ 提示文案由本引擎 say，不依赖回调方
   ontick: null,     // (msLeft) 睡眠定时倒计时回调（0 = 已关）
+  onplaylast: null, // 媒体键 play 但当前无台时，转交 app 走「续播上次收听」（与 pp 按钮同语义）
 
   init(el, vol0) {
     this.audio = el; this.vol = vol0; el.volume = vol0;
@@ -21,7 +22,7 @@ const Player = {
     if ('mediaSession' in navigator) {
       const ms = navigator.mediaSession;
       try {
-        ms.setActionHandler('play', () => this.resume());
+        ms.setActionHandler('play', () => this.station ? this.resume() : (this.onplaylast && this.onplaylast()));
         ms.setActionHandler('pause', () => this.pause());
         ms.setActionHandler('stop', () => this.stop());
       } catch (_) {} // 个别浏览器不支持部分 action，单独容错
@@ -54,9 +55,10 @@ const Player = {
     }
     const next = () => {
       if (my !== this.token) return;
-      if (i >= urls.length) { // 全部源失败
+      if (i >= urls.length) { // 全部源失败：状态栏给出结论与下一步指引，footer 由 onfail 复位
         this.station = this.connecting = null; this.emit(true);
-        if (this.onfail) this.onfail(); else this.say('⚠ 全部源失败，建议点「体检」或「同步源」');
+        this.say('⚠ 全部源失败，建议点「体检」或「同步源」');
+        if (this.onfail) this.onfail();
         return;
       }
       this.connecting = this.station; this.emit(true); // 换源重试期间保持连接中指示
@@ -103,6 +105,7 @@ const Player = {
   },
   // 暂停恢复：直播流建流慢（蜻蜓 5-10s），先给连接中提示；失败由遗留 onerror 闭包接管换源
   resume() {
+    if (!this.station) return; // 无台可续：媒体键空台场景已转 onplaylast，此处兜底
     this.connecting = this.station; this.emit(true); this.say('连接中…');
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
     this.audio.play().catch(() => {});

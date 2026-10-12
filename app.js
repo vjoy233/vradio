@@ -56,9 +56,15 @@ const App = {
       const line = raw.trim();
       if (!line || line.startsWith('#VRADIO')) continue; // 本项目导出标记行（E4），不影响导入
       if (line.endsWith('#genre#')) { sec = line.replace(/,#genre#$/, ''); continue; }
-      const m = line.match(/^#EXTINF:.*group-title="([^"]*)"[^,]*,(.+)$/); // 标准 m3u：属性区后取台名，group-title 映射分类
-      if (m) { pend = { c: m[1].trim() || sec, n: m[2].trim() }; continue; }
-      if (/^#EXTINF:/i.test(line)) { const i = line.indexOf(','); pend = { c: sec, n: i >= 0 ? line.slice(i + 1).trim() : '' }; continue; }
+      if (/^#EXTINF:/i.test(line)) {
+        // 属性值可含逗号（如 tvg-logo="http://a/b,c.png"）：引号外的第一个逗号才是「属性区,台名」分隔符
+        let q = false, sep = -1;
+        for (let j = 8; j < line.length; j++) { const ch = line[j]; if (ch === '"') q = !q; else if (ch === ',' && !q) { sep = j; break; } }
+        const attrs = sep >= 0 ? line.slice(0, sep) : '', name = sep >= 0 ? line.slice(sep + 1).trim() : '';
+        const g = attrs.match(/group-title="([^"]*)"/);
+        pend = { c: (g && g[1].trim()) || sec, n: name };
+        continue;
+      }
       if (line.startsWith('#')) continue;
       if (/^https?:\/\//.test(line)) { if (pend) { add(pend.c, pend.n, line); pend = null; } continue; } // m3u 的 URL 行
       const i = line.lastIndexOf(','); if (i < 0) continue; // csv 风格：名字,地址
@@ -107,8 +113,10 @@ const App = {
       // 旧名字键（无 URL）回绑失败 → 即刻回收（迁移策略）
     }
     this.favs = nf;
+    // recents 回绑后按键去重：上游改名会让新旧两条解析到同一台，「最近」不出现重复行
+    const seen = new Set();
     this.recents = this.recents.map(r => { const st = find(r); return st ? { k: keyOf(st), n: st.n, u: st.u.slice(0, 6) } : r; })
-      .filter(r => r.u.length || this.state.stations.some(s => keyOf(s) === r.k))
+      .filter(r => { if (seen.has(r.k)) return false; seen.add(r.k); return r.u.length || this.state.stations.some(s => keyOf(s) === r.k); })
       .slice(0, 20);
     this.saveFavs(); this.saveRecents();
   },
@@ -158,9 +166,8 @@ const App = {
   visible() {
     const st = this.state, kw = st.keyword.toLowerCase(), favs = this.favKeys();
     if (st.cat === '最近') { // 最近播放（E3）：按 recents 队序（键或 URL 回绑解析），上限 20
-      const rec = new Map(this.recents.slice(0, 20).map((r, i) => [r, i]));
       const hits = [];
-      for (const r of rec.keys()) { const s = this.resolve(r); if (s && (!kw || s.n.toLowerCase().includes(kw))) hits.push(s); }
+      for (const r of this.recents.slice(0, 20)) { const s = this.resolve(r); if (s && (!kw || s.n.toLowerCase().includes(kw))) hits.push(s); }
       return hits;
     }
     return st.stations.filter(s =>
@@ -222,8 +229,8 @@ const App = {
     const list = this.state.stations.filter(s => favs.has(keyOf(s)));
     if (!list.length) { $('status').textContent = '还没有收藏，先点 ☆ 收藏再导出'; return; }
     const lines = ['#EXTM3U', '#VRADIO:FAV'];
-    for (const s of list) for (const u of s.u)
-      lines.push(`#EXTINF:-1 group-title="${this.esc(s.c).replace(/"/g, '')}",${s.n.replace(/,/g, ' ')}`, u);
+    for (const s of list) for (const u of s.u) // m3u 是纯文本：只清分隔/换行符，不过 HTML 转义（否则 R&B 会腐蚀成 R&amp;B）
+      lines.push(`#EXTINF:-1 group-title="${s.c.replace(/["\r\n]/g, '')}",${s.n.replace(/[\r\n,]/g, ' ')}`, u);
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'audio/x-mpegurl' }));
     a.download = 'vradio-favorites.m3u';
@@ -236,7 +243,7 @@ const App = {
     // 音量持久化（读取夹取 0-100，坏值回退 90）
     const savedVol = localStorage.getItem('radio.vol'), vol0 = +savedVol;
     const vol = savedVol !== null && Number.isFinite(vol0) && vol0 >= 0 && vol0 <= 100 ? vol0 : 90;
-    if (savedVol !== null && Number.isFinite(vol0) && vol0 >= 0 && vol0 <= 100) $('vol').value = vol0;
+    $('vol').value = vol;
     Player.init($('audio'), vol / 100);
 
     // Player 状态回调：full=true 需整表重渲（行高亮/连接中变化），否则只轻量更新底部
@@ -287,12 +294,13 @@ const App = {
     };
 
     // 底部控制：未播放时 ▶ = 续播上次收听（按键或 URL 回绑解析）；播放中 = 暂停；暂停 = 继续
+    const resumeLast = () => {
+      const s = this.resolve(this.recents[0]);
+      if (s) Player.play(s); else $('status').textContent = '上次收听的电台已不在列表中，请直接点播';
+    };
+    Player.onplaylast = resumeLast; // 锁屏/媒体键 play 空台时与 pp 按钮同语义（AIbot P3-1）
     $('pp').onclick = () => {
-      if (!Player.station) {
-        const s = this.resolve(this.recents[0]);
-        if (s) Player.play(s); else $('status').textContent = '上次收听的电台已不在列表中，请直接点播';
-        return;
-      }
+      if (!Player.station) return resumeLast();
       Player.isPaused() ? Player.resume() : Player.pause();
     };
     $('vol').oninput = e => { Player.setVolume(e.target.value / 100); localStorage.setItem('radio.vol', e.target.value); };
@@ -308,16 +316,20 @@ const App = {
         const isFavBackup = text.includes('#VRADIO:FAV');
         const list = this.parse(text);
         if (!list.length) { $('status').textContent = '导入失败：未解析到任何电台（支持 radio.txt / m3u）'; return; }
-        let my = [];
-        if (location.protocol.startsWith('http')) { // file:// 边界：无后端不拉 my-radio，导入后 = 精选 + 导入列表
-          my = await fetch('my-radio.txt').then(r => r.ok ? r.text() : '').then(t => t ? this.parse(t) : []).catch(() => []);
-        }
-        this.applySources(list, my);
-        if (isFavBackup) { // 本项目导出的备份：按 URL 回绑恢复收藏（换机场景收藏不丢）
+        if (isFavBackup) {
+          // 收藏备份恢复：主列表不动（http 下重拉全量），只恢复收藏态——避免「导入备份后列表只剩收藏」的换机困惑
           for (const s of list) { const k = keyOf(s); if (!this.favs.some(f2 => f2.k === k)) this.favs.push({ k, u: s.u.slice(0, 6) }); }
-          this.rebind(); this.render();
-          $('status').textContent = `已恢复：${list.length} 台（含收藏标记）`;
-        } else $('status').textContent = `已导入 ${list.length} 台`;
+          const ok = await this.reloadMain();
+          if (!ok) { this.rebind(); this.render(); } // file:// 或拉取失败：在当前列表上回绑
+          $('status').textContent = `已恢复收藏：${list.length} 个电台`;
+        } else {
+          let my = [];
+          if (location.protocol.startsWith('http')) { // file:// 边界：无后端不拉 my-radio，导入后 = 精选 + 导入列表
+            my = await fetch('my-radio.txt').then(r => r.ok ? r.text() : '').then(t => t ? this.parse(t) : []).catch(() => []);
+          }
+          this.applySources(list, my);
+          $('status').textContent = `已导入 ${list.length} 台`;
+        }
         $('hint').style.display = 'none';
       };
       r.readAsText(f, 'utf-8');

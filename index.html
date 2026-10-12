@@ -74,6 +74,10 @@
   .row .l1 { display:flex; align-items:center; gap:10px; min-width:0; }
   .row .meta { font-size:12px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .row .meta .badge, .row .meta .srcs { font-size:11px; }
+  /* 台标：网格 30px / 列表 22px；img 直连加载不受 CORS 限制，坏图 onerror 移除回退纯文字 */
+  .logo { flex:0 0 auto; object-fit:cover; border:1px solid var(--line); background:var(--panel); }
+  .card .logo { width:30px; height:30px; border-radius:8px; }
+  .row .logo { width:22px; height:22px; border-radius:5px; }
   /* 节目单入口（有数据源的台才渲染） */
   .epgbtn { flex:0 0 auto; font-size:12px; color:var(--dim); background:none; border:1px solid var(--line); border-radius:6px; padding:2px 7px; cursor:pointer; line-height:1.5; transition:color .15s, border-color .15s; }
   .epgbtn:hover { color:var(--acc); border-color:var(--acc); }
@@ -132,12 +136,13 @@
   <input type="range" id="vol" min="0" max="100" value="90" aria-label="音量">
 </footer>
 <audio id="audio" preload="none"></audio>
-<!-- 结构壳：样式与结构在此，逻辑按模块契约分置四文件；
-     顺序 = player（引擎）→ epg（节目单数据）→ app（数据/渲染）→ sync（同步/体检编排）；
-     epg 先于 app 装载（boot 渲染行内节目单入口时即引用）；经典 script 是 file:// 硬约束 -->
+<!-- 结构壳：样式与结构在此，逻辑按模块契约分置五文件；
+     顺序 = player（引擎）→ epg（节目单数据）→ logos（台标数据）→ app（数据/渲染）→ sync（同步/体检编排）；
+     epg/logos 先于 app 装载（boot 渲染行内入口时即引用）；经典 script 是 file:// 硬约束 -->
 <script src="hls.min.js"></script>
 <script src="player.js"></script>
 <script src="epg.js"></script>
+<script src="logos.js"></script>
 <script src="app.js"></script>
 <script src="sync.js"></script>
 </body>

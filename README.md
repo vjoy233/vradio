@@ -2,7 +2,7 @@
 
 > 零依赖的本地网络电台播放器 —— 国内电台为主、海外电台为辅，无需翻墙，`npm start` 即听。
 
-在浏览器里收听 1600+ 电台：央广/国际台全系、全国省市地方台、音乐/文艺频率，**以及 190+ 个实测可直连的欧美主流音乐台**（Radio Paradise / Capital FM / Classic FM / Heart / Skyrock / SomaFM…）。全部代码约 1250 行（前端按模块分四文件），无 npm 依赖，不收集任何数据，纯本地运行。
+在浏览器里收听 1600+ 电台：央广/国际台全系、全国省市地方台、音乐/文艺频率，**以及 190+ 个实测可直连的欧美主流音乐台**（Radio Paradise / Capital FM / Classic FM / Heart / Skyrock / SomaFM…）。全部代码约 1400 行（前端按模块分五文件），无 npm 依赖，不收集任何数据，纯本地运行。
 
 ## 特性
 
@@ -12,6 +12,7 @@
 - ⭐ **收藏**：一键收藏，localStorage 持久化（记录源 URL，电台改名后自动回绑）；可导出为 m3u 备份/换机，导回即恢复收藏
 - 🕘 **最近播放**：「最近」分类按播放顺序记录最近 20 台，与「上次收听」续播合一
 - 🗂️ **网格/列表双视图**：「▦ 网格」精简卡片一屏多台，「☰ 列表」两行详情（含「正在播」节目、体检状态），选择自动记住
+- 🖼️ **台标**：卡片/行首显示电台标志，一眼认台——欧美台来自 Radio Browser 镜像数据（同步时按流 URL 确定性匹配），国内蜻蜓台按「收藏 + 正在播」优先自动解析并永久缓存（图片直连加载，坏图自动回退纯文字）
 - 🕐 **节目单**：蜻蜓源电台自动获取当天节目（主播、「正在播」高亮）；欧美台等可用 `epg.txt` 手动补充，支持周几与**时区换算**（详见[使用](#使用)）
 - 🔐 **锁屏/媒体键**：MediaSession API——锁屏、蓝牙耳机、键盘媒体键都能控制播放暂停并显示台名
 - 😴 **睡眠定时**：15/30/60 分钟定时渐弱停止，睡前听电台不怕忘关
@@ -50,6 +51,7 @@ file:// 模式下可用内置精选电台和「导入列表」手动加载 radio
 
 - **搜索**：顶部输入框按名称过滤；**分类**：顶部 chip 切换（音乐场景用户直接点置顶的「音乐」/「欧美音乐」）
 - **视图切换**：右上「▦ 网格 / ☰ 列表」——网格为默认（单列长列表太费纵向空间），选择存 localStorage 自动记住
+- **台标**：有台标的台在卡片/行首显示标志。来源三级：内置精选硬编码 → `logos.txt`（同步生成，欧美台）→ 运行时解析（**只解析「收藏 + 正在播」的台**：蜻蜓台取频道页封面、其它台查 Radio Browser favicon，结果永久缓存在本地，失败 7 天后自动重试）。图片由 `<img>` 直连加载不走代理，坏图自动隐藏回退纯文字
 - **节目单**：带 🕐 的台点开即看当天节目（来源标注、当前档「正在播」高亮；蜻蜓只提供今天已开播的档期）。仅收听欧美台/央广直连源可用 `epg.txt` 手动补充节目单：
 
 <details>
@@ -98,7 +100,8 @@ Radio Browser 官方 API 在国内直连不可达，走 GitHub 镜像 + api.gith
 **命令行用法**（不开页面也能同步）：
 
 ```bash
-npm run sync    # = node update-sources.js
+npm run sync                 # = node update-sources.js，同步电台源（含台标随行更新）
+npm run sync -- --logos      # 只重建 logos.txt 台标数据（数秒，不实测不改 radio.txt）
 ```
 
 同步前会自动备份旧列表为 `radio.txt.bak`；`my-radio.txt` 为个人补充，永不被覆盖。
@@ -144,6 +147,7 @@ gh api repos/gaotianliuyun/gao/contents/radio.txt --jq .content | base64 -d > ra
 - ✅ 实测浏览器可播：Love Radio FM103.7（mp3 直流）、CNR 中国之声（代理 + hls.js）、动感 101 / 经典 947 / 东广新闻台 / 交通台 105.7（mp3 直流）、YES 933 / Class 95 新加坡（AAC 直流）、**Capital FM London（mp3 直流秒开）**
 - ✅ 欧美台可用率：Radio Browser 全球 top-500 中 223 个欧美台实测 177 个直连可用（80%）
 - ✅ **节目单（EPG）数据源实测（2026-10）**：老 API `api.qingting.fm` 已停止解析，`api2.qingting.fm/v6` 全 404（需鉴权）；可用的是蜻蜓 SSR 页——`m.qtfm.cn/channels/{id}/from/{日}`（**id 与流 URL `qingting.fm/live/{id}` 同空间**，确定性映射，但只含今天已开播档）+ `www.qtfm.cn/search/{台名} → /radios/{id}` 全天档
+- ✅ **台标数据源实测（2026-10）**：蜻蜓频道页 `m.qtfm.cn/channels/{id}` 内嵌封面图（`<img class="img" src="…!200">`，200px 缩略，直连可加载）——按流 URL 确定性可取；`pic.qingting.fm/2013/channel_logo/{id}.jpg` 旧规律对 channel id 已 404（只对 radios 目录 id 有效）；欧美台走 Radio Browser 镜像 m3u 的 `tvg-logo`（当前覆盖 104/195 ≈ 53%，按流 URL 匹配）；Radio Browser `byurl` 接口的 favicon 作运行时兜底（镜像 de1 直连可用）
 - ⚠️ **蜻蜓 radios 目录按 id 取页会随机串台**：同一 `/radios/{id}` 先后吐出过三家电台的内容（实测 /radios/273 出过新疆交通广播/广州新闻电台/Love Radio），且约 1/9 概率返回 no-content 桩页——必须做「搜索结果台名严格匹配 + 页面 h1 复核 + 空页重试」才敢用，核不过就退回已开播档，宁可没数据不给错数据
 - ⚠️ Radio Browser 官方 API 镜像（`de1.api.radio-browser.info`）2026-10 起实测可直连（与旧记录「国内不可达」不符），但其数据按名字匹配我们 1600+ 台不可靠（仅欧美台有镜像属性），**概览富化不采纳**——列表概览信息以「正在播节目 + 体检状态 + 源数」为准
 - ⚠️ **`live.xmcdn.com`（喜马拉雅 CDN）是假流**：返回 `206 / audio/aac` 但只有 336 字节，探活时勿信状态码，要按「持续吐数据」验收
@@ -154,14 +158,16 @@ gh api repos/gaotianliuyun/gao/contents/radio.txt --jq .content | base64 -d > ra
 
 ```text
 vradio/
-├── index.html        # 结构壳：DOM + 样式（引擎/节目单/应用/同步分置四文件，经典 script 顺序引入）
+├── index.html        # 结构壳：DOM + 样式（引擎/节目单/台标/应用/同步分置五文件，经典 script 顺序引入）
 ├── player.js         # 播放引擎：三级策略/多源切换/MediaSession/睡眠定时
 ├── epg.js            # 节目单（EPG）：蜻蜓 SSR 拉取解析/台名复核/缓存/时区换算/手动 epg.txt
+├── logos.js          # 台标：三级来源解析/永久缓存/收藏+正在播优先补全/坏图回退
 ├── app.js            # 应用层：列表/搜索/分类/收藏/最近/导入导出/双视图渲染（状态集中 + 单一 render 入口）
 ├── sync.js           # 同步/体检编排：只调用 App/Player 暴露的接口
 ├── server.js         # 静态服务 + 流代理 + /api/sync + /api/check（SSRF/CSRF/dotfile 防护齐备）
-├── update-sources.js # 源同步引擎：双上游拉取 + 欧美台实测过滤 + 合并备份 + 网络安全护栏
+├── update-sources.js # 源同步引擎：双上游拉取 + 欧美台实测过滤 + 台标提取 + 合并备份 + 网络安全护栏
 ├── radio.txt         # 电台数据库（1673 台，分类分节）
+├── logos.txt         # 台标数据（欧美音乐分类，同步自动生成；node update-sources.js --logos 可单独重建）
 ├── hls.min.js        # 本地化的 hls.js v1.5.20（Apache-2.0）
 ├── package.json      # npm start / npm run sync
 └── LICENSE           # MIT

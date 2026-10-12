@@ -2,18 +2,18 @@
    播放一律经 Player 接口；同步/体检由 sync.js 编排本文件暴露的方法；节目单数据经 EPG 模块获取（本文件只渲染）。
    身份公理（债务 1）：URL = 持久身份（收藏/最近记录源 URL，名字漂移后按 URL 回绑），名字 = 显示层。 */
 
-/* ---------- 内置精选（地址已实测直连可用；含同一电台的多个备选源） ---------- */
+/* ---------- 内置精选（地址已实测直连可用；含同一电台的多个备选源。l = 台标，蜻蜓频道页封面实测可直连） ---------- */
 const STARTER = [
-  { c:'常听', n:'Love Radio FM103.7 经典金曲', u:['http://lhttp.qingting.fm/live/273/64k.mp3','http://ls.qingting.fm/live/273.m3u8'] },
-  { c:'常听', n:'动感101 FM101.7', u:['http://lhttp.qingting.fm/live/274/64k.mp3','http://live.xmcdn.com/live/53/64.m3u8'] },
-  { c:'常听', n:'经典947 FM94.7', u:['http://lhttp.qingting.fm/live/267/64k.mp3','http://live.xmcdn.com/live/54/64.m3u8'] },
-  { c:'常听', n:'上海东广新闻台', u:['http://lhttp.qingting.fm/live/275/64k.mp3'] },
-  { c:'常听', n:'上海交通台 FM105.7', u:['http://lhttp.qingting.fm/live/266/64k.mp3','http://ls.qingting.fm/live/266.m3u8'] },
+  { c:'常听', n:'Love Radio FM103.7 经典金曲', u:['http://lhttp.qingting.fm/live/273/64k.mp3','http://ls.qingting.fm/live/273.m3u8'], l:'http://pic.qtfm.cn/2014/0909/20140909125130474.jpg!200' },
+  { c:'常听', n:'动感101 FM101.7', u:['http://lhttp.qingting.fm/live/274/64k.mp3','http://live.xmcdn.com/live/53/64.m3u8'], l:'http://pic.qtfm.cn/2014/0909/20140909123511693.jpg!200' },
+  { c:'常听', n:'经典947 FM94.7', u:['http://lhttp.qingting.fm/live/267/64k.mp3'], l:'http://pic.qtfm.cn/sso/48/1641437907698_k0NNOUP54.jpeg!200' },
+  { c:'常听', n:'上海东广新闻台', u:['http://lhttp.qingting.fm/live/275/64k.mp3'], l:'http://pic.qtfm.cn/sso/198/1606449636209_K8-0Zavn2.png!200' },
+  { c:'常听', n:'上海交通台 FM105.7', u:['http://lhttp.qingting.fm/live/266/64k.mp3','http://ls.qingting.fm/live/266.m3u8'], l:'http://pic.qtfm.cn/sso/48/1641437453117_JxQnTn1vv.jpeg!200' },
   { c:'常听', n:'CNR 中国之声', u:['http://ngcdn001.cnr.cn/live/zgzs/index.m3u8'] },
   { c:'常听', n:'CNR 音乐之声', u:['http://ngcdn003.cnr.cn/live/yyzs/index.m3u8'] },
   { c:'常听', n:'CRI 环球资讯广播 FM90.5', u:['http://sk.cri.cn/905.m3u8'] },
-  { c:'常听', n:'CRI 怀旧金曲频道', u:['https://lhttp.qingting.fm/live/5022038/64k.mp3'] },
-  { c:'常听', n:'Asia FM 亚洲经典台', u:['https://lhttp.qingting.fm/live/5021912/64k.mp3'] },
+  { c:'常听', n:'CRI 怀旧金曲频道', u:['https://lhttp.qingting.fm/live/5022038/64k.mp3'], l:'http://pic.qtfm.cn/2024/0726/20240726111933.png!200' },
+  { c:'常听', n:'Asia FM 亚洲经典台', u:['https://lhttp.qingting.fm/live/5021912/64k.mp3'], l:'http://pic.qtfm.cn/2022/0712/20220712122112.jpeg!200' },
   { c:'世界', n:'YES 933 (新加坡)', u:['http://playerservices.streamtheworld.com/api/livestream-redirect/YES933AAC.aac'] },
   { c:'世界', n:'Class 95 (新加坡)', u:['http://playerservices.streamtheworld.com/api/livestream-redirect/CLASS95AAC.aac'] },
   { c:'世界', n:'Listen.Moe JPop', u:['https://listen.moe/stream'] },
@@ -80,7 +80,7 @@ const App = {
     const byKey = new Map(), byName = new Set();
     for (const s of mainList) { byKey.set(keyOf(s), s); byName.add(s.n); }
     for (const st of STARTER) if (!byName.has(st.n)) { // 决策 C：与主列表精确重名的精选台不再并入（http 模式下常听=纯重复）
-      byKey.set(keyOf(st), { c: st.c, n: st.n, u: st.u.slice() }); byName.add(st.n);
+      byKey.set(keyOf(st), { c: st.c, n: st.n, u: st.u.slice(), l: st.l }); byName.add(st.n);
     }
     for (const s of myList || []) {
       const cur = byKey.get(keyOf(s));
@@ -126,7 +126,7 @@ const App = {
   toggleFav(s) {
     const k = keyOf(s);
     const i = this.favs.findIndex(f => f.k === k);
-    if (i >= 0) this.favs.splice(i, 1); else this.favs.push({ k, u: s.u.slice(0, 6) });
+    if (i >= 0) this.favs.splice(i, 1); else { this.favs.push({ k, u: s.u.slice(0, 6) }); this.logosEnsure(); } // 新收藏优先补台标
     this.saveFavs(); this.render();
   },
   remember(s) { // 播放即记入最近（队首 = 上次收听）
@@ -210,9 +210,9 @@ const App = {
       const base = `${playing ? ' playing' : ''}${k === ck ? ' connecting' : ''}${s.health === 'dead' ? ' dead' : ''}`;
       const attrs = `data-k="${this.esc(k)}" data-i="${i}" role="listitem" tabindex="0" aria-label="${this.esc(s.n)}${playing ? '（播放中）' : ''}"${playing ? ' aria-current="true"' : ''}${s.health === 'dead' ? ' title="体检不可用，点击仍可尝试播放"' : ''}`;
       const hp = s.health ? `<span class="health ${s.health === 'ok' ? 'ok' : 'bad'}" title="体检${s.health === 'ok' ? '可用' : '不可用'}">${s.health === 'ok' ? '✓' : '✗'}</span>` : '';
-      if (grid) return `<div class="card${base}" ${attrs}><div class="chead"><span class="cname">${this.esc(s.n)}</span>${this.favBtn(k, on, s)}</div><div class="cfoot"><span class="badge">${this.esc(s.c)}</span><span class="srcs" title="备选源数量">${s.u.length}源</span>${hp}${this.epgBtn(s)}</div></div>`;
+      if (grid) return `<div class="card${base}" ${attrs}><div class="chead">${Logos.img(s)}<span class="cname">${this.esc(s.n)}</span>${this.favBtn(k, on, s)}</div><div class="cfoot"><span class="badge">${this.esc(s.c)}</span><span class="srcs" title="备选源数量">${s.u.length}源</span>${hp}${this.epgBtn(s)}</div></div>`;
       const now = this.nowOf(s);
-      return `<div class="row${base}" ${attrs}>${this.favBtn(k, on, s)}<div class="col"><div class="l1"><span class="name">${this.esc(s.n)}</span>${hp}${this.epgBtn(s)}</div><div class="meta"><span class="badge">${this.esc(s.c)}</span><span class="srcs" title="备选源数量">${s.u.length}源</span>${now ? ' · 正在播：' + this.esc(now) : ''}</div></div></div>`;
+      return `<div class="row${base}" ${attrs}>${this.favBtn(k, on, s)}<div class="col"><div class="l1">${Logos.img(s)}<span class="name">${this.esc(s.n)}</span>${hp}${this.epgBtn(s)}</div><div class="meta"><span class="badge">${this.esc(s.c)}</span><span class="srcs" title="备选源数量">${s.u.length}源</span>${now ? ' · 正在播：' + this.esc(now) : ''}</div></div></div>`;
     }).join('') || this.emptyHtml();
     restore();
   },
@@ -237,8 +237,17 @@ const App = {
     }
     this.remember(s);
     this.wantEpg(s); // 播放即顺手取节目单（每天一次进缓存），取到后底部/列表补「正在播」
+    this.logosEnsure(); // 正在播的台也优先补台标
     if (this.state.cat === '最近') this.render(); // 最近队列头插后刷新顺序
     Player.play(s);
+  },
+  /* 台标补全（收藏 + 正在播优先，请求量可控）：Logos.ensure 落库后回调重渲一次展示 */
+  logosEnsure() {
+    if (!location.protocol.startsWith('http')) return;
+    const seen = new Set(), list = [];
+    for (const f of this.favs) { const s = this.resolve(f); if (s && !seen.has(keyOf(s))) { seen.add(keyOf(s)); list.push(s); } }
+    if (Player.station && !seen.has(keyOf(Player.station))) list.push(Player.station);
+    Logos.ensure(list, () => this.render());
   },
   wantEpg(s) {
     if (!location.protocol.startsWith('http') || !EPG.avail(s)) return;
@@ -380,10 +389,12 @@ const App = {
     this.state.view = localStorage.getItem('radio.view') === 'list' ? 'list' : 'grid'; // 网格为默认
     syncView();
 
-    // 节目单（EPG）：缓存 + 手动 epg.txt（http 下才有后端/代理）+ 面板事件
-    EPG.load();
-    if (location.protocol.startsWith('http'))
+    // 节目单（EPG）与台标：缓存 + 数据文件（http 下才有后端/代理）+ 面板事件
+    EPG.load(); Logos.load();
+    if (location.protocol.startsWith('http')) {
       fetch('epg.txt').then(r => r.ok ? r.text() : '').then(t => { if (t) { EPG.loadManual(t); this.render(); } }).catch(() => {});
+      fetch('logos.txt').then(r => r.ok ? r.text() : '').then(t => { Logos.loadFile(t); this.render(); this.logosEnsure(); }).catch(() => this.logosEnsure());
+    }
     $('epgClose').onclick = () => this.closeEpg();
     $('epgPanel').onclick = e => { if (e.target === $('epgPanel')) this.closeEpg(); };
     $('epgDays').onclick = e => { const c = e.target.closest('.chip'); if (c) { this.epgDow = +c.dataset.dow; this.renderEpg(); } };
@@ -432,7 +443,7 @@ const App = {
     };
 
     // 初始数据：radio.txt + my-radio.txt（http 下），file:// 下回退内置精选 + 手动导入
-    this.reloadMain().then(ok => { if (!ok) $('hint').style.display = 'block'; });
+    this.reloadMain().then(ok => { if (!ok) $('hint').style.display = 'block'; this.logosEnsure(); });
     this.buildCats(); this.render(); this.showLast(); // file:// 降级模式下也补齐「上次收听」提示
   },
 };

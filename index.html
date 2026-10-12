@@ -11,7 +11,7 @@
   * { box-sizing:border-box; margin:0; }
   body { background:var(--bg); color:var(--tx); font:14px/1.6 system-ui,"Microsoft YaHei",sans-serif; display:flex; flex-direction:column; height:100vh; height:100dvh; } /* dvh：iOS 动态工具栏下不被裁切（P3-9） */
   :focus-visible { outline:2px solid var(--acc); outline-offset:1px; } /* 键盘焦点可见（不删 outline；outline 自动跟随元素圆角） */
-  header { display:flex; gap:10px; align-items:center; padding:10px 14px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header { display:flex; gap:10px; align-items:center; padding:10px 14px; border-bottom:1px solid var(--line); flex-wrap:wrap; position:relative; }
   header h1 { font-size:16px; font-weight:600; white-space:nowrap; }
   header h1 .live { color:var(--acc); }
   #q { flex:1; min-width:140px; background:var(--panel); border:1px solid var(--line); color:var(--tx); border-radius:8px; padding:7px 12px; outline:none; font:inherit; }
@@ -29,6 +29,8 @@
   .chip { padding:5px 12px; min-height:30px; border-radius:999px; border:1px solid var(--line); color:var(--dim); cursor:pointer; white-space:nowrap; font:inherit; font-size:13px; background:transparent; transition:color .15s, border-color .15s; }
   .chip:hover { color:var(--tx); }
   .chip.on { color:var(--acc); border-color:var(--acc); }
+  .chip .n { font-style:normal; font-size:10px; color:var(--dim); margin-left:5px; } /* 数量角标（UI 审计 P3-5）：预判列表规模 */
+  .chip.on .n { color:inherit; opacity:.7; }
   #list { flex:1; overflow-y:auto; padding:6px 14px 90px; scroll-padding-bottom:90px; scrollbar-width:thin; scrollbar-color:var(--line) transparent; } /* scroll-padding 防止焦点行被固定 footer 遮挡；细滚动条（UI 审计 A 批） */
   ::-webkit-scrollbar { width:8px; height:8px; }
   ::-webkit-scrollbar-thumb { background:var(--line); border-radius:4px; }
@@ -136,21 +138,40 @@
   #mAdd input:focus { border-color:var(--acc); }
   #mAdd select { background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:6px; font:inherit; font-size:12px; max-width:9em; }
   .mfoot { display:flex; gap:8px; justify-content:flex-end; padding:10px 14px; border-top:1px solid var(--line); }
+  /* 更多菜单（UI 审计 P2-6）：桌面 display:contents 按钮原样排布；≤640px 收进锚定 header 右下的浮层 */
+  #lowfreq { display:contents; }
+  #moreBtn { display:none; }
+  #sleepWrap { position:relative; display:inline-flex; }
+  #sleepMenu { position:absolute; right:0; bottom:calc(100% + 8px); display:flex; flex-direction:column; gap:2px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:6px; min-width:8em; box-shadow:0 8px 24px rgba(0,0,0,.25); z-index:6; }
+  #sleepMenu[hidden] { display:none; }
+  #sleepMenu .btn { border:none; background:none; justify-content:flex-start; }
+  @media (max-width:640px) {
+    header { padding:8px 10px; gap:8px; }
+    #lowfreq { display:none; position:absolute; top:100%; right:8px; margin-top:6px; flex-direction:column; gap:2px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:6px; min-width:9em; box-shadow:0 8px 24px rgba(0,0,0,.25); z-index:6; }
+    #lowfreq.open { display:flex; }
+    #lowfreq .btn { border:none; background:none; justify-content:flex-start; }
+    #moreBtn { display:inline-block; }
+    .fav { font-size:19px; padding:8px 9px; margin:-8px 0; } /* 触屏命中区 ~37px（原 ~26px 达标偏小，UI 审计 P2-6 备注） */
+  }
 </style>
 </head>
 <body>
 <header>
   <h1><span class="live" aria-hidden="true">●</span> VRadio</h1>
-  <input id="q" type="search" aria-label="搜索电台" title="按 / 快速聚焦，Esc 清空" placeholder="搜索电台名，如：中国之声 / Love / NHK">
+  <input id="q" type="search" aria-label="搜索电台" title="按 / 快速聚焦，Esc 清空，↓ 进列表" placeholder="搜索电台名，如：中国之声 / Love / NHK">
   <span class="seg" role="group" aria-label="视图切换">
     <button class="btn" id="gridBtn" aria-pressed="true" title="网格视图：精简卡片，一页看更多">▦ 网格</button>
     <button class="btn" id="listBtn" aria-pressed="false" title="列表视图：两行详情（分类/源数）">☰ 列表</button>
   </span>
-  <button class="btn" id="syncBtn" title="同步上游国内源 + 实测重建欧美音乐台">同步源</button>
-  <button class="btn" id="healthBtn" title="体检当前列表的电台可用性">体检</button>
+  <!-- 低频操作收组（UI 审计 P2-6）：桌面 display:contents 原样排布；≤640px 收进「⋯ 更多」菜单，header 压回两行 -->
+  <span id="lowfreq">
+    <button class="btn" id="syncBtn" title="同步上游国内源 + 实测重建欧美音乐台">同步源</button>
+    <button class="btn" id="healthBtn" title="体检当前列表的电台可用性">体检</button>
+    <button class="btn" id="importBtn" title="导入 radio.txt / m3u 列表，或本项目导出的收藏备份">导入列表</button>
+    <button class="btn" id="exportBtn" title="导出收藏电台为 m3u（换机/备份；导回可恢复收藏）">导出收藏</button>
+  </span>
+  <button class="btn" id="moreBtn" aria-haspopup="true" aria-expanded="false" aria-label="更多操作">⋯</button>
   <button class="btn" id="deadBtn" aria-pressed="false" hidden title="体检不可用（✗）的电台默认隐藏；点击显示/隐藏它们">✗ 无效源</button>
-  <button class="btn" id="importBtn" title="导入 radio.txt / m3u 列表，或本项目导出的收藏备份">导入列表</button>
-  <button class="btn" id="exportBtn" title="导出收藏电台为 m3u（换机/备份；导回可恢复收藏）">导出收藏</button>
   <button class="btn" id="manageBtn" title="分类与电台维护：移动/重命名/隐藏电台，新建/重命名/隐藏分类（个人配置，同步后保留）">⚙ 维护</button>
   <button class="btn" id="themeBtn" aria-label="主题：跟随系统，点击切换" title="主题：跟随系统（点击循环：跟随系统 → 浅色 → 深色）">🌓</button>
   <input type="file" id="file" accept=".txt,.csv,.m3u" hidden aria-label="导入电台列表文件">
@@ -162,7 +183,16 @@
   <button class="btn" id="pp" aria-label="播放 / 暂停">▶</button>
   <span id="eq" aria-hidden="true"><i></i><i></i><i></i></span>
   <div id="now" aria-live="polite"><div id="nowline">未在播放</div><div id="song" hidden></div></div>
-  <button class="btn" id="sleepBtn" title="睡眠定时：点击设置 15/30/60 分钟" aria-label="睡眠定时">😴</button>
+  <span id="sleepWrap">
+    <button class="btn" id="sleepBtn" title="睡眠定时：到点渐弱停止" aria-label="睡眠定时">😴</button>
+    <!-- 睡眠菜单（UI 审计 P3-7）：一次点选替代 15→30→60 循环（想设 60 分钟原要按三下）；进行中点击按钮直接取消 -->
+    <span id="sleepMenu" hidden>
+      <button type="button" class="btn" data-min="15">15 分钟</button>
+      <button type="button" class="btn" data-min="30">30 分钟</button>
+      <button type="button" class="btn" data-min="60">60 分钟</button>
+    </span>
+  </span>
+  <button class="btn" id="muteBtn" aria-label="静音" title="静音 / 取消静音">🔊</button>
   <span id="status" role="status" aria-live="polite"></span>
   <input type="range" id="vol" min="0" max="100" value="90" aria-label="音量">
 </footer>

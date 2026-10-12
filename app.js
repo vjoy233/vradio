@@ -29,6 +29,7 @@ const App = {
      showDead：无效源（体检 ✗）台是否显示，默认隐藏（boot 从 localStorage 恢复）
      theme：auto/light/dark，默认跟随系统（boot 从 localStorage 恢复，写 <html data-theme>） */
   state: { stations: STARTER.slice(), cat: '全部', keyword: '', view: 'grid', showDead: false, theme: 'auto', stamp: 0, index: new Map() },
+  rowIdx: 0, // 方向键导航落点（UI 审计 P2-5）：roving tabindex——仅此行 tabindex=0，Tab 不再穿全库停靠点
   favs: [],    // [{k, u:[源URL…]}] —— 带 URL 的条目永不回收（休眠待回绑），旧名字键回绑失败即刻回收
   recents: [], // [{k, n, u:[…]}] 最近在前、≤20；队首即「上次收听」（E3 与 lastKey 合并为单一队列）
   cfg: null,   // 个人维护层（radio.cfg，owner 三批拍板）：分类重命名/隐藏/自建 + 电台移动/重命名/隐藏。
@@ -242,10 +243,29 @@ const App = {
       ...[...present].filter(c => !pins.includes(c) && !this.cfg.cats.includes(c))];     // 其余按数据序
     const cats = ['全部', '★收藏', '最近', ...order];
     if (!cats.includes(this.state.cat)) this.state.cat = '全部'; // 数据更新/分类被藏后回退全部
+    // 数量角标（UI 审计 P3-5，owner 拍板）：与 visible() 同口径的可见台数，帮用户预判列表规模
+    const cc = this.catCounts();
+    const cnt = c => c === '全部' ? cc.all : c === '★收藏' ? cc.favN : c === '最近' ? cc.recN : (cc.m.get(c) || 0);
     // 互斥单选语义用 aria-current（aria-pressed 是独立开关语义，不适用）
-    $('cats').innerHTML = cats.map(c => `<button type="button" class="chip${c === this.state.cat ? ' on' : ''}" data-c="${this.esc(c)}"${c === this.state.cat ? ' aria-current="true"' : ''}>${this.esc(c)}</button>`).join('');
+    $('cats').innerHTML = cats.map(c => `<button type="button" class="chip${c === this.state.cat ? ' on' : ''}" data-c="${this.esc(c)}"${c === this.state.cat ? ' aria-current="true"' : ''}>${this.esc(c)}<i class="n">${cnt(c)}</i></button>`).join('');
     restore();
     this.updateCatsFade();
+  },
+  /* chip 角标计数：手动隐藏/藏分类不计；死台默认隐藏不计（正在播/连接中例外，与 visible 一致） */
+  catCounts() {
+    const pk = Player.station && keyOf(Player.station), ck = Player.connecting && keyOf(Player.connecting), favs = this.favKeys();
+    const m = new Map(); let all = 0, favN = 0;
+    for (const s of this.state.stations) {
+      if (s.hidden || this.cfg.hideC[s.c]) continue;
+      if (s.health === 'dead' && !this.state.showDead && keyOf(s) !== pk && keyOf(s) !== ck) continue;
+      all++; if (favs.has(keyOf(s))) favN++;
+      m.set(s.c, (m.get(s.c) || 0) + 1);
+    }
+    const recN = this.recents.slice(0, 20).filter(r => {
+      const s = this.resolve(r);
+      return s && !s.hidden && !this.cfg.hideC[s.c] && (this.state.showDead || s.health !== 'dead' || keyOf(s) === pk || keyOf(s) === ck);
+    }).length;
+    return { m, all, favN, recN };
   },
   /* 分类条两端渐隐（UI 审计 P3-5）：滚动位置离端点远才渐隐该端，提示横向可滚（细滚动条已在 CSS） */
   updateCatsFade() {
@@ -286,11 +306,12 @@ const App = {
     const pk = Player.station && keyOf(Player.station), ck = Player.connecting && keyOf(Player.connecting);
     const favs = this.favKeys(), grid = this.state.view === 'grid';
     $('list').className = grid ? 'grid' : '';
+    const ri = Math.min(this.rowIdx || 0, list.length - 1); // roving tabindex（P2-5）：仅落点行可 Tab 停靠
     $('list').innerHTML = list.map((s, i) => {
       const k = keyOf(s), on = favs.has(k), playing = k === pk;
       const base = `${playing ? ' playing' : ''}${k === ck ? ' connecting' : ''}${s.health === 'dead' ? ' dead' : ''}`;
       // title=全名（UI 审计 P3-9）：截断长名（最长 84 字）此前无处可看全名；死台叠加提示
-      const attrs = `data-k="${this.esc(k)}" data-i="${i}" role="listitem" tabindex="0" aria-label="${this.esc(s.n)}${playing ? '（播放中）' : ''}"${playing ? ' aria-current="true"' : ''} title="${this.esc(s.n)}${s.health === 'dead' ? '（体检不可用，点击仍可尝试播放）' : ''}"`;
+      const attrs = `data-k="${this.esc(k)}" data-i="${i}" role="listitem" tabindex="${i === ri ? 0 : -1}" aria-label="${this.esc(s.n)}${playing ? '（播放中）' : ''}"${playing ? ' aria-current="true"' : ''} title="${this.esc(s.n)}${s.health === 'dead' ? '（体检不可用，点击仍可尝试播放）' : ''}"`;
       const hp = s.health ? `<span class="health ${s.health === 'ok' ? 'ok' : 'bad'}" title="体检${s.health === 'ok' ? '可用' : '不可用'}">${s.health === 'ok' ? '✓' : '✗'}</span>` : '';
       // 信息降噪（UI 审计 P2-1/P2-2，owner 拍板）：① 台名剥离「[国别]」后缀进 meta（搜索/aria/身份仍用全名，
       // 数据层不动）；② meta 行按视图降级——分类 badge 只在 全部/收藏/最近 显示（分类视图下 100% 冗余），
@@ -304,6 +325,14 @@ const App = {
       return `<div class="row${base}" ${attrs}>${this.favBtn(k, on, s)}<div class="col"><div class="l1">${Logos.visual(s)}<span class="name">${this.esc(dn)}</span>${hp}</div>${meta}</div></div>`;
     }).join('') || this.emptyHtml();
     restore();
+    const ae = document.activeElement; // 重渲后焦点行找回（keepFocus）：同步 roving 落点，防 Tab 跳回别行
+    if (ae && ae.dataset && ae.dataset.i != null) this.rowIdx = +ae.dataset.i;
+  },
+  /* 方向键导航落点（UI 审计 P2-5）：焦点搬家 + 滚动跟随；搜索框 ↓ 也落到列表首行 */
+  focusRow(i) {
+    const t = $('list').querySelector(`[data-i="${i}"]`);
+    if (!t) return;
+    this.rowIdx = i; t.focus(); t.scrollIntoView({ block: 'nearest' });
   },
   /* 体检增量落库（sync.js 调用）：stamp 未变时顺手更新该行 DOM，否则只落数据由结束时的兜底 render 收口（P3-13）。
      healthMarks 只改内存，落盘由 Sync.health 收尾统一一次——全量体检标死几百台时逐台全量写 localStorage 会卡主线程；
@@ -427,8 +456,12 @@ const App = {
      分类页：重命名（撞名=合并，confirm 提示不易拆）/隐藏/删除自建（台撤回默认）；电台页：搜索定位后
      移动（含新建分类）/重命名/隐藏/单台 ↺ 恢复默认；失配清单：同步后 URL 漂移的个人调整可观测 ---------- */
   mTab: 'cats', mKw: '',
-  manageOpen() { $('manage').hidden = false; this.renderManage(); },
-  manageClose() { $('manage').hidden = true; },
+  manageOpen() { this.mOpener = document.activeElement; $('manage').hidden = false; this.renderManage(); $('mClose').focus(); }, // 打开即移焦 + 记录归还点（P2-7）
+  manageClose() {
+    $('manage').hidden = true;
+    const b = this.mOpener && this.mOpener.isConnected ? this.mOpener : $('manageBtn');
+    if (b && b.focus) b.focus();
+  },
   renderManage() {
     if ($('manage').hidden) return;
     const cats = this.mTab !== 'st';
@@ -602,16 +635,22 @@ const App = {
     Player.onstate = full => { this.playerNow(); if (full) this.render(); };
     Player.onstatus = t => { $('status').textContent = t; };
     Player.onfail = () => this.showLast();
-    // 睡眠定时（E2）：未设置时点击循环 15→30→60 分钟；进行中点击直接取消
-    const SLEEPS = [15, 30, 60]; let si = -1;
+    // 睡眠定时（E2 + UI 审计 P3-7）：菜单一次点选 15/30/60（循环模式要点三下才到 60）；进行中点击按钮直接取消
     $('sleepBtn').onclick = () => {
-      if (Player.sleepId) { si = -1; Player.sleep(0); return; }
-      si = (si + 1) % SLEEPS.length; Player.sleep(SLEEPS[si]);
+      if (Player.sleepId) { Player.sleep(0); return; }
+      const m = $('sleepMenu');
+      m.hidden = !m.hidden;
+      if (!m.hidden) m.querySelector('button')?.focus();
     };
+    $('sleepMenu').onclick = e => {
+      const b = e.target.closest('[data-min]'); if (!b) return;
+      $('sleepMenu').hidden = true; Player.sleep(+b.dataset.min);
+    };
+    document.addEventListener('click', e => { if (!e.target.closest('#sleepWrap')) $('sleepMenu').hidden = true; });
     Player.ontick = ms => {
       const b = $('sleepBtn');
       if (ms > 0) { const s = Math.ceil(ms / 1000); b.textContent = '😴 ' + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); b.title = '睡眠定时进行中，点击取消'; }
-      else { b.textContent = '😴'; b.title = '睡眠定时：点击设置 15/30/60 分钟'; }
+      else { b.textContent = '😴'; b.title = '睡眠定时：点击选择时长'; }
     };
 
     // 曲讯轮询（B-6）：15s 常驻轮（条件不满足时空转不发包）；页面重新可见时立刻补一轮
@@ -621,10 +660,13 @@ const App = {
     $('song').onclick = () => this.toggleSongHist();
     document.addEventListener('click', e => { if (!e.target.closest('#songhist,#song')) $('songhist').hidden = true; });
 
-    // 搜索：120ms 防抖，避免 1600+ 行列表每键整表重渲；Esc 清空；任意位置按 / 聚焦
+    // 搜索：120ms 防抖，避免 1600+ 行列表每键整表重渲；Esc 清空；任意位置按 / 聚焦；↓ 接力列表首行（P2-5）
     let timer = 0;
     $('q').oninput = e => { clearTimeout(timer); timer = setTimeout(() => { this.state.keyword = e.target.value.trim(); this.render(); }, 120); };
-    $('q').onkeydown = e => { if (e.key === 'Escape') { e.target.value = ''; clearTimeout(timer); this.state.keyword = ''; this.render(); } };
+    $('q').onkeydown = e => {
+      if (e.key === 'Escape') { e.target.value = ''; clearTimeout(timer); this.state.keyword = ''; this.render(); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); this.focusRow(0); }
+    };
     document.addEventListener('keydown', e => { // 全局快捷键（A-5）：/ 聚焦搜索、空格 播放/暂停、←/→ 收藏间切台
       if (e.ctrlKey || e.altKey || e.metaKey) return; // 不抢组合键（Ctrl+/ 等）
       const t = e.target, tag = t && t.tagName;
@@ -648,10 +690,17 @@ const App = {
       }
       const row = e.target.closest('.row,.card'); if (row) this.togglePlay(row.dataset.k);
     };
-    $('list').onkeydown = e => {
-      if (e.key !== 'Enter' && e.key !== ' ') return;
-      const row = e.target.closest('.row,.card');
-      if (row && e.target === row) { e.preventDefault(); this.togglePlay(row.dataset.k); }
+    $('list').onkeydown = e => { // Enter/Space 播放 + ↑↓/Home/End 方向键导航（UI 审计 P2-5）
+      const row = e.target.closest && e.target.closest('.row,.card');
+      if (!row || e.target !== row) return;
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.togglePlay(row.dataset.k); return; }
+      const n = this.visible().length, cur = +row.dataset.i; let to = -1;
+      if (e.key === 'ArrowDown') to = Math.min(n - 1, cur + 1);
+      else if (e.key === 'ArrowUp') to = Math.max(0, cur - 1);
+      else if (e.key === 'Home') to = 0;
+      else if (e.key === 'End') to = n - 1;
+      if (to < 0 || to === cur) return;
+      e.preventDefault(); this.focusRow(to);
     };
 
     // 视图切换（网格=精简卡片 / 列表=两行详情）与无效源显隐，均持久化到 localStorage
@@ -694,8 +743,29 @@ const App = {
     $('manageBtn').onclick = () => this.manageOpen();
     $('mClose').onclick = () => this.manageClose();
     $('manage').onclick = e => { if (e.target === $('manage')) this.manageClose(); }; // 点遮罩关闭
-    document.addEventListener('keydown', e => { // Esc 关面板（焦点在输入框/下拉里时不抢，让它们先清自身）
-      if (e.key === 'Escape' && !$('manage').hidden && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) this.manageClose();
+    document.addEventListener('keydown', e => { // Esc 关面板（焦点在输入框/下拉里时不抢，让它们先清自身）+ 收起两个浮层菜单
+      if (e.key === 'Escape') {
+        if (!$('manage').hidden && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) this.manageClose();
+        $('lowfreq').classList.remove('open'); $('moreBtn').setAttribute('aria-expanded', 'false');
+        $('sleepMenu').hidden = true;
+      }
+      if (e.key === 'Tab' && !$('manage').hidden) { // 焦点困在弹窗内（UI 审计 P2-7）：aria-modal 此前 Tab 可穿透到被遮罩的主页
+        const f = [...$('manage').querySelectorAll('button,input,select')].filter(x => !x.disabled && x.offsetParent !== null);
+        if (!f.length) return;
+        const first = f[0], last = f[f.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+    });
+    // 更多菜单（UI 审计 P2-6）：≤640px 收纳低频操作；桌面由 CSS display:contents 原样排布，按钮不可见
+    $('moreBtn').onclick = e => {
+      e.stopPropagation();
+      const on = $('lowfreq').classList.toggle('open');
+      $('moreBtn').setAttribute('aria-expanded', String(on));
+    };
+    $('lowfreq').addEventListener('click', e => { if (e.target.closest('.btn')) { $('lowfreq').classList.remove('open'); $('moreBtn').setAttribute('aria-expanded', 'false'); } }); // 点操作项后收起
+    document.addEventListener('click', e => {
+      if ($('lowfreq').classList.contains('open') && !e.target.closest('#lowfreq,#moreBtn')) { $('lowfreq').classList.remove('open'); $('moreBtn').setAttribute('aria-expanded', 'false'); }
     });
     $('mTabC').onclick = () => { this.mTab = 'cats'; this.renderManage(); };
     $('mTabS').onclick = () => { this.mTab = 'st'; this.renderManage(); };
@@ -772,7 +842,21 @@ const App = {
       if (!Player.station) return resumeLast();
       Player.isPaused() ? Player.resume() : Player.pause();
     };
-    $('vol').oninput = e => { Player.setVolume(e.target.value / 100); localStorage.setItem('radio.vol', e.target.value); };
+    // 音量：静音键 + 拖动百分比反馈（UI 审计 P3-6）；静音记忆恢复值，radio.vol 只存非静音音量
+    const syncMute = () => {
+      const muted = !+$('vol').value;
+      $('muteBtn').textContent = muted ? '🔇' : '🔊';
+      $('muteBtn').setAttribute('aria-label', muted ? '取消静音' : '静音');
+    };
+    let lastVol = vol / 100;
+    $('muteBtn').onclick = () => {
+      const v = +$('vol').value;
+      if (v > 0) { lastVol = v / 100; Player.setVolume(0); $('vol').value = 0; $('status').textContent = '已静音'; }
+      else { const r = lastVol > 0 ? lastVol : 0.9; Player.setVolume(r); $('vol').value = Math.round(r * 100); $('status').textContent = '音量 ' + Math.round(r * 100) + '%'; }
+      syncMute();
+    };
+    syncMute();
+    $('vol').oninput = e => { Player.setVolume(e.target.value / 100); localStorage.setItem('radio.vol', e.target.value); $('status').textContent = '音量 ' + e.target.value + '%'; syncMute(); };
 
     // 导入列表：csv 风格 txt 与标准 m3u 双格式（P1-1）；本项目导出的收藏备份（#VRADIO:FAV 标记）另恢复收藏态（E4）
     $('importBtn').onclick = () => $('file').click();

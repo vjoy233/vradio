@@ -240,8 +240,24 @@ ETA 文案已有（sync.js:48-50），但按钮只有文字变化，无不确定
   - D+E 视觉动效 → `4f43995`（P3-1 SVG sprite / P3-2 字重 / P3-3 圆角收敛 / P3-8 进度条 / E 淡入+呼吸条）
 - **验收结果**（第六节清单）：对比度脚本复测浅色 acc 5.29/4.88、warn 5.55/5.12、金星 5.32/4.91（全部 ≥AA），深色 7.23/5.56/10.12 不变；sprite 27 symbol / 1556 引用 0 missing；方向键全链路（↓↑/Home/End/搜索接力）合成事件实测通过；弹窗焦点困窗双向 + 归还实测通过；静音/睡眠菜单/移动端 390px 两行 header 实测通过；网格 1280px 实测 5 列（单元 239px）。
 
+## 九、AIbot review 采纳记录（PR #9，2026-10-12）
+
+AIbot 全量 diff review（comment 6127950808）：需求覆盖/模块契约/对比度声称值/sprite/语法全部复核通过，指出 2 P1 + 3 P2 + 6 P3。逐条处置：
+
+- **P1-a/P1-b（必修，同根因）**：`.btn{display:inline-flex}`、`#mStations{display:flex}` 等作者样式压过 UA 的 `[hidden]{display:none}`——「✗ 无效源」按钮常驻可见、维护面板「分类」页混入电台表单。采纳 reviewer 方案：全局 `[hidden]{display:none!important}` 根治，并删除 `#songhist/#prog/#manage/#sleepMenu` 四处既有逐元素补丁。两处均在 http 实测复现→修复→复测通过（hidden 属性 = computed display:none = offsetParent null）。
+- **P2-a**：chip 角标只在 buildCats 调用点刷新，`toggleFav`/体检/显隐开关只调 render → 角标 stale（实测收藏后 ★收藏 仍 0）。采纳方案 a：`render()` 顶部统一调 `buildCats()`（O(n) 计数 + keepFocus，1661 台量级无压力），实测 0→1→0 同步。
+- **P2-b**：面板「电台」页隐藏按钮残留 👁/🙈 彩色 emoji（与「清零」声称矛盾）。换分类页同款 `i-eye`/`i-eye-off`，实测切换双向图标正确。
+- **P2-c**：README/注释声称「坏图回退色块」但 `onerror="this.remove()"` 只会裸删。采纳实现真回退：色块参数抽 `Logos.phd`，img 携带 `data-ch/data-hue`，坏图 `Logos.phf` 就地换色块（textContent 重建不经 HTML 解析，注入面不扩大）；实测强制 error 事件后 img → 首字母色块。
+- **P3-1**：`focusRow` 补 tabindex 属性搬家——Tab 离开列表再回来落点不跳回旧行（实测 ↓↓ 后唯一停靠点=data-i 1，↑/Home/End 全对）。
+- **P3-2**：两个浮层菜单项无边框无 hover 反馈，补 `background:var(--bg)` hover（实测截图灰底可见）。
+- **P3-3**：themeBtn 静态 HTML 直接写 `#i-auto` SVG，消除首屏 🌓 闪换。
+- **P3-5**：`patchHealth` 增量更新同步行 `title`（与整表 render 口径一致），实测标死/复活双向正确。
+- **不采纳**：P3-4（色块黄相白字对比度）——装饰性 aria-hidden 字形，双主题验证时再议；P3-6（moreBtn inline-block 亚像素）——实测未见异常。
+- **reviewer 建议的补课**：第六节验收清单的「双主题×双视图×面板×移动端」截图矩阵本轮已补跑（7 张，1280/390 双视口），期间另证实一课时：主题切换后 <300ms 内截图会拍到 compositor 未及重绘的黑块假象，以 computed style 复核为准。
+
 ---
 
 *本报告由 design-taste-frontend audit 流程生成于 2026-10-12，行号对应 pr-8 @ 32c6ea2。截图取证在 http://localhost:8137 实测完成（1280×800 桌面 / 390×844 移动，深浅双主题）。assets 目录未入 git，review 后可随实施批一起提交或删除。*
+*更新记录：① 2026-10-12 增补 P2-8 网格单元放大（owner 反馈密度过高）；② 同日 grill-me 二审：14 项主张逐项实证（9 成立 / 4 修正 / 1 换值），修正记录见第七节，正文相关条目已同步改写，另新增 P3-9 与两条移动端观察；③ 同日 grill-me 二轮问答：8 项开放决策全部拍板（全部采纳推荐档），第五节转为决策记录，进入实施阶段。*
 *更新记录：① 2026-10-12 增补 P2-8 网格单元放大（owner 反馈密度过高）；② 同日 grill-me 二审：14 项主张逐项实证（9 成立 / 4 修正 / 1 换值），修正记录见第七节，正文相关条目已同步改写，另新增 P3-9 与两条移动端观察；③ 同日 grill-me 二轮问答：8 项开放决策全部拍板（全部采纳推荐档），第五节转为决策记录，进入实施阶段。*
 *更新记录：2026-10-12 增补 P2-8 网格单元放大（owner 反馈密度过高），同步更新拨盘目标、B 层提案与验收清单。*

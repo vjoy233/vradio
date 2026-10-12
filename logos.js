@@ -5,7 +5,7 @@
    ③ 运行时按需解析（只解析「收藏 + 正在播」的台，控制请求量——全量 1600+ 台不抓）：
       带蜻蜓源 → m.qtfm.cn/channels/{id} 频道页封面（id 与流 URL qingting.fm/live/{id} 同空间，确定性映射）
       无蜻蜓源 → Radio Browser byurl 接口的 favicon（欧美台为主；镜像 de1 实测国内可直连，经 /proxy 稳妥）
-   负缓存 7 天自动过期重试；图片本体由 <img> 直连加载（img 不受 CORS 限制，file:// 也可显示），坏图 onerror 移除。 */
+   负缓存 7 天自动过期重试；图片本体由 <img> 直连加载（img 不受 CORS 限制，file:// 也可显示），坏图 onerror 换首字母色块。 */
 const Logos = {
   LS: 'radio.logos', cap: 600, NEG: 7 * 86400000,
   file: new Map(),  // logos.txt：'分类|台名' → URL
@@ -31,24 +31,36 @@ const Logos = {
   ekey(c, n) { return c + '|' + n; },
   /* 同步窥探（渲染用，绝不发请求）：STARTER 内置 l 字段 > logos.txt > localStorage */
   get(s) { return s.l || this.file.get(this.ekey(s.c, s.n)) || (this.mem[this.ekey(s.c, s.n)] || {}).u || ''; },
-  /* 渲染片段：无台标返回 ''（纯文字回退）；loading=lazy 离屏不拉流量，坏图 onerror 移除。
-     URL 是上游可控数据（logos.txt/Radio Browser/favicon）：拼进属性前必须转义，防 src 属性逃逸 */
+  /* 上游可控数据（URL/台名首字符）拼进 HTML 属性前必须转义，防属性逃逸 */
+  esc(v) { return String(v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); },
+  /* 首字母色块参数：剥离 [国别] 后取首字符，色相 = 台名 hash 确定性生成（同一台永远同色），白字双主题稳 */
+  phd(s) {
+    const n = s.n.replace(/\s*\[[^\]]+\]\s*$/, '');
+    let h = 0; for (const c of s.c + '|' + s.n) h = (h * 31 + c.charCodeAt(0)) | 0;
+    return { ch: ([...n][0] || '?').toUpperCase(), hue: ((h % 360) + 360) % 360 };
+  },
+  /* 渲染片段：loading=lazy 离屏不拉流量；坏图 onerror 换首字母色块而非裸删（AIbot PR#9 review P2-c，
+     文档声称的回退自此为真）——phf() 用 textContent 重建、不经 HTML 解析，注入面不扩大 */
   img(s) {
     const u = this.get(s);
     if (!u) return '';
-    const a = u.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-    return `<img class="logo" src="${a}" alt="" loading="lazy" onerror="this.remove()">`;
+    const d = this.phd(s);
+    return `<img class="logo" src="${this.esc(u)}" alt="" loading="lazy" data-ch="${this.esc(d.ch)}" data-hue="${d.hue}" onerror="Logos.phf(this)">`;
+  },
+  /* 坏图 onerror：img 就地换首字母色块（aria-hidden 纯装饰，与无台标分支同款） */
+  phf(el) {
+    const sp = document.createElement('span');
+    sp.className = 'logo ph'; sp.setAttribute('aria-hidden', 'true');
+    sp.style.background = `hsl(${el.dataset.hue} 42% 44%)`;
+    sp.textContent = el.dataset.ch || '?';
+    el.replaceWith(sp);
   },
   /* 渲染入口（UI 审计 P2-3，owner 拍板）：有台标出图，无台标出首字母色块兜底——
-     台标只覆盖欧美系（实测 44%/35%，国内台 0），有图无图卡片节奏断裂；色块底色由台名 hash
-     确定性生成（同一台永远同色），白字双主题稳定。剥离 [国别] 后取首字符 */
+     台标只覆盖欧美系（实测 44%/35%，国内台 0），有图无图卡片节奏断裂 */
   visual(s) {
-    const u = this.get(s);
-    if (u) return this.img(s);
-    const n = s.n.replace(/\s*\[[^\]]+\]\s*$/, '');
-    const ch = ([...n][0] || '?').toUpperCase().replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-    let h = 0; for (const c of s.c + '|' + s.n) h = (h * 31 + c.charCodeAt(0)) | 0;
-    return `<span class="logo ph" style="background:hsl(${((h % 360) + 360) % 360} 42% 44%)" aria-hidden="true">${ch}</span>`;
+    if (this.get(s)) return this.img(s);
+    const d = this.phd(s);
+    return `<span class="logo ph" style="background:hsl(${d.hue} 42% 44%)" aria-hidden="true">${this.esc(d.ch)}</span>`;
   },
   freshNeg(s) { const e = this.mem[this.ekey(s.c, s.n)]; return !!(e && e.x && Date.now() - e.t < this.NEG); },
 

@@ -298,6 +298,7 @@ const App = {
     return `<div class="empty">${msg}</div>`;
   },
   render() {
+    this.buildCats(); // 角标与列表同源刷新（AIbot PR#9 review P2-a）：收藏/体检/显隐开关等只调 render 的路径，chip 计数不再 stale
     const restore = this.keepFocus($('list'), 'k', 'fav'); // 焦点在行/卡片或按钮上都找回
     const list = this.visible();
     $('deadBtn').hidden = !this.state.stations.some(s => s.health === 'dead'); // 出现过死台才亮「无效源」开关
@@ -332,6 +333,9 @@ const App = {
   focusRow(i) {
     const t = $('list').querySelector(`[data-i="${i}"]`);
     if (!t) return;
+    const p = $('list').querySelector('[tabindex="0"]'); // roving 落点随焦点搬家（AIbot PR#9 review P3-1）：Tab 离开列表再回来不跳回旧行
+    if (p && p !== t) p.tabIndex = -1;
+    t.tabIndex = 0;
     this.rowIdx = i; t.focus(); t.scrollIntoView({ block: 'nearest' });
   },
   /* 切换淡入（E 批）：swap 类挂期间行/卡片 140ms 淡入；搜索逐键重渲不挂类不闪；reduced-motion 由 CSS 关 */
@@ -357,6 +361,7 @@ const App = {
       row.remove(); return; // 默认隐藏：死台行当场消失，与 visible() 口径一致（正在播/连接中的台不消失）
     }
     row.classList.toggle('dead', !ok);
+    row.title = s.n + (ok ? '' : '（体检不可用，点击仍可尝试播放）'); // 与整表 render 的 title 口径一致（AIbot PR#9 review P3-5）
     const old = row.querySelector('.health'); if (old) old.remove();
     const sp = document.createElement('span'); sp.className = 'health ' + (ok ? 'ok' : 'bad'); sp.innerHTML = ok ? '<svg class="ic"><use href="#i-check"/></svg>' : '<svg class="ic"><use href="#i-x"/></svg>';
     // meta 行按视图降级后（UI 审计 P2-1）分类视图的卡片可能没有 cfoot：兜底挂到 chead（台名行）
@@ -558,7 +563,7 @@ const App = {
         <select data-act="move" aria-label="「${this.esc(s.n)}」的分类">${opts.map(c => `<option value="${this.esc(c)}"${c === s.c ? ' selected' : ''}>${this.esc(c)}${this.cfg.hideC[c] ? '（已隐藏）' : ''}</option>`).join('')}<option value="__new">＋新建分类…</option><option value="__def">↺ 默认（${this.esc(this.cfg.renames[dC] || dC)}）</option></select>
         ${(moved || named || s.hidden) ? `<button type="button" class="btn mbtn" data-act="reset" title="撤销此台全部个人调整（回到默认分类/默认名/显示）"><svg class="ic"><use href="#i-undo"/></svg></button>` : ''}
         <button type="button" class="btn mbtn" data-act="rename" title="重命名电台（仅显示层，收藏按 URL 不受影响；台标若因改名失配可重新收藏触发解析）"><svg class="ic"><use href="#i-pencil"/></svg></button>
-        <button type="button" class="btn mbtn" data-act="hide" title="${s.hidden ? '取消隐藏' : '隐藏电台（彻底消失，含全部/搜索）'}">${s.hidden ? '👁' : '🙈'}</button>
+        <button type="button" class="btn mbtn" data-act="hide" title="${s.hidden ? '取消隐藏' : '隐藏电台（彻底消失，含全部/搜索）'}">${s.hidden ? '<svg class="ic"><use href="#i-eye"/></svg>' : '<svg class="ic"><use href="#i-eye-off"/></svg>'}</button>
       </div>`;
     }).join('') || '<div class="empty">没有匹配的电台</div>';
     if (!kw && all.length > 100) box.innerHTML += '<div class="empty" style="padding:8px 30px;">电台较多，仅列前 100 台——用上方搜索缩小范围</div>';

@@ -2,7 +2,7 @@
 
 > 调研日期：2026-10-12（feature/grid-epg 分支）
 > 调研方法：agent-reach（gh CLI）搜索 GitHub 五类形态的同类项目，读 README/CHANGELOG 提功能清单，映射回本项目的硬边界筛选。
-> 状态：**已定稿并开工**——两轮 grill 拷问（2026-10-12）拍板 + 第三轮外部 review 处置（逐条代码核实，勘误 A-4、补 B-6/A-1/A-2/B-10 方案缺口），终版交付清单见文末（6 项）。
+> 状态：**已实施**（2026-10-12，分支 feature/iterate-batch，6 功能 commits + docs）——两轮 grill 拷问拍板 + 第三轮外部 review 处置，终版交付清单见文末（6 项，逐项已含现状基线与验收口径）。
 > **实施基线（2026-10-12 定）**：origin/feature/reclassify（PR #5 头部 e8f3ada，stacked PR、base=feature/reclassify）——PR #5 的 ⚙ 维护面板与 A-2 同属个性化管理层，**A-2 集成进面板**而非另造弹窗；player/sync/server 三文件 PR #5 未动，零冲突。PR #4 已被 owner 合并进 main（cab04fe），不构成本期基线。
 
 ---

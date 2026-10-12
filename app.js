@@ -292,8 +292,16 @@ const App = {
       // title=全名（UI 审计 P3-9）：截断长名（最长 84 字）此前无处可看全名；死台叠加提示
       const attrs = `data-k="${this.esc(k)}" data-i="${i}" role="listitem" tabindex="0" aria-label="${this.esc(s.n)}${playing ? '（播放中）' : ''}"${playing ? ' aria-current="true"' : ''} title="${this.esc(s.n)}${s.health === 'dead' ? '（体检不可用，点击仍可尝试播放）' : ''}"`;
       const hp = s.health ? `<span class="health ${s.health === 'ok' ? 'ok' : 'bad'}" title="体检${s.health === 'ok' ? '可用' : '不可用'}">${s.health === 'ok' ? '✓' : '✗'}</span>` : '';
-      if (grid) return `<div class="card${base}" ${attrs}><div class="chead">${Logos.img(s)}<span class="cname">${this.esc(s.n)}</span>${this.favBtn(k, on, s)}</div><div class="cfoot"><span class="badge">${this.esc(s.c)}</span><span class="srcs" title="备选源数量">${s.u.length}源</span>${hp}</div></div>`;
-      return `<div class="row${base}" ${attrs}>${this.favBtn(k, on, s)}<div class="col"><div class="l1">${Logos.img(s)}<span class="name">${this.esc(s.n)}</span>${hp}</div><div class="meta"><span class="badge">${this.esc(s.c)}</span><span class="srcs" title="备选源数量">${s.u.length}源</span></div></div></div>`;
+      // 信息降噪（UI 审计 P2-1/P2-2，owner 拍板）：① 台名剥离「[国别]」后缀进 meta（搜索/aria/身份仍用全名，
+      // 数据层不动）；② meta 行按视图降级——分类 badge 只在 全部/收藏/最近 显示（分类视图下 100% 冗余），
+      // 源数只在 ≥2 源时显示；国别在 meta 与源数并列展示
+      const cm = s.n.match(/\s*\[([^\]]+)\]\s*$/), cn = cm ? cm[1] : '', dn = cm ? s.n.slice(0, s.n.length - cm[0].length) : s.n;
+      const inCat = this.state.cat !== '全部' && this.state.cat !== '★收藏' && this.state.cat !== '最近';
+      const parts = `${!inCat ? `<span class="badge">${this.esc(s.c)}</span>` : ''}${cn ? `<span class="srcs" title="国家/地区">${this.esc(cn)}</span>` : ''}${s.u.length > 1 ? `<span class="srcs" title="备选源数量">${s.u.length}源</span>` : ''}`;
+      const cfoot = (parts || hp) ? `<div class="cfoot">${parts}${hp}</div>` : '';
+      if (grid) return `<div class="card${base}" ${attrs}><div class="chead">${Logos.visual(s)}<span class="cname">${this.esc(dn)}</span>${this.favBtn(k, on, s)}</div>${cfoot}</div>`;
+      const meta = parts ? `<div class="meta">${parts}</div>` : '';
+      return `<div class="row${base}" ${attrs}>${this.favBtn(k, on, s)}<div class="col"><div class="l1">${Logos.visual(s)}<span class="name">${this.esc(dn)}</span>${hp}</div>${meta}</div></div>`;
     }).join('') || this.emptyHtml();
     restore();
   },
@@ -314,7 +322,8 @@ const App = {
     row.classList.toggle('dead', !ok);
     const old = row.querySelector('.health'); if (old) old.remove();
     const sp = document.createElement('span'); sp.className = 'health ' + (ok ? 'ok' : 'bad'); sp.textContent = ok ? '✓' : '✗';
-    row.querySelector('.l1, .cfoot').appendChild(sp);
+    // meta 行按视图降级后（UI 审计 P2-1）分类视图的卡片可能没有 cfoot：兜底挂到 chead（台名行）
+    const tgt = row.querySelector('.cfoot, .l1, .chead'); if (tgt) tgt.appendChild(sp);
   },
 
   togglePlay(k) { // 再点当前台 = 暂停/继续；点其他台 = 切换

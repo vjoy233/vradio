@@ -528,6 +528,8 @@ const App = {
      分类页：重命名（撞名=合并，confirm 提示不易拆）/隐藏/删除自建（台撤回默认）；电台页：搜索定位后
      移动（含新建分类）/重命名/隐藏/单台 ↺ 恢复默认；失配清单：同步后 URL 漂移的个人调整可观测 ---------- */
   mTab: 'cats', mKw: '',
+  mExp: '',     // 电台页展开备选源管理的台（keyOf；P1-a/r2 ⑨）——innerHTML 全量重渲，展开态必须外置
+  mSrcVal: '',  // 展开行输入框内容（重渲不清输入，同 mq 持久做法）
   manageOpen() { this.mOpener = document.activeElement; $('manage').hidden = false; this.renderManage(); $('mClose').focus(); }, // 打开即移焦 + 记录归还点（P2-7）
   manageClose() {
     $('manage').hidden = true;
@@ -617,17 +619,68 @@ const App = {
       // moved 按 moves 键命中而非 s.c !== dC：分类级重命名会把整类台的 s.c 都改掉，但那不是单台移动，
       // ↺ 也撤不掉分类改名——按名字比较会让全类台误亮 ↺（PR#5 二轮 review 微小观察）
       const k = keyOf(s), moved = s.u.some(u => this.cfg.moves[u]), named = s.n !== dN;
+      const srcd = s.u.some(u => !s.dU.includes(u)); // 有追加源（P1-a）：↺ 一并撤销
       return `<div class="mrow${s.hidden ? ' hidden-item' : ''}" data-k="${this.esc(k)}">
         <span class="nm" title="${this.esc(named ? '原名：' + dN : s.n)}${s.hidden ? '（已隐藏）' : ''}">${this.esc(s.n)}</span>
         <select data-act="move" aria-label="「${this.esc(s.n)}」的分类">${opts.map(c => `<option value="${this.esc(c)}"${c === s.c ? ' selected' : ''}>${this.esc(c)}${this.cfg.hideC[c] ? '（已隐藏）' : ''}</option>`).join('')}<option value="__new">＋新建分类…</option><option value="__def">↺ 默认（${this.esc(this.cfg.renames[dC] || dC)}）</option></select>
-        ${(moved || named || s.hidden) ? `<button type="button" class="btn mbtn" data-act="reset" title="撤销此台全部个人调整（回到默认分类/默认名/显示）"><svg class="ic"><use href="#i-undo"/></svg></button>` : ''}
+        ${(moved || named || s.hidden || srcd) ? `<button type="button" class="btn mbtn" data-act="reset" title="撤销此台全部个人调整（回到默认分类/默认名/显示/移除全部追加源）"><svg class="ic"><use href="#i-undo"/></svg></button>` : ''}
         <button type="button" class="btn mbtn" data-act="rename" title="重命名电台（仅显示层，收藏按 URL 不受影响；台标若因改名失配可重新收藏触发解析）"><svg class="ic"><use href="#i-pencil"/></svg></button>
         <button type="button" class="btn mbtn" data-act="hide" title="${s.hidden ? '取消隐藏' : '隐藏电台（彻底消失，含全部/搜索）'}">${s.hidden ? '<svg class="ic"><use href="#i-eye"/></svg>' : '<svg class="ic"><use href="#i-eye-off"/></svg>'}</button>
+        <button type="button" class="btn mbtn" data-act="srcs" aria-expanded="${k === this.mExp}" title="备选源管理：查看全部源 / 探活追加（流地址漂移的手动救援） / 移除追加"><svg class="ic"><use href="#i-dots"/></svg></button>
+        ${k === this.mExp ? this.srcRowHtml(s) : ''}
       </div>`;
     }).join('') || '<div class="empty">没有匹配的电台</div>';
     if (!kw && all.length > 100) box.innerHTML += '<div class="empty" style="padding:8px 30px;">电台较多，仅列前 100 台——用上方搜索缩小范围</div>';
     box.scrollTop = keepScroll;
   },
+  /* —— 备选源管理（P1-a/r2 ⑨）：展开行内列出全部源（追加的可移除，原源只读——身份公理：s.u[0] 是
+     srcmem/收藏/健康标记的身份键）+ 先 /api/check 探活再收的追加输入（拒绝假流/死链，口径同 A-2 添加电台） —— */
+  srcRowHtml(s) {
+    const rows = s.u.map((u, i) => `<div class="srcline">
+      <i class="idx">${i + 1}</i><span class="u" title="${this.esc(u)}">${this.esc(u)}</span>
+      ${s.dU.includes(u) ? '' : `<span class="badge">追加</span><button type="button" class="btn mbtn" data-act="srcdel" data-u="${this.esc(u)}" title="移除这条追加源（原源不可删）"><svg class="ic"><use href="#i-x"/></svg></button>`}
+    </div>`).join('');
+    const ok = location.protocol.startsWith('http'); // 探活依赖后端，file:// 降级禁用（同添加电台口径）
+    return `<div class="msrc">
+      <div class="msrc-t">备选源 ${s.u.length} 条——点播失败自动逐个切换；追加源只挂本台，不动原源与收藏</div>
+      ${rows}
+      <div class="msrc-add">
+        <input type="url" value="${this.esc(this.mSrcVal || '')}" placeholder="追加流地址 http(s)://…（mp3/aac 直流或 m3u8）" aria-label="追加备选源地址"${ok ? '' : ' disabled title="file:// 降级模式无后端探活，npm start 后可用"'}>
+        <button type="button" class="btn mbtn" data-act="srcadd"${ok ? '' : ' disabled'}>探活并追加</button>
+      </div>
+    </div>`;
+  },
+  async srcAppend(s, btn) {
+    const inp = btn.closest('.msrc-add').querySelector('input');
+    const u = (inp.value || '').trim().replace(/\s+/g, ''); // URL 内不该有空白/换行，容错顺手清（坑③）
+    if (!/^https?:\/\//.test(u)) { $('status').textContent = '追加源需以 http(s):// 开头'; return; }
+    if (s.u.includes(u)) { $('status').textContent = '该地址已在源列表中'; return; }
+    btn.disabled = true; btn.textContent = '探活中…';
+    let r = null;
+    try { r = await fetch('/api/check?url=' + encodeURIComponent(u)).then(x => x.json()); }
+    catch (e) { $('status').textContent = '追加失败（探活请求）：' + (e && e.message || e); }
+    if (!r || !r.ok) {
+      if (r) $('status').textContent = '探活未通过，未追加：' + (r.detail || '源不可用（假流/死链）');
+      btn.disabled = false; btn.textContent = '探活并追加';
+      return;
+    }
+    // 挂键 = 台上任一已有 srcs 键（变体换序免疫，与移动/改名同机制），否则主 URL；每台封顶 6 条
+    const key = s.u.find(x => this.cfg.srcs[x]) || s.u[0];
+    const arr = this.cfg.srcs[key] || [];
+    if (!arr.includes(u)) arr.push(u);
+    this.cfg.srcs[key] = arr.slice(0, 6);
+    this.cfgTag(s); this.mSrcVal = ''; this.saveCfg(); this.reapplyCfg(); // reapplyCfg 内含面板重渲
+    $('status').textContent = `已追加备选源（${r.detail || '探活通过'}）——点播时进入自动切换序列`;
+  },
+  srcRemove(u) {
+    for (const k of Object.keys(this.cfg.srcs)) {
+      const i = this.cfg.srcs[k].indexOf(u); // 原源不在 cfg.srcs 值域里，能找到的必是追加源（UI 也只对追加放 ✕）
+      if (i >= 0) { this.cfg.srcs[k].splice(i, 1); if (!this.cfg.srcs[k].length) delete this.cfg.srcs[k]; break; }
+    }
+    this.saveCfg(); this.reapplyCfg();
+    $('status').textContent = '已移除该追加源';
+  },
+
   stMove(s, v) {
     if (v === s.c) return;
     // 选中「等同默认分类」的目标视同 ↺ 默认：只删 moves 键，不写 moves[u]=默认分类——
@@ -868,7 +921,24 @@ const App = {
       if (b.dataset.act === 'rename') this.stRename(s);
       else if (b.dataset.act === 'hide') this.stHide(s);
       else if (b.dataset.act === 'reset') this.cfgResetStation(s);
+      else if (b.dataset.act === 'srcs') { // 展开/收起备选源管理（P1-a/r2 ⑨）；换台展开时清输入残留
+        this.mExp = this.mExp === keyOf(s) ? '' : keyOf(s);
+        this.mSrcVal = '';
+        this.renderMStations();
+        const i = $('mlist').querySelector('.msrc-add input');
+        if (i && this.mExp) i.focus();
+      }
+      else if (b.dataset.act === 'srcadd') this.srcAppend(s, b);
+      else if (b.dataset.act === 'srcdel') this.srcRemove(b.dataset.u);
     };
+    $('mlist').addEventListener('input', e => { if (e.target.matches('.msrc-add input')) this.mSrcVal = e.target.value; }); // 重渲不清输入（坑④）
+    $('mlist').addEventListener('keydown', e => { // Enter 直接触发探活追加
+      if (e.key === 'Enter' && e.target.matches('.msrc-add input')) {
+        e.preventDefault();
+        const b2 = e.target.closest('.msrc-add').querySelector('[data-act="srcadd"]');
+        if (b2 && !b2.disabled) b2.click();
+      }
+    });
     $('mMiss').onclick = e => {
       if (!e.target.closest('[data-act="missclear"]')) return;
       for (const b of this.missList()) { delete this.cfg.moves[b.u]; delete this.cfg.names[b.u]; delete this.cfg.hideS[b.u]; delete this.cfg.srcs[b.u]; delete this.cfg.tag[b.u]; }

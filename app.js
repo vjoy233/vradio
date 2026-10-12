@@ -363,17 +363,17 @@ const App = {
     const t = (j && j.title) || '';
     if (!Player.station || keyOf(Player.station) !== this.songFor) return; // 轮询期间切台：丢弃过期结果
     if (t === this.lastSong) return;
-    if (this.lastSong && t) this.pushSongHist(keyOf(s), this.lastSong); // 换歌：旧歌入史（B-7）
+    if (this.lastSong && t) this.pushSongHist(s.u[0], this.lastSong); // 换歌：旧歌入史（B-7，键=台主 URL——身份公理，改名/换分类不丢）
     this.lastSong = t;
     if (t) { $('song').textContent = '♪ ' + t; $('song').hidden = false; Player.setSong(t); }
   },
 
-  /* ---------- 歌曲历史（B-7）：换歌时旧歌入史（当前曲只显示不入史），按台存 localStorage（radio.songs） ---------- */
-  pushSongHist(k, title) {
+  /* ---------- 歌曲历史（B-7）：换歌时旧歌入史（当前曲只显示不入史），按台主 URL 存 localStorage（radio.songs，身份公理——AIbot P3-6） ---------- */
+  pushSongHist(u0, title) {
     if (!title) return;
     let songs; try { songs = JSON.parse(localStorage.getItem('radio.songs') || '{}'); } catch (_) { songs = {}; }
-    const list = songs[k] || [];
-    if (!list.length || list[0].t !== title) { list.unshift({ t: title, at: Date.now() }); songs[k] = list.slice(0, 12); } // 每台 12 首封顶
+    const list = songs[u0] || [];
+    if (!list.length || list[0].t !== title) { list.unshift({ t: title, at: Date.now() }); songs[u0] = list.slice(0, 12); } // 每台 12 首封顶
     const ks = Object.keys(songs).sort((a, b) => (songs[b][0] ? songs[b][0].at : 0) - (songs[a][0] ? songs[a][0].at : 0));
     for (const x of ks.slice(50)) delete songs[x]; // 台数 50 FIFO（按最近有歌活动排序砍最旧）
     try { localStorage.setItem('radio.songs', JSON.stringify(songs)); } catch (_) {}
@@ -383,7 +383,7 @@ const App = {
     if (!el.hidden) { el.hidden = true; return; }
     if (!Player.station) return;
     let songs; try { songs = JSON.parse(localStorage.getItem('radio.songs') || '{}'); } catch (_) { songs = {}; }
-    const list = (songs[this.songFor] || []).slice(0, 12);
+    const list = (songs[Player.station.u[0]] || []).slice(0, 12); // 同 pushSongHist 的 URL 键
     el.innerHTML = '<b>本台最近播放</b>' + (list.length
       ? list.map(x => `<div class="shrow">${this.esc(x.t)}</div>`).join('')
       : '<div class="shrow" style="color:var(--dim)">暂无历史（换歌后自动记录）</div>');

@@ -55,6 +55,8 @@ function myStationWrite(n, u, c) {
     const lines = txt ? txt.split(/\r?\n/) : [];
     if (lines.length >= MY_MAX_LINES || txt.length >= MY_MAX_BYTES) return done({ ok: false, error: `my-radio.txt 已达上限（${MY_MAX_LINES} 行），请清理后再添加` });
     if (lines.some(l => l.trim() === `${n},${u}`)) return done({ ok: false, error: '该电台已在个人列表中' });
+    const dup = lines.find(l => l.trim().endsWith(',' + u)); // 同 URL 换名也不双开（AIbot P3-7：applySources 按 keyOf 合并，不同名会出两行）
+    if (dup) return done({ ok: false, error: `该流地址已存在（「${dup.split(',')[0]}」），同一地址请直接使用现有电台` });
     const head = `${c},#genre#`, at = lines.findIndex(l => l.trim() === head);
     if (at >= 0) lines.splice(at + 1, 0, `${n},${u}`); // 已有该分类节：节内插入
     else lines.push('', head, `${n},${u}`); // 新分类：尾部开节
@@ -94,7 +96,7 @@ function npStart(url) { // 建会话（或复用已有）；并发封顶时 LRU 
       }
       s.req = creq;
       const mi = parseInt(r.headers['icy-metaint'], 10);
-      if (!(mi > 0)) { s.noIcy = true; r.resume(); return; } // 协议无曲讯（普通文件流/部分服务器）：负缓存，不再重连
+      if (!(mi > 0)) { s.noIcy = true; r.destroy(); creq.destroy(); return; } // 协议无曲讯（普通文件流/部分服务器）：请求+响应双销毁防双倍带宽（resume 会把整条音频流在服务端放空下载——AIbot P1-1），Map 条目即负缓存
       // ICY 帧状态机：mi 个音频字节 → 1 字节长度(值×16) → meta 载荷，取 StreamTitle='…'（\' 转义）
       let pos = 'a', left = mi, mlen = 0, mbuf = [];
       r.on('data', d => {
@@ -107,7 +109,10 @@ function npStart(url) { // 建会话（或复用已有）；并发封顶时 LRU 
           } else {
             const use = Math.min(mlen, d.length - i); mbuf.push(d.slice(i, i + use)); i += use; mlen -= use;
             if (!mlen) {
-              const t2 = Buffer.concat(mbuf).toString('latin1').match(/StreamTitle='((?:\\'|[^'])*)'/);
+              const raw = Buffer.concat(mbuf);
+              let txt = raw.toString('utf8'); // 多数欧美台 meta 是 UTF-8（AIbot P3-5）；含替换符再回退 latin1（老 Icecast 字节流）
+              if (txt.includes('\uFFFD')) txt = raw.toString('latin1');
+              const t2 = txt.match(/StreamTitle='((?:\\'|[^'])*)'/);
               if (t2) s.title = t2[1].replace(/\\'/g, "'").trim();
               left = mi; pos = 'a';
             }
@@ -124,6 +129,12 @@ function npStart(url) { // 建会话（或复用已有）；并发封顶时 LRU 
   go(url, 0);
   return s;
 }
+// 全局回收器（AIbot P2-4）：空闲回收只在 npStart 入口触发不够——暂停/停止后无人再发请求，
+// 挂着的旁路连接要靠这里 30s 一扫兜底销毁，否则最多 2 条 ICY 流在 upstream 永久下载
+setInterval(() => {
+  const now = Date.now();
+  for (const [u, x] of [...npSess]) if (now - x.hit > NP_IDLE) { if (x.req) x.req.destroy(); npSess.delete(u); }
+}, NP_IDLE);
 
 let syncInFlight = null;
 http.createServer((req, res) => {
@@ -153,8 +164,7 @@ http.createServer((req, res) => {
   if (req.method === 'POST' && req.url.split('?')[0] === '/api/mystation') { // 添加自定义电台（A-2）：探活通过才写 my-radio.txt
     if (crossOrigin(req)) return json(403, { error: '跨源请求被拒绝' }); // 写文件接口，防 CSRF 与 check/sync 同口径
     let body = '', big = false;
-    req.on('data', c => { body += c; if (body.length > 2048) { big = true; req.destroy(); } });
-    req.on('close', () => { if (big) json(413, { error: '请求体过大' }); });
+    req.on('data', c => { body += c; if (body.length > 2048) { big = true; json(413, { error: '请求体过大' }); req.destroy(); } }); // 超限先写响应再断连（destroy 后无 end，socket 已毁时补写会静默失败——AIbot P3-8）
     req.on('end', () => {
       if (big) return;
       let j; try { j = JSON.parse(body); } catch (_) { return json(400, { error: 'bad request' }); }
@@ -165,7 +175,7 @@ http.createServer((req, res) => {
       if (!n || !c) return json(400, { error: '电台名/分类不能为空' });
       const target = safeTarget(u0);
       if (!target) return json(403, { error: '流地址不合法（仅公网 http(s)）' });
-      checkStream(target).then(async r => { // 探活先行：假流（xmcdn 336B 类）与死链一律拒绝入库
+      checkStream(target, 0, { timeout: 12000 }).then(async r => { // 探活先行：假流（xmcdn 336B 类）与死链一律拒绝入库；窗口放宽到 12s——蜻蜓系建流 5-10s 属正常（AIbot P1-2），单 URL 手动添加不涉 /api/check 的放大面
         if (!r.ok) return json(200, { ok: false, detail: '探活失败：' + r.detail });
         json(200, await myStationWrite(n, target, c));
       }).catch(e => json(500, { error: String(e && e.message || e) }));

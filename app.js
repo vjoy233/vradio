@@ -245,6 +245,13 @@ const App = {
     // 互斥单选语义用 aria-current（aria-pressed 是独立开关语义，不适用）
     $('cats').innerHTML = cats.map(c => `<button type="button" class="chip${c === this.state.cat ? ' on' : ''}" data-c="${this.esc(c)}"${c === this.state.cat ? ' aria-current="true"' : ''}>${this.esc(c)}</button>`).join('');
     restore();
+    this.updateCatsFade();
+  },
+  /* 分类条两端渐隐（UI 审计 P3-5）：滚动位置离端点远才渐隐该端，提示横向可滚（细滚动条已在 CSS） */
+  updateCatsFade() {
+    const c = $('cats');
+    c.classList.toggle('fade-l', c.scrollLeft > 4);
+    c.classList.toggle('fade-r', c.scrollLeft + c.clientWidth < c.scrollWidth - 4);
   },
   visible(all) {
     const st = this.state, kw = st.keyword.toLowerCase(), favs = this.favKeys();
@@ -282,7 +289,8 @@ const App = {
     $('list').innerHTML = list.map((s, i) => {
       const k = keyOf(s), on = favs.has(k), playing = k === pk;
       const base = `${playing ? ' playing' : ''}${k === ck ? ' connecting' : ''}${s.health === 'dead' ? ' dead' : ''}`;
-      const attrs = `data-k="${this.esc(k)}" data-i="${i}" role="listitem" tabindex="0" aria-label="${this.esc(s.n)}${playing ? '（播放中）' : ''}"${playing ? ' aria-current="true"' : ''}${s.health === 'dead' ? ' title="体检不可用，点击仍可尝试播放"' : ''}`;
+      // title=全名（UI 审计 P3-9）：截断长名（最长 84 字）此前无处可看全名；死台叠加提示
+      const attrs = `data-k="${this.esc(k)}" data-i="${i}" role="listitem" tabindex="0" aria-label="${this.esc(s.n)}${playing ? '（播放中）' : ''}"${playing ? ' aria-current="true"' : ''} title="${this.esc(s.n)}${s.health === 'dead' ? '（体检不可用，点击仍可尝试播放）' : ''}"`;
       const hp = s.health ? `<span class="health ${s.health === 'ok' ? 'ok' : 'bad'}" title="体检${s.health === 'ok' ? '可用' : '不可用'}">${s.health === 'ok' ? '✓' : '✗'}</span>` : '';
       if (grid) return `<div class="card${base}" ${attrs}><div class="chead">${Logos.img(s)}<span class="cname">${this.esc(s.n)}</span>${this.favBtn(k, on, s)}</div><div class="cfoot"><span class="badge">${this.esc(s.c)}</span><span class="srcs" title="备选源数量">${s.u.length}源</span>${hp}</div></div>`;
       return `<div class="row${base}" ${attrs}>${this.favBtn(k, on, s)}<div class="col"><div class="l1">${Logos.img(s)}<span class="name">${this.esc(s.n)}</span>${hp}</div><div class="meta"><span class="badge">${this.esc(s.c)}</span><span class="srcs" title="备选源数量">${s.u.length}源</span></div></div></div>`;
@@ -345,7 +353,7 @@ const App = {
         this.songFor = k; this.lastSong = '';
         $('song').hidden = true; $('song').textContent = '';
       }
-      $('nowline').textContent = '▶ ' + s.n; $('pp').textContent = (Player.connecting || !Player.isPaused()) ? '⏸' : '▶';
+      $('nowline').textContent = s.n; $('pp').textContent = (Player.connecting || !Player.isPaused()) ? '⏸' : '▶'; // 台名不再带 ▶（UI 审计 P3-4）：与列表行的 ▶ 前缀重复，footer 已有按钮+均衡器表达状态
     } else { $('pp').textContent = '▶'; this.showLast(); $('song').hidden = true; }
     $('eq').classList.toggle('on', !!s && !Player.isPaused()); // 均衡器动画（E6）：活着且在播
   },
@@ -619,6 +627,8 @@ const App = {
     });
 
     // 分类与列表（行/卡片可用键盘操作：Enter/Space 播放；收藏按钮由原生 button 处理）
+    $('cats').addEventListener('scroll', () => this.updateCatsFade(), { passive:true }); // 分类条渐隐随滚动切换（P3-5）
+    addEventListener('resize', () => this.updateCatsFade());
     $('cats').onclick = e => { const c = e.target.closest('.chip'); if (c) { this.state.cat = c.dataset.c; this.buildCats(); this.render(); } };
     $('list').onclick = e => {
       const fav = e.target.closest('.fav');

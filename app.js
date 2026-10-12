@@ -126,7 +126,7 @@ const App = {
     for (const s of this.state.stations) { s.dCat = s.c; s.dName = s.n; } // 同步默认口径留底（面板 ↺恢复/撤回移动用）
     this.applyCfg(); // 维护层最后套用（覆盖分类/台名/隐藏，收藏随后按 URL 回绑不受影响）
     this.rebind(); // 收藏/最近按 URL 回绑（债务 1）
-    this.buildCats(); this.render();
+    this.rebind(); this.render();
     if (!Player.station) this.showLast();
   },
   /* 维护层套用：电台移动/重命名/手动隐藏按「任一源 URL 命中」（变体换序免疫）；
@@ -147,7 +147,7 @@ const App = {
   reapplyCfg() { // 面板改动后即时生效：回滚到装配默认再重套，并重走回绑/分类条/渲染/面板自身
     for (const s of this.state.stations) { if (s.dCat !== undefined) { s.c = s.dCat; s.n = s.dName; } }
     this.applyCfg();
-    this.rebind(); this.buildCats(); this.render(); this.renderManage();
+    this.rebind(); this.render(); this.renderManage();
   },
   /* 主列表（radio.txt）+ 个人层（my-radio.txt）重拉重并；仅 http:// 下可用（file:// 下 fetch 必失败，P3-12 同源守卫） */
   async reloadMain() {
@@ -298,7 +298,7 @@ const App = {
     return `<div class="empty">${msg}</div>`;
   },
   render() {
-    this.buildCats(); // 角标与列表同源刷新（AIbot PR#9 review P2-a）：收藏/体检/显隐开关等只调 render 的路径，chip 计数不再 stale
+    this.buildCats(); // 角标与列表同源刷新（AIbot PR#9 review P2-a）：render 内统一调，调用方无需再单独调 buildCats
     const restore = this.keepFocus($('list'), 'k', 'fav'); // 焦点在行/卡片或按钮上都找回
     const list = this.visible();
     $('deadBtn').hidden = !this.state.stations.some(s => s.health === 'dead'); // 出现过死台才亮「无效源」开关
@@ -693,7 +693,7 @@ const App = {
     // 分类与列表（行/卡片可用键盘操作：Enter/Space 播放；收藏按钮由原生 button 处理）
     $('cats').addEventListener('scroll', () => this.updateCatsFade(), { passive:true }); // 分类条渐隐随滚动切换（P3-5）
     addEventListener('resize', () => this.updateCatsFade());
-    $('cats').onclick = e => { const c = e.target.closest('.chip'); if (c) { this.state.cat = c.dataset.c; this.buildCats(); this.swapRender(); } };
+    $('cats').onclick = e => { const c = e.target.closest('.chip'); if (c) { this.state.cat = c.dataset.c; this.swapRender(); } };
     $('list').onclick = e => {
       const fav = e.target.closest('.fav');
       if (fav) {
@@ -908,7 +908,7 @@ const App = {
       // 开机静默体检（B-10）：首屏渲染/台标补全之后 4s 再跑收藏+最近范围，死台自动隐藏无需手动点「体检」
       if (ok) setTimeout(() => Sync.silentHealth(), 4000);
     });
-    this.buildCats(); this.render(); this.showLast(); // file:// 降级模式下也补齐「上次收听」提示
+    this.render(); this.showLast(); // file:// 降级模式下也补齐「上次收听」提示
   },
 };
 

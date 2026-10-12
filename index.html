@@ -46,6 +46,10 @@
   footer #nowline { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   #song { font-size:12px; color:var(--dim); cursor:pointer; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   #song:hover { color:var(--acc); }
+  #songhist { position:fixed; right:14px; bottom:72px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 14px; max-width:min(380px, 82vw); max-height:38vh; overflow-y:auto; z-index:9; font-size:12px; } /* 歌曲历史浮层（B-7） */
+  #songhist[hidden] { display:none; }
+  #songhist b { display:block; margin-bottom:4px; color:var(--dim); font-weight:500; }
+  .shrow { padding:2px 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   footer #status { font-size:12px; color:var(--dim); }
   #vol { width:110px; accent-color:var(--acc); }
   #eq { display:inline-flex; align-items:flex-end; gap:2px; height:14px; } /* 均衡器动画（E6）：一眼可辨「活着且在播」 */
@@ -140,6 +144,7 @@
   <input type="range" id="vol" min="0" max="100" value="90" aria-label="音量">
 </footer>
 <audio id="audio" preload="none"></audio>
+<div id="songhist" hidden></div>
 <!-- 维护面板：个人分类/电台调整（localStorage 覆盖层，同步重跑后按 URL 回绑自动复用）；逻辑在 app.js -->
 <div id="manage" hidden>
   <div class="mbox" role="dialog" aria-modal="true" aria-label="分类与电台维护">

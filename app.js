@@ -191,6 +191,16 @@ const App = {
     this.saveFavs(); this.saveRecents();
   },
   favKeys() { return new Set(this.favs.map(f => f.k)); },
+  /* 同步消失名单 × 收藏比对（N4/r2 ⑥）：按显示名比对（名单是旧名）。必须在 reloadMain 之后调用——
+     URL 回绑已救回「改名台」（新名不在消失名单，天然不误报），撞上名单且当前解析不到的才是真消失 */
+  favsGone(names) {
+    const set = new Set(names), hits = [];
+    for (const f of this.favs) {
+      const nm = f.k.slice(f.k.lastIndexOf('|') + 1);
+      if (set.has(nm) && !this.resolve(f)) hits.push(nm);
+    }
+    return hits;
+  },
   toggleFav(s) {
     const k = keyOf(s);
     const i = this.favs.findIndex(f => f.k === k);

@@ -425,7 +425,8 @@ const App = {
     if (!row) return;
     const rm = matchMedia('(prefers-reduced-motion: reduce)').matches;
     row.scrollIntoView({ block: 'center', behavior: rm ? 'auto' : 'smooth' });
-    this._flashK = k; // render() 内重挂：后台重渲（台标补全/体检收尾）会重建整表吃掉 flash 类与滚动位置
+    row.classList.add('flash'); // 立即挂（此时 _flashK 尚未设置，render 尾部管的是后续重渲）
+    this._flashK = k;
     clearTimeout(this._flashT);
     this._flashT = setTimeout(() => {
       this._flashK = '';

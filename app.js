@@ -425,13 +425,15 @@ const App = {
     this._flashT = setTimeout(() => row.classList.remove('flash'), 1000);
   },
 
-  /* 台标补全（收藏 + 正在播优先，请求量可控）：Logos.ensure 落库后回调重渲一次展示 */
+  /* 台标补全（收藏 + 正在播优先，请求量可控）：Logos.ensure 落库后回调重渲一次展示；
+     正在播台的台标若此刻才解析到，顺手刷一次锁屏元数据（r2 ⑩——ICY 曲讯 setSong 只覆盖直流台，
+     m3u8 台等不到换歌，后解析的台标在这里补上） */
   logosEnsure() {
     if (!location.protocol.startsWith('http')) return;
     const seen = new Set(), list = [];
     for (const f of this.favs) { const s = this.resolve(f); if (s && !seen.has(keyOf(s))) { seen.add(keyOf(s)); list.push(s); } }
     if (Player.station && !seen.has(keyOf(Player.station))) list.push(Player.station);
-    Logos.ensure(list, () => this.render());
+    Logos.ensure(list, () => { this.render(); if (Player.station) Player.setSong(this.lastSong); });
   },
   /* 底部栏刷新（Player.onstate 用）：当前台名 + 播放/暂停态 + 均衡器动画 */
   playerNow() {

@@ -16,7 +16,9 @@
   header h1 .live { color:var(--acc); }
   #q { flex:1; min-width:140px; background:var(--panel); border:1px solid var(--line); color:var(--tx); border-radius:8px; padding:7px 12px; outline:none; font:inherit; }
   #q:focus { border-color:var(--acc); }
-  .btn { background:var(--panel); border:1px solid var(--line); color:var(--tx); border-radius:8px; padding:7px 12px; cursor:pointer; white-space:nowrap; font:inherit; transition:border-color .15s, background-color .15s; }
+  .btn { background:var(--panel); border:1px solid var(--line); color:var(--tx); border-radius:8px; padding:7px 12px; cursor:pointer; white-space:nowrap; font:inherit; transition:border-color .15s, background-color .15s; display:inline-flex; align-items:center; gap:5px; }
+  .ic { width:1em; height:1em; flex:0 0 auto; } /* sprite 引用：1em 随按钮字号缩放，stroke 走 currentColor 继承主题色（UI 审计 P3-1） */
+  #pp .ic { width:17px; height:17px; }
   .btn:hover { border-color:var(--acc); }
   .btn.on { color:var(--acc); border-color:var(--acc); }
   .btn:active, .chip:active, .row:active, .card:active { transform:translateY(1px); } /* 按压物理反馈（UI 审计 A 批：此前无 :active 态） */
@@ -41,7 +43,7 @@
   .row.playing .name::before { content:'▶ '; color:var(--acc); }
   .row.connecting .name::before { content:'● '; animation:pulse 1s infinite; } /* 连接中脉冲提示等待 */
   @keyframes pulse { 50% { opacity:.25; } }
-  @media (prefers-reduced-motion: reduce) { .row.connecting .name::before, .card.connecting .cname::before, #eq.on i { animation:none; } * { transition:none !important; } }
+  @media (prefers-reduced-motion: reduce) { .row.connecting .name::before, .card.connecting .cname::before, #eq.on i, .card.playing::after { animation:none; } #prog { display:none; } #list.swap .row, #list.swap .card { animation:none; } * { transition:none !important; } }
   .row .name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .badge { font-size:12px; color:var(--dim); border:1px solid var(--line); border-radius:4px; padding:0 6px; white-space:nowrap; }
   .srcs { font-size:12px; color:var(--dim); white-space:nowrap; }
@@ -50,6 +52,8 @@
   .fav.on { color:#f5c542; }
   :root[data-theme="light"] .fav:hover, :root[data-theme="light"] .fav.on { color:#8a6508; } /* 浅色下 #f5c542 对白面板仅 1.62:1 金星隐形（P1-2），定 #8a6508=5.32:1 */
   .row.dead .name { text-decoration:line-through; opacity:.45; }
+  .row .name, .card .cname { font-weight:500; } /* 字重层级（UI 审计 P3-2）：台名 500，播中 600，层级不再全靠字号+颜色 */
+  .row.playing .name, .card.playing .cname { font-weight:600; }
   .health { font-size:12px; white-space:nowrap; }
   .health.ok { color:var(--acc); } .health.bad { color:var(--warn); }
   .btn:disabled { opacity:.5; cursor:wait; }
@@ -63,6 +67,14 @@
   #songhist b { display:block; margin-bottom:4px; color:var(--dim); font-weight:500; }
   .shrow { padding:2px 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   footer #status { font-size:12px; color:var(--dim); }
+  /* 同步/体检不确定进度条（UI 审计 P3-8）：贴 footer 顶边 2px，transform 动画不走 layout；reduced-motion 隐藏（状态栏文案仍在） */
+  #prog { position:absolute; top:-1px; left:0; right:0; height:2px; overflow:hidden; }
+  #prog[hidden] { display:none; }
+  #prog i { position:absolute; top:0; bottom:0; width:40%; background:var(--acc); transform:translateX(-100%); animation:prog 1.1s ease-in-out infinite; }
+  @keyframes prog { to { transform:translateX(350%); } }
+  /* 视图/分类切换淡入（E 批）：仅 swap 类挂期间生效，搜索逐键重渲不闪 */
+  #list.swap .row, #list.swap .card { animation:fadein .14s ease-out; }
+  @keyframes fadein { from { opacity:0; } }
   #vol { width:110px; accent-color:var(--acc); }
   #sleepBtn { min-width:76px; font-variant-numeric:tabular-nums; } /* 倒计时每秒变宽会引起 footer 抖动（UI 审计 P3-2）：min-width + 等宽数字 */
   .srcs, .cnt, .health, .badge { font-variant-numeric:tabular-nums; }
@@ -83,9 +95,10 @@
   #list.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(clamp(160px,18vw,230px),1fr)); gap:12px; align-content:start; }
   .card { border:1px solid var(--line); border-radius:10px; padding:12px; cursor:pointer; display:flex; flex-direction:column; gap:8px; min-height:100px; transition:background-color .15s, border-color .15s; }
   .card:hover, .card.playing { background:var(--panel); }
-  .card.playing { border-color:var(--acc); }
+  .card.playing { border-color:var(--acc); position:relative; }
   .card.playing .cname { color:var(--acc); }
-  .card.playing .cname::before { content:'▶ '; color:var(--acc); }
+  .card.playing::after { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; border-radius:10px 0 0 10px; background:var(--acc); animation:breath 1.6s ease-in-out infinite; } /* 播放卡呼吸条（E 批）：边框之外的第二重活体指示 */
+  @keyframes breath { 50% { opacity:.35; } }
   .card.connecting .cname::before { content:'● '; animation:pulse 1s infinite; }
   .card.dead .cname { text-decoration:line-through; opacity:.45; }
   .chead { display:flex; gap:6px; align-items:flex-start; }
@@ -156,23 +169,55 @@
 </style>
 </head>
 <body>
+<!-- 图标：Tabler Icons v3（MIT 许可，https://github.com/tabler/tabler-icons）本地内嵌 sprite，
+     零依赖零构建不破；单色继承 currentColor（UI 审计 P3-1：彩色 emoji 与单色字形两套语言统一） -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+<symbol id="i-grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1l0 -4" /><path d="M14 5a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1l0 -4" /><path d="M4 15a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1l0 -4" /><path d="M14 15a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1l0 -4" /></symbol>
+<symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l11 0" /><path d="M9 12l11 0" /><path d="M9 18l11 0" /><path d="M5 6l0 .01" /><path d="M5 12l0 .01" /><path d="M5 18l0 .01" /></symbol>
+<symbol id="i-sync" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4" /><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4" /></symbol>
+<symbol id="i-health" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8l4 -16l3 8h4" /></symbol>
+<symbol id="i-import" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2" /><path d="M7 11l5 5l5 -5" /><path d="M12 4l0 12" /></symbol>
+<symbol id="i-export" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2" /><path d="M7 9l5 -5l5 5" /><path d="M12 4l0 12" /></symbol>
+<symbol id="i-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065" /><path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" /></symbol>
+<symbol id="i-auto" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" /><path d="M12 3v18" /></symbol>
+<symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" /><path d="M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7" /></symbol>
+<symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454l0 .008" /></symbol>
+<symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12" /><path d="M6 6l12 12" /></symbol>
+<symbol id="i-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v16l13 -8l-13 -8" /></symbol>
+<symbol id="i-pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1l0 -12" /><path d="M14 6a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1l0 -12" /></symbol>
+<symbol id="i-sleep" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h6l-6 8h6" /><path d="M14 4h6l-6 8h6" /></symbol>
+<symbol id="i-star" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17.75l-6.172 3.245l1.179 -6.873l-5 -4.867l6.9 -1l3.086 -6.253l3.086 6.253l6.9 1l-5 4.867l1.179 6.873l-6.158 -3.245" /></symbol>
+<symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5l10 -10" /></symbol>
+<symbol id="i-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" /><path d="M21 12c-2.4 4 -5.4 6 -9 6c-3.6 0 -6.6 -2 -9 -6c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6" /></symbol>
+<symbol id="i-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.585 10.587a2 2 0 0 0 2.829 2.828" /><path d="M16.681 16.673a8.717 8.717 0 0 1 -4.681 1.327c-3.6 0 -6.6 -2 -9 -6c1.272 -2.12 2.712 -3.678 4.32 -4.674m2.86 -1.146a9.055 9.055 0 0 1 1.82 -.18c3.6 0 6.6 2 9 6c-.666 1.11 -1.379 2.067 -2.138 2.87" /><path d="M3 3l18 18" /></symbol>
+<symbol id="i-pencil" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" /><path d="M13.5 6.5l4 4" /></symbol>
+<symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7l16 0" /><path d="M10 11l0 6" /><path d="M14 11l0 6" /><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12" /><path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3" /></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5l0 14" /><path d="M5 12l14 0" /></symbol>
+<symbol id="i-undo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14l-4 -4l4 -4" /><path d="M5 10h11a4 4 0 1 1 0 8h-1" /></symbol>
+<symbol id="i-dots" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M18 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /></symbol>
+<symbol id="i-warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4" /><path d="M10.363 3.591l-8.106 13.534a1.914 1.914 0 0 0 1.636 2.871h16.214a1.914 1.914 0 0 0 1.636 -2.87l-8.106 -13.536a1.914 1.914 0 0 0 -3.274 0" /><path d="M12 16h.01" /></symbol>
+<symbol id="i-vol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 8a5 5 0 0 1 0 8" /><path d="M17.7 5a9 9 0 0 1 0 14" /><path d="M6 15h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2l3.5 -4.5a.8 .8 0 0 1 1.5 .5v14a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5" /></symbol>
+<symbol id="i-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 8a5 5 0 0 1 1.912 4.934m-1.377 2.602a5 5 0 0 1 -.535 .464" /><path d="M17.7 5a9 9 0 0 1 2.362 11.086m-1.676 2.299a9 9 0 0 1 -.686 .615" /><path d="M9.069 5.054l.431 -.554a.8 .8 0 0 1 1.5 .5v2m0 4v8a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2l1.294 -1.664" /><path d="M3 3l18 18" /></symbol>
+<symbol id="i-star-filled" viewBox="0 0 24 24" fill="currentColor"><path d="M8.243 7.34l-6.38 .925l-.113 .023a1 1 0 0 0 -.44 1.684l4.622 4.499l-1.09 6.355l-.013 .11a1 1 0 0 0 1.464 .944l5.706 -3l5.693 3l.1 .046a1 1 0 0 0 1.352 -1.1l-1.091 -6.355l4.624 -4.5l.078 -.085a1 1 0 0 0 -.633 -1.62l-6.38 -.926l-2.852 -5.78a1 1 0 0 0 -1.794 0l-2.853 5.78z" /></symbol>
+</svg>
+
 <header>
   <h1><span class="live" aria-hidden="true">●</span> VRadio</h1>
   <input id="q" type="search" aria-label="搜索电台" title="按 / 快速聚焦，Esc 清空，↓ 进列表" placeholder="搜索电台名，如：中国之声 / Love / NHK">
   <span class="seg" role="group" aria-label="视图切换">
-    <button class="btn" id="gridBtn" aria-pressed="true" title="网格视图：精简卡片，一页看更多">▦ 网格</button>
-    <button class="btn" id="listBtn" aria-pressed="false" title="列表视图：两行详情（分类/源数）">☰ 列表</button>
+    <button class="btn" id="gridBtn" aria-pressed="true" title="网格视图：精简卡片，一页看更多"><svg class="ic"><use href="#i-grid"/></svg><span>网格</span></button>
+    <button class="btn" id="listBtn" aria-pressed="false" title="列表视图：两行详情（分类/源数）"><svg class="ic"><use href="#i-list"/></svg><span>列表</span></button>
   </span>
   <!-- 低频操作收组（UI 审计 P2-6）：桌面 display:contents 原样排布；≤640px 收进「⋯ 更多」菜单，header 压回两行 -->
   <span id="lowfreq">
-    <button class="btn" id="syncBtn" title="同步上游国内源 + 实测重建欧美音乐台">同步源</button>
-    <button class="btn" id="healthBtn" title="体检当前列表的电台可用性">体检</button>
-    <button class="btn" id="importBtn" title="导入 radio.txt / m3u 列表，或本项目导出的收藏备份">导入列表</button>
-    <button class="btn" id="exportBtn" title="导出收藏电台为 m3u（换机/备份；导回可恢复收藏）">导出收藏</button>
+    <button class="btn" id="syncBtn" title="同步上游国内源 + 实测重建欧美音乐台"><svg class="ic"><use href="#i-sync"/></svg><span>同步源</span></button>
+    <button class="btn" id="healthBtn" title="体检当前列表的电台可用性"><svg class="ic"><use href="#i-health"/></svg><span>体检</span></button>
+    <button class="btn" id="importBtn" title="导入 radio.txt / m3u 列表，或本项目导出的收藏备份"><svg class="ic"><use href="#i-import"/></svg><span>导入列表</span></button>
+    <button class="btn" id="exportBtn" title="导出收藏电台为 m3u（换机/备份；导回可恢复收藏）"><svg class="ic"><use href="#i-export"/></svg><span>导出收藏</span></button>
   </span>
-  <button class="btn" id="moreBtn" aria-haspopup="true" aria-expanded="false" aria-label="更多操作">⋯</button>
-  <button class="btn" id="deadBtn" aria-pressed="false" hidden title="体检不可用（✗）的电台默认隐藏；点击显示/隐藏它们">✗ 无效源</button>
-  <button class="btn" id="manageBtn" title="分类与电台维护：移动/重命名/隐藏电台，新建/重命名/隐藏分类（个人配置，同步后保留）">⚙ 维护</button>
+  <button class="btn" id="moreBtn" aria-haspopup="true" aria-expanded="false" aria-label="更多操作"><svg class="ic"><use href="#i-dots"/></svg></button>
+  <button class="btn" id="deadBtn" aria-pressed="false" hidden title="体检不可用（✗）的电台默认隐藏；点击显示/隐藏它们"><svg class="ic"><use href="#i-x"/></svg><span>无效源</span></button>
+  <button class="btn" id="manageBtn" title="分类与电台维护：移动/重命名/隐藏电台，新建/重命名/隐藏分类（个人配置，同步后保留）"><svg class="ic"><use href="#i-gear"/></svg><span>维护</span></button>
   <button class="btn" id="themeBtn" aria-label="主题：跟随系统，点击切换" title="主题：跟随系统（点击循环：跟随系统 → 浅色 → 深色）">🌓</button>
   <input type="file" id="file" accept=".txt,.csv,.m3u" hidden aria-label="导入电台列表文件">
 </header>
@@ -180,11 +225,12 @@
 <div id="hint">radio.txt 未加载（file:// 下 fetch 受限）——点右上「导入列表」选择本目录的 radio.txt 即可获得全部电台；当前为内置精选。</div>
 <div id="list" role="list" aria-label="电台列表"></div>
 <footer>
-  <button class="btn" id="pp" aria-label="播放 / 暂停">▶</button>
+  <div id="prog" hidden><i></i></div>
+  <button class="btn" id="pp" aria-label="播放 / 暂停"><svg class="ic"><use href="#i-play"/></svg></button>
   <span id="eq" aria-hidden="true"><i></i><i></i><i></i></span>
   <div id="now" aria-live="polite"><div id="nowline">未在播放</div><div id="song" hidden></div></div>
   <span id="sleepWrap">
-    <button class="btn" id="sleepBtn" title="睡眠定时：到点渐弱停止" aria-label="睡眠定时">😴</button>
+    <button class="btn" id="sleepBtn" title="睡眠定时：到点渐弱停止" aria-label="睡眠定时"><svg class="ic"><use href="#i-sleep"/></svg><span id="sleepLab"></span></button>
     <!-- 睡眠菜单（UI 审计 P3-7）：一次点选替代 15→30→60 循环（想设 60 分钟原要按三下）；进行中点击按钮直接取消 -->
     <span id="sleepMenu" hidden>
       <button type="button" class="btn" data-min="15">15 分钟</button>
@@ -192,7 +238,7 @@
       <button type="button" class="btn" data-min="60">60 分钟</button>
     </span>
   </span>
-  <button class="btn" id="muteBtn" aria-label="静音" title="静音 / 取消静音">🔊</button>
+  <button class="btn" id="muteBtn" aria-label="静音" title="静音 / 取消静音"><svg class="ic"><use href="#i-vol"/></svg></button>
   <span id="status" role="status" aria-live="polite"></span>
   <input type="range" id="vol" min="0" max="100" value="90" aria-label="音量">
 </footer>
@@ -201,7 +247,7 @@
 <!-- 维护面板：个人分类/电台调整（localStorage 覆盖层，同步重跑后按 URL 回绑自动复用）；逻辑在 app.js -->
 <div id="manage" hidden>
   <div class="mbox" role="dialog" aria-modal="true" aria-label="分类与电台维护">
-    <div class="mhead"><b>⚙ 分类与电台维护</b><button class="btn" id="mClose" title="关闭面板（Esc）">✕ 关闭</button></div>
+    <div class="mhead"><b><svg class="ic"><use href="#i-gear"/></svg> 分类与电台维护</b><button class="btn" id="mClose" title="关闭面板（Esc）"><svg class="ic"><use href="#i-x"/></svg><span>关闭</span></button></div>
     <div class="seg" role="group" aria-label="维护对象切换">
       <button class="btn on" id="mTabC">分类</button>
       <button class="btn" id="mTabS">电台</button>
@@ -213,7 +259,7 @@
         <input id="mAName" type="text" maxlength="40" placeholder="电台名（如：我的私藏台）" aria-label="电台名">
         <input id="mAUrl" type="url" placeholder="流地址 http(s)://…（mp3/aac 直流）" aria-label="流地址">
         <select id="mACat" aria-label="分类"></select>
-        <button class="btn" id="mAddBtn">＋ 添加</button>
+        <button class="btn" id="mAddBtn"><svg class="ic"><use href="#i-plus"/></svg><span>添加</span></button>
       </div>
       <input id="mq" type="search" placeholder="搜索要维护的电台（含已隐藏），如：动感 / CNN / 戏曲" aria-label="搜索电台">
       <div id="mlist" role="list"></div>

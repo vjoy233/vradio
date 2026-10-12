@@ -2,6 +2,7 @@
 // /proxy?url=...   同源转发远端音频流/HLS，绕开浏览器 CORS 限制（配合前端 hls.js 使用；同源无需 ACAO）
 // /api/sync        一键同步最新源（update-sources.js，进行中重复触发返回 409）
 // /api/check?url=  可用性探测（url 参数可重复=多源、任一活即 OK，最多 4 个；服务端检测无 CORS 限制）
+// /api/mystation   添加自定义电台（POST JSON {n,u,c}：先探活拒绝假流/死链，再原子写入 my-radio.txt）
 // 安全：默认仅监听 127.0.0.1；proxy/check 仅允许公网 http(s) 目标 —— safeTarget 字符串校验 + guardLookup
 //       连接级 IP 校验（防 DNS rebinding/TOCTOU），重定向逐跳复查；/api/sync、/api/check 校验 Origin/
 //       Sec-Fetch-Site（防跨源 CSRF/探活驱动）；静态服务拒绝目录穿越与 dotfile/备份文件。
@@ -43,6 +44,26 @@ function proxy(target, req, res, depth = 0) {
   creq.on('error', () => { if (res.headersSent) res.destroy(); else res.writeHead(502).end('upstream error'); });
 }
 
+// ---------- my-radio.txt 写入（A-2）：tmp+rename 原子替换 + 写段串行化（与前端 reloadMain/导入重并无半写竞争） ----------
+const MY_FILE = path.join(ROOT, 'my-radio.txt'), MY_MAX_LINES = 500, MY_MAX_BYTES = 65536;
+let myQ = Promise.resolve(); // 串行写队列：探活是异步的，两个并发添加不得互踩对方的读-改-写
+function myStationWrite(n, u, c) {
+  return myQ = myQ.then(() => new Promise(done => {
+    let txt = '';
+    try { txt = fs.readFileSync(MY_FILE, 'utf8'); } catch (_) {} // 不存在 = 首次创建
+    const lines = txt ? txt.split(/\r?\n/) : [];
+    if (lines.length >= MY_MAX_LINES || txt.length >= MY_MAX_BYTES) return done({ ok: false, error: `my-radio.txt 已达上限（${MY_MAX_LINES} 行），请清理后再添加` });
+    if (lines.some(l => l.trim() === `${n},${u}`)) return done({ ok: false, error: '该电台已在个人列表中' });
+    const head = `${c},#genre#`, at = lines.findIndex(l => l.trim() === head);
+    if (at >= 0) lines.splice(at + 1, 0, `${n},${u}`); // 已有该分类节：节内插入
+    else lines.push('', head, `${n},${u}`); // 新分类：尾部开节
+    const out = lines.join('\r\n').replace(/^\r\n/, '') + '\r\n';
+    const tmp = MY_FILE + '.tmp';
+    fs.writeFile(tmp, out, e => e ? done({ ok: false, error: '写入失败' })
+      : fs.rename(tmp, MY_FILE, e2 => done(e2 ? { ok: false, error: '写入失败' } : { ok: true })));
+  })).catch(() => ({ ok: false, error: '写入失败' }));
+}
+
 let syncInFlight = null;
 http.createServer((req, res) => {
   const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(obj)); };
@@ -66,6 +87,28 @@ http.createServer((req, res) => {
       for (const t of targets) { const r = await checkStream(t); if (r.ok) return json(200, { ok: true, detail: r.detail }); }
       json(200, { ok: false, detail: `${targets.length} 个源均不可用` });
     })();
+    return;
+  }
+  if (req.method === 'POST' && req.url.split('?')[0] === '/api/mystation') { // 添加自定义电台（A-2）：探活通过才写 my-radio.txt
+    if (crossOrigin(req)) return json(403, { error: '跨源请求被拒绝' }); // 写文件接口，防 CSRF 与 check/sync 同口径
+    let body = '', big = false;
+    req.on('data', c => { body += c; if (body.length > 2048) { big = true; req.destroy(); } });
+    req.on('close', () => { if (big) json(413, { error: '请求体过大' }); });
+    req.on('end', () => {
+      if (big) return;
+      let j; try { j = JSON.parse(body); } catch (_) { return json(400, { error: 'bad request' }); }
+      // 内容护栏：台名/分类去 csv 分隔符与换行（radio.txt 格式硬约束），长度封顶；地址须公网 http(s)
+      const n = String(j.n || '').replace(/[,\r\n|]/g, ' ').trim().slice(0, 40);
+      const c = String(j.c || '').replace(/[,\r\n|#]/g, ' ').trim().slice(0, 24);
+      const u0 = String(j.u || '').trim().slice(0, 512);
+      if (!n || !c) return json(400, { error: '电台名/分类不能为空' });
+      const target = safeTarget(u0);
+      if (!target) return json(403, { error: '流地址不合法（仅公网 http(s)）' });
+      checkStream(target).then(async r => { // 探活先行：假流（xmcdn 336B 类）与死链一律拒绝入库
+        if (!r.ok) return json(200, { ok: false, detail: '探活失败：' + r.detail });
+        json(200, await myStationWrite(n, target, c));
+      }).catch(e => json(500, { error: String(e && e.message || e) }));
+    });
     return;
   }
   if (req.url.startsWith('/proxy?url=')) {

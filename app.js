@@ -426,6 +426,8 @@ const App = {
     // dName/dCat 用 || 兜底（file:// 降级模式 boot 已快照，双保险防再漏）
     const list = kw ? all.filter(s => s.n.toLowerCase().includes(kw) || (s.dName || s.n).toLowerCase().includes(kw)) : all.slice(0, 100);
     const opts = this.mCatOptions();
+    // 添加电台表单（A-2）分类下拉随行刷新；默认选中当前分类（全部/收藏/最近等非数据分类则落第一项）
+    $('mACat').innerHTML = opts.map(c => `<option value="${this.esc(c)}"${c === this.state.cat ? ' selected' : ''}>${this.esc(c)}</option>`).join('');
     box.innerHTML = list.map(s => {
       const dC = s.dCat || s.c, dN = s.dName || s.n;
       const k = keyOf(s), moved = s.c !== dC, named = s.n !== dN;
@@ -630,6 +632,30 @@ const App = {
     $('mImport').onclick = () => $('mfile').click();
     $('mfile').onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => this.importCfg(String(r.result)); r.readAsText(f, 'utf-8'); e.target.value = ''; };
     $('mReset').onclick = () => this.resetCfg();
+
+    // 添加自定义电台（A-2）：面板内表单 → /api/mystation（服务端先探活拒绝假流/死链，再原子写 my-radio.txt；
+    // 与 cfg 的分工 = cfg 调整既有台的显示层（localStorage），这里新增列表里不存在的台（数据层文件，跨浏览器持久））
+    const addOk = location.protocol.startsWith('http');
+    $('mAddBtn').disabled = !addOk;
+    $('mAddBtn').title = addOk ? '先探活（拒绝假流/死链），可用才写入个人列表 my-radio.txt' : 'file:// 降级模式无后端，npm start 后可用';
+    $('mAddBtn').onclick = async () => {
+      const n = $('mAName').value.trim().replace(/[,\r\n|]/g, ' ').slice(0, 40);
+      const u = $('mAUrl').value.trim();
+      if (!n) { $('status').textContent = '请填写电台名'; return; }
+      if (!/^https?:\/\//.test(u)) { $('status').textContent = '流地址需以 http(s):// 开头'; return; }
+      const c = $('mACat').value;
+      $('mAddBtn').disabled = true; $('mAddBtn').textContent = '探活中…';
+      try {
+        const r = await fetch('/api/mystation', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ n, u, c }) }).then(x => x.json());
+        if (r.ok) {
+          $('mAName').value = $('mAUrl').value = '';
+          await this.reloadMain(); // 重拉重并（个人层常驻），列表与面板同步出现新台
+          this.renderManage();
+          $('status').textContent = `已添加「${n}」到「${c}」（持久于 my-radio.txt，同步不覆盖）`;
+        } else $('status').textContent = '添加失败：' + (r.detail || r.error || '未知错误');
+      } catch (e) { $('status').textContent = '添加失败：' + (e && e.message || e); }
+      $('mAddBtn').disabled = false; $('mAddBtn').textContent = '＋ 添加';
+    };
 
     // 台标：缓存 + 数据文件（http 下才有后端/代理）
     Logos.load();

@@ -20,6 +20,7 @@ const Player = {
   ontick: null,     // (msLeft) 睡眠定时倒计时回调（0 = 已关）
   onplaylast: null, // 媒体键 play 但当前无台时，转交 app 走「续播上次收听」（与 pp 按钮同语义）
   onlogo: null,     // (station) → 台标 URL（锁屏 artwork 大图，r2 ⑩）；由 app 注入 Logos.get，player 不伸手进台标模块
+  onstepfav: null,  // (±1) 锁屏/媒体键 ⏮⏭ = 收藏间切台（A2/r2 ①）；由 app 注入 stepFav
 
   init(el, vol0) {
     this.audio = el; this.vol = vol0; el.volume = vol0;
@@ -41,6 +42,10 @@ const Player = {
         ms.setActionHandler('pause', () => this.pause());
         ms.setActionHandler('stop', () => this.stop());
       } catch (_) {} // 个别浏览器不支持部分 action，单独容错
+      try { // ⏮⏭ = 收藏间切台（A2/r2 ①）：与 ←/→ 键同语义；独立 try——这两个 action 的支持面更窄，挂了不连累上面三个
+        ms.setActionHandler('previoustrack', () => this.onstepfav && this.onstepfav(-1));
+        ms.setActionHandler('nexttrack', () => this.onstepfav && this.onstepfav(1));
+      } catch (_) {}
     }
   },
   emit(full) { if (this.onstate) this.onstate(full); },

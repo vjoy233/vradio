@@ -1,44 +1,23 @@
-# 由 npm run sync 自动生成：欧美音乐分类台标（源：Radio Browser 镜像 m3u 的 tvg-logo，按流 URL 匹配）。手工编辑会被覆盖。
+# 由 npm run sync 自动生成：欧美系台标（欧美音乐/国际新闻·谈话，源：Radio Browser 镜像 m3u 的 tvg-logo，按流 URL 匹配）。手工编辑会被覆盖。
 欧美音乐|98.1 KBEAR [美国],https://pwa.tunegenie.com/kyyaam/icon-192.png
 欧美音乐|Adroit Jazz Underground [美国],https://icecast.walmradio.com:8443/jazz.jpg
 欧美音乐|Bassdrive [美国],https://thumbnailer.mixcloud.com/unsafe/160x160/extaudio/8/5/8/a/f8e6-9555-4eb9-8005-1ec4dabd55ce.jpg
-欧美音乐|Classic Vinyl HD [美国],https://icecast.walmradio.com:8443/classic.jpg
+欧美音乐|Christmas Vinyl HD [美国],https://icecast.walmradio.com:8443/christmas.png
 欧美音乐|Classic Vinyl HD Opus [美国],https://icecast.walmradio.com:8443/classic.jpg
-欧美音乐|CNN [美国],https://www.cnn.com/media/sites/cnn/favicon.ico
-欧美音乐|Fox News Radio [美国],https://static.foxnews.com/radio.foxnews.com/content/uploads/2017/10/default_logo-150x150.png
 欧美音乐|Frisky [美国],https://s3.amazonaws.com/media.friskyradio.com/favicon.png
 欧美音乐|Miami Beach Radio [美国],https://cdn-elements.radiostreamlive.com/v1/images/favicon.ico
-欧美音乐|NBC News Radio [美国],https://iscale.iheart.com/catalog/live/6043
-欧美音乐|Nostalgie New York [美国],https://demigod-assets.sgp1.cdn.digitaloceanspaces.com/landingpages/fatcai/faviconcai.webp
-欧美音乐|NPR 24 Hour Program Stream [美国],https://static-assets.npr.org/static/images/favicon/favicon-96x96.png
 欧美音乐|Radio Paradise Main Mix (EU) 320k AAC [美国],https://radioparadise.com/apple-touch-icon.png
 欧美音乐|Radio Paradise Rock Mix 320k AAC [美国],https://radioparadise.com/apple-touch-icon.png
-欧美音乐|SomaFM Groove Salad (128k MP3) [美国],https://somafm.com/img3/groovesalad-400.jpg
 欧美音乐|SomaFM Indie Pop Rocks! (128k AAC) [美国],https://somafm.com/img3/indiepop-400.jpg
-欧美音乐|SomaFM Left Coast 70s (320k MP3) [美国],https://somafm.com/img3/seventies400.jpg
-欧美音乐|SomaFM Lush (128k MP3) [美国],https://somafm.com/img3/lush-400.jpg
 欧美音乐|SomaFM PopTron (128k MP3) [美国],https://somafm.com/img3/poptron-400.png
 欧美音乐|SomaFM Secret Agent (128k MP3) [美国],https://somafm.com/img3/secretagent-400.jpg
-欧美音乐|SomaFM Space Station Soma (128k AAC) [美国],https://somafm.com/img3/spacestation-400.png
 欧美音乐|SomaFM Underground 80s (128k MP3) [美国],https://somafm.com/img3/u80s-400.png
-欧美音乐|WALM - Old Time Radio Opus [美国],https://icecast.walmradio.com:8443/otr.jpg
 欧美音乐|Z 92 (Miami) - 92.3 FM - WCMQ-FM - Spanish Broadcasting System - Miami  Florida [美国],https://cdn-profiles.tunein.com/s27943/images/logod.png
 欧美音乐|100% Radio 80 [法国],https://bocir-prod-bucket.s3.amazonaws.com/radios/centpourcent/images/favicon.ico
 欧美音乐|100% Radio Hit [法国],https://bocir-prod-bucket.s3.amazonaws.com/radios/centpourcent/images/favicon.ico
-欧美音乐|BFM radio [法国],https://www.radio.fr/images/broadcasts/76/27/105095/3/c300.png
 欧美音乐|Chante France [法国],https://bocir-prod-bucket.s3.eu-west-1.amazonaws.com/radios/chante-france/images/favicon.x-icon
 欧美音乐|Chante France 80's [法国],https://bocir-prod-bucket.s3.eu-west-1.amazonaws.com/radios/chante-france/images/favicon.x-icon
 欧美音乐|EuroDance 90 radio [法国],https://eurodance90.fr/favicon.ico
-欧美音乐|Europe 1 [法国],https://www.europe1.fr/build/e1/images/favicon-120x120.png
-欧美音乐|FIP [法国],https://upload.wikimedia.org/wikipedia/fr/thumb/d/d5/FIP_logo_2005.svg/1024px-FIP_logo_2005.svg.png
-欧美音乐|FIP Jazz [法国],https://www.fip.fr/dist/favicons/logo-120.png
-欧美音乐|France Culture [法国],https://upload.wikimedia.org/wikipedia/fr/thumb/c/c9/France_Culture_-_2008.svg/1024px-France_Culture_-_2008.svg.png
-欧美音乐|France Info [法国],https://www.francetvinfo.fr/assets/common/images/pwa/ios/120-5487caf3.png
-欧美音乐|France Info [法国],https://www.francetvinfo.fr/assets/common/images/pwa/ios/120-0cfbd6d4.png
-欧美音乐|France Inter [法国],https://www.franceinter.fr/favicon.ico
-欧美音乐|France Inter [法国],https://www.franceinter.fr/favicon.ico
-欧美音乐|France Inter [法国],https://upload.wikimedia.org/wikipedia/commons/thumb/a/a0/France_Inter_logo_2021.svg/1200px-France_Inter_logo_2021.svg.png
-欧美音乐|France Musique [法国],https://upload.wikimedia.org/wikipedia/fr/thumb/2/22/France_Musique_-_2008.svg/1024px-France_Musique_-_2008.svg.png
 欧美音乐|Jazz Radio Blues [法国],https://www.jazzradio.fr/apple-touch-icon-120x120.png
 欧美音乐|Jazz Radio Classic Jazz [法国],https://www.jazzradio.fr/apple-touch-icon-120x120.png
 欧美音乐|Jazz Radio Funk [法国],https://www.jazzradio.fr/apple-touch-icon-120x120.png
@@ -47,10 +26,7 @@
 欧美音乐|Latina Reggaeton [法国],https://bocir-prod-bucket.s3.eu-west-1.amazonaws.com/radios/latina/images/favicon.ico
 欧美音乐|Latina Salsa [法国],https://bocir-prod-bucket.s3.eu-west-1.amazonaws.com/radios/latina/images/favicon.ico
 欧美音乐|Radio Nova [法国],https://www.nova.fr/wp-content/uploads/sites/2/2021/02/cropped-favicon.png?fit=180%2c180&#038;quality=75
-欧美音乐|RMC FR [法国],https://i1.wp.com/www.mediasportif.fr/wp-content/uploads/2014/05/Radio-RMC.jpg
 欧美音乐|Skyrock [法国],https://play-lh.googleusercontent.com/dPiQ01OUKZVfRZUbbb-EVK5g9miS_K-xrxHgmBbynGG-GQ53yt3GzFKr0zUTnb-xswQ=s200-rw
-欧美音乐|Sud Radio [法国],https://www.sudradio.fr/wp-content/uploads/2019/06/cropped-favicon-180x180.png
-欧美音乐|BBC World Service [英国],https://rmp.files.bbci.co.uk/rmp-shared-assets/1.4.0/img/network-logos/national/bbc_world_service_colour.svg
 欧美音乐|Classic FM [英国],https://upload.wikimedia.org/wikipedia/commons/thumb/a/ae/Classic_FM_logo.svg/472px-Classic_FM_logo.svg.png
 欧美音乐|Classic FM Relax [英国],https://images-na.ssl-images-amazon.com/images/I/61wHBPSryzL.png
 欧美音乐|Gold [英国],https://www.mygoldmusic.co.uk/assets_v4r/gold/img/favicon-196x196.png
@@ -59,14 +35,11 @@
 欧美音乐|Heart Dance [英国],https://www.heart.co.uk/assets_v4r/heart/img/favicon-196x196.png
 欧美音乐|Heart London 106.2 [MP3] [英国],https://cdn-profiles.tunein.com/s2846/images/logoq.jpg
 欧美音乐|Jazz London Radio [英国],https://www.jazzlondonradio.com/images/favicon.ico
-欧美音乐|LBC UK [英国],https://cdn-radiotime-logos.tunein.com/s220687q.png
 欧美音乐|Smooth Chill [英国],https://www.smoothradio.com/assets_v4r/smooth/img/favicon-196x196.png
 欧美音乐|TMM 1 [英国],https://cdn-profiles.tunein.com/s159857/images/logod.png
 欧美音乐|TMM 2 [英国],https://cdn-profiles.tunein.com/s155539/images/logod.png
 欧美音乐|Cadena 100 [西班牙],https://www.cadena100.es/estaticos/apple-touch-icon-192x192.png
 欧美音乐|Cadena Dial [西班牙],https://www.cadenadial.com/wp-content/uploads/2024/03/cropped-512x512_favicon_dial-180x180.png
-欧美音乐|Cadena SER España [西班牙],https://cadenaser00.epimg.net/favicon.png
-欧美音乐|Cadena SER Radio MADRID [西班牙],https://cadenaser00.epimg.net/favicon.png
 欧美音乐|Café del Mar [西班牙],https://cafedelmar.com/apple-touch-icon.png
 欧美音乐|Chocolate FM [西班牙],https://www.chocolatefm.com/__ovh/common/img/favicon.ico
 欧美音乐|Chocolate FM [calidad móvil-low bandwidth] [西班牙],https://chocolatefm.com/radio-browser.png
@@ -74,32 +47,43 @@
 欧美音乐|LOS 40 Principales España [西班牙],https://los40es00.epimg.net/iconos/v1.x/v1.0/touch-apple.png
 欧美音乐|Los 40 Urban [西班牙],https://los40es00.epimg.net/iconos/v1.x/v1.0/promos/promo_og_los40.png
 欧美音乐|LOS40 Classic [西班牙],https://los40es00.epimg.net/estaticos/recursosgraficos/v1/img/app/los40_192.png
-欧美音乐|Rock FM [西班牙],https://www.rockfm.fm/estaticos/apple-touch-icon-192x192.png
+欧美音乐|Antyradio [波兰],https://gfx.antyradio.pl/design/antyradio/src/images/favicon/favicon_180x180.png
+欧美音乐|ESKA ROCK [波兰],https://static.mytuner.mobi/media/tvos_radios/2LqeyZhdFq.png
+欧美音乐|Radio 357 [波兰],https://radio357.pl/wp-content/uploads/2022/04/c5399c0d-1b8e-43d5-b23b-e5cef1857856.png
+欧美音乐|Radio RMF MAXXX [波兰],https://cdn.onlineradiobox.com/img/l/4/1294.v9.png
+欧美音乐|RMF FM [波兰],https://www.rmf.fm/assets/images/favicon/apple-icon-120x120.png?3
 欧美音乐|Radio 105 Network [意大利],https://upload.wikimedia.org/wikipedia/it/0/01/105.png
-欧美音乐|Radio 24 il sole 24 ore [意大利],https://www.radio24.ilsole24ore.com/whitelabel/group-2420101401040528/img/apple-touch-icon.png
 欧美音乐|Radio 80 [意大利],https://upload.wikimedia.org/wikipedia/it/1/1b/Radio80.jpg
 欧美音乐|Radio Armisa [意大利],https://armisa.it/assets/favicon/android-chrome-512x512.png
 欧美音乐|Radio Italia Solo Musica Italiana [意大利],https://www.radioitalia.it/images/logo-radioitalia.png
 欧美音乐|- 0 N - 70s on Radio [德国],https://www.0nradio.com/logos/0n-70s_600x600.jpg
 欧美音乐|- 0 N - Classic Rock on Radio [德国],https://www.0nradio.com/logos/0n-classic-rock_600x600.jpg
 欧美音乐|1LIVE [德国],https://www1.wdr.de/radio/1live/resources/img/favicon/apple-touch-icon.png
-欧美音乐|Deutschlandfunk | DLF | MP3 128k [德国],https://www.deutschlandfunk.de/static/img/deutschlandfunk/icons/apple-touch-icon-128x128.png
 欧美音乐|MANGORADIO [德国],https://mangoradio.de/wp-content/uploads/cropped-Logo-192x192.webp
-欧美音乐|SWR3 [德国],https://swr3.de/assets/swr3/icons/apple-touch-icon.png
 欧美音乐|TranceBase.FM - AAC HD 256k [德国],https://www.trancebase.fm/media/icons/trb/apple-touch-icon.png
-欧美音乐|WDR 5 [德国],https://www1.wdr.de/resources-v5.134.1/img/favicon/apple-touch-icon.png
-欧美音乐|Antyradio [波兰],https://gfx.antyradio.pl/design/antyradio/src/images/favicon/favicon_180x180.png
-欧美音乐|ESKA ROCK [波兰],https://static.mytuner.mobi/media/tvos_radios/2LqeyZhdFq.png
-欧美音乐|Radio 357 [波兰],https://radio357.pl/wp-content/uploads/2022/04/c5399c0d-1b8e-43d5-b23b-e5cef1857856.png
-欧美音乐|Radio RMF MAXXX [波兰],https://cdn.onlineradiobox.com/img/l/4/1294.v9.png
-欧美音乐|Radio Zet [波兰],https://gfx.radiozet.pl/extension/radiozet/design/standard/images/favicon/apple-touch-icon.png
-欧美音乐|RMF FM [波兰],https://www.rmf.fm/assets/images/favicon/apple-icon-120x120.png?3
-欧美音乐|TOK FM [波兰],https://static.im-g.pl/im/6/7455/m7455556.gif
+欧美音乐|Rádio Observador [葡萄牙],https://observador.pt/wp-content/themes/observador-child/assets/build/img/favicon.ico
+欧美音乐|RFM [葡萄牙],https://rfmsite-images.azureedge.net/icons/touch-icon-iphone-retina.png
 欧美音乐|Arrow Classic Rock [荷兰],https://www.arrow.nl/wp-content/themes/bones-master/library/images/apple-touch-icon.png
 欧美音乐|Intense Radio - We love Dance 256K [荷兰],https://www.intenseradio.net/wp-content/uploads/2023/09/intense-radio-vierkant-4d-2026.jpg
-欧美音乐|NPO Radio 1 [荷兰],https://upload.wikimedia.org/wikipedia/commons/thumb/d/da/NPO_Radio_1_logo_2014.svg/640px-NPO_Radio_1_logo_2014.svg.png
-欧美音乐|NPO Radio 2 [荷兰],https://upload.wikimedia.org/wikipedia/commons/thumb/f/f4/NPO_Radio_2_logo.svg/640px-NPO_Radio_2_logo.svg.png
-欧美音乐|Rádio Observador [葡萄牙],https://observador.pt/wp-content/themes/observador-child/assets/build/img/favicon.ico
-欧美音乐|Rádio Renascença [葡萄牙],https://rrsite-images.azureedge.net/favicon/apple-touch-icon.png
-欧美音乐|RFM [葡萄牙],https://rfmsite-images.azureedge.net/icons/touch-icon-iphone-retina.png
 欧美音乐|ChroniX Radio Metalcore [加拿大],https://storage.googleapis.com/wzukusers/user-27172421/images/fav-6a63dee4b19e4b57a9038cc5f853f41a/apple-touch-icon-120x120.png?v=fav-6a63dee4b19e4b57a9038cc5f853f41a
+国际新闻·谈话|Radio 24 il sole 24 ore [意大利],https://www.radio24.ilsole24ore.com/whitelabel/group-2420101401040528/img/apple-touch-icon.png
+国际新闻·谈话|CNN [美国],https://www.cnn.com/media/sites/cnn/favicon.ico
+国际新闻·谈话|Fox News Radio [美国],https://static.foxnews.com/radio.foxnews.com/content/uploads/2017/10/default_logo-150x150.png
+国际新闻·谈话|NBC News Radio [美国],https://iscale.iheart.com/catalog/live/6043
+国际新闻·谈话|NPR 24 Hour Program Stream [美国],https://static-assets.npr.org/static/images/favicon/favicon-96x96.png
+国际新闻·谈话|Radio Marti [美国],https://www.radiotelevisionmarti.com/content/responsive/ocb/img/webapp/ico-128x128.png
+国际新闻·谈话|BBC World Service [英国],https://rmp.files.bbci.co.uk/rmp-shared-assets/1.4.0/img/network-logos/national/bbc_world_service_colour.svg
+国际新闻·谈话|LBC UK [英国],https://cdn-radiotime-logos.tunein.com/s220687q.png
+国际新闻·谈话|BFM radio [法国],https://www.radio.fr/images/broadcasts/76/27/105095/3/c300.png
+国际新闻·谈话|Europe 1 [法国],https://www.europe1.fr/build/e1/images/favicon-120x120.png
+国际新闻·谈话|France Inter [法国],https://upload.wikimedia.org/wikipedia/commons/thumb/a/a0/France_Inter_logo_2021.svg/1200px-France_Inter_logo_2021.svg.png
+国际新闻·谈话|RMC FR [法国],https://i1.wp.com/www.mediasportif.fr/wp-content/uploads/2014/05/Radio-RMC.jpg
+国际新闻·谈话|Sud Radio [法国],https://www.sudradio.fr/wp-content/uploads/2019/06/cropped-favicon-180x180.png
+国际新闻·谈话|Deutschlandfunk | DLF | MP3 128k [德国],https://www.deutschlandfunk.de/static/img/deutschlandfunk/icons/apple-touch-icon-128x128.png
+国际新闻·谈话|SWR3 [德国],https://swr3.de/assets/swr3/icons/apple-touch-icon.png
+国际新闻·谈话|WDR 5 [德国],https://www1.wdr.de/resources-v5.134.1/img/favicon/apple-touch-icon.png
+国际新闻·谈话|Cadena SER Radio MADRID [西班牙],https://cadenaser00.epimg.net/favicon.png
+国际新闻·谈话|NPO Radio 1 [荷兰],https://upload.wikimedia.org/wikipedia/commons/thumb/d/da/NPO_Radio_1_logo_2014.svg/640px-NPO_Radio_1_logo_2014.svg.png
+国际新闻·谈话|NPO Radio 2 [荷兰],https://upload.wikimedia.org/wikipedia/commons/thumb/f/f4/NPO_Radio_2_logo.svg/640px-NPO_Radio_2_logo.svg.png
+国际新闻·谈话|TOK FM [波兰],https://static.im-g.pl/im/6/7455/m7455556.gif
+国际新闻·谈话|NPR News,https://static-assets.npr.org/static/images/favicon/favicon-96x96.png

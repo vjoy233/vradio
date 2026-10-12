@@ -26,8 +26,9 @@ const keyOf = s => s.c + '|' + s.n;
 const App = {
   /* 集中状态（docs/review.md 架构-风险 2）：stations 数据 + 渲染哨兵 + 行索引（体检增量更新用，去 O(n²)）
      view：网格/列表视图（boot 从 localStorage 恢复，网格为默认——单列长列表浪费纵向空间）
-     showDead：无效源（体检 ✗）台是否显示，默认隐藏（boot 从 localStorage 恢复） */
-  state: { stations: STARTER.slice(), cat: '全部', keyword: '', view: 'grid', showDead: false, stamp: 0, index: new Map() },
+     showDead：无效源（体检 ✗）台是否显示，默认隐藏（boot 从 localStorage 恢复）
+     theme：auto/light/dark，默认跟随系统（boot 从 localStorage 恢复，写 <html data-theme>） */
+  state: { stations: STARTER.slice(), cat: '全部', keyword: '', view: 'grid', showDead: false, theme: 'auto', stamp: 0, index: new Map() },
   favs: [],    // [{k, u:[源URL…]}] —— 带 URL 的条目永不回收（休眠待回绑），旧名字键回绑失败即刻回收
   recents: [], // [{k, n, u:[…]}] 最近在前、≤20；队首即「上次收听」（E3 与 lastKey 合并为单一队列）
 
@@ -41,9 +42,19 @@ const App = {
     if (last && !rec.some(r => r.k === last)) rec.unshift({ k: last, n: '', u: [] });
     localStorage.removeItem('radio.last');
     this.recents = rec.slice(0, 20).map(r => ({ k: String(r.k), n: r.n || String(r.k).split('|').pop() || '', u: Array.isArray(r.u) ? r.u : [] }));
+    // 死台标记持久化（radio.health）：键 → { u:[源URL快照], t }。TTL 7 天对齐 Logos 负缓存——流地址天然漂移，
+    // 陈年死标不值得永久埋台；✓ 标记不持久化（会话级反馈即可，隐藏只关心死台）
+    let hp; try { hp = JSON.parse(localStorage.getItem('radio.health') || '{}'); } catch (_) { hp = {}; }
+    this.healthMarks = {};
+    for (const k of Object.keys(hp || {})) { const e = hp[k]; if (e && Array.isArray(e.u) && Date.now() - (e.t || 0) < 7 * 86400000) this.healthMarks[k] = e; }
   },
   saveFavs() { localStorage.setItem('radio.favs', JSON.stringify(this.favs)); },
   saveRecents() { localStorage.setItem('radio.recents', JSON.stringify(this.recents)); },
+  saveHealth() { // FIFO 500 封顶防膨胀（全量体检标死几百台的场景）
+    const keys = Object.keys(this.healthMarks).sort((a, b) => (this.healthMarks[a].t || 0) - (this.healthMarks[b].t || 0));
+    while (keys.length > 500) delete this.healthMarks[keys.shift()];
+    try { localStorage.setItem('radio.health', JSON.stringify(this.healthMarks)); } catch (_) {}
+  },
 
   /* ---------- 列表解析：radio.txt（"分类,#genre#" 分节 + 名字,地址 行）与 m3u（#EXTINF + URL 行）双格式 ---------- */
   parse(text) {
@@ -120,6 +131,17 @@ const App = {
     this.recents = this.recents.map(r => { const st = find(r); return st ? { k: keyOf(st), n: st.n, u: st.u.slice(0, 6) } : r; })
       .filter(r => { if (seen.has(r.k)) return false; seen.add(r.k); return r.u.length || this.state.stations.some(s => keyOf(s) === r.k); })
       .slice(0, 20);
+    // 死台标记按 URL 身份回绑（上游改名/换分类后仍对得上）：命中即 s.health='dead'（刷新后依然默认隐藏），
+    // 键与 URL 快照随之刷新；对不上当前列表的休眠保留待 TTL 过期
+    const hm = {};
+    for (const k of Object.keys(this.healthMarks)) {
+      const e = this.healthMarks[k];
+      const st = this.state.stations.find(s => keyOf(s) === k)
+        || (e.u.length && this.state.stations.find(s => s.u.some(u => e.u.includes(u))));
+      if (st) { st.health = 'dead'; hm[keyOf(st)] = { u: st.u.slice(0, 6), t: e.t }; }
+      else hm[k] = e;
+    }
+    this.healthMarks = hm; this.saveHealth();
     this.saveFavs(); this.saveRecents();
   },
   favKeys() { return new Set(this.favs.map(f => f.k)); },
@@ -210,10 +232,12 @@ const App = {
     }).join('') || this.emptyHtml();
     restore();
   },
-  /* 体检增量落库（sync.js 调用）：stamp 未变时顺手更新该行 DOM，否则只落数据由结束时的兜底 render 收口（P3-13） */
+  /* 体检增量落库（sync.js 调用）：stamp 未变时顺手更新该行 DOM，否则只落数据由结束时的兜底 render 收口（P3-13）。
+     死台标记同步持久化（radio.health）；复活即撤销标记，体检结束的兜底 render 会让它回归列表 */
   patchHealth(s, ok, stamp) {
     s.health = ok ? 'ok' : 'dead';
-    if (!ok) $('deadBtn').hidden = false; // 首个死台出现即亮「无效源」开关（增量路径没有整表 render）
+    if (ok) { if (this.healthMarks[keyOf(s)]) { delete this.healthMarks[keyOf(s)]; this.saveHealth(); } }
+    else { this.healthMarks[keyOf(s)] = { u: s.u.slice(0, 6), t: Date.now() }; this.saveHealth(); $('deadBtn').hidden = false; } // 首个死台出现即亮开关
     if (this.state.stamp !== stamp) return;
     const row = $('list').querySelector(`[data-i="${this.state.index.get(s)}"]`); // 行/卡片通用
     if (!row) return;
@@ -336,6 +360,21 @@ const App = {
     $('deadBtn').onclick = () => { this.state.showDead = !this.state.showDead; localStorage.setItem('radio.showdead', this.state.showDead ? '1' : '0'); syncDead(); this.render(); };
     this.state.showDead = localStorage.getItem('radio.showdead') === '1'; // 默认隐藏无效台
     syncDead();
+
+    // 主题：🌓 跟随系统（默认）→ ☀️ 浅色 → 🌙 深色 循环，持久化 radio.theme；
+    // 生效值写 <html data-theme>，浅色变量只认它（auto 由 matchMedia 实时换算，系统切换即时跟随）
+    const mq = matchMedia('(prefers-color-scheme: light)');
+    const themeName = { auto: '跟随系统', light: '浅色', dark: '深色' };
+    const applyTheme = () => {
+      document.documentElement.dataset.theme = this.state.theme === 'auto' ? (mq.matches ? 'light' : 'dark') : this.state.theme;
+      $('themeBtn').textContent = { auto: '🌓', light: '☀️', dark: '🌙' }[this.state.theme];
+      $('themeBtn').setAttribute('aria-label', '主题：' + themeName[this.state.theme] + '，点击切换');
+      $('themeBtn').title = '主题：' + themeName[this.state.theme] + '（点击循环：跟随系统 → 浅色 → 深色）';
+    };
+    this.state.theme = ['auto', 'light', 'dark'].includes(localStorage.getItem('radio.theme')) ? localStorage.getItem('radio.theme') : 'auto';
+    $('themeBtn').onclick = () => { this.state.theme = { auto: 'light', light: 'dark', dark: 'auto' }[this.state.theme]; localStorage.setItem('radio.theme', this.state.theme); applyTheme(); };
+    mq.addEventListener('change', () => { if (this.state.theme === 'auto') applyTheme(); });
+    applyTheme();
 
     // 台标：缓存 + 数据文件（http 下才有后端/代理）
     Logos.load();

@@ -32,7 +32,7 @@ const App = {
   rowIdx: 0, // 方向键导航落点（UI 审计 P2-5）：roving tabindex——仅此行 tabindex=0，Tab 不再穿全库停靠点
   favs: [],    // [{k, u:[源URL…]}] —— 带 URL 的条目永不回收（休眠待回绑），旧名字键回绑失败即刻回收
   recents: [], // [{k, n, u:[…]}] 最近在前、≤20；队首即「上次收听」（E3 与 lastKey 合并为单一队列）
-  cfg: null,   // 个人维护层（radio.cfg，owner 三批拍板）：分类重命名/隐藏/自建 + 电台移动/重命名/隐藏。
+  cfg: null,   // 个人维护层（radio.cfg，owner 三批拍板）：分类重命名/隐藏/自建 + 电台移动/重命名/隐藏 + 追加备选源（P1-a/r2 ⑨）。
                // 键 = 源 URL（身份公理），同步重建后自动复用；tag = URL→原始台名快照，仅供失配清单显示
   songFor: '', lastSong: '', // 曲讯（B-6/B-7）：songFor=曲讯归属台（切台即清零重取）；lastSong=最近一次拿到的曲名（换歌时旧歌入史）
 
@@ -71,6 +71,9 @@ const App = {
     c.renames = this.normStrMap(c.renames, true);                                                // 分类名 → 分类名（键非 URL，不做 URL 过滤）
     const urlKeys = m => Object.fromEntries(Object.entries(m).filter(([k]) => /^https?:\/\//.test(k)));
     c.hideS = c.hideS && typeof c.hideS === 'object' ? urlKeys(c.hideS) : {};                   // URL → 1（手藏电台）
+    // 追加备选源（P1-a/r2 ⑨）：URL → [追加源 URL…]。条数 6 / 单条 512 封顶对齐 mystation 护栏口径；只追加不动身份
+    const urlArrMap = m => { const o = {}; for (const [k, v] of Object.entries(m || {})) if (/^https?:\/\//.test(k) && Array.isArray(v)) { const a = [...new Set(v.map(x => String(x).trim().slice(0, 512)).filter(x => /^https?:\/\//.test(x)))].slice(0, 6); if (a.length) o[k.trim()] = a; } return o; };
+    c.srcs = urlArrMap(c.srcs);
     const strKeys = m => Object.fromEntries(Object.entries(m).filter(([k, v]) => typeof k === 'string' && k.trim() && v !== null && v !== false));
     c.hideC = c.hideC && typeof c.hideC === 'object' ? strKeys(c.hideC) : {};                   // 分类名 → 1（藏分类）
     if (!Array.isArray(c.cats)) c.cats = [];
@@ -123,17 +126,17 @@ const App = {
       else { byKey.set(keyOf(s), s); byName.add(s.n); }
     }
     this.state.stations = [...byKey.values()];
-    for (const s of this.state.stations) { s.dCat = s.c; s.dName = s.n; } // 同步默认口径留底（面板 ↺恢复/撤回移动用）
+    for (const s of this.state.stations) { s.dCat = s.c; s.dName = s.n; s.dU = s.u.slice(); } // 同步默认口径留底（面板 ↺恢复/撤回移动/撤回追加源用）
     this.applyCfg(); // 维护层最后套用（覆盖分类/台名/隐藏，收藏随后按 URL 回绑不受影响）
     this.rebind(); // 收藏/最近按 URL 回绑（债务 1）
     this.rebind(); this.render();
     if (!Player.station) this.showLast();
   },
-  /* 维护层套用：电台移动/重命名/手动隐藏按「任一源 URL 命中」（变体换序免疫）；
+  /* 维护层套用：电台移动/重命名/手动隐藏/追加源按「任一源 URL 命中」（变体换序免疫）；
      手动隐藏 = 彻底消失（全部/收藏/搜索/体检一律不可见，owner 拍板无正在播例外——手动是明确意图，
      与死台隐藏的「正在播例外」口径不同）；分类重命名最后映射（移动目标在改名时已级联改写） */
   applyCfg() {
-    const { moves, names, hideS, renames } = this.cfg;
+    const { moves, names, hideS, renames, srcs } = this.cfg;
     for (const s of this.state.stations) {
       s.hidden = false;
       for (const u of s.u) {
@@ -141,11 +144,17 @@ const App = {
         if (moves[u]) s.c = moves[u];
         if (names[u]) s.n = names[u];
       }
+      // 追加备选源（P1-a/r2 ⑨）：只挂到台尾——绝不插前/改删原源（s.u[0] 是 srcmem/收藏/健康标记的身份键，
+      // 动了四处回绑全断）；先收集后 push，避免遍历中修改 s.u。variants()/srcmem 天然吃新序列，无需另行接线
+      const add = [];
+      for (const u of s.u) { const a = srcs[u]; if (a) for (const x of a) if (!s.u.includes(x) && !add.includes(x)) add.push(x); }
+      if (add.length) s.u.push(...add);
       if (renames[s.c]) s.c = renames[s.c];
     }
   },
-  reapplyCfg() { // 面板改动后即时生效：回滚到装配默认再重套，并重走回绑/分类条/渲染/面板自身
-    for (const s of this.state.stations) { if (s.dCat !== undefined) { s.c = s.dCat; s.n = s.dName; } }
+  reapplyCfg() { // 面板改动后即时生效：回滚到装配默认再重套，并重走回绑/分类条/渲染/面板自身。
+    // u 也随留底回滚——追加源每次从 cfg 重放，撤除/移除即刻生效（P1-a）
+    for (const s of this.state.stations) { if (s.dCat !== undefined) { s.c = s.dCat; s.n = s.dName; s.u = s.dU.slice(); } }
     this.applyCfg();
     this.rebind(); this.render(); this.renderManage();
   },
@@ -648,14 +657,15 @@ const App = {
   },
   cfgResetStation(s) {
     for (const u of s.u) { delete this.cfg.moves[u]; delete this.cfg.names[u]; delete this.cfg.hideS[u]; delete this.cfg.tag[u]; } // tag 只在失配清单用，恢复默认即清（防只增不减）
+    for (const k of Object.keys(this.cfg.srcs)) if (s.u.includes(k)) delete this.cfg.srcs[k]; // 追加源一并撤（键=任一源 URL，均在此台 s.u 内）
     this.saveCfg(); this.reapplyCfg();
   },
 
-  /* —— 失配清单：moves/names/hideS 的键没命中任何当前台的源 URL = 上游 URL 漂移（欧美台同步重建常见） —— */
+  /* —— 失配清单：moves/names/hideS/srcs 的键没命中任何当前台的源 URL = 上游 URL 漂移（欧美台同步重建常见） —— */
   missList() {
     const used = new Set(); for (const s of this.state.stations) for (const u of s.u) used.add(u);
     const bad = [];
-    for (const [m, kind] of [[this.cfg.moves, '移动'], [this.cfg.names, '改名'], [this.cfg.hideS, '隐藏']])
+    for (const [m, kind] of [[this.cfg.moves, '移动'], [this.cfg.names, '改名'], [this.cfg.hideS, '隐藏'], [this.cfg.srcs, '备源']])
       for (const u of Object.keys(m)) if (!used.has(u)) bad.push({ u, kind, name: this.cfg.tag[u] || u.replace(/^https?:\/\//, '').slice(0, 40) });
     return bad;
   },
@@ -665,7 +675,7 @@ const App = {
   },
 
   /* —— 配置导入导出（owner 拍板：只含维护层；收藏另有 m3u 导出）—— */
-  cfgCount(c) { return Object.keys(c.moves).length + Object.keys(c.names).length + Object.keys(c.hideS).length + Object.keys(c.renames).length + Object.keys(c.hideC).length + c.cats.length; },
+  cfgCount(c) { return Object.keys(c.moves).length + Object.keys(c.names).length + Object.keys(c.hideS).length + Object.keys(c.renames).length + Object.keys(c.hideC).length + Object.keys(c.srcs).length + c.cats.length; },
   exportCfg() {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify({ v: 1, cfg: this.cfg }, null, 2)], { type: 'application/json' }));
@@ -806,7 +816,7 @@ const App = {
     this.loadCfg();
     // file:// 降级模式（reloadMain 必失败）下 stations 停留在 STARTER、不走 applySources 的留底循环——
     // 此处补快照，否则维护面板「电台」页读 s.dName 直接抛错（渲染处另有 || 兜底双保险）
-    for (const s of this.state.stations) { if (s.dCat === undefined) { s.dCat = s.c; s.dName = s.n; } }
+    for (const s of this.state.stations) { if (s.dCat === undefined) { s.dCat = s.c; s.dName = s.n; s.dU = s.u.slice(); } }
     $('manageBtn').onclick = () => this.manageOpen();
     $('mClose').onclick = () => this.manageClose();
     $('manage').onclick = e => { if (e.target === $('manage')) this.manageClose(); }; // 点遮罩关闭
@@ -861,7 +871,7 @@ const App = {
     };
     $('mMiss').onclick = e => {
       if (!e.target.closest('[data-act="missclear"]')) return;
-      for (const b of this.missList()) { delete this.cfg.moves[b.u]; delete this.cfg.names[b.u]; delete this.cfg.hideS[b.u]; delete this.cfg.tag[b.u]; }
+      for (const b of this.missList()) { delete this.cfg.moves[b.u]; delete this.cfg.names[b.u]; delete this.cfg.hideS[b.u]; delete this.cfg.srcs[b.u]; delete this.cfg.tag[b.u]; }
       this.saveCfg(); this.renderManage();
     };
     $('mExport').onclick = () => this.exportCfg();

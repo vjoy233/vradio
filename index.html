@@ -100,6 +100,11 @@
   #mq { width:100%; margin:10px 0 4px; background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:8px; padding:7px 12px; outline:none; font:inherit; }
   #mq:focus { border-color:var(--acc); }
   .mrow select { background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:4px 6px; font:inherit; font-size:12px; max-width:9em; }
+  /* 添加自定义电台（A-2）：面板电台页顶部表单，先探活（拒绝假流/死链）再写入 my-radio.txt（持久层，区别于 cfg 显示层） */
+  #mAdd { display:flex; gap:6px; padding:10px 14px 0; flex-wrap:wrap; }
+  #mAdd input { flex:1; min-width:110px; background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:6px 8px; outline:none; font:inherit; font-size:12px; }
+  #mAdd input:focus { border-color:var(--acc); }
+  #mAdd select { background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:6px; font:inherit; font-size:12px; max-width:9em; }
   .mfoot { display:flex; gap:8px; justify-content:flex-end; padding:10px 14px; border-top:1px solid var(--line); }
 </style>
 </head>
@@ -143,6 +148,12 @@
     <div id="mMiss"></div>
     <div id="mCats"></div>
     <div id="mStations" hidden>
+      <div id="mAdd">
+        <input id="mAName" type="text" maxlength="40" placeholder="电台名（如：我的私藏台）" aria-label="电台名">
+        <input id="mAUrl" type="url" placeholder="流地址 http(s)://…（mp3/aac 直流）" aria-label="流地址">
+        <select id="mACat" aria-label="分类"></select>
+        <button class="btn" id="mAddBtn">＋ 添加</button>
+      </div>
       <input id="mq" type="search" placeholder="搜索要维护的电台（含已隐藏），如：动感 / CNN / 戏曲" aria-label="搜索电台">
       <div id="mlist" role="list"></div>
     </div>

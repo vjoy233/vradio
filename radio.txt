@@ -1503,7 +1503,9 @@ Ambient Sleeping Pill [美国],http://radio.stereoscenic.com/asp-h
 Bassdrive [美国],http://stream.bassdrive.uk:8200/
 Big R Radio - 80s Metal FM [美国],http://bigrradio.cdnstream1.com/5186_128
 Christmas Vinyl HD [美国],https://icecast.walmradio.com:8443/christmas
+Christmas Vinyl HD Opus [美国],https://icecast.walmradio.com:8443/christmas_opus
 CLASSIC HITS RADIO 70 80 DiscoFunk ModernSoul Boogie [美国],https://radiopanther.radiolebowski.com/play
+Classic Vinyl HD Opus [美国],https://icecast.walmradio.com:8443/classic_opus
 CNN [美国],https://tunein.cdnstream1.com/2868_96.mp3
 Cryosleep [美国],http://streams.echoesofbluemars.org:8000/cryosleep
 Fox News Radio [美国],https://live.amperwave.net/direct/foxnewsradio-foxnewsradioaac-imc?source=fnr.web
@@ -1529,33 +1531,12 @@ SomaFM Space Station Soma (128k AAC) [美国],https://ice5.somafm.com/spacestati
 SomaFM Underground 80s (128k MP3) [美国],https://ice5.somafm.com/u80s-128-mp3
 The Big 80s Station [美国],http://158.69.114.190:8065/;
 The Jazz Groove - East [美国],http://east-mp3-128.streamthejazzgroove.com/stream
-WALM HD [美国],https://icecast.walmradio.com:8443/walm
+VOA Chinese Radio [美国],http://voa-ingest.akamaized.net/hls/live/2035206/151_124L/playlist.m3u8
+WALM - Old Time Radio Opus [美国],https://icecast.walmradio.com:8443/otr_opus
+WALM 2 HD [美国],https://icecast.walmradio.com:8443/walm2
 WEOW FM 92.7 [美国],http://ice42.securenetsystems.net/WEOW
 Your Classical - Relax [美国],http://relax.stream.publicradio.org/relax.mp3
 Z 92 (Miami) - 92.3 FM - WCMQ-FM - Spanish Broadcasting System - Miami  Florida [美国],https://liveaudio.lamusica.com/MIA_WCMQ_icy
-100% Radio 80 [法国],http://100radio-80.ice.infomaniak.ch/100radio-80-128.mp3
-100% Radio Hit [法国],http://100radio-hit.ice.infomaniak.ch/100radio-hit-128.mp3
-BFM radio [法国],https://audio.bfmtv.com/bfmradio_128.mp3
-Chante France [法国],http://stream.chantefrance.com/Chante_France
-Chante France 80's [法国],http://stream1.chantefrance.com/cf-80
-EuroDance 90 radio [法国],https://stream-eurodance90.fr/radio/8000/128.mp3?1627933323
-Europe 1 [法国],https://stream.europe1.fr/europe1.aac
-Generations R&B [法国],http://generationfm-slowjam.ice.infomaniak.ch/generationfm-slowjam-high.mp3
-Jazz Radio [法国],http://jazzradio.ice.infomaniak.ch/jazzradio-high.mp3
-Jazz Radio Blues [法国],http://jazzblues.ice.infomaniak.ch/jazzblues-high.mp3
-Jazz Radio Classic Jazz [法国],http://jazz-wr01.ice.infomaniak.ch/jazz-wr01-128.mp3
-Jazz Radio Funk [法国],http://jazz-wr06.ice.infomaniak.ch/jazz-wr06-128.mp3
-Jazz Radio Only Women [法国],http://jazz-wr16.ice.infomaniak.ch/jazz-wr16-128.mp3
-La Grosse Radio Métal [法国],http://hd.lagrosseradio.info/lagrosseradio-metal-192.mp3
-La Grosse Radio Reggae [法国],http://hd.lagrosseradio.info/lagrosseradio-reggae-192.mp3
-Latina Reggaeton [法国],http://latinareggaeton.ice.infomaniak.ch/latinareggaeton.mp3
-Latina Salsa [法国],http://latinasalsa.ice.infomaniak.ch/latinasalsa.mp3
-Radio Meuh [法国],http://radiomeuh.ice.infomaniak.ch/radiomeuh-128.mp3
-Radio Nova [法国],http://novazz.ice.infomaniak.ch/novazz-128.mp3
-RFM [法国],http://stream.rfm.fr/rfm.mp3
-RMC FR [法国],https://audio.bfmtv.com/rmcradio_128.mp3
-Skyrock [法国],http://icecast.skyrock.net/s/natio_mp3_128k
-Sud Radio [法国],https://ice.creacast.com/sudradio
 BBC World Service [英国],http://stream.live.vc.bbcmedia.co.uk/bbc_world_service
 BBC World Service [英国],https://stream.live.vc.bbcmedia.co.uk/bbc_world_service
 Capital FM London [英国],http://media-ice.musicradio.com/CapitalMP3
@@ -1578,10 +1559,33 @@ Smooth Chill [英国],https://media-ssl.musicradio.com/ChillMP3
 Smooth Radio [英国],http://media-the.musicradio.com/SmoothEastMids
 TMM 1 [英国],https://listen-msmn.sharp-stream.com/nme1.mp3
 TMM 2 [英国],https://listen-msmn.sharp-stream.com/nme2.mp3
+100% Radio 80 [法国],http://100radio-80.ice.infomaniak.ch/100radio-80-128.mp3
+100% Radio Hit [法国],http://100radio-hit.ice.infomaniak.ch/100radio-hit-128.mp3
+BFM radio [法国],https://audio.bfmtv.com/bfmradio_128.mp3
+Chante France 80's [法国],http://stream1.chantefrance.com/cf-80
+EuroDance 90 radio [法国],https://stream-eurodance90.fr/radio/8000/128.mp3?1627933323
+Europe 1 [法国],https://stream.europe1.fr/europe1.aac
+Generations R&B [法国],http://generationfm-slowjam.ice.infomaniak.ch/generationfm-slowjam-high.mp3
+Jazz Radio [法国],http://jazzradio.ice.infomaniak.ch/jazzradio-high.mp3
+Jazz Radio Blues [法国],http://jazzblues.ice.infomaniak.ch/jazzblues-high.mp3
+Jazz Radio Classic Jazz [法国],http://jazz-wr01.ice.infomaniak.ch/jazz-wr01-128.mp3
+Jazz Radio Funk [法国],http://jazz-wr06.ice.infomaniak.ch/jazz-wr06-128.mp3
+Jazz Radio Only Women [法国],http://jazz-wr16.ice.infomaniak.ch/jazz-wr16-128.mp3
+La Grosse Radio Métal [法国],http://hd.lagrosseradio.info/lagrosseradio-metal-192.mp3
+La Grosse Radio Reggae [法国],http://hd.lagrosseradio.info/lagrosseradio-reggae-192.mp3
+Latina Reggaeton [法国],http://latinareggaeton.ice.infomaniak.ch/latinareggaeton.mp3
+Latina Salsa [法国],http://latinasalsa.ice.infomaniak.ch/latinasalsa.mp3
+Radio Meuh [法国],http://radiomeuh.ice.infomaniak.ch/radiomeuh-128.mp3
+Radio Nova [法国],http://novazz.ice.infomaniak.ch/novazz-128.mp3
+RFM [法国],http://stream.rfm.fr/rfm.mp3
+RMC FR [法国],https://audio.bfmtv.com/rmcradio_128.mp3
+Skyrock [法国],http://icecast.skyrock.net/s/natio_mp3_128k
+Sud Radio [法国],https://ice.creacast.com/sudradio
 _80 EXITOS [西班牙],https://80sexitos.stream.laut.fm/80sexitos
 1000 HITS 80s [西班牙],http://c2.auracast.net:8048/stream
 Cadena 100 [西班牙],http://cadena100-streamers-mp3.flumotion.com/cope/cadena100.mp3
 Cadena Dial [西班牙],http://playerservices.streamtheworld.com/api/livestream-redirect/CADENADIAL.mp3
+Cadena SER España [西班牙],http://playerservices.streamtheworld.com/api/livestream-redirect/CADENASER.mp3
 Cadena SER Radio MADRID [西班牙],http://server7.20comunicacion.com:8040/
 Chocolate FM [西班牙],http://streaming5.elitecomunicacion.es:8082/live.mp3
 Chocolate FM [calidad móvil-low bandwidth] [西班牙],http://streaming5.elitecomunicacion.es:8082/live32.aac
@@ -1603,7 +1607,6 @@ Radio 24 il sole 24 ore [意大利],http://shoutcast2.radio24.it:8000/;
 Radio 80 [意大利],http://str01.fluidstream.net:7020/;stream.mp3
 Radio Armisa [意大利],https://onair.armisa.it/listen/armisa/radio.mp3
 Radio Italia Solo Musica Italiana [意大利],https://radioitaliasmi.akamaized.net/hls/live/2093120/RISMI/stream01/streamPlaylist.m3u8
-Rai Radio 1 [意大利],http://icestreaming.rai.it/1.mp3
 Rai Radio 3 [意大利],http://icestreaming.rai.it/3.mp3
 RMC 80 [意大利],http://edge.radiomontecarlo.net/rmcweb008
 RMC Radio Monte Carlo [意大利],http://icecast.unitedradio.it/RMC.mp3
@@ -1611,6 +1614,7 @@ Tele Radio Stereo [意大利],http://trsw.inmystream.info:8068/;stream.mp3
 Virgin Radio Classic Rock [意大利],http://icy.unitedradio.it/VirginRockClassics.mp3
 Virgin Radio Hard Rock [意大利],http://icy.unitedradio.it/VirginHardRock.mp3
 Virgin Radio Italia [意大利],http://icecast.unitedradio.it/Virgin.mp3
+Virgin Radio Rock '70 [意大利],http://icy.unitedradio.it/VirginRock70.mp3
 Virgin Radio Rock '80 [意大利],http://icy.unitedradio.it/VirginRock80.mp3
 - 0 N - 70s on Radio [德国],https://0n-70s.radionetz.de/0n-70s.mp3
 - 0 N - Classic Rock on Radio [德国],https://0n-classicrock.radionetz.de/0n-classicrock.mp3
@@ -1630,7 +1634,6 @@ Antyradio [波兰],https://n-4-2.dcs.redcdn.pl/sc/o2/Eurozet/live/antyradio.livx
 ESKA ROCK [波兰],https://ic2.smcdn.pl/5380-1.mp3#ESKA_ROCK
 Radio 357 [波兰],https://n-11-21.dcs.redcdn.pl/sc/o2/radio357/live/radio357_pr.livx?preroll=0
 Radio RMF MAXXX [波兰],https://rs9-krk2-cyfronet.rmfstream.pl/RMFMAXXX48
-Radio Zet [波兰],http://zet-net-01.cdn.eurozet.pl:8400/
 Radio ZET [波兰],https://r.dcs.redcdn.pl/sc/o2/Eurozet/live/audio.livx?audio=5
 Radioparty.pl Dj Mixes Party [波兰],http://djmixes.radioparty.pl:8035/
 RMF 90s [波兰],http://31.192.216.7/90S
@@ -1656,6 +1659,7 @@ NPO Radio 1 [荷兰],http://icecast.omroep.nl/radio1-bb-mp3
 NPO Radio 2 [荷兰],http://icecast.omroep.nl/radio2-bb-mp3
 ORBITAL [葡萄牙],http://centova.radios.pt:8401/;listen.pls
 Rádio Observador [葡萄牙],http://195.23.85.126:8455/stream
+Rádio Renascença [葡萄牙],http://22653.live.streamtheworld.com/RADIO_RENASCENCA_SC
 RFM [葡萄牙],https://23603.live.streamtheworld.com/RFMAAC.aac
 ChroniX Radio Metalcore [加拿大],http://usa17.fastcast4u.com:5508/stream
 REGGAE CHILL CAFE [加拿大],https://maggie.torontocast.com:2020/stream/reggaechillcafe

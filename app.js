@@ -33,6 +33,7 @@ const App = {
   recents: [], // [{k, n, u:[…]}] 最近在前、≤20；队首即「上次收听」（E3 与 lastKey 合并为单一队列）
   cfg: null,   // 个人维护层（radio.cfg，owner 三批拍板）：分类重命名/隐藏/自建 + 电台移动/重命名/隐藏。
                // 键 = 源 URL（身份公理），同步重建后自动复用；tag = URL→原始台名快照，仅供失配清单显示
+  songFor: '', lastSong: '', // 曲讯（B-6/B-7）：songFor=曲讯归属台（切台即清零重取）；lastSong=最近一次拿到的曲名（换歌时旧歌入史）
 
   /* ---------- 持久化（localStorage 全部容错读取 + 旧格式迁移） ---------- */
   loadStore() {
@@ -211,7 +212,7 @@ const App = {
   },
   showLast() {
     const s = this.recents[0] && this.resolve(this.recents[0]);
-    $('now').textContent = s ? '上次收听：' + s.n : '未在播放';
+    $('nowline').textContent = s ? '上次收听：' + s.n : '未在播放';
   },
 
   /* ---------- 渲染（唯一入口）：网格 = 精简卡片 / 列表 = 两行详情（元信息行含「正在播」节目） ---------- */
@@ -331,9 +332,33 @@ const App = {
   /* 底部栏刷新（Player.onstate 用）：当前台名 + 播放/暂停态 + 均衡器动画 */
   playerNow() {
     const s = Player.station;
-    if (s) { $('now').textContent = '▶ ' + s.n; $('pp').textContent = (Player.connecting || !Player.isPaused()) ? '⏸' : '▶'; }
-    else { $('pp').textContent = '▶'; this.showLast(); }
+    if (s) {
+      const k = keyOf(s);
+      if (this.songFor !== k) { // 切台：曲讯清零（新台从零取，旧曲名不得串台）
+        this.songFor = k; this.lastSong = '';
+        $('song').hidden = true; $('song').textContent = '';
+      }
+      $('nowline').textContent = '▶ ' + s.n; $('pp').textContent = (Player.connecting || !Player.isPaused()) ? '⏸' : '▶';
+    } else { $('pp').textContent = '▶'; this.showLast(); $('song').hidden = true; }
     $('eq').classList.toggle('on', !!s && !Player.isPaused()); // 均衡器动画（E6）：活着且在播
+  },
+
+  /* ---------- 曲讯（B-6）：轮询 /api/nowplaying 取正在播台的 ICY 曲名 ----------
+     只对「正在播 + 未暂停 + 页面可见」的台取（http 形态）；m3u8 结构性无 ICY 不空耗探活；
+     换歌时旧曲名入史（B-7）+ 曲名写 MediaSession（锁屏同步显示） */
+  async tickSong() {
+    const s = Player.station;
+    if (!s || Player.isPaused() || document.hidden || !location.protocol.startsWith('http')) return;
+    const raw = Player.curUrl;
+    if (!raw || /\.m3u8(\?|$)/.test(raw)) return;
+    let j;
+    try { j = await fetch('/api/nowplaying?url=' + encodeURIComponent(raw)).then(x => x.json()); } catch (_) { return; }
+    const t = (j && j.title) || '';
+    if (!Player.station || keyOf(Player.station) !== this.songFor) return; // 轮询期间切台：丢弃过期结果
+    if (t === this.lastSong) return;
+    if (this.lastSong && t) this.pushSongHist(keyOf(s), this.lastSong); // 换歌：旧歌入史（B-7）
+    this.lastSong = t;
+    if (t) { $('song').textContent = '♪ ' + t; $('song').hidden = false; Player.setSong(t); }
   },
 
   /* ---------- 收藏导出/导入（Tier 1 E4）：导出 = 带 #VRADIO:FAV 标记的 m3u（通用播放器可读），
@@ -537,6 +562,10 @@ const App = {
       if (ms > 0) { const s = Math.ceil(ms / 1000); b.textContent = '😴 ' + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); b.title = '睡眠定时进行中，点击取消'; }
       else { b.textContent = '😴'; b.title = '睡眠定时：点击设置 15/30/60 分钟'; }
     };
+
+    // 曲讯轮询（B-6）：15s 常驻轮（条件不满足时空转不发包）；页面重新可见时立刻补一轮
+    setInterval(() => this.tickSong(), 15000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) this.tickSong(); });
 
     // 搜索：120ms 防抖，避免 1600+ 行列表每键整表重渲；Esc 清空；任意位置按 / 聚焦
     let timer = 0;

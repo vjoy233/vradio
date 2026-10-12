@@ -149,7 +149,7 @@ const App = {
     const restore = this.keepFocus($('cats'), 'c');
     const present = new Set(this.state.stations.map(s => s.c));
     const order = ['音乐', '欧美音乐']; // 音乐场景置顶
-    const cats = ['全部', '★收藏', ...order.filter(c => present.has(c)), ...[...present].filter(c => !order.includes(c))];
+    const cats = ['全部', '★收藏', '最近', ...order.filter(c => present.has(c)), ...[...present].filter(c => !order.includes(c))];
     if (!cats.includes(this.state.cat)) this.state.cat = '全部'; // 数据更新后分类可能消失，回退全部
     // 互斥单选语义用 aria-current（aria-pressed 是独立开关语义，不适用）
     $('cats').innerHTML = cats.map(c => `<button type="button" class="chip${c === this.state.cat ? ' on' : ''}" data-c="${this.esc(c)}"${c === this.state.cat ? ' aria-current="true"' : ''}>${this.esc(c)}</button>`).join('');
@@ -157,6 +157,12 @@ const App = {
   },
   visible() {
     const st = this.state, kw = st.keyword.toLowerCase(), favs = this.favKeys();
+    if (st.cat === '最近') { // 最近播放（E3）：按 recents 队序（键或 URL 回绑解析），上限 20
+      const rec = new Map(this.recents.slice(0, 20).map((r, i) => [r, i]));
+      const hits = [];
+      for (const r of rec.keys()) { const s = this.resolve(r); if (s && (!kw || s.n.toLowerCase().includes(kw))) hits.push(s); }
+      return hits;
+    }
     return st.stations.filter(s =>
       (st.cat === '全部' || (st.cat === '★收藏' ? favs.has(keyOf(s)) : s.c === st.cat)) &&
       (!kw || s.n.toLowerCase().includes(kw)));
@@ -165,6 +171,7 @@ const App = {
   esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); },
   emptyHtml() { // 空态给出原因和下一步动作
     const msg = this.state.cat === '★收藏' && !this.favs.length ? '还没有收藏电台——点电台左侧 ☆ 即可收藏'
+      : this.state.cat === '最近' && !this.recents.length ? '还没有播放记录——点任意电台即开始收听'
       : this.state.keyword ? `没有匹配「${this.esc(this.state.keyword)}」的电台，换个关键词试试` : '该分类暂无电台';
     return `<div class="empty">${msg}</div>`;
   },
@@ -178,7 +185,7 @@ const App = {
     $('list').innerHTML = list.map((s, i) => {
       const k = keyOf(s), on = favs.has(k), playing = k === pk;
       const hp = s.health ? `<span class="health ${s.health === 'ok' ? 'ok' : 'bad'}" title="体检${s.health === 'ok' ? '可用' : '不可用'}">${s.health === 'ok' ? '✓' : '✗'}</span>` : '';
-      return `<div class="row${playing ? ' playing' : ''}${k === ck ? ' connecting' : ''}${s.health === 'dead' ? ' dead' : ''}" data-k="${this.esc(k)}" data-i="${i}" role="button" tabindex="0" aria-label="${this.esc(s.n)}${playing ? '（播放中）' : ''}"${playing ? ' aria-current="true"' : ''}${s.health === 'dead' ? ' title="体检不可用，点击仍可尝试播放"' : ''}>
+      return `<div class="row${playing ? ' playing' : ''}${k === ck ? ' connecting' : ''}${s.health === 'dead' ? ' dead' : ''}" data-k="${this.esc(k)}" data-i="${i}" role="listitem" tabindex="0" aria-label="${this.esc(s.n)}${playing ? '（播放中）' : ''}"${playing ? ' aria-current="true"' : ''}${s.health === 'dead' ? ' title="体检不可用，点击仍可尝试播放"' : ''}>
         <button type="button" class="fav${on ? ' on' : ''}" data-fav="${this.esc(k)}" aria-pressed="${on}" aria-label="${on ? '取消收藏' : '收藏'}：${this.esc(s.n)}" title="${on ? '取消收藏' : '收藏'}">${on ? '★' : '☆'}</button>
         <span class="name">${this.esc(s.n)}</span>${hp}
         <span class="badge">${this.esc(s.c)}</span><span class="srcs" title="备选源数量">${s.u.length}源</span></div>`;
@@ -204,7 +211,24 @@ const App = {
       return;
     }
     this.remember(s);
+    if (this.state.cat === '最近') this.render(); // 最近队列头插后刷新顺序
     Player.play(s);
+  },
+
+  /* ---------- 收藏导出/导入（Tier 1 E4）：导出 = 带 #VRADIO:FAV 标记的 m3u（通用播放器可读），
+     导回同文件时恢复收藏态；round-trip 即天然回归用例（docs/review.md G 组） ---------- */
+  exportFavs() {
+    const favs = this.favKeys();
+    const list = this.state.stations.filter(s => favs.has(keyOf(s)));
+    if (!list.length) { $('status').textContent = '还没有收藏，先点 ☆ 收藏再导出'; return; }
+    const lines = ['#EXTM3U', '#VRADIO:FAV'];
+    for (const s of list) for (const u of s.u)
+      lines.push(`#EXTINF:-1 group-title="${this.esc(s.c).replace(/"/g, '')}",${s.n.replace(/,/g, ' ')}`, u);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'audio/x-mpegurl' }));
+    a.download = 'vradio-favorites.m3u';
+    a.click(); URL.revokeObjectURL(a.href);
+    $('status').textContent = `已导出 ${list.length} 个收藏电台（vradio-favorites.m3u）`;
   },
 
   boot() {
@@ -220,10 +244,22 @@ const App = {
       const s = Player.station;
       if (s) { $('now').textContent = '▶ ' + s.n; $('pp').textContent = (Player.connecting || !Player.isPaused()) ? '⏸' : '▶'; }
       else { $('pp').textContent = '▶'; this.showLast(); }
+      $('eq').classList.toggle('on', !!s && !Player.isPaused()); // 均衡器动画（E6）：活着且在播
       if (full) this.render();
     };
     Player.onstatus = t => { $('status').textContent = t; };
     Player.onfail = () => this.showLast();
+    // 睡眠定时（E2）：未设置时点击循环 15→30→60 分钟；进行中点击直接取消
+    const SLEEPS = [15, 30, 60]; let si = -1;
+    $('sleepBtn').onclick = () => {
+      if (Player.sleepId) { si = -1; Player.sleep(0); return; }
+      si = (si + 1) % SLEEPS.length; Player.sleep(SLEEPS[si]);
+    };
+    Player.ontick = ms => {
+      const b = $('sleepBtn');
+      if (ms > 0) { const s = Math.ceil(ms / 1000); b.textContent = '😴 ' + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); b.title = '睡眠定时进行中，点击取消'; }
+      else { b.textContent = '😴'; b.title = '睡眠定时：点击设置 15/30/60 分钟'; }
+    };
 
     // 搜索：120ms 防抖，避免 1600+ 行列表每键整表重渲；Esc 清空；任意位置按 / 聚焦
     let timer = 0;
@@ -261,20 +297,27 @@ const App = {
     };
     $('vol').oninput = e => { Player.setVolume(e.target.value / 100); localStorage.setItem('radio.vol', e.target.value); };
 
-    // 导入列表：csv 风格 txt 与标准 m3u 双格式（P1-1）；主列表替换、个人层重新并入（决策 B）
+    // 导入列表：csv 风格 txt 与标准 m3u 双格式（P1-1）；本项目导出的收藏备份（#VRADIO:FAV 标记）另恢复收藏态（E4）
     $('importBtn').onclick = () => $('file').click();
+    $('exportBtn').onclick = () => this.exportFavs();
     $('file').onchange = e => {
       const f = e.target.files[0]; if (!f) return;
       const r = new FileReader();
       r.onload = async () => {
-        const list = this.parse(String(r.result));
+        const text = String(r.result);
+        const isFavBackup = text.includes('#VRADIO:FAV');
+        const list = this.parse(text);
         if (!list.length) { $('status').textContent = '导入失败：未解析到任何电台（支持 radio.txt / m3u）'; return; }
         let my = [];
         if (location.protocol.startsWith('http')) { // file:// 边界：无后端不拉 my-radio，导入后 = 精选 + 导入列表
           my = await fetch('my-radio.txt').then(r => r.ok ? r.text() : '').then(t => t ? this.parse(t) : []).catch(() => []);
         }
         this.applySources(list, my);
-        $('status').textContent = `已导入 ${list.length} 台`;
+        if (isFavBackup) { // 本项目导出的备份：按 URL 回绑恢复收藏（换机场景收藏不丢）
+          for (const s of list) { const k = keyOf(s); if (!this.favs.some(f2 => f2.k === k)) this.favs.push({ k, u: s.u.slice(0, 6) }); }
+          this.rebind(); this.render();
+          $('status').textContent = `已恢复：${list.length} 台（含收藏标记）`;
+        } else $('status').textContent = `已导入 ${list.length} 台`;
         $('hint').style.display = 'none';
       };
       r.readAsText(f, 'utf-8');

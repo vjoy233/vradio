@@ -70,6 +70,13 @@
   #songhist b { display:block; margin-bottom:4px; color:var(--dim); font-weight:500; }
   #songhist .shhead { display:flex; align-items:center; justify-content:space-between; gap:8px; } /* 头部：标题 + 导出全部（N2） */
   #songhist .shhead b { margin-bottom:0; }
+  /* 快捷键帮助（N8/r2 ⑧）：? 呼出的 cheatsheet；kbd 键帽样式与面板浮层同语言 */
+  #keys { position:fixed; right:14px; bottom:72px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 14px; max-width:min(360px,82vw); z-index:9; font-size:12px; }
+  #keys b { display:block; margin-bottom:6px; color:var(--dim); font-weight:500; }
+  #keys .krow { display:flex; gap:8px; align-items:baseline; padding:2px 0; }
+  #keys .krow span { flex:0 0 auto; min-width:72px; display:inline-flex; gap:3px; }
+  #keys .knote { margin-top:6px; padding-top:6px; border-top:1px solid var(--line); color:var(--dim); }
+  kbd { font:inherit; font-size:11px; border:1px solid var(--line); border-bottom-width:2px; border-radius:4px; padding:0 5px; background:var(--bg); white-space:nowrap; }
   .shrow { padding:2px 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   footer #status { font-size:12px; color:var(--dim); }
   /* 同步/体检不确定进度条（UI 审计 P3-8）：贴 footer 顶边 2px，transform 动画不走 layout；reduced-motion 隐藏（状态栏文案仍在） */
@@ -216,7 +223,7 @@
 
 <header>
   <h1><span class="live" aria-hidden="true">●</span> VRadio</h1>
-  <input id="q" type="search" aria-label="搜索电台" title="按 / 快速聚焦，Esc 清空，↓ 进列表" placeholder="搜索电台名，如：中国之声 / Love / NHK">
+  <input id="q" type="search" aria-label="搜索电台" title="按 / 快速聚焦，Esc 清空，↓ 进列表，? 全部快捷键" placeholder="搜索电台名，如：中国之声 / Love / NHK">
   <span class="seg" role="group" aria-label="视图切换">
     <button class="btn" id="gridBtn" aria-pressed="true" title="网格视图：精简卡片，一页看更多"><svg class="ic"><use href="#i-grid"/></svg><span>网格</span></button>
     <button class="btn" id="listBtn" aria-pressed="false" title="列表视图：两行详情（分类/源数）"><svg class="ic"><use href="#i-list"/></svg><span>列表</span></button>
@@ -257,6 +264,18 @@
 </footer>
 <audio id="audio" preload="none"></audio>
 <div id="songhist" hidden></div>
+<!-- 快捷键帮助（N8/r2 ⑧）：按 ? 呼出；键位集合与 app.js 实际绑定一一对应，改键位时两处同步 -->
+<div id="keys" hidden tabindex="-1" role="dialog" aria-label="快捷键一览">
+  <b>快捷键一览</b>
+  <div class="krow"><span><kbd>/</kbd></span>聚焦搜索框</div>
+  <div class="krow"><span><kbd>空格</kbd></span>播放 / 暂停</div>
+  <div class="krow"><span><kbd>←</kbd><kbd>→</kbd></span>收藏间切台</div>
+  <div class="krow"><span><kbd>↑</kbd><kbd>↓</kbd></span>列表行导航（<kbd>Home</kbd>/<kbd>End</kbd> 跳首尾）</div>
+  <div class="krow"><span><kbd>Enter</kbd>/<kbd>空格</kbd></span>播放聚焦行</div>
+  <div class="krow"><span><kbd>Esc</kbd></span>清空搜索 / 关闭浮层与面板</div>
+  <div class="krow"><span><kbd>?</kbd></span>本帮助</div>
+  <div class="knote">锁屏 / 蓝牙媒体键：<kbd>⏮</kbd><kbd>⏭</kbd> = 收藏间切台</div>
+</div>
 <!-- 维护面板：个人分类/电台调整（localStorage 覆盖层，同步重跑后按 URL 回绑自动复用）；逻辑在 app.js -->
 <div id="manage" hidden>
   <div class="mbox" role="dialog" aria-modal="true" aria-label="分类与电台维护">

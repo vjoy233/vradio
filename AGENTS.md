@@ -1,6 +1,6 @@
 # AGENTS.md
 
-VRadio — 零依赖本地网络电台 Web 播放器（国内电台为主、欧美音乐台为辅，面向国内直连环境）。共 3 个源码文件 + 1 个数据文件，**无 npm 依赖、无构建步骤、无测试/lint 配置**。背景与实测记录详见 README.md。
+VRadio — 零依赖本地网络电台 Web 播放器（国内电台为主、欧美音乐台为辅，面向国内直连环境）。共 6 个源码文件 + 1 个数据文件，**无 npm 依赖、无构建步骤、无测试/lint 配置**。背景与实测记录详见 README.md，评审与实施依据见 docs/review.md。
 
 ## 常用命令
 
@@ -16,19 +16,26 @@ npm run sync     # = node update-sources.js，同步电台源（约 1 分钟，�
 
 | 文件 | 职责 |
 |---|---|
-| `index.html` | 单页应用（内联 CSS/原生 JS，无框架）：搜索/分类/收藏/多源播放/同步/体检 |
-| `server.js` | 静态服务 + `/proxy?url=` 流代理（绕 CORS）+ `POST /api/sync` + `/api/check?url=` 探活 |
-| `update-sources.js` | 源同步引擎，导出 `syncSources`/`checkStream` 供 server.js require；同时可独立作 CLI 运行（改它时两种入口都不能坏） |
+| `index.html` | 结构壳：DOM + 样式（浅/深主题、均衡器、safe-area）；逻辑全部外置三文件，经典 script 顺序引入 |
+| `player.js` | 播放引擎：audio/hls/播放态/睡眠定时/MediaSession 的唯一所有者（世代令牌防串台） |
+| `app.js` | 应用层：列表/搜索/分类/收藏/最近播放/导入导出/渲染；集中 state 对象 + 单一 render 入口 |
+| `sync.js` | 同步/体检编排：只调用 App/Player 暴露的接口，不改对方状态 |
+| `server.js` | 静态服务 + `/proxy?url=` 流代理（绕 CORS）+ `POST /api/sync` + `/api/check?url=` 探活（≤4 源） |
+| `update-sources.js` | 源同步引擎 + 网络安全护栏（`safeTarget`/`guardLookup` 导出供 server.js 复用）；可独立作 CLI 运行（改它时两种入口都不能坏） |
 | `radio.txt` | 电台数据库（1600+ 台）。**数据文件，由同步生成**，不要手工维护 |
 | `hls.min.js` | 本地化的 hls.js v1.5.20（Apache-2.0 第三方库），勿改 |
-| `my-radio.txt` | 用户个人补充列表（gitignored），同步永不覆盖，前端启动时自动合并 |
+| `my-radio.txt` | 用户个人补充列表（gitignored），同步/导入后常驻重并，永不被覆盖 |
 
 ## 架构要点
 
-- **播放三级策略**（`index.html` 的 `variants()`/`load()`，顺序不能乱）：① mp3/AAC 直流（`<audio>` 原生跨域；蜻蜓 `ls.qingting.fm/live/{id}.m3u8` 自动换算成同 id 的 `lhttp.../64k.mp3`）→ ② m3u8 直连 hls.js → ③ 本地 `/proxy` 兜底。央广 ngcdn 系 CDN 锁了 CORS，只走得通第 ③ 级。
+- **前端模块契约**（改代码前必读，详见 docs/review.md 十一节债务 2）：player 拥有 audio/hls/播放态，app 拥有 stations/渲染/收藏，sync 只编排；跨模块只走暴露接口，UI 反馈经 Player 的 onstate/onstatus 回调注入。**用经典 script 而非 ES modules 是硬约束**（file:// 下 module 加载受 CORS 限制必挂）。
+- **身份公理**：URL = 持久身份，名字 = 显示层。收藏/最近（`radio.favs`/`radio.recents`）记录源 URL，电台改名/换分类后按 URL 回绑；带 URL 的休眠条目永不回收。
+- **数据装配管线**（`app.js` 的 `applySources`）：主列表 replace → STARTER 精选层按精确名去重并入 → my-radio.txt 个人层常驻并入；同步与导入都走它。
+- **播放三级策略**（`player.js` 的 `variants()`/`load()`，顺序不能乱）：① mp3/AAC 直流（`<audio>` 原生跨域；蜻蜓 `ls.qingting.fm/live/{id}.m3u8` 自动换算成同 id 的 `lhttp.../64k.mp3`）→ ② m3u8 直连 hls.js → ③ 本地 `/proxy` 兜底。央广 ngcdn 系 CDN 锁了 CORS，只走得通第 ③ 级。
 - **代理分片重写**：走代理播 m3u8 时，hls.js 的 `xhrSetup` 必须把相对分片 URL 拼回远端 base 再包 `/proxy`，否则分片会被解析到 localhost。
 - **同步双上游**（`update-sources.js`）：国内源原样拉取 gaotianliuyun/gao 的 radio.txt；欧美台从 AlonDrilich/radio-playlists（Radio Browser 镜像，官方 API 国内不可达）top-500 过滤欧美国家后**逐个实测重建**。`欧美音乐` 分类每次同步整体重建，手工编辑会被覆盖。
 - GitHub 取文件：api.github.com 直连，失败回退 `gh` CLI（异步 `execFile`，不阻塞事件循环）。
+- **服务端安全护栏**：`safeTarget`（字符串级）+ `guardLookup`（连接级 DNS 校验，防 rebinding/TOCTOU）双层校验，重定向逐跳复查；`/api/sync`、`/api/check` 拒跨源（CSRF）；静态服务拒 dotfile 与 `*.bak`；`/proxy` 不加 ACAO。改这些时安全回归见 docs/review.md G 组清单。
 
 ## radio.txt 格式
 
@@ -40,7 +47,7 @@ npm run sync     # = node update-sources.js，同步电台源（约 1 分钟，�
 
 - 同步写入用 CRLF；电台名内不能含逗号（同步时会替换为空格）。
 - 同步前自动备份为 `radio.txt.bak`（gitignored）。
-- `index.html` 双击以 file:// 打开是降级模式：代理路径不可用，仅剩内置精选 + 手动导入，调试播放务必走 `npm start` 的 http://。
+- 双击 `index.html` 以 file:// 打开是降级模式（http:// 才是支持形态）：代理/同步/体检/my-radio 均不可用（体检会明确提示而非标死台），仅剩内置精选 + 手动导入，调试播放务必走 `npm start` 的 http://。
 
 ## 已知坑（改代码前必读）
 

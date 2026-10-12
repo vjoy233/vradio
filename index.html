@@ -42,7 +42,10 @@
   .health.ok { color:var(--acc); } .health.bad { color:var(--warn); }
   .btn:disabled { opacity:.5; cursor:wait; }
   footer { position:fixed; left:0; right:0; bottom:0; background:var(--panel); border-top:1px solid var(--line); padding:10px 14px; padding-bottom:calc(10px + env(safe-area-inset-bottom)); display:flex; gap:12px; align-items:center; flex-wrap:wrap; } /* safe-area：全面屏底部不被遮挡（P3-9） */
-  footer #now { flex:1; min-width:120px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  footer #now { flex:1; min-width:120px; overflow:hidden; display:flex; flex-direction:column; line-height:1.45; } /* 两行：台名 + 曲讯（B-6） */
+  footer #nowline { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  #song { font-size:12px; color:var(--dim); cursor:pointer; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  #song:hover { color:var(--acc); }
   footer #status { font-size:12px; color:var(--dim); }
   #vol { width:110px; accent-color:var(--acc); }
   #eq { display:inline-flex; align-items:flex-end; gap:2px; height:14px; } /* 均衡器动画（E6）：一眼可辨「活着且在播」 */
@@ -131,7 +134,7 @@
 <footer>
   <button class="btn" id="pp" aria-label="播放 / 暂停">▶</button>
   <span id="eq" aria-hidden="true"><i></i><i></i><i></i></span>
-  <div id="now" aria-live="polite">未在播放</div>
+  <div id="now" aria-live="polite"><div id="nowline">未在播放</div><div id="song" hidden></div></div>
   <button class="btn" id="sleepBtn" title="睡眠定时：点击设置 15/30/60 分钟" aria-label="睡眠定时">😴</button>
   <span id="status" role="status" aria-live="polite"></span>
   <input type="range" id="vol" min="0" max="100" value="90" aria-label="音量">

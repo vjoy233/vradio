@@ -39,6 +39,17 @@ const Logos = {
     const a = u.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     return `<img class="logo" src="${a}" alt="" loading="lazy" onerror="this.remove()">`;
   },
+  /* 渲染入口（UI 审计 P2-3，owner 拍板）：有台标出图，无台标出首字母色块兜底——
+     台标只覆盖欧美系（实测 44%/35%，国内台 0），有图无图卡片节奏断裂；色块底色由台名 hash
+     确定性生成（同一台永远同色），白字双主题稳定。剥离 [国别] 后取首字符 */
+  visual(s) {
+    const u = this.get(s);
+    if (u) return this.img(s);
+    const n = s.n.replace(/\s*\[[^\]]+\]\s*$/, '');
+    const ch = ([...n][0] || '?').toUpperCase().replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    let h = 0; for (const c of s.c + '|' + s.n) h = (h * 31 + c.charCodeAt(0)) | 0;
+    return `<span class="logo ph" style="background:hsl(${((h % 360) + 360) % 360} 42% 44%)" aria-hidden="true">${ch}</span>`;
+  },
   freshNeg(s) { const e = this.mem[this.ekey(s.c, s.n)]; return !!(e && e.x && Date.now() - e.t < this.NEG); },
 
   busy: new Set(), // 在飞键集合：logosEnsure 可由收藏/播放/启动/数据文件加载多路并发触发，同一台不重复解析

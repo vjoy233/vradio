@@ -444,7 +444,10 @@ const App = {
   },
   stMove(s, v) {
     if (v === s.c) return;
-    if (v === '__def') { for (const u of s.u) delete this.cfg.moves[u]; }
+    // 选中「等同默认分类」的目标视同 ↺ 默认：只删 moves 键，不写 moves[u]=默认分类——
+    // 否则位置没变却留下键，↺ 亮起且点了无效果（PR#8 review P3-1；默认分类重命名后按现名比对）
+    const def = this.cfg.renames[s.dCat || s.c] || s.dCat || s.c;
+    if (v === '__def' || v === def) { for (const u of s.u) delete this.cfg.moves[u]; }
     else {
       if (v === '__new') {
         v = this.askName('新建分类并移入');

@@ -241,8 +241,9 @@ function splitSections(text) {
 /* ---------- 国内重分类：把上游 sections（或同步失败时的本地旧文件）整编进 CAT_ORDER 目标分类。
    幂等性（P1）：输入既可能是上游旧式节，也可能是上轮同步的自身产物（新式节名 ∈ CAT_ORDER）——
    ① 新式节整节原样保留（上游旧文件没有这些节名，主路径不受影响；否则降级同步时「亚洲·港台」等会被台名规则重新打散）；
-   ② 欧美系两新式节例外：本体由欧美拉取独占重建（或降级保留），其行只做捞回扫描
-     （CN 失败 + EU 成功时，困在旧节里的 BBC/CGTN 捞回行与世界系新闻台由此回收；与旧节本体重复由装配处按 URL 去重）；
+   ② 欧美系两新式节例外：本体由欧美拉取独占重建（或降级保留），其行只做捞回扫描且只扫无国名后缀行
+     （CN 失败 + EU 成功时，困在旧节里的 BBC/CGTN 捞回行与世界系新闻台由此回收；带后缀的重建本体生死
+     全由欧美结果决定，与旧节本体重复由装配处按 URL 去重）；
    ③ 旧「世界」按 WORLD_NEWS 拆走新闻台。
    返回 { out: 分类→行[], euExtra: 欧美系两分类的捞回行（BBC 音乐网/英文新闻台/世界系新闻台，追加到欧美同步结果之后） } ---------- */
 function classifyCn(sections) {
@@ -252,12 +253,15 @@ function classifyCn(sections) {
     if (EU_SYSTEM_CATS.includes(sec.cat)) {
       for (const line of sec.lines) {
         const nm = line.split(',')[0];
+        // 带国名后缀 = EU 重建本体：生死由本轮欧美拉取全权决定，捞回扫描一律跳过——
+        // 实测淘汰的旧台（如 LBC News [英国]）不得借品牌正则复活，欧美重建语义不破（PR#8 review P2）
+        if (EU_TAG_RE.test(nm)) continue;
+        // 无后缀行 = 国内捞回/世界拆分产物，三条规则只在其中捞：
         if (CN_RESCUE_MUSIC.test(nm)) euExtra[EU_CAT].push(line);
         else if (CN_RESCUE_INTL.test(nm)) euExtra[INTL_CAT].push(line);
-        // PR#5 二轮 review 残留：当年按 WORLD_NEWS 从旧「世界」拆入的世界系新闻台（CNA 938/百家知識…）
-        // 不匹配上面两条品牌正则，CN 失败 + EU 成功时会随旧节丢弃——无国名后缀 = 非 EU 重建产物，补测捞回；
-        // 带后缀的实测淘汰旧台（如 LBC News [英国]）不得借此复活，欧美重建语义不破
-        else if (!EU_TAG_RE.test(nm) && WORLD_NEWS.test(nm)) euExtra[INTL_CAT].push(line);
+        // 当年按 WORLD_NEWS 从旧「世界」拆入的世界系新闻台（CNA 938/百家知識…）不匹配上面两条品牌正则，
+        // CN 失败 + EU 成功时会随旧节丢弃——补测 WORLD_NEWS 捞回（PR#5 二轮 review 残留）
+        else if (WORLD_NEWS.test(nm)) euExtra[INTL_CAT].push(line);
       }
       continue;
     }

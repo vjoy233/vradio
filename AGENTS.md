@@ -17,10 +17,10 @@ npm run sync -- --logos   # = node update-sources.js --logos，只重建 logos.t
 
 | 文件 | 职责 |
 |---|---|
-| `index.html` | 结构壳：DOM + 样式（浅/深主题、双视图/台标/无效源开关、safe-area）；逻辑全部外置四文件，经典 script 顺序引入 |
+| `index.html` | 结构壳：DOM + 样式（浅/深主题、双视图/台标/无效源开关、⚙ 维护面板、safe-area）；逻辑全部外置四文件，经典 script 顺序引入 |
 | `player.js` | 播放引擎：audio/hls/播放态/睡眠定时/MediaSession 的唯一所有者（世代令牌防串台） |
 | `logos.js` | 台标数据唯一所有者：三级来源（STARTER 内置 → logos.txt → 运行时解析）/永久缓存/收藏+正在播优先补全/负缓存 7 天 |
-| `app.js` | 应用层：列表/搜索/分类/收藏/最近播放/导入导出/网格+列表双视图渲染/无效源默认隐藏/明暗主题切换；集中 state 对象 + 单一 render 入口 |
+| `app.js` | 应用层：列表/搜索/分类/收藏/最近播放/导入导出/网格+列表双视图渲染/无效源默认隐藏/明暗主题切换/⚙ 维护面板（个人分类与电台调整）；集中 state 对象 + 单一 render 入口 |
 | `sync.js` | 同步/体检编排：只调用 App/Player 暴露的接口，不改对方状态 |
 | `server.js` | 静态服务 + `/proxy?url=` 流代理（绕 CORS）+ `POST /api/sync` + `/api/check?url=` 探活（≤4 源） |
 | `update-sources.js` | 源同步引擎 + 网络安全护栏（`safeTarget`/`guardLookup` 导出供 server.js 复用）+ 欧美台台标提取（tvg-logo→logos.txt）；可独立作 CLI 运行（改它时两种入口都不能坏，另有 `--logos` 只重建台标） |
@@ -33,7 +33,7 @@ npm run sync -- --logos   # = node update-sources.js --logos，只重建 logos.t
 
 - **前端模块契约**（改代码前必读，详见 docs/review.md 十一节债务 2）：player 拥有 audio/hls/播放态，logos 拥有台标数据（三级来源/缓存/按需补全），app 拥有 stations/渲染/收藏，sync 只编排；跨模块只走暴露接口，UI 反馈经 Player 的 onstate/onstatus 回调注入。**用经典 script 而非 ES modules 是硬约束**（file:// 下 module 加载受 CORS 限制必挂），且 **logos.js 必须先于 app.js 装载**（boot 渲染行内入口时即引用）。
 - **身份公理**：URL = 持久身份，名字 = 显示层。收藏/最近（`radio.favs`/`radio.recents`）记录源 URL，电台改名/换分类后按 URL 回绑；带 URL 的休眠条目永不回收。
-- **数据装配管线**（`app.js` 的 `applySources`）：主列表 replace → STARTER 精选层按精确名去重并入 → my-radio.txt 个人层常驻并入；同步与导入都走它。
+- **数据装配管线**（`app.js` 的 `applySources`）：主列表 replace → STARTER 精选层按精确名去重并入 → my-radio.txt 个人层常驻并入 → **维护层套用**（`applyCfg`，radio.cfg，owner 两轮拍板）：电台移动/重命名/手动隐藏按「任一源 URL 命中」回绑（同步重建后自动复用），分类重命名最后映射（改名时移动目标/隐藏标记级联改写）；手动隐藏 = 彻底消失（全部/收藏/搜索/体检一律不可见，无正在播例外——与死台隐藏的自动例外口径不同）。装配默认口径留底在 `s.dCat/dName`（面板 ↺ 恢复/删自建分类撤回移动用），面板改动经 `reapplyCfg` 回滚重套即时生效。电台重命名禁止同分类撞名（keyOf 串台防护）；配置导入 = 全量覆盖 + confirm；失配（URL 漂移）在面板顶部出清单。
 - **播放三级策略**（`player.js` 的 `variants()`/`load()`，顺序不能乱）：① mp3/AAC 直流（`<audio>` 原生跨域；蜻蜓 `ls.qingting.fm/live/{id}.m3u8` 自动换算成同 id 的 `lhttp.../64k.mp3`）→ ② m3u8 直连 hls.js → ③ 本地 `/proxy` 兜底。央广 ngcdn 系 CDN 锁了 CORS，只走得通第 ③ 级。
 - **代理分片重写**：走代理播 m3u8 时，hls.js 的 `xhrSetup` 必须把相对分片 URL 拼回远端 base 再包 `/proxy`，否则分片会被解析到 localhost。
 - **无效源隐藏**（`app.js`）：体检标记 `health:'dead'` 的台默认不进 `visible()`（正在播/连接中的台例外——明明活着不该消失）；开关持久化在 `radio.showdead`（默认隐藏），出现死台即亮「✗ 无效源」按钮；体检中 `patchHealth` 对死台行当场移除（与 `visible()` 口径一致）。**死台标记持久化** `radio.health`（键 → {u:URL 快照, t}；TTL 7 天对齐 Logos 负缓存、FIFO 500 封顶、URL 身份回绑——上游改名/换分类仍对得上；✓ 标记不持久化；`patchHealth` 只改内存，`Sync.health` 收尾统一落盘一次防逐台全量写卡主线程）；体检用 `visible(true)` 连默认隐藏的死台一起复查，复活即撤销标记回归列表。同步源不产健康标记（欧美台在同步期已实测过滤、国内台不测）。

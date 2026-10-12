@@ -14,10 +14,10 @@ const STARTER = [
   { c:'常听', n:'CRI 环球资讯广播 FM90.5', u:['http://sk.cri.cn/905.m3u8'] },
   { c:'常听', n:'CRI 怀旧金曲频道', u:['https://lhttp.qingting.fm/live/5022038/64k.mp3'], l:'http://pic.qtfm.cn/2024/0726/20240726111933.png!200' },
   { c:'常听', n:'Asia FM 亚洲经典台', u:['https://lhttp.qingting.fm/live/5021912/64k.mp3'], l:'http://pic.qtfm.cn/2022/0712/20220712122112.jpeg!200' },
-  { c:'世界', n:'YES 933 (新加坡)', u:['http://playerservices.streamtheworld.com/api/livestream-redirect/YES933AAC.aac'] },
-  { c:'世界', n:'Class 95 (新加坡)', u:['http://playerservices.streamtheworld.com/api/livestream-redirect/CLASS95AAC.aac'] },
-  { c:'世界', n:'Listen.Moe JPop', u:['https://listen.moe/stream'] },
-  { c:'世界', n:'Nightwave Plaza', u:['http://radio.plaza.one/opus'] },
+  { c:'亚洲·港台', n:'YES 933 (新加坡)', u:['http://playerservices.streamtheworld.com/api/livestream-redirect/YES933AAC.aac'] },
+  { c:'亚洲·港台', n:'Class 95 (新加坡)', u:['http://playerservices.streamtheworld.com/api/livestream-redirect/CLASS95AAC.aac'] },
+  { c:'亚洲·港台', n:'Listen.Moe JPop', u:['https://listen.moe/stream'] },
+  { c:'欧美音乐', n:'Nightwave Plaza', u:['http://radio.plaza.one/opus'] },
 ];
 
 const $ = id => document.getElementById(id);
@@ -183,7 +183,7 @@ const App = {
   buildCats() {
     const restore = this.keepFocus($('cats'), 'c');
     const present = new Set(this.state.stations.map(s => s.c));
-    const order = ['音乐', '欧美音乐']; // 音乐场景置顶
+    const order = ['华语音乐', '欧美音乐']; // 音乐场景置顶（用户拍板：国内外音乐各一类、排最前）
     const cats = ['全部', '★收藏', '最近', ...order.filter(c => present.has(c)), ...[...present].filter(c => !order.includes(c))];
     if (!cats.includes(this.state.cat)) this.state.cat = '全部'; // 数据更新后分类可能消失，回退全部
     // 互斥单选语义用 aria-current（aria-pressed 是独立开关语义，不适用）

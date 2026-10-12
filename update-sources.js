@@ -117,23 +117,24 @@ function request(url, { timeout = 10000, headers = {}, maxBytes = 1 << 20, maxRe
 }
 
 // 流可用性探测：按「持续吐数据 + 非HTML」判定活流（m3u8 先取清单再测分片，master playlist 递归解一层）
-async function checkStream(url, depth = 0) {
+async function checkStream(url, depth = 0, opts = {}) {
+  const T = opts.timeout || 4500; // 探活窗口：默认 4.5s；调用方可放宽（server.js /api/mystation 传 12s——蜻蜓系建流 5-10s 属正常，见 AGENTS.md 已知坑）
   const isHls = /\.m3u8?(\?|$)/.test(url);
   if (!isHls) {
     try {
-      const r = await request(url, { timeout: 4500, maxBytes: 24000 });
+      const r = await request(url, { timeout: T, maxBytes: 24000 });
       const ok = r.bytes >= 8000 && !/text\/html/i.test(r.ct); // 显式判定；HTML 错误页不算活流
       return { ok, detail: `${r.ct || '未知类型'} ${r.bytes}B` };
     } catch (e) { return { ok: false, detail: String(e.message || e).slice(0, 40) }; }
   }
   try {
-    const pl = await request(url, { timeout: 4500, maxBytes: 8000 });
+    const pl = await request(url, { timeout: T, maxBytes: 8000 });
     if (pl.status !== 200) return { ok: false, detail: `清单 HTTP ${pl.status}` };
     const seg = pl.body.toString('utf8').split(/\r?\n/).map(l => l.trim()).find(l => l && !l.startsWith('#'));
     if (!seg) return { ok: false, detail: '清单无分片' };
     const segUrl = new URL(seg, url).href;
-    if (/\.m3u8?(\?|$)/.test(segUrl) && depth < 2) return checkStream(segUrl, depth + 1); // master → variant 再解一层
-    const r2 = await request(segUrl, { timeout: 4500, maxBytes: 16000 });
+    if (/\.m3u8?(\?|$)/.test(segUrl) && depth < 2) return checkStream(segUrl, depth + 1, opts); // master → variant 再解一层（参数透传）
+    const r2 = await request(segUrl, { timeout: T, maxBytes: 16000 });
     return { ok: r2.bytes >= 6000 && !/text\/html/i.test(r2.ct), detail: `hls分片 ${r2.bytes}B` };
   } catch (e) { return { ok: false, detail: String(e.message || e).slice(0, 40) }; }
 }

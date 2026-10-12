@@ -33,6 +33,7 @@ const App = {
   recents: [], // [{k, n, u:[…]}] 最近在前、≤20；队首即「上次收听」（E3 与 lastKey 合并为单一队列）
   cfg: null,   // 个人维护层（radio.cfg，owner 三批拍板）：分类重命名/隐藏/自建 + 电台移动/重命名/隐藏。
                // 键 = 源 URL（身份公理），同步重建后自动复用；tag = URL→原始台名快照，仅供失配清单显示
+  songFor: '', lastSong: '', // 曲讯（B-6/B-7）：songFor=曲讯归属台（切台即清零重取）；lastSong=最近一次拿到的曲名（换歌时旧歌入史）
 
   /* ---------- 持久化（localStorage 全部容错读取 + 旧格式迁移） ---------- */
   loadStore() {
@@ -209,9 +210,16 @@ const App = {
       || (entry.u && entry.u.length && this.state.stations.find(s => s.u.some(u => entry.u.includes(u))))
       || null;
   },
+  scopeFavRecent(max = 30) { // 静默体检范围（B-10，Sync 调用）：收藏 + 最近播放（键/URL 回绑解析、去重、上限）；手动隐藏的台不测——隐藏是明确意图
+    const seen = new Set(), list = [];
+    const push = e => { const s = this.resolve(e); if (s && !s.hidden && !seen.has(keyOf(s))) { seen.add(keyOf(s)); list.push(s); } };
+    for (const f of this.favs) push(f);
+    for (const r of this.recents) push(r);
+    return list.slice(0, max);
+  },
   showLast() {
     const s = this.recents[0] && this.resolve(this.recents[0]);
-    $('now').textContent = s ? '上次收听：' + s.n : '未在播放';
+    $('nowline').textContent = s ? '上次收听：' + s.n : '未在播放';
   },
 
   /* ---------- 渲染（唯一入口）：网格 = 精简卡片 / 列表 = 两行详情（元信息行含「正在播」节目） ---------- */
@@ -312,6 +320,14 @@ const App = {
     if (this.state.cat === '最近') this.render(); // 最近队列头插后刷新顺序
     Player.play(s);
   },
+  stepFav(d) { // ←/→ 在收藏间切台（A-5）：顺序取当前可见列表内的收藏台；当前台不在收藏则从队首/队尾起步
+    const favs = this.favKeys();
+    const list = this.visible().filter(s => favs.has(keyOf(s)));
+    if (!list.length) { $('status').textContent = '还没有收藏电台——点电台左侧 ☆ 收藏后可用 ←/→ 键切换'; return; }
+    const cur = Player.station ? list.findIndex(s => keyOf(s) === keyOf(Player.station)) : -1;
+    const nx = cur < 0 ? (d > 0 ? 0 : list.length - 1) : (cur + d + list.length) % list.length;
+    this.togglePlay(keyOf(list[nx]));
+  },
   /* 台标补全（收藏 + 正在播优先，请求量可控）：Logos.ensure 落库后回调重渲一次展示 */
   logosEnsure() {
     if (!location.protocol.startsWith('http')) return;
@@ -323,9 +339,55 @@ const App = {
   /* 底部栏刷新（Player.onstate 用）：当前台名 + 播放/暂停态 + 均衡器动画 */
   playerNow() {
     const s = Player.station;
-    if (s) { $('now').textContent = '▶ ' + s.n; $('pp').textContent = (Player.connecting || !Player.isPaused()) ? '⏸' : '▶'; }
-    else { $('pp').textContent = '▶'; this.showLast(); }
+    if (s) {
+      const k = keyOf(s);
+      if (this.songFor !== k) { // 切台：曲讯清零（新台从零取，旧曲名不得串台）
+        this.songFor = k; this.lastSong = '';
+        $('song').hidden = true; $('song').textContent = '';
+      }
+      $('nowline').textContent = '▶ ' + s.n; $('pp').textContent = (Player.connecting || !Player.isPaused()) ? '⏸' : '▶';
+    } else { $('pp').textContent = '▶'; this.showLast(); $('song').hidden = true; }
     $('eq').classList.toggle('on', !!s && !Player.isPaused()); // 均衡器动画（E6）：活着且在播
+  },
+
+  /* ---------- 曲讯（B-6）：轮询 /api/nowplaying 取正在播台的 ICY 曲名 ----------
+     只对「正在播 + 未暂停 + 页面可见」的台取（http 形态）；m3u8 结构性无 ICY 不空耗探活；
+     换歌时旧曲名入史（B-7）+ 曲名写 MediaSession（锁屏同步显示） */
+  async tickSong() {
+    const s = Player.station;
+    if (!s || Player.isPaused() || document.hidden || !location.protocol.startsWith('http')) return;
+    const raw = Player.curUrl;
+    if (!raw || /\.m3u8(\?|$)/.test(raw)) return;
+    let j;
+    try { j = await fetch('/api/nowplaying?url=' + encodeURIComponent(raw)).then(x => x.json()); } catch (_) { return; }
+    const t = (j && j.title) || '';
+    if (!Player.station || keyOf(Player.station) !== this.songFor) return; // 轮询期间切台：丢弃过期结果
+    if (t === this.lastSong) return;
+    if (this.lastSong && t) this.pushSongHist(s.u[0], this.lastSong); // 换歌：旧歌入史（B-7，键=台主 URL——身份公理，改名/换分类不丢）
+    this.lastSong = t;
+    if (t) { $('song').textContent = '♪ ' + t; $('song').hidden = false; Player.setSong(t); }
+  },
+
+  /* ---------- 歌曲历史（B-7）：换歌时旧歌入史（当前曲只显示不入史），按台主 URL 存 localStorage（radio.songs，身份公理——AIbot P3-6） ---------- */
+  pushSongHist(u0, title) {
+    if (!title) return;
+    let songs; try { songs = JSON.parse(localStorage.getItem('radio.songs') || '{}'); } catch (_) { songs = {}; }
+    const list = songs[u0] || [];
+    if (!list.length || list[0].t !== title) { list.unshift({ t: title, at: Date.now() }); songs[u0] = list.slice(0, 12); } // 每台 12 首封顶
+    const ks = Object.keys(songs).sort((a, b) => (songs[b][0] ? songs[b][0].at : 0) - (songs[a][0] ? songs[a][0].at : 0));
+    for (const x of ks.slice(50)) delete songs[x]; // 台数 50 FIFO（按最近有歌活动排序砍最旧）
+    try { localStorage.setItem('radio.songs', JSON.stringify(songs)); } catch (_) {}
+  },
+  toggleSongHist() { // 点击曲名行：本台最近播放浮层（当前曲在曲名行本身，不入列）
+    const el = $('songhist');
+    if (!el.hidden) { el.hidden = true; return; }
+    if (!Player.station) return;
+    let songs; try { songs = JSON.parse(localStorage.getItem('radio.songs') || '{}'); } catch (_) { songs = {}; }
+    const list = (songs[Player.station.u[0]] || []).slice(0, 12); // 同 pushSongHist 的 URL 键
+    el.innerHTML = '<b>本台最近播放</b>' + (list.length
+      ? list.map(x => `<div class="shrow">${this.esc(x.t)}</div>`).join('')
+      : '<div class="shrow" style="color:var(--dim)">暂无历史（换歌后自动记录）</div>');
+    el.hidden = false;
   },
 
   /* ---------- 收藏导出/导入（Tier 1 E4）：导出 = 带 #VRADIO:FAV 标记的 m3u（通用播放器可读），
@@ -426,6 +488,8 @@ const App = {
     // dName/dCat 用 || 兜底（file:// 降级模式 boot 已快照，双保险防再漏）
     const list = kw ? all.filter(s => s.n.toLowerCase().includes(kw) || (s.dName || s.n).toLowerCase().includes(kw)) : all.slice(0, 100);
     const opts = this.mCatOptions();
+    // 添加电台表单（A-2）分类下拉随行刷新；默认选中当前分类（全部/收藏/最近等非数据分类则落第一项）
+    $('mACat').innerHTML = opts.map(c => `<option value="${this.esc(c)}"${c === this.state.cat ? ' selected' : ''}>${this.esc(c)}</option>`).join('');
     box.innerHTML = list.map(s => {
       const dC = s.dCat || s.c, dN = s.dName || s.n;
       // moved 按 moves 键命中而非 s.c !== dC：分类级重命名会把整类台的 s.c 都改掉，但那不是单台移动，
@@ -533,12 +597,25 @@ const App = {
       else { b.textContent = '😴'; b.title = '睡眠定时：点击设置 15/30/60 分钟'; }
     };
 
+    // 曲讯轮询（B-6）：15s 常驻轮（条件不满足时空转不发包）；页面重新可见时立刻补一轮
+    setInterval(() => this.tickSong(), 15000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) this.tickSong(); });
+    // 歌曲历史浮层（B-7）：点曲名行开关；点别处收起
+    $('song').onclick = () => this.toggleSongHist();
+    document.addEventListener('click', e => { if (!e.target.closest('#songhist,#song')) $('songhist').hidden = true; });
+
     // 搜索：120ms 防抖，避免 1600+ 行列表每键整表重渲；Esc 清空；任意位置按 / 聚焦
     let timer = 0;
     $('q').oninput = e => { clearTimeout(timer); timer = setTimeout(() => { this.state.keyword = e.target.value.trim(); this.render(); }, 120); };
     $('q').onkeydown = e => { if (e.key === 'Escape') { e.target.value = ''; clearTimeout(timer); this.state.keyword = ''; this.render(); } };
-    document.addEventListener('keydown', e => { // 排除修饰键组合，避免误抢 Ctrl+/ 等
-      if (e.key === '/' && !e.ctrlKey && !e.altKey && !e.metaKey && !/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) { e.preventDefault(); $('q').focus(); }
+    document.addEventListener('keydown', e => { // 全局快捷键（A-5）：/ 聚焦搜索、空格 播放/暂停、←/→ 收藏间切台
+      if (e.ctrlKey || e.altKey || e.metaKey) return; // 不抢组合键（Ctrl+/ 等）
+      const t = e.target, tag = t && t.tagName;
+      // 焦点在交互件/列表行/维护面板/歌曲浮层上：让位原生行为（行内 Enter/Space 已有处理、面板有自己的 Esc 语义、按钮空格原生触发 click）
+      if (/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(tag) || t.isContentEditable || (t.closest && t.closest('#list,#manage,#songhist'))) return;
+      if (e.key === '/') { e.preventDefault(); $('q').focus(); return; }
+      if (e.key === ' ') { e.preventDefault(); $('pp').click(); return; }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); this.stepFav(e.key === 'ArrowRight' ? 1 : -1); }
     });
 
     // 分类与列表（行/卡片可用键盘操作：Enter/Space 播放；收藏按钮由原生 button 处理）
@@ -636,6 +713,30 @@ const App = {
     $('mfile').onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => this.importCfg(String(r.result)); r.readAsText(f, 'utf-8'); e.target.value = ''; };
     $('mReset').onclick = () => this.resetCfg();
 
+    // 添加自定义电台（A-2）：面板内表单 → /api/mystation（服务端先探活拒绝假流/死链，再原子写 my-radio.txt；
+    // 与 cfg 的分工 = cfg 调整既有台的显示层（localStorage），这里新增列表里不存在的台（数据层文件，跨浏览器持久））
+    const addOk = location.protocol.startsWith('http');
+    $('mAddBtn').disabled = !addOk;
+    $('mAddBtn').title = addOk ? '先探活（拒绝假流/死链），可用才写入个人列表 my-radio.txt' : 'file:// 降级模式无后端，npm start 后可用';
+    $('mAddBtn').onclick = async () => {
+      const n = $('mAName').value.trim().replace(/[,\r\n|]/g, ' ').slice(0, 40);
+      const u = $('mAUrl').value.trim();
+      if (!n) { $('status').textContent = '请填写电台名'; return; }
+      if (!/^https?:\/\//.test(u)) { $('status').textContent = '流地址需以 http(s):// 开头'; return; }
+      const c = $('mACat').value;
+      $('mAddBtn').disabled = true; $('mAddBtn').textContent = '探活中…';
+      try {
+        const r = await fetch('/api/mystation', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ n, u, c }) }).then(x => x.json());
+        if (r.ok) {
+          $('mAName').value = $('mAUrl').value = '';
+          await this.reloadMain(); // 重拉重并（个人层常驻），列表与面板同步出现新台
+          this.renderManage();
+          $('status').textContent = `已添加「${n}」到「${c}」（持久于 my-radio.txt，同步不覆盖）`;
+        } else $('status').textContent = '添加失败：' + (r.detail || r.error || '未知错误');
+      } catch (e) { $('status').textContent = '添加失败：' + (e && e.message || e); }
+      $('mAddBtn').disabled = false; $('mAddBtn').textContent = '＋ 添加';
+    };
+
     // 台标：缓存 + 数据文件（http 下才有后端/代理）
     Logos.load();
     if (location.protocol.startsWith('http')) {
@@ -685,7 +786,12 @@ const App = {
     };
 
     // 初始数据：radio.txt + my-radio.txt（http 下），file:// 下回退内置精选 + 手动导入
-    this.reloadMain().then(ok => { if (!ok) $('hint').style.display = 'block'; this.logosEnsure(); });
+    this.reloadMain().then(ok => {
+      if (!ok) $('hint').style.display = 'block';
+      this.logosEnsure();
+      // 开机静默体检（B-10）：首屏渲染/台标补全之后 4s 再跑收藏+最近范围，死台自动隐藏无需手动点「体检」
+      if (ok) setTimeout(() => Sync.silentHealth(), 4000);
+    });
     this.buildCats(); this.render(); this.showLast(); // file:// 降级模式下也补齐「上次收听」提示
   },
 };

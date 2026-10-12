@@ -143,11 +143,11 @@ gh api repos/gaotianliuyun/gao/contents/radio.txt --jq .content | base64 -d > ra
 ```text
 vradio/
 ├── index.html        # 结构壳：DOM + 样式（引擎/台标/应用/同步分置四文件，经典 script 顺序引入）
-├── player.js         # 播放引擎：三级策略/多源切换/MediaSession/睡眠定时
+├── player.js         # 播放引擎：三级策略/多源切换/断流自愈+成功源记忆/MediaSession（台名+曲讯）/睡眠定时
 ├── logos.js          # 台标：三级来源解析/永久缓存/收藏+正在播优先补全/坏图回退
-├── app.js            # 应用层：列表/搜索/分类/收藏/最近/导入导出/双视图渲染/无效源隐藏/主题切换（状态集中 + 单一 render 入口）
-├── sync.js           # 同步/体检编排：只调用 App/Player 暴露的接口
-├── server.js         # 静态服务 + 流代理 + /api/sync + /api/check（SSRF/CSRF/dotfile 防护齐备）
+├── app.js            # 应用层：列表/搜索/分类/收藏/最近/导入导出/双视图渲染/无效源隐藏/主题切换/⚙ 维护面板（含添加电台）/曲讯轮询+歌曲历史/键盘快捷键（状态集中 + 单一 render 入口）
+├── sync.js           # 同步/体检编排（手动全量 + 开机静默体检收藏/最近范围）：只调用 App/Player 暴露的接口
+├── server.js         # 静态服务 + 流代理 + /api/sync + /api/check + /api/mystation + /api/nowplaying（SSRF/CSRF/dotfile 防护齐备）
 ├── update-sources.js # 源同步引擎：双上游拉取 + 欧美台实测过滤 + 台标提取 + 合并备份 + 网络安全护栏
 ├── radio.txt         # 电台数据库（1600+ 台，按内容分 9 类；同步生成）
 ├── logos.txt         # 台标数据（欧美音乐/国际新闻·谈话分类，同步自动生成；node update-sources.js --logos 可单独重建）
@@ -158,9 +158,15 @@ vradio/
 
 ## Roadmap
 
-- [ ] 闹钟
-- [ ] 手机布局（PWA）
-- [ ] 按流派细分子分类（rock/pop/jazz/country…）
+- [x] 断流自愈 + 变体成功记忆（播放中断流自动恢复/换源，同一台记住上次试通的源）
+- [x] 添加自定义电台（⚙ 面板内，探活通过才写入 my-radio.txt，同步不覆盖）
+- [x] 正在播曲讯 + 最近播放歌曲历史（欧美 Icecast 台显示当前歌名，锁屏同步；国内 m3u8 台协议限制显示为空）
+- [x] 键盘快捷键（`/` 搜索、空格 播放/暂停、`←`/`→` 收藏间切台）
+- [x] 开机静默体检（收藏 + 最近播放范围的台自动探活，死台无需手动体检即隐藏）
+- [ ] 安卓原生 app（移动场景访问不到 localhost 网络，移动端不走 Web 响应式/PWA 路线——owner 拍板）
+- [ ] 欧美台数据加量（人工精选流清单第三上游，待现有列表洗净后再议）
+
+> 已撤销项：闹钟（睡眠定时淡出已内置，闹钟语义与本地 Web 形态不匹配，挂起）；按流派细分子分类（已由 9 类内容重分类覆盖）。
 
 ## 致谢与许可
 

@@ -52,6 +52,7 @@ const Sync = {
       }
     };
     await Promise.all(Array.from({ length: 5 }, worker));
+    App.saveHealth(); // patchHealth 只改内存，收尾统一落盘一次（正常结束/取消都走这里）
     App.render(); // P3-13：途中若发生过整表重渲，结束时兜底一次，标记不丢
     $('status').textContent = this.abort ? `体检已取消：完成 ${done}/${list.length}` : `体检完成：${alive}/${list.length} 可用（✗ 台建议换源或点「同步源」重建）`;
     b.textContent = '体检';

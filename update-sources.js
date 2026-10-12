@@ -183,9 +183,10 @@ const countEntries = lines => lines.filter(l => l && !l.endsWith('#genre#')).len
 /* ---------- 台标独立生成（node update-sources.js --logos）：只取镜像 m3u 的 tvg-logo 按当前
    radio.txt 的欧美台 URL 匹配写 logos.txt，不做实测、不改 radio.txt —— 免费台标，随时可重跑 ---------- */
 async function buildLogoFile() {
+  if (!fs.existsSync(RADIO)) throw new Error('radio.txt 缺失：--logos 按其欧美台 URL 匹配台标，请先完整同步（npm run sync）'); // 缺失时宁可报错退出，不能把 logos.txt 清成只剩表头
   const all = parseM3u(await ghFile(EU_REPO, EU_FILE), () => {});
   const byUrl = new Map(all.filter(s => s.logo).map(s => [s.url, s.logo]));
-  const rt = fs.existsSync(RADIO) ? fs.readFileSync(RADIO, 'utf8') : '';
+  const rt = fs.readFileSync(RADIO, 'utf8');
   const sec = splitSections(rt).find(s => s.cat === EU_CAT);
   const out = [LOGOS_HEADER]; let n = 0;
   for (const l of (sec ? sec.lines : [])) {

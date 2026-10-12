@@ -2,7 +2,7 @@
 
 > 零依赖的本地网络电台播放器 —— 国内电台为主、海外电台为辅，无需翻墙，`npm start` 即听。
 
-在浏览器里收听 1600+ 电台：央广/国际台全系、全国省市地方台、音乐/文艺频率，**以及 150+ 个实测可直连的欧美主流音乐台**（Radio Paradise / Classic FM / Heart / Skyrock / SomaFM…）和 CNN / NPR / BBC 等国际新闻台。全部代码约 1200 行（前端按模块分四文件），无 npm 依赖，不收集任何数据，纯本地运行。
+在浏览器里收听 1600+ 电台：央广/国际台全系、全国省市地方台、音乐/文艺频率，**以及 150+ 个实测可直连的欧美主流音乐台**（Radio Paradise / Classic FM / Heart / Skyrock / SomaFM…）和 CNN / NPR / BBC 等国际新闻台。全部代码约 1400 行（前端按模块分四文件），无 npm 依赖，不收集任何数据，纯本地运行。
 
 ## 特性
 
@@ -149,7 +149,7 @@ vradio/
 ├── sync.js           # 同步/体检编排：只调用 App/Player 暴露的接口
 ├── server.js         # 静态服务 + 流代理 + /api/sync + /api/check（SSRF/CSRF/dotfile 防护齐备）
 ├── update-sources.js # 源同步引擎：双上游拉取 + 欧美台实测过滤 + 台标提取 + 合并备份 + 网络安全护栏
-├── radio.txt         # 电台数据库（1673 台，分类分节）
+├── radio.txt         # 电台数据库（1600+ 台，按内容分 9 类；同步生成）
 ├── logos.txt         # 台标数据（欧美音乐/国际新闻·谈话分类，同步自动生成；node update-sources.js --logos 可单独重建）
 ├── hls.min.js        # 本地化的 hls.js v1.5.20（Apache-2.0）
 ├── package.json      # npm start / npm run sync

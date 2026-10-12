@@ -227,7 +227,7 @@ const App = {
   buildCats() {
     const restore = this.keepFocus($('cats'), 'c');
     const present = new Set(this.state.stations.filter(s => !s.hidden && !this.cfg.hideC[s.c]).map(s => s.c));
-    const pins = ['华语音乐', '欧美音乐'].map(c => this.cfg.renames[c] || c); // 音乐置顶（owner 拍板）；重命名跟随新名
+    const pins = [...new Set(['华语音乐', '欧美音乐'].map(c => this.cfg.renames[c] || c))]; // 音乐置顶（owner 拍板）；重命名跟随新名；双音乐类互相合并后去重防重复 chip
     const hid = c => this.cfg.hideC[c];
     const order = [...pins.filter(c => present.has(c)),                                  // 置顶双音乐类
       ...this.cfg.cats.filter(c => present.has(c) && !hid(c) && !pins.includes(c)),       // 自建分类（移入台后才出现）
@@ -363,8 +363,8 @@ const App = {
     let v = null; try { v = prompt(title + '（不能含 |，24 字以内）', def); } catch (_) { return ''; }
     return v === null ? '' : v.trim().replace(/\|/g, ' ').slice(0, 24);
   },
-  mCatOptions() { // 分类下拉选项 = 当前数据的默认分类（数据序）+ 自建分类
-    const seen = new Set(); for (const s of this.state.stations) if (s.dCat) seen.add(s.dCat);
+  mCatOptions() { // 分类下拉选项 = 当前生效分类（数据序，含重命名后名——与分类条一致）+ 自建分类
+    const seen = new Set(); for (const s of this.state.stations) if (s.c) seen.add(s.c);
     return [...seen, ...this.cfg.cats];
   },
   cfgTag(s) { for (const u of s.u) this.cfg.tag[u] = s.dName; }, // 原始台名快照：失配清单显示/再搜索用
@@ -412,7 +412,7 @@ const App = {
   },
   catDel(c) {
     if (!confirm(`删除自建分类「${c}」？其中电台将回到同步默认分类。`)) return;
-    for (const k of Object.keys(this.cfg.moves)) if (this.cfg.moves[k] === c) delete this.cfg.moves[k]; // 台撤回默认
+    for (const k of Object.keys(this.cfg.moves)) if (this.cfg.moves[k] === c) { delete this.cfg.moves[k]; delete this.cfg.tag[k]; } // 台撤回默认，tag 快照一并清
     this.cfg.cats = this.cfg.cats.filter(x => x !== c); delete this.cfg.hideC[c];
     if (this.state.cat === c) this.state.cat = '全部';
     this.saveCfg(); this.reapplyCfg();
@@ -420,21 +420,25 @@ const App = {
 
   /* —— 电台页（搜索含已隐藏台，恢复入口也在这）—— */
   renderMStations() {
+    const box = $('mlist'), keepScroll = box.scrollTop; // innerHTML 重建丢滚动位置：先记后还
     const kw = (this.mKw || '').toLowerCase(), all = this.state.stations;
     // 命中当前名或原始名（改过名的用旧名也搜得到）；无关键词只列前 100，避免 1600+ 行整表渲染
-    const list = kw ? all.filter(s => s.n.toLowerCase().includes(kw) || s.dName.toLowerCase().includes(kw)) : all.slice(0, 100);
+    // dName/dCat 用 || 兜底（file:// 降级模式 boot 已快照，双保险防再漏）
+    const list = kw ? all.filter(s => s.n.toLowerCase().includes(kw) || (s.dName || s.n).toLowerCase().includes(kw)) : all.slice(0, 100);
     const opts = this.mCatOptions();
-    $('mlist').innerHTML = list.map(s => {
-      const k = keyOf(s), moved = s.c !== s.dCat, named = s.n !== s.dName;
+    box.innerHTML = list.map(s => {
+      const dC = s.dCat || s.c, dN = s.dName || s.n;
+      const k = keyOf(s), moved = s.c !== dC, named = s.n !== dN;
       return `<div class="mrow${s.hidden ? ' hidden-item' : ''}" data-k="${this.esc(k)}">
-        <span class="nm" title="${this.esc(named ? '原名：' + s.dName : s.n)}${s.hidden ? '（已隐藏）' : ''}">${this.esc(s.n)}</span>
-        <select data-act="move" aria-label="「${this.esc(s.n)}」的分类">${opts.map(c => `<option value="${this.esc(c)}"${c === s.c ? ' selected' : ''}>${this.esc(c)}${this.cfg.hideC[c] ? '（已隐藏）' : ''}</option>`).join('')}<option value="__new">＋新建分类…</option><option value="__def">↺ 默认（${this.esc(s.dCat)}）</option></select>
+        <span class="nm" title="${this.esc(named ? '原名：' + dN : s.n)}${s.hidden ? '（已隐藏）' : ''}">${this.esc(s.n)}</span>
+        <select data-act="move" aria-label="「${this.esc(s.n)}」的分类">${opts.map(c => `<option value="${this.esc(c)}"${c === s.c ? ' selected' : ''}>${this.esc(c)}${this.cfg.hideC[c] ? '（已隐藏）' : ''}</option>`).join('')}<option value="__new">＋新建分类…</option><option value="__def">↺ 默认（${this.esc(this.cfg.renames[dC] || dC)}）</option></select>
         ${(moved || named || s.hidden) ? `<button type="button" class="btn mbtn" data-act="reset" title="撤销此台全部个人调整（回到默认分类/默认名/显示）">↺</button>` : ''}
-        <button type="button" class="btn mbtn" data-act="rename" title="重命名电台（仅显示层，收藏/台标按 URL 不受影响）">✎</button>
+        <button type="button" class="btn mbtn" data-act="rename" title="重命名电台（仅显示层，收藏按 URL 不受影响；台标若因改名失配可重新收藏触发解析）">✎</button>
         <button type="button" class="btn mbtn" data-act="hide" title="${s.hidden ? '取消隐藏' : '隐藏电台（彻底消失，含全部/搜索）'}">${s.hidden ? '👁' : '🙈'}</button>
       </div>`;
     }).join('') || '<div class="empty">没有匹配的电台</div>';
-    if (!kw && all.length > 100) $('mlist').innerHTML += '<div class="empty" style="padding:8px 30px;">电台较多，仅列前 100 台——用上方搜索缩小范围</div>';
+    if (!kw && all.length > 100) box.innerHTML += '<div class="empty" style="padding:8px 30px;">电台较多，仅列前 100 台——用上方搜索缩小范围</div>';
+    box.scrollTop = keepScroll;
   },
   stMove(s, v) {
     if (v === s.c) return;
@@ -461,7 +465,7 @@ const App = {
     this.cfgTag(s); this.saveCfg(); this.reapplyCfg();
   },
   cfgResetStation(s) {
-    for (const u of s.u) { delete this.cfg.moves[u]; delete this.cfg.names[u]; delete this.cfg.hideS[u]; }
+    for (const u of s.u) { delete this.cfg.moves[u]; delete this.cfg.names[u]; delete this.cfg.hideS[u]; delete this.cfg.tag[u]; } // tag 只在失配清单用，恢复默认即清（防只增不减）
     this.saveCfg(); this.reapplyCfg();
   },
 
@@ -583,6 +587,9 @@ const App = {
 
     // 维护面板（⚙）：个人分类/电台调整，全部落 radio.cfg（localStorage），同步重跑后按 URL 回绑自动复用
     this.loadCfg();
+    // file:// 降级模式（reloadMain 必失败）下 stations 停留在 STARTER、不走 applySources 的留底循环——
+    // 此处补快照，否则维护面板「电台」页读 s.dName 直接抛错（渲染处另有 || 兜底双保险）
+    for (const s of this.state.stations) { if (s.dCat === undefined) { s.dCat = s.c; s.dName = s.n; } }
     $('manageBtn').onclick = () => this.manageOpen();
     $('mClose').onclick = () => this.manageClose();
     $('manage').onclick = e => { if (e.target === $('manage')) this.manageClose(); }; // 点遮罩关闭

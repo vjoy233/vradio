@@ -79,7 +79,7 @@ const Player = {
     const { urls, my } = this.pctx;
     if (my !== this.token) return;
     if (this.pctx.i >= urls.length) { // 全部源失败：状态栏给出结论与下一步指引，footer 由 onfail 复位
-      this.station = this.connecting = null; this.emit(true);
+      this.station = this.connecting = null; this.stopWatchdog(); this.emit(true);
       this.say('⚠ 全部源失败，建议点「体检」或「同步源」');
       if (this.onfail) this.onfail();
       return;
@@ -143,7 +143,8 @@ const Player = {
     const my = this.token;
     this.wd = setTimeout(() => {
       this.wd = 0;
-      if (my === this.token) { this.say('流卡住，自动恢复…'); this.retryOrNext(); }
+      if (my !== this.token || !this.station) return; // 级联已终结（全部源失败/切台）：残留看门狗不说话不动作
+      this.say('流卡住，自动恢复…'); this.retryOrNext();
     }, 12000);
   },
   stopWatchdog() { if (this.wd) { clearTimeout(this.wd); this.wd = 0; } },

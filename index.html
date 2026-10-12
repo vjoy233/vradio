@@ -68,6 +68,8 @@
   #song:hover { color:var(--acc); }
   #songhist { position:fixed; right:14px; bottom:72px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 14px; max-width:min(380px, 82vw); max-height:38vh; overflow-y:auto; z-index:9; font-size:12px; } /* 歌曲历史浮层（B-7） */
   #songhist b { display:block; margin-bottom:4px; color:var(--dim); font-weight:500; }
+  #songhist .shhead { display:flex; align-items:center; justify-content:space-between; gap:8px; } /* 头部：标题 + 导出全部（N2） */
+  #songhist .shhead b { margin-bottom:0; }
   .shrow { padding:2px 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   footer #status { font-size:12px; color:var(--dim); }
   /* 同步/体检不确定进度条（UI 审计 P3-8）：贴 footer 顶边 2px，transform 动画不走 layout；reduced-motion 隐藏（状态栏文案仍在） */

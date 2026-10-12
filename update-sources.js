@@ -359,6 +359,17 @@ async function syncSources(log = () => {}) {
     fs.renameSync(RADIODATA + '.tmp', RADIODATA);
   } catch (e) { log('radio-data.js 写入失败（不影响电台列表）：' + (e.message || e)); }
 
+  // 4.5) 同步 diff 摘要（N4/r2 ⑥）：按台名集合对比旧文件与新列表——分类变化不算（重分类是本项目常规操作），
+  //      改名 = 消失+新增如实呈现；aborted 早退不产出（保留旧列表口径一致）。名单封顶 50，前端收藏点名用
+  const entryNames = lines => new Set((Array.isArray(lines) ? lines : splitSections(lines).flatMap(s => s.lines))
+    .filter(l => !l.endsWith('#genre#')).map(l => l.split(',')[0].trim()).filter(Boolean));
+  const oldNames = entryNames(curText), neuNames = entryNames(merged);
+  const removedNames = [...oldNames].filter(n => !neuNames.has(n));
+  const addedNames = [...neuNames].filter(n => !oldNames.has(n));
+  summary.added = addedNames.length; summary.removed = removedNames.length;
+  if (addedNames.length) summary.addedNames = addedNames.slice(0, 50);
+  if (removedNames.length) summary.removedNames = removedNames.slice(0, 50);
+
   // 5) 台标（欧美成功重建时随行重写 logos.txt，双分类前缀；失败时保留旧文件不动）
   if (euLines) {
     try {
@@ -371,7 +382,7 @@ async function syncSources(log = () => {}) {
   }
 
   summary.total = after; summary.delta = after - before;
-  log(`完成：共 ${after} 台（${summary.delta >= 0 ? '+' : ''}${summary.delta}）`);
+  log(`完成：共 ${after} 台（${summary.delta >= 0 ? '+' : ''}${summary.delta}${(addedNames.length || removedNames.length) ? `；新增 ${addedNames.length}、消失 ${removedNames.length}` : ''}）`);
   return summary;
 }
 

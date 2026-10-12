@@ -945,9 +945,13 @@ const App = {
       r.readAsText(f, 'utf-8');
     };
 
-    // 初始数据：radio.txt + my-radio.txt（http 下），file:// 下回退内置精选 + 手动导入
+    // 初始数据：radio.txt + my-radio.txt（http 下）；file:// 降级链（N1/r2 ③）：radio-data.js 全库直读
+    // （同步产出的经典 script 全局，fetch 被拦但 script 加载不会）→ 再退内置精选；hint 只在两者皆无时提示
     this.reloadMain().then(ok => {
-      if (!ok) $('hint').style.display = 'block';
+      if (!ok) {
+        if (window.RADIO_DATA) this.applySources(this.parse(window.RADIO_DATA), []); // 代理级 m3u8 台播不了，直流台照常
+        else $('hint').style.display = 'block';
+      }
       this.logosEnsure();
       // 开机静默体检（B-10）：首屏渲染/台标补全之后 4s 再跑收藏+最近范围，死台自动隐藏无需手动点「体检」
       if (ok) setTimeout(() => Sync.silentHealth(), 4000);

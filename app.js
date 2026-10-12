@@ -1,5 +1,5 @@
 /* VRadio 应用层 —— 列表/搜索/分类/收藏/最近播放/导入导出/渲染的唯一所有者（模块契约见 docs/review.md 十一节债务 2）。
-   播放一律经 Player 接口；同步/体检由 sync.js 编排本文件暴露的方法。
+   播放一律经 Player 接口；同步/体检由 sync.js 编排本文件暴露的方法；节目单数据经 EPG 模块获取（本文件只渲染）。
    身份公理（债务 1）：URL = 持久身份（收藏/最近记录源 URL，名字漂移后按 URL 回绑），名字 = 显示层。 */
 
 /* ---------- 内置精选（地址已实测直连可用；含同一电台的多个备选源） ---------- */
@@ -24,8 +24,10 @@ const $ = id => document.getElementById(id);
 const keyOf = s => s.c + '|' + s.n;
 
 const App = {
-  /* 集中状态（docs/review.md 架构-风险 2）：stations 数据 + 渲染哨兵 + 行索引（体检增量更新用，去 O(n²)） */
-  state: { stations: STARTER.slice(), cat: '全部', keyword: '', stamp: 0, index: new Map() },
+  /* 集中状态（docs/review.md 架构-风险 2）：stations 数据 + 渲染哨兵 + 行索引（体检增量更新用，去 O(n²)）
+     view：网格/列表视图（boot 从 localStorage 恢复，网格为默认——单列长列表浪费纵向空间） */
+  state: { stations: STARTER.slice(), cat: '全部', keyword: '', view: 'grid', stamp: 0, index: new Map() },
+  epgNow: null, // { k, n } 当前播放台的节目单「正在播」节目名（取到后注入底部与列表元信息）
   favs: [],    // [{k, u:[源URL…]}] —— 带 URL 的条目永不回收（休眠待回绑），旧名字键回绑失败即刻回收
   recents: [], // [{k, n, u:[…]}] 最近在前、≤20；队首即「上次收听」（E3 与 lastKey 合并为单一队列）
 
@@ -146,12 +148,25 @@ const App = {
     $('now').textContent = s ? '上次收听：' + s.n : '未在播放';
   },
 
-  /* ---------- 渲染（唯一入口） ---------- */
+  /* ---------- 渲染（唯一入口）：网格 = 精简卡片 / 列表 = 两行详情（元信息行含「正在播」节目） ---------- */
   keepFocus(box, ...attrs) { // innerHTML 整表重建会把键盘焦点弹回 body：重建前后找回同节点
     const ae = document.activeElement;
     if (!box.contains(ae) || !ae.dataset) return () => {};
     const pair = attrs.map(a => [a, ae.dataset[a]]).find(([, v]) => v != null);
     return () => { if (pair) box.querySelector(`[data-${pair[0]}="${CSS.escape(pair[1])}"]`)?.focus({ preventScroll: true }); };
+  },
+  favBtn(k, on, s) {
+    return `<button type="button" class="fav${on ? ' on' : ''}" data-fav="${this.esc(k)}" aria-pressed="${on}" aria-label="${on ? '取消收藏' : '收藏'}：${this.esc(s.n)}" title="${on ? '取消收藏' : '收藏'}">${on ? '★' : '☆'}</button>`;
+  },
+  /* 节目单入口：仅有手动节目单或蜻蜓源的台渲染（无数据安静忽略）；file:// 无后端取不到数据，同样不渲染 */
+  epgBtn(s) {
+    if (!location.protocol.startsWith('http') || !EPG.avail(s)) return '';
+    return `<button type="button" class="epgbtn" data-epg="${this.esc(keyOf(s))}" title="查看节目单" aria-label="查看节目单：${this.esc(s.n)}">🕐</button>`;
+  },
+  /* 缓存窥探（不发请求）：该台节目单里「正在播」的节目名 */
+  nowOf(s) {
+    const p = EPG.peek(s); const n = p && p.progs && EPG.nowProg(p.progs, p.tz);
+    return n ? n.n : '';
   },
   buildCats() {
     const restore = this.keepFocus($('cats'), 'c');
@@ -183,19 +198,21 @@ const App = {
     return `<div class="empty">${msg}</div>`;
   },
   render() {
-    const restore = this.keepFocus($('list'), 'k', 'fav'); // 焦点在行或收藏按钮上都找回
+    const restore = this.keepFocus($('list'), 'k', 'fav', 'epg'); // 焦点在行/卡片或按钮上都找回
     const list = this.visible();
     this.state.stamp++;
     this.state.index = new Map(list.map((s, i) => [s, i])); // 行索引（体检增量更新用，替代 indexOf 的 O(n²)）
     const pk = Player.station && keyOf(Player.station), ck = Player.connecting && keyOf(Player.connecting);
-    const favs = this.favKeys();
+    const favs = this.favKeys(), grid = this.state.view === 'grid';
+    $('list').className = grid ? 'grid' : '';
     $('list').innerHTML = list.map((s, i) => {
       const k = keyOf(s), on = favs.has(k), playing = k === pk;
+      const base = `${playing ? ' playing' : ''}${k === ck ? ' connecting' : ''}${s.health === 'dead' ? ' dead' : ''}`;
+      const attrs = `data-k="${this.esc(k)}" data-i="${i}" role="listitem" tabindex="0" aria-label="${this.esc(s.n)}${playing ? '（播放中）' : ''}"${playing ? ' aria-current="true"' : ''}${s.health === 'dead' ? ' title="体检不可用，点击仍可尝试播放"' : ''}`;
       const hp = s.health ? `<span class="health ${s.health === 'ok' ? 'ok' : 'bad'}" title="体检${s.health === 'ok' ? '可用' : '不可用'}">${s.health === 'ok' ? '✓' : '✗'}</span>` : '';
-      return `<div class="row${playing ? ' playing' : ''}${k === ck ? ' connecting' : ''}${s.health === 'dead' ? ' dead' : ''}" data-k="${this.esc(k)}" data-i="${i}" role="listitem" tabindex="0" aria-label="${this.esc(s.n)}${playing ? '（播放中）' : ''}"${playing ? ' aria-current="true"' : ''}${s.health === 'dead' ? ' title="体检不可用，点击仍可尝试播放"' : ''}>
-        <button type="button" class="fav${on ? ' on' : ''}" data-fav="${this.esc(k)}" aria-pressed="${on}" aria-label="${on ? '取消收藏' : '收藏'}：${this.esc(s.n)}" title="${on ? '取消收藏' : '收藏'}">${on ? '★' : '☆'}</button>
-        <span class="name">${this.esc(s.n)}</span>${hp}
-        <span class="badge">${this.esc(s.c)}</span><span class="srcs" title="备选源数量">${s.u.length}源</span></div>`;
+      if (grid) return `<div class="card${base}" ${attrs}><div class="chead"><span class="cname">${this.esc(s.n)}</span>${this.favBtn(k, on, s)}</div><div class="cfoot"><span class="badge">${this.esc(s.c)}</span><span class="srcs" title="备选源数量">${s.u.length}源</span>${hp}${this.epgBtn(s)}</div></div>`;
+      const now = this.nowOf(s);
+      return `<div class="row${base}" ${attrs}>${this.favBtn(k, on, s)}<div class="col"><div class="l1"><span class="name">${this.esc(s.n)}</span>${hp}${this.epgBtn(s)}</div><div class="meta"><span class="badge">${this.esc(s.c)}</span><span class="srcs" title="备选源数量">${s.u.length}源</span>${now ? ' · 正在播：' + this.esc(now) : ''}</div></div></div>`;
     }).join('') || this.emptyHtml();
     restore();
   },
@@ -203,12 +220,13 @@ const App = {
   patchHealth(s, ok, stamp) {
     s.health = ok ? 'ok' : 'dead';
     if (this.state.stamp !== stamp) return;
-    const row = $('list').querySelector(`.row[data-i="${this.state.index.get(s)}"]`);
+    const row = $('list').querySelector(`[data-i="${this.state.index.get(s)}"]`); // 行/卡片通用
     if (!row) return;
     row.classList.toggle('dead', !ok);
     const old = row.querySelector('.health'); if (old) old.remove();
     const sp = document.createElement('span'); sp.className = 'health ' + (ok ? 'ok' : 'bad'); sp.textContent = ok ? '✓' : '✗';
-    row.insertBefore(sp, row.querySelector('.badge'));
+    const host = row.querySelector('.l1, .cfoot');
+    host.insertBefore(sp, host.querySelector('.epgbtn')); // 无入口时第二参数为 null = 追加末尾
   },
 
   togglePlay(k) { // 再点当前台 = 暂停/继续；点其他台 = 切换
@@ -218,8 +236,20 @@ const App = {
       return;
     }
     this.remember(s);
+    this.wantEpg(s); // 播放即顺手取节目单（每天一次进缓存），取到后底部/列表补「正在播」
     if (this.state.cat === '最近') this.render(); // 最近队列头插后刷新顺序
     Player.play(s);
+  },
+  wantEpg(s) {
+    if (!location.protocol.startsWith('http') || !EPG.avail(s)) return;
+    EPG.get(s).then(info => {
+      if (!info || !info.progs || !Player.station || keyOf(Player.station) !== keyOf(s)) return;
+      const np = EPG.nowProg(info.progs, info.tz);
+      if (!np) return;
+      this.epgNow = { k: keyOf(s), n: np.n };
+      this.playerNow();
+      if (this.state.view === 'list') this.render(); // 列表视图元信息行补节目名
+    }).catch(() => {});
   },
 
   /* ---------- 收藏导出/导入（Tier 1 E4）：导出 = 带 #VRADIO:FAV 标记的 m3u（通用播放器可读），
@@ -238,6 +268,50 @@ const App = {
     $('status').textContent = `已导出 ${list.length} 个收藏电台（vradio-favorites.m3u）`;
   },
 
+  /* ---------- 节目单面板（数据经 EPG 模块，渲染归本文件；Esc/遮罩/✕ 关闭） ---------- */
+  async openEpg(k) {
+    const s = this.state.stations.find(x => keyOf(x) === k); if (!s) return;
+    this.epgFocus = document.activeElement; // 关闭后还焦点
+    this.epgKey = k;
+    $('epgTitle').textContent = s.n;
+    $('epgMeta').textContent = ''; $('epgDays').innerHTML = '';
+    $('epgList').innerHTML = '<li class="epg-hint">节目单加载中…</li>';
+    $('epgPanel').hidden = false; $('epgClose').focus();
+    const info = await EPG.get(s).catch(() => null);
+    if (this.epgKey !== k || $('epgPanel').hidden) return; // 面板已切台/关闭：丢弃过期结果
+    if (!info || !info.progs || !info.progs.length) { $('epgList').innerHTML = '<li class="epg-hint">暂无节目单数据</li>'; return; }
+    this.epgInfo = info;
+    this.epgDow = info.scope === 'week' ? EPG.dow(info.tz) : 0; // 手动周节目单默认选中「电台当地今天」
+    this.renderEpg();
+  },
+  closeEpg() {
+    $('epgPanel').hidden = true; this.epgKey = null;
+    const f = this.epgFocus; // 开面板期间若发生过整表重渲，原节点已失联：按 data 属性找回在位的替身
+    if (f && f.isConnected && f.focus) f.focus();
+    else if (f && f.dataset && (f.dataset.epg || f.dataset.fav || f.dataset.k)) {
+      const v = f.dataset.epg || f.dataset.fav || f.dataset.k;
+      const n = $('list').querySelector(`[data-epg="${CSS.escape(v)}"],[data-fav="${CSS.escape(v)}"],[data-k="${CSS.escape(v)}"]`);
+      if (n) n.focus();
+    }
+  },
+  renderEpg() {
+    const info = this.epgInfo, tz = info.tz;
+    const week = info.scope === 'week', todaySel = !week || this.epgDow === EPG.dow(tz);
+    $('epgMeta').textContent = (info.src ? '来源：' + info.src + ' · ' : '') + '时段为电台当地时间（UTC' + EPG.tzLabel(tz) + '）'
+      + (info.loop ? ' · ' + info.loop : '') + (info.src === '蜻蜓 · 已开播' ? ' · 蜻蜓只提供今天已开播的档期' : '');
+    $('epgDays').innerHTML = week ? ['一', '二', '三', '四', '五', '六', '日'].map((d, i) =>
+      `<button type="button" class="chip${i + 1 === this.epgDow ? ' on' : ''}" data-dow="${i + 1}"${i + 1 === this.epgDow ? ' aria-current="true"' : ''}>周${d}</button>`).join('') : '';
+    const progs = week ? EPG.dayList(info.raw, this.epgDow) : info.progs;
+    const now = todaySel ? EPG.nowProg(progs, tz) : null, nMin = EPG.nowMin(tz);
+    const local = -new Date().getTimezoneOffset() !== tz; // 观看者时区 ≠ 电台时区才加本地换算（国际台时区关注点）
+    $('epgList').innerHTML = progs.map(p => {
+      const isNow = p === now, past = todaySel && !isNow && p.e <= nMin;
+      let loc = '';
+      if (local) { const l = EPG.localTime(p.s, tz); loc = `<span class="epg-loc">本地 ${l.t}${l.day > 0 ? '（次日）' : l.day < 0 ? '（前日）' : ''}</span>`; }
+      return `<li class="epg-item${isNow ? ' now' : past ? ' past' : ''}"><span class="epg-time">${EPG.hhmm(p.s)}~${EPG.hhmm(p.e)}</span><span class="epg-name">${this.esc(p.n)}</span>${p.d ? `<span class="epg-dj">${this.esc(p.d)}</span>` : ''}${loc}${isNow ? '<span class="epg-live">正在播</span>' : ''}</li>`;
+    }).join('') || '<li class="epg-hint">该日无节目安排</li>';
+  },
+
   boot() {
     this.loadStore();
     // 音量持久化（读取夹取 0-100，坏值回退 90）
@@ -249,7 +323,7 @@ const App = {
     // Player 状态回调：full=true 需整表重渲（行高亮/连接中变化），否则只轻量更新底部
     Player.onstate = full => {
       const s = Player.station;
-      if (s) { $('now').textContent = '▶ ' + s.n; $('pp').textContent = (Player.connecting || !Player.isPaused()) ? '⏸' : '▶'; }
+      if (s) { $('now').textContent = '▶ ' + s.n + (this.epgNow && this.epgNow.k === keyOf(s) ? ' · 正在播：' + this.epgNow.n : ''); $('pp').textContent = (Player.connecting || !Player.isPaused()) ? '⏸' : '▶'; }
       else { $('pp').textContent = '▶'; this.showLast(); }
       $('eq').classList.toggle('on', !!s && !Player.isPaused()); // 均衡器动画（E6）：活着且在播
       if (full) this.render();
@@ -276,7 +350,7 @@ const App = {
       if (e.key === '/' && !e.ctrlKey && !e.altKey && !e.metaKey && !/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) { e.preventDefault(); $('q').focus(); }
     });
 
-    // 分类与列表（行可用键盘操作：Enter/Space 播放；收藏按钮由原生 button 处理）
+    // 分类与列表（行/卡片可用键盘操作：Enter/Space 播放；收藏、节目单按钮由原生 button 处理）
     $('cats').onclick = e => { const c = e.target.closest('.chip'); if (c) { this.state.cat = c.dataset.c; this.buildCats(); this.render(); } };
     $('list').onclick = e => {
       const fav = e.target.closest('.fav');
@@ -285,13 +359,35 @@ const App = {
         if (s) this.toggleFav(s);
         return;
       }
-      const row = e.target.closest('.row'); if (row) this.togglePlay(row.dataset.k);
+      const eb = e.target.closest('.epgbtn');
+      if (eb) { this.openEpg(eb.dataset.epg); return; }
+      const row = e.target.closest('.row,.card'); if (row) this.togglePlay(row.dataset.k);
     };
     $('list').onkeydown = e => {
       if (e.key !== 'Enter' && e.key !== ' ') return;
-      const row = e.target.closest('.row');
+      const row = e.target.closest('.row,.card');
       if (row && e.target === row) { e.preventDefault(); this.togglePlay(row.dataset.k); }
     };
+
+    // 视图切换（网格=精简卡片 / 列表=两行详情），持久化到 localStorage
+    const syncView = () => {
+      $('gridBtn').classList.toggle('on', this.state.view === 'grid'); $('gridBtn').setAttribute('aria-pressed', String(this.state.view === 'grid'));
+      $('listBtn').classList.toggle('on', this.state.view === 'list'); $('listBtn').setAttribute('aria-pressed', String(this.state.view === 'list'));
+    };
+    const setView = v => { if (this.state.view === v) return; this.state.view = v; localStorage.setItem('radio.view', v); syncView(); this.render(); };
+    $('gridBtn').onclick = () => setView('grid');
+    $('listBtn').onclick = () => setView('list');
+    this.state.view = localStorage.getItem('radio.view') === 'list' ? 'list' : 'grid'; // 网格为默认
+    syncView();
+
+    // 节目单（EPG）：缓存 + 手动 epg.txt（http 下才有后端/代理）+ 面板事件
+    EPG.load();
+    if (location.protocol.startsWith('http'))
+      fetch('epg.txt').then(r => r.ok ? r.text() : '').then(t => { if (t) { EPG.loadManual(t); this.render(); } }).catch(() => {});
+    $('epgClose').onclick = () => this.closeEpg();
+    $('epgPanel').onclick = e => { if (e.target === $('epgPanel')) this.closeEpg(); };
+    $('epgDays').onclick = e => { const c = e.target.closest('.chip'); if (c) { this.epgDow = +c.dataset.dow; this.renderEpg(); } };
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('epgPanel').hidden) this.closeEpg(); });
 
     // 底部控制：未播放时 ▶ = 续播上次收听（按键或 URL 回绑解析）；播放中 = 暂停；暂停 = 继续
     const resumeLast = () => {

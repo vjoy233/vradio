@@ -33,7 +33,7 @@ const Sync = {
     const b = $('healthBtn');
     if (b.textContent.includes('取消')) { this.abort = true; return; }
     this.abort = false; b.textContent = '取消体检';
-    const list = App.visible(); let done = 0, alive = 0;
+    const list = App.visible(true); let done = 0, alive = 0; // visible(true)：连默认隐藏的死台一起复查，复活即自动回归列表
     const stamp = App.state.stamp, q = list.slice(), t0 = Date.now();
     const worker = async () => {
       while (q.length && !this.abort) {
@@ -52,6 +52,7 @@ const Sync = {
       }
     };
     await Promise.all(Array.from({ length: 5 }, worker));
+    App.saveHealth(); // patchHealth 只改内存，收尾统一落盘一次（正常结束/取消都走这里）
     App.render(); // P3-13：途中若发生过整表重渲，结束时兜底一次，标记不丢
     $('status').textContent = this.abort ? `体检已取消：完成 ${done}/${list.length}` : `体检完成：${alive}/${list.length} 可用（✗ 台建议换源或点「同步源」重建）`;
     b.textContent = '体检';
@@ -59,4 +60,7 @@ const Sync = {
 };
 
 $('syncBtn').onclick = () => Sync.doSync();
-$('healthBtn').onclick = () => Sync.health();
+$('healthBtn').onclick = () => Sync.health().catch(e => { // health() 内部只兜了探活失败，其余异常不兜底会把按钮永久卡在「取消体检」
+  $('status').textContent = '体检异常：' + (e && e.message || e);
+  $('healthBtn').textContent = '体检';
+});

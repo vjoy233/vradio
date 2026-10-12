@@ -122,6 +122,11 @@ const Player = {
   },
   stopHls() { if (this.hls) { this.hls.destroy(); this.hls = null; } },
 
+  setSong(t) { // 曲讯（B-6）：锁屏/媒体键显示当前歌名；空串回退台名（app 轮询到曲名时调用）
+    if (!('mediaSession' in navigator) || !this.station) return;
+    try { navigator.mediaSession.metadata = new MediaMetadata({ title: t || this.station.n, artist: 'VRadio · ' + this.station.c }); } catch (_) {}
+  },
+
   stop() {
     this.token++; this.stopHls(); this.stopWatchdog();
     this.audio.removeAttribute('src'); this.audio.load();

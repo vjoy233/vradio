@@ -347,6 +347,11 @@ const App = {
     restore();
     const ae = document.activeElement; // 重渲后焦点行找回（keepFocus）：同步 roving 落点，防 Tab 跳回别行
     if (ae && ae.dataset && ae.dataset.i != null) this.rowIdx = +ae.dataset.i;
+    // 定位闪烁窗口（N5/r2 ⑦）：flash 生效期内的重渲保持高亮与视口（1s 超时后不干扰常规浏览）
+    if (this._flashK) {
+      const fr = $('list').querySelector(`[data-k="${CSS.escape(this._flashK)}"]`);
+      if (fr) { fr.classList.add('flash'); fr.scrollIntoView({ block: 'center' }); }
+    }
   },
   /* 方向键导航落点（UI 审计 P2-5）：焦点搬家 + 滚动跟随；搜索框 ↓ 也落到列表首行 */
   focusRow(i) {
@@ -420,9 +425,12 @@ const App = {
     if (!row) return;
     const rm = matchMedia('(prefers-reduced-motion: reduce)').matches;
     row.scrollIntoView({ block: 'center', behavior: rm ? 'auto' : 'smooth' });
-    row.classList.add('flash');
+    this._flashK = k; // render() 内重挂：后台重渲（台标补全/体检收尾）会重建整表吃掉 flash 类与滚动位置
     clearTimeout(this._flashT);
-    this._flashT = setTimeout(() => row.classList.remove('flash'), 1000);
+    this._flashT = setTimeout(() => {
+      this._flashK = '';
+      for (const x of $('list').querySelectorAll('.flash')) x.classList.remove('flash');
+    }, 1000);
   },
 
   /* 台标补全（收藏 + 正在播优先，请求量可控）：Logos.ensure 落库后回调重渲一次展示；

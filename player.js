@@ -19,6 +19,7 @@ const Player = {
   onfail: null,     // 全部源失败的善后回调（footer 复位）；⚠ 提示文案由本引擎 say，不依赖回调方
   ontick: null,     // (msLeft) 睡眠定时倒计时回调（0 = 已关）
   onplaylast: null, // 媒体键 play 但当前无台时，转交 app 走「续播上次收听」（与 pp 按钮同语义）
+  onlogo: null,     // (station) → 台标 URL（锁屏 artwork 大图，r2 ⑩）；由 app 注入 Logos.get，player 不伸手进台标模块
 
   init(el, vol0) {
     this.audio = el; this.vol = vol0; el.volume = vol0;
@@ -69,8 +70,8 @@ const Player = {
     for (const si of order) for (const v of this.variants(s.u[si])) urls.push({ u: v, si });
     this.pctx = { urls, i: 0, my: ++this.token }; // 世代令牌：快速连续点播时旧链路回调全部失效，防串台
     this.station = this.connecting = s; this.emit(true);
-    if ('mediaSession' in navigator) { // 锁屏/媒体键显示当前台（E1）
-      try { navigator.mediaSession.metadata = new MediaMetadata({ title: s.n, artist: 'VRadio · ' + s.c }); } catch (_) {}
+    if ('mediaSession' in navigator) { // 锁屏/媒体键显示当前台（E1）+ 台标大图（r2 ⑩）
+      this.meta(s.n);
       navigator.mediaSession.playbackState = 'playing';
     }
     this.next();
@@ -122,9 +123,15 @@ const Player = {
   },
   stopHls() { if (this.hls) { this.hls.destroy(); this.hls = null; } },
 
-  setSong(t) { // 曲讯（B-6）：锁屏/媒体键显示当前歌名；空串回退台名（app 轮询到曲名时调用）
+  meta(title) { // 锁屏元数据组装（E1 + r2 ⑩）：artwork 只给 src——台标 URL 后缀杂乱（jpg/png/无后缀），
+    // sizes/type 是可选提示字段，猜错反而挡路；URL 由浏览器直接取图不经 HTML 插值，无 XSS 面
+    const logo = this.onlogo && this.station ? this.onlogo(this.station) : '';
+    try { navigator.mediaSession.metadata = new MediaMetadata({ title, artist: 'VRadio · ' + this.station.c, artwork: logo ? [{ src: logo }] : [] }); } catch (_) {}
+  },
+  setSong(t) { // 曲讯（B-6）：锁屏/媒体键显示当前歌名；空串回退台名（app 轮询到曲名时调用）。
+    // 台标可能在开播后才由 Logos 运行时解析到（收藏+正在播优先补全），此处再取一次即覆盖
     if (!('mediaSession' in navigator) || !this.station) return;
-    try { navigator.mediaSession.metadata = new MediaMetadata({ title: t || this.station.n, artist: 'VRadio · ' + this.station.c }); } catch (_) {}
+    this.meta(t || this.station.n);
   },
 
   stop() {

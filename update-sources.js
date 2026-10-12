@@ -6,6 +6,7 @@
 //      欧美获取失败时保留旧分类；合并结果低于下限时中止写盘
 // 用法：node update-sources.js  或 页面上点「同步源」(POST /api/sync)
 const http = require('http'), https = require('https'), fs = require('fs'), path = require('path');
+const dns = require('dns');
 const { execFile } = require('child_process');
 
 const ROOT = __dirname;
@@ -18,13 +19,52 @@ const EU_CAT = '欧美音乐';
 const MIN_TOTAL = 800;      // 合并结果条目数下限，低于视为异常中止写盘
 const MIN_CN_ENTRIES = 500; // 国内上游内容条目数下限，低于视为上游异常
 
+/* ---------- 网络安全护栏（server.js 与本文件共用，导出供 require） ---------- */
+// 私网/环回/链路本地判定：IPv4 段 + IPv6（::1、fc00::/7、fe80::/10、IPv4-mapped、未指定地址）
+function isPrivateIp(a) {
+  const s = String(a);
+  const m = s.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  if (m) return isPrivateIp(m[1]);
+  if (s.includes(':')) {
+    const v6 = s.toLowerCase();
+    return v6 === '::1' || v6 === '::' || v6.startsWith('fc') || v6.startsWith('fd') || /^(fe8|fe9|fea|feb)/.test(v6);
+  }
+  const o = s.split('.').map(Number);
+  return o[0] === 0 || o[0] === 10 || o[0] === 127 || (o[0] === 169 && o[1] === 254)
+    || (o[0] === 192 && o[1] === 168) || (o[0] === 172 && o[1] >= 16 && o[1] <= 31);
+}
+// 目标字符串校验：仅 http(s) 且 hostname 非内网字面量（WHATWG URL 会把十进制 IP 规范化为点分，变形已堵）
+function safeTarget(raw) {
+  let u; try { u = new URL(raw); } catch (_) { return null; }
+  if (!/^https?:$/.test(u.protocol)) return null;
+  const h = u.hostname.toLowerCase();
+  if (h === 'localhost' || h === '::1' || h === '[::1]' || h.endsWith('.local')) return null;
+  if (/^(10\.|127\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h)) return null;
+  return u.href;
+}
+// 连接级校验（TOCTOU 安全，P2-7 修法）：包成自定义 lookup 传给 http(s).get，
+// 校验的就是实际用于建立连接的那次 DNS 解析；rebinding 换 IP 也逃不过
+function guardLookup(host, opts, cb) {
+  dns.lookup(host, opts, (err, ...rest) => {
+    if (err) return cb(err);
+    const bad = (opts && opts.all) ? rest[0].some(x => isPrivateIp(x.address)) : isPrivateIp(rest[0]);
+    if (bad) return cb(new Error('目标解析到内网/环回地址: ' + host));
+    cb(null, ...rest);
+  });
+}
+
 /* ---------- 基础网络 ---------- */
-function request(url, { timeout = 10000, headers = {}, maxBytes = 1 << 20 } = {}) {
+function request(url, { timeout = 10000, headers = {}, maxBytes = 1 << 20, maxRedirect = 5 } = {}, depth = 0) {
   return new Promise((resolve, reject) => {
+    if (depth > maxRedirect) return reject(new Error('too many redirects ' + url.slice(0, 50))); // P3-7：重定向深度上限
+    if (!safeTarget(url)) return reject(new Error('目标非公网 http(s): ' + url.slice(0, 50)));    // P2-6：目标逐次校验
     const mod = url.startsWith('https') ? https : http;
-    const req = mod.get(url, { timeout, headers: { 'User-Agent': 'vradio/0.1 (+local radio player)', ...headers } }, res => {
+    const req = mod.get(url, { timeout, lookup: guardLookup, headers: { 'User-Agent': 'vradio/0.1 (+local radio player)', ...headers } }, res => {
       if ([301, 302, 303, 307].includes(res.statusCode) && res.headers.location) {
-        res.resume(); return request(new URL(res.headers.location, url).href, { timeout, headers, maxBytes }).then(resolve, reject);
+        res.resume();
+        const next = safeTarget(new URL(res.headers.location, url).href); // 重定向逐跳复查（P2-6）
+        if (!next) return reject(new Error('重定向目标非公网'));
+        return request(next, { timeout, headers, maxBytes, maxRedirect }, depth + 1).then(resolve, reject);
       }
       const chunks = []; let n = 0, settled = false;
       const finish = () => { if (settled) return; settled = true; clearTimeout(deadline); resolve({ status: res.statusCode, ct: res.headers['content-type'] || '', bytes: n, body: Buffer.concat(chunks) }); };
@@ -182,4 +222,4 @@ if (require.main === module) {
   syncSources(m => console.log('[vradio]', m)).then(s => { console.log(JSON.stringify(s, null, 2)); })
     .catch(e => { console.error('同步失败:', e); process.exit(1); });
 }
-module.exports = { syncSources, checkStream };
+module.exports = { syncSources, checkStream, safeTarget, guardLookup };

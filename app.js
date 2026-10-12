@@ -786,7 +786,15 @@ const App = {
     document.addEventListener('visibilitychange', () => { if (!document.hidden) this.tickSong(); });
     // 歌曲历史浮层（B-7）：点曲名行开关；点别处收起
     $('song').onclick = () => this.toggleSongHist();
-    document.addEventListener('click', e => { if (!e.target.closest('#songhist,#song')) $('songhist').hidden = true; });
+    // 快捷键帮助（N8/r2 ⑧）：? 呼出，Esc/点外关闭，焦点归还呼出点
+    const keysOpen = () => { this.kOpener = document.activeElement; $('keys').hidden = false; $('keys').focus(); };
+    const keysClose = () => {
+      if ($('keys').hidden) return;
+      $('keys').hidden = true;
+      const b = this.kOpener && this.kOpener.isConnected ? this.kOpener : null;
+      if (b && b.focus) b.focus();
+    };
+    document.addEventListener('click', e => { if (!e.target.closest('#songhist,#song,#keys')) { $('songhist').hidden = true; keysClose(); } });
     // footer 台名可点（N5/r2 ⑦）：回到正在播行并高亮一闪
     $('nowline').onclick = () => this.locatePlaying();
 
@@ -803,6 +811,7 @@ const App = {
       // 焦点在交互件/列表行/维护面板/歌曲浮层上：让位原生行为（行内 Enter/Space 已有处理、面板有自己的 Esc 语义、按钮空格原生触发 click）
       if (/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(tag) || t.isContentEditable || (t.closest && t.closest('#list,#manage,#songhist'))) return;
       if (e.key === '/') { e.preventDefault(); $('q').focus(); return; }
+      if (e.key === '?') { e.preventDefault(); $('keys').hidden ? keysOpen() : keysClose(); return; } // cheatsheet（N8）
       if (e.key === ' ') { e.preventDefault(); $('pp').click(); return; }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); this.stepFav(e.key === 'ArrowRight' ? 1 : -1); }
     });
@@ -873,8 +882,9 @@ const App = {
     $('manageBtn').onclick = () => this.manageOpen();
     $('mClose').onclick = () => this.manageClose();
     $('manage').onclick = e => { if (e.target === $('manage')) this.manageClose(); }; // 点遮罩关闭
-    document.addEventListener('keydown', e => { // Esc 关面板（焦点在输入框/下拉里时不抢，让它们先清自身）+ 收起两个浮层菜单
+    document.addEventListener('keydown', e => { // Esc 关面板（焦点在输入框/下拉里时不抢，让它们先清自身）+ 收起浮层菜单
       if (e.key === 'Escape') {
+        keysClose(); // 快捷键浮层（N8）：最上层，先关
         if (!$('manage').hidden && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) this.manageClose();
         $('lowfreq').classList.remove('open'); $('moreBtn').setAttribute('aria-expanded', 'false');
         $('sleepMenu').hidden = true;

@@ -24,32 +24,45 @@ const Logos = {
       if (!line || /^#/.test(line)) continue;
       const i = line.lastIndexOf(','); if (i < 0) continue; // URL 可含逗号：最后一个逗号才是分隔
       const u = line.slice(i + 1).trim();
-      if (/^https?:\/\//.test(u)) this.file.set(line.slice(0, i).trim(), u);
+      // 引号/空白/尖括号 URL 直接拒收（logos.txt 来自上游镜像仓库，防属性逃逸，与 img() 转义互为纵深）
+      if (/^https?:\/\//.test(u) && !/[\s"'<>]/.test(u)) this.file.set(line.slice(0, i).trim(), u);
     }
   },
   ekey(c, n) { return c + '|' + n; },
   /* 同步窥探（渲染用，绝不发请求）：STARTER 内置 l 字段 > logos.txt > localStorage */
   get(s) { return s.l || this.file.get(this.ekey(s.c, s.n)) || (this.mem[this.ekey(s.c, s.n)] || {}).u || ''; },
-  /* 渲染片段：无台标返回 ''（纯文字回退）；loading=lazy 离屏不拉流量，坏图 onerror 移除 */
+  /* 渲染片段：无台标返回 ''（纯文字回退）；loading=lazy 离屏不拉流量，坏图 onerror 移除。
+     URL 是上游可控数据（logos.txt/Radio Browser/favicon）：拼进属性前必须转义，防 src 属性逃逸 */
   img(s) {
     const u = this.get(s);
-    return u ? `<img class="logo" src="${u}" alt="" loading="lazy" onerror="this.remove()">` : '';
+    if (!u) return '';
+    const a = u.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    return `<img class="logo" src="${a}" alt="" loading="lazy" onerror="this.remove()">`;
   },
   freshNeg(s) { const e = this.mem[this.ekey(s.c, s.n)]; return !!(e && e.x && Date.now() - e.t < this.NEG); },
 
-  /* 批量补全（收藏 + 正在播优先，去重后逐个解析）：全部落库后回调一次由 app 重渲（resolve 内部不碰 DOM） */
+  busy: new Set(), // 在飞键集合：logosEnsure 可由收藏/播放/启动/数据文件加载多路并发触发，同一台不重复解析
+  /* 批量补全（收藏 + 正在播优先，去重 + 在飞去重后 3 路并行）：全部落库后回调一次由 app 重渲（resolve 内部不碰 DOM） */
   async ensure(stations, done) {
     const seen = new Set(), todo = [];
     for (const s of stations || []) {
       if (!s) continue;
       const k = this.ekey(s.c, s.n);
-      if (seen.has(k) || this.get(s) || this.freshNeg(s)) continue;
+      if (seen.has(k) || this.busy.has(k) || this.get(s) || this.freshNeg(s)) continue;
       seen.add(k); todo.push(s);
     }
-    for (const s of todo) {
-      const u = await this.resolve(s).catch(() => '');
-      this.mem[this.ekey(s.c, s.n)] = u ? { u, t: Date.now() } : { x: 1, t: Date.now() };
-    }
+    for (const s of todo) this.busy.add(this.ekey(s.c, s.n)); // 先整批标记在飞（同步段完成，并发调用不会重复捡走）
+    let i = 0;
+    const worker = async () => {
+      while (i < todo.length) {
+        const s = todo[i++], k = this.ekey(s.c, s.n);
+        try {
+          const u = await this.resolve(s).catch(() => '');
+          this.mem[k] = u ? { u, t: Date.now() } : { x: 1, t: Date.now() };
+        } finally { this.busy.delete(k); }
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]); // 3 路并行：串行时 30 个收藏首补最坏要 8 分钟+
     if (todo.length) { this.save(); if (done) done(); }
   },
   async resolve(s) {
@@ -57,11 +70,11 @@ const Logos = {
     if (id) { // 蜻蜓频道页封面：class="img" 的 pic.qtfm/qingting 图（首图即台标，alt=台名；回听页无串台问题，仍带校验重试）
       const html = await this.px('https://m.qtfm.cn/channels/' + id + '/', t => /<img class="img" src="/.test(t));
       const m = html.match(/<img class="img" src="(http[^"]+pic\.(?:qtfm|qingting)\.[^"]+)" alt="[^"]*"/);
-      if (m) return m[1];
+      if (m && !/[\s"'<>]/.test(m[1])) return m[1];
     }
     const r = await this.px('https://de1.api.radio-browser.info/json/stations/byurl?url=' + encodeURIComponent(s.u[0]), t => t.trim().startsWith('['));
     const f = (JSON.parse(r)[0] || {}).favicon;
-    return /^https?:\/\//.test(f || '') ? f : '';
+    return /^https?:\/\//.test(f || '') && !/[\s"'<>]/.test(f) ? f : '';
   },
   async px(url, ok) { // 经 /proxy 取页/接口（同源无 CORS 问题），ok(text) 校验不过重试一次（蜻蜓 SSR 偶发桩页）
     for (let i = 0; i < 2; i++) {

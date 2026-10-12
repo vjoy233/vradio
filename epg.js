@@ -12,7 +12,8 @@ const EPG = {
   cache: {},                          // { '分类|台名': {day, tz, src, progs, dg, prev, t} } —— progs 时间 = 电台时区当日分钟
   manual: new Map(), manualByName: new Map(), // epg.txt：「分类|台名」完整键 / 裸台名（重名时后节覆盖前节）
 
-  load() { let c; try { c = JSON.parse(localStorage.getItem(this.LS) || '{}'); } catch (_) { c = {}; } this.cache = c && typeof c === 'object' ? c : {}; },
+  load() { let c; try { c = JSON.parse(localStorage.getItem(this.LS) || '{}'); } catch (_) { c = {}; } this.cache = c && typeof c === 'object' ? c : {};
+    let mx = 0; for (const k in this.cache) mx = Math.max(mx, this.cache[k].t || 0); this.seq = mx; }, // seq 接续存量最大 t：跨会话从 0 重置会让 400 封顶时的 FIFO 淘汰次序颠倒
 
   /* ---------- 时间工具（电台时区 = UTC 偏移分钟；一律用 UTC getter 换算，避免本机时区干扰） ---------- */
   dayStr(tz, off = 0) { const d = new Date(Date.now() + tz * 60000 + off * 86400000); return d.getUTCFullYear() + String(d.getUTCMonth() + 1).padStart(2, '0') + String(d.getUTCDate()).padStart(2, '0'); },
@@ -39,10 +40,10 @@ const EPG = {
     const man = this.manual.get(this.ekey(s.c, s.n)) || this.manualByName.get(s.n);
     if (man) return { tz: man.tz, src: '手动', scope: man.week ? 'week' : 'daily', raw: man, progs: this.dayList(man, this.dow(man.tz)) };
     const e = this.cache[this.ekey(s.c, s.n)];
-    return e && e.day === this.dayStr(480) ? this.info(e) : null;
+    return e && !e.miss && e.day === this.dayStr(480) ? this.info(e) : null;
   },
   info(e) {
-    const loop = !e.prev ? '' : e.prev === e.dg ? '每天循环' : '每周循环';
+    const loop = e.prev && e.prev === e.dg ? '每天循环' : ''; // 连续两天节目完全一致才标；「每周循环」需与上周同日对照，缓存只留今昨两天无从验证——标错不如不标
     return { progs: e.progs, tz: e.tz, src: e.src, scope: 'today', loop };
   },
 
@@ -52,15 +53,17 @@ const EPG = {
     if (man) return { tz: man.tz, src: '手动', scope: man.week ? 'week' : 'daily', raw: man, progs: this.dayList(man, this.dow(man.tz)) };
     const id = this.qtId(s); if (!id) return null;
     const today = this.dayStr(480), k = this.ekey(s.c, s.n), hit = this.cache[k];
-    if (hit && hit.day === today) return this.info(hit);
+    if (hit && hit.day === today) return hit.miss ? null : this.info(hit);
     const rs = await Promise.allSettled([this.radiosFullDay(s.n), this.channelsSoFar(id)]);
     let progs = null, src = '';
     if (rs[0].status === 'fulfilled' && rs[0].value && rs[0].value.length) { progs = rs[0].value; src = '蜻蜓 · 全天'; }
     else if (rs[1].status === 'fulfilled' && rs[1].value && rs[1].value.length) { progs = rs[1].value; src = '蜻蜓 · 已开播'; }
-    if (!progs) return null;
+    if (!progs) { // 负缓存（当天）：无数据台当日不再重放整套抓取链（单台单次最坏约 10 个 /proxy 请求），与 Logos 负缓存对齐
+      this.cache[k] = { day: today, miss: 1, t: ++this.seq }; this.save(); return null;
+    }
     progs.sort((a, b) => a.s - b.s);
     const e = { day: today, tz: 480, src, progs, dg: this.digest(progs), t: ++this.seq };
-    e.prev = hit ? (hit.day === this.dayStr(480, -1) ? hit.dg : hit.prev || '') : ''; // 昨日摘要留存 → 天/周循环判断
+    e.prev = hit && hit.dg ? (hit.day === this.dayStr(480, -1) ? hit.dg : hit.prev || '') : ''; // 昨日摘要留存 → 每天循环判断
     this.cache[k] = e; this.save();
     return this.info(e);
   },
@@ -72,11 +75,14 @@ const EPG = {
     while (keys.length > this.cap) delete this.cache[keys.shift()];
     try { localStorage.setItem(this.LS, JSON.stringify(this.cache)); } catch (_) {}
   },
-  /* 取页（经 /proxy）：ok(text) 校验不过则重试一次——蜻蜓 SSR 偶发返回 no-content 桩页（实测约 1/9） */
+  /* 取页（经 /proxy）：ok(text) 校验不过则重试一次——蜻蜓 SSR 偶发返回 no-content 桩页（实测约 1/9）；10s 超时防面板长挂 */
   async px(url, ok) {
     for (let i = 0; i < 2; i++) {
-      const t = await fetch('/proxy?url=' + encodeURIComponent(url)).then(r => { if (!r.ok) throw new Error(r.status); return r.text(); });
-      if (!ok || ok(t)) return t;
+      const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 10000);
+      try {
+        const t = await fetch('/proxy?url=' + encodeURIComponent(url), { signal: ac.signal }).then(r => { if (!r.ok) throw new Error(r.status); return r.text(); });
+        if (!ok || ok(t)) return t;
+      } finally { clearTimeout(timer); }
     }
     throw new Error('stub page');
   },
@@ -86,6 +92,7 @@ const EPG = {
     const html = await this.px('https://m.qtfm.cn/channels/' + id + '/from/' + this.dayStr(480) + '000000', t => /<h2 class="text">/.test(t));
     const ps = [], re = /<h2 class="text">([^<]+)<\/h2>[\s\S]*?<span class="time">(\d{1,2}:\d{2}) ~ (\d{1,2}:\d{2})<\/span>(?:<div class="sep"><\/div><span class="broadcasters">([^<]*)<\/span>)?/g;
     let m; while ((m = re.exec(html))) ps.push({ s: this.hm(m[2]), e: this.hm(m[3]), n: m[1].trim(), d: (m[4] || '').trim() });
+    ps.forEach((p, i) => { if (i && p.e <= p.s) p.e += 1440; }); // 跨午夜档归一（23:30~00:30 → e=+1440，正在播判定才不漏）；首条不归：无前文参照
     return ps;
   },
   /* ---------- ② 蜻蜓全天（按台名搜索桥接 radios 目录；规范化严格相等 + 页面 h1 复核） ---------- */
@@ -112,6 +119,7 @@ const EPG = {
         if (!h1 || (this.norm(h1[1]) !== n1 && (!n2 || this.norm2(h1[1]) !== n2))) continue;
         const ps = [], re = /radio-program-row-root[\s\S]*?<div>([^<]+)<\/div><\/span><span class="col2">(\d{1,2}:\d{2}) - (\d{1,2}:\d{2})<\/span>/g;
         let m; while ((m = re.exec(ph))) ps.push({ s: this.hm(m[2]), e: this.hm(m[3]), n: m[1].trim(), d: '' });
+        ps.forEach((p, i) => { if (i && p.e <= p.s) p.e += 1440; }); // 跨午夜档归一（同 channelsSoFar）
         if (ps.length) return ps;
       }
       return null;
@@ -126,17 +134,17 @@ const EPG = {
     for (const raw of String(text).split(/\r?\n/)) {
       const line = raw.trim();
       if (!line || /^#/.test(line)) continue;
-      if (line.includes(',')) { // 节头（节目行不含逗号：主播用 / 分隔）
-        const i = line.lastIndexOf(',');
-        cur = { tz: this.tzMin(line.slice(i + 1).trim()), week: false, progs: [] };
-        const key = line.slice(0, i).trim();
+      const hi = line.lastIndexOf(','), tzS = hi >= 0 ? line.slice(hi + 1).trim() : '';
+      if (/^[+-]?\d{1,2}(:\d{2})?$/.test(tzS)) { // 节头（「分类|台名,时区」/「台名,时区」）：时区段可解析才成立，含逗号的节目行落进下方节目匹配
+        cur = { tz: this.tzMin(tzS), week: false, progs: [] };
+        const key = line.slice(0, hi).trim();
         this.manual.set(key, cur);
         if (!key.includes('|')) this.manualByName.set(key, cur);
         continue;
       }
       if (!cur) continue;
       const m = line.match(/^(?:\[([一二三四五六日]+)\])?\s*(\d{1,2}:\d{2})\s*[~\-—]\s*(\d{1,2}:\d{2})\s+(\S.*?)(?:\s+\/\s+(.+))?$/);
-      if (!m) continue;
+      if (!m) { console.warn('[vradio] epg.txt 无法解析的行（已跳过）：' + line); continue; }
       const p = { s: this.hm(m[2]), e: this.hm(m[3]), n: m[4].trim(), d: (m[5] || '').trim() };
       if (p.e <= p.s) p.e += 1440; // 跨午夜档（23:00~01:00）归一到次日结束
       if (m[1]) { p.w = [...m[1]].map(ch => '一二三四五六日'.indexOf(ch) + 1); cur.week = true; }

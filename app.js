@@ -258,7 +258,14 @@ const App = {
       this.epgNow = { k: keyOf(s), n: np.n };
       this.playerNow();
       if (this.state.view === 'list') this.render(); // 列表视图元信息行补节目名
-    }).catch(() => {});
+    }).catch(e => console.warn('EPG 正在播联动失败', e)); // 不再静默吞：断链要能在 console 看到
+  },
+  /* 底部栏刷新：Player.onstate 与 wantEpg 首次取到节目后共用（否则首取路径要等下一次播放态切换才上栏） */
+  playerNow() {
+    const s = Player.station;
+    if (s) { $('now').textContent = '▶ ' + s.n + (this.epgNow && this.epgNow.k === keyOf(s) ? ' · 正在播：' + this.epgNow.n : ''); $('pp').textContent = (Player.connecting || !Player.isPaused()) ? '⏸' : '▶'; }
+    else { $('pp').textContent = '▶'; this.showLast(); }
+    $('eq').classList.toggle('on', !!s && !Player.isPaused()); // 均衡器动画（E6）：活着且在播
   },
 
   /* ---------- 收藏导出/导入（Tier 1 E4）：导出 = 带 #VRADIO:FAV 标记的 m3u（通用播放器可读），
@@ -330,13 +337,7 @@ const App = {
     Player.init($('audio'), vol / 100);
 
     // Player 状态回调：full=true 需整表重渲（行高亮/连接中变化），否则只轻量更新底部
-    Player.onstate = full => {
-      const s = Player.station;
-      if (s) { $('now').textContent = '▶ ' + s.n + (this.epgNow && this.epgNow.k === keyOf(s) ? ' · 正在播：' + this.epgNow.n : ''); $('pp').textContent = (Player.connecting || !Player.isPaused()) ? '⏸' : '▶'; }
-      else { $('pp').textContent = '▶'; this.showLast(); }
-      $('eq').classList.toggle('on', !!s && !Player.isPaused()); // 均衡器动画（E6）：活着且在播
-      if (full) this.render();
-    };
+    Player.onstate = full => { this.playerNow(); if (full) this.render(); };
     Player.onstatus = t => { $('status').textContent = t; };
     Player.onfail = () => this.showLast();
     // 睡眠定时（E2）：未设置时点击循环 15→30→60 分钟；进行中点击直接取消

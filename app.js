@@ -200,13 +200,14 @@ const App = {
     this.saveFavs(); this.saveRecents();
   },
   favKeys() { return new Set(this.favs.map(f => f.k)); },
-  /* 同步消失名单 × 收藏比对（N4/r2 ⑥）：按显示名比对（名单是旧名）。必须在 reloadMain 之后调用——
-     URL 回绑已救回「改名台」（新名不在消失名单，天然不误报），撞上名单且当前解析不到的才是真消失 */
-  favsGone(names) {
-    const set = new Set(names), hits = [];
+  /* 同步消失名单 × 收藏比对（N4/r2 ⑥）：双通道——显示名 + 消失台 URL 集合（AIbot P3-1：经维护面板本地
+     改名的收藏台键名已换、按名会漏，URL 快照按身份公理仍对得上）。必须在 reloadMain 之后调用——
+     URL 回绑已救回「改名台」（新名不在消失名单，天然不误报），撞上名单/URL 且当前解析不到的才是真消失 */
+  favsGone(names, urls) {
+    const set = new Set(names || []), uset = new Set(urls || []), hits = [];
     for (const f of this.favs) {
       const nm = f.k.slice(f.k.lastIndexOf('|') + 1);
-      if (set.has(nm) && !this.resolve(f)) hits.push(nm);
+      if ((set.has(nm) || f.u.some(u => uset.has(u))) && !this.resolve(f)) hits.push(nm);
     }
     return hits;
   },
@@ -498,6 +499,7 @@ const App = {
       ? list.map(x => `<div class="shrow">${this.esc(x.t)}</div>`).join('')
       : '<div class="shrow" style="color:var(--dim)">暂无历史（换歌后自动记录）</div>');
     el.hidden = false;
+    $('keys').hidden = true; // 与快捷键浮层互斥（AIbot P3-3）：同位会重叠，开一方关另一方
     el.querySelector('[data-act="exportsongs"]').onclick = () => this.exportSongs();
   },
   exportSongs() { // 歌曲历史导出（N2/r2 ④）：全部台历史按时间倒序拼 txt；台名按台主 URL 反解，休眠台用 URL 截断兜底
@@ -666,20 +668,24 @@ const App = {
     const u = (inp.value || '').trim().replace(/\s+/g, ''); // URL 内不该有空白/换行，容错顺手清（坑③）
     if (!/^https?:\/\//.test(u)) { $('status').textContent = '追加源需以 http(s):// 开头'; return; }
     if (s.u.includes(u)) { $('status').textContent = '该地址已在源列表中'; return; }
+    // 挂键 = 台上任一已有 srcs 键（变体换序免疫，与移动/改名同机制），否则主 URL；判满前置到探活之前——
+    // 否则第 7 条会过完探活才被 slice(0,6) 静默砍掉、状态栏还报成功（AIbot P1-2）
+    const key = s.u.find(x => this.cfg.srcs[x]) || s.u[0];
+    const arr = this.cfg.srcs[key] || [];
+    if (arr.length >= 6) { $('status').textContent = '该台追加源已达上限（6 条），先移除一条再追加'; return; }
     btn.disabled = true; btn.textContent = '探活中…';
     let r = null;
-    try { r = await fetch('/api/check?url=' + encodeURIComponent(u)).then(x => x.json()); }
+    // t=12000 与 /api/mystation 同口径（AIbot P1-1）：主打场景是给蜻蜓系慢源救援，建流 5-10s 属正常，
+    // 默认 4.5s 窗口会整类误拒；批量体检路径不带 t 仍是 4.5s（ETA 按最坏校准不能放慢）
+    try { r = await fetch('/api/check?t=12000&url=' + encodeURIComponent(u)).then(x => x.json()); }
     catch (e) { $('status').textContent = '追加失败（探活请求）：' + (e && e.message || e); }
     if (!r || !r.ok) {
       if (r) $('status').textContent = '探活未通过，未追加：' + (r.detail || '源不可用（假流/死链）');
       btn.disabled = false; btn.textContent = '探活并追加';
       return;
     }
-    // 挂键 = 台上任一已有 srcs 键（变体换序免疫，与移动/改名同机制），否则主 URL；每台封顶 6 条
-    const key = s.u.find(x => this.cfg.srcs[x]) || s.u[0];
-    const arr = this.cfg.srcs[key] || [];
     if (!arr.includes(u)) arr.push(u);
-    this.cfg.srcs[key] = arr.slice(0, 6);
+    this.cfg.srcs[key] = arr;
     this.cfgTag(s); this.mSrcVal = ''; this.saveCfg(); this.reapplyCfg(); // reapplyCfg 内含面板重渲
     $('status').textContent = `已追加备选源（${r.detail || '探活通过'}）——点播时进入自动切换序列`;
   },
@@ -797,8 +803,8 @@ const App = {
     document.addEventListener('visibilitychange', () => { if (!document.hidden) this.tickSong(); });
     // 歌曲历史浮层（B-7）：点曲名行开关；点别处收起
     $('song').onclick = () => this.toggleSongHist();
-    // 快捷键帮助（N8/r2 ⑧）：? 呼出，Esc/点外关闭，焦点归还呼出点
-    const keysOpen = () => { this.kOpener = document.activeElement; $('keys').hidden = false; $('keys').focus(); };
+    // 快捷键帮助（N8/r2 ⑧）：? 呼出，Esc/点外关闭，焦点归还呼出点；与歌曲历史浮层互斥（AIbot P3-3）
+    const keysOpen = () => { this.kOpener = document.activeElement; $('songhist').hidden = true; $('keys').hidden = false; $('keys').focus(); };
     const keysClose = () => {
       if ($('keys').hidden) return;
       $('keys').hidden = true;
@@ -819,8 +825,9 @@ const App = {
     document.addEventListener('keydown', e => { // 全局快捷键（A-5）：/ 聚焦搜索、空格 播放/暂停、←/→ 收藏间切台
       if (e.ctrlKey || e.altKey || e.metaKey) return; // 不抢组合键（Ctrl+/ 等）
       const t = e.target, tag = t && t.tagName;
-      // 焦点在交互件/列表行/维护面板/歌曲浮层上：让位原生行为（行内 Enter/Space 已有处理、面板有自己的 Esc 语义、按钮空格原生触发 click）
-      if (/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(tag) || t.isContentEditable || (t.closest && t.closest('#list,#manage,#songhist'))) return;
+      // 焦点在交互件/列表行/维护面板/歌曲浮层/快捷键浮层上：让位原生行为（行内 Enter/Space 已有处理、面板有自己的 Esc 语义、按钮空格原生触发 click）。
+      // #keys 进让位（AIbot P3-4）：dialog 持焦点时空格/←/→ 不再直控播放（与 songhist 口径一致）；关浮层走 Esc/点外（cheatsheet 自述）
+      if (/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(tag) || t.isContentEditable || (t.closest && t.closest('#list,#manage,#songhist,#keys'))) return;
       if (e.key === '/') { e.preventDefault(); $('q').focus(); return; }
       if (e.key === '?') { e.preventDefault(); $('keys').hidden ? keysOpen() : keysClose(); return; } // cheatsheet（N8）
       if (e.key === ' ') { e.preventDefault(); $('pp').click(); return; }

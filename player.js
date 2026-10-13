@@ -13,6 +13,9 @@ const Player = {
   pctx: null,     // 本次 play 的级联上下文 {urls:[{u,si}], i, my}（世代令牌防串台）
   wd: 0,          // 静默挂起看门狗（A-1）：stalled/waiting 后 N 秒无进展按断流处理
   retried: false, // 当前源是否已「先重连一次」（stall/ended 专属；error 级联照旧直接顺延）
+  halt: false,    // 有意暂停标志（AIbot P2-1）：用户/让位/睡眠定时走 pause() 置位。不能拿 isPaused() 判——
+                  // 媒体元素加载失败会自动置 paused=true，正常 error 级联会被误当暂停挡死
+  heldNext: false, // 暂停期间 error 级联被守卫挡住的标记：resume 时接回（error 事件只发一次，等 play() 再触发是等不到的）
   curSi: -1,      // 正在试的源序号（variants 展开前的 s.u 下标；playing 时记忆）
   curPlay: '',    // 当前装载的 variant URL（stall/ended 重连当前源用）
   curUrl: '',     // 正在播的远端原始 URL（app 曲讯轮询用；/proxy 形态已还原回远端）
@@ -106,6 +109,7 @@ const Player = {
 
   play(s) {
     this.stopWatchdog();
+    this.halt = this.heldNext = false; // 清上一轮的有意暂停/级联搁浅标记（AIbot P2-1）
     // 成功源记忆（A-1）：上次试通的源提到最前（流地址天然漂移，省一轮必败等待）；序号对齐原始 s.u
     const order = s.u.map((_, i) => i);
     const mem = this.srcMem[s.u[0]];
@@ -135,6 +139,11 @@ const Player = {
       if (this.onfail) this.onfail();
       return;
     }
+    // 有意暂停（用户/让位/睡眠定时）后不再装载下一个源（AIbot P2-1）：否则在飞源报错 → 级联 → audio.play()
+    // 会把暂停页自我复活、再广播 'on' 反杀对方（ping-pong）。i>0 区分级联续摊与 play() 首装载（后者时 i 尚为 0）。
+    // 耗尽分支不受限：它不起播只善后。heldNext 记级联被挡，resume 时接回——error 事件只发一次，
+    // 元素已停在错误态（且会自动置 paused），恢复时靠 play() 再触发 error 是等不到的
+    if (this.halt && this.pctx.i > 0) { this.heldNext = true; return; }
     const cur = urls[this.pctx.i++];
     this.curSi = cur.si; this.curPlay = cur.u; this.retried = false;
     this.connecting = this.station; this.emit(true); // 换源重试期间保持连接中指示
@@ -185,7 +194,7 @@ const Player = {
   },
 
   stop() {
-    this.token++; this.stopHls(); this.stopWatchdog();
+    this.token++; this.stopHls(); this.stopWatchdog(); this.halt = this.heldNext = false;
     this.audio.removeAttribute('src'); this.audio.load();
     this.station = this.connecting = null; this.cancelSleep();
     this.curSi = -1; this.curPlay = this.curUrl = '';
@@ -225,15 +234,19 @@ const Player = {
     while (ks.length > 300) delete this.srcMem[ks.shift()];
     try { localStorage.setItem('radio.srcmem', JSON.stringify(this.srcMem)); } catch (_) {}
   },
-  // 暂停恢复：直播流建流慢（蜻蜓 5-10s），先给连接中提示；失败由遗留 onerror 闭包接管换源
+  // 暂停恢复：直播流建流慢（蜻蜓 5-10s），先给连接中提示；失败由遗留 onerror 闭包接管换源。
+  // 暂停期间级联被 next() 守卫挡住过（源已报错、error 不再发）→ retryOrNext 接回：先重连当前源一次再顺延
   resume() {
     if (!this.station) return; // 无台可续：媒体键空台场景已转 onplaylast，此处兜底
+    this.halt = false;
     this.connecting = this.station; this.emit(true); this.say('连接中…');
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+    if (this.heldNext) { this.heldNext = false; this.retryOrNext(); return; }
     this.audio.play().catch(() => {});
   },
   pause() {
     this.stopWatchdog(); // 用户主动暂停是明确意图：武装中的看门狗一并撤（否则 12s 后 retryOrNext 会把流强拉起来——AIbot P2-3）
+    this.halt = true; // 有意暂停：挡住在飞 error 级联的续摊（AIbot P2-1）
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
     this.audio.pause();
   },

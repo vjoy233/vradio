@@ -360,7 +360,8 @@ async function syncSources(log = () => {}) {
   } catch (e) { log('radio-data.js 写入失败（不影响电台列表）：' + (e.message || e)); }
 
   // 4.5) 同步 diff 摘要（N4/r2 ⑥）：按台名集合对比旧文件与新列表——分类变化不算（重分类是本项目常规操作），
-  //      改名 = 消失+新增如实呈现；aborted 早退不产出（保留旧列表口径一致）。名单封顶 50，前端收藏点名用
+  //      改名 = 消失+新增如实呈现；aborted 早退不产出（保留旧列表口径一致）。名单封顶 50 防爆——前端收藏
+  //      点名同样只看得到这 50 个，超出部分的消失收藏台不进点名（已知缺口，AIbot P3-2）
   const entryNames = lines => new Set((Array.isArray(lines) ? lines : splitSections(lines).flatMap(s => s.lines))
     .filter(l => !l.endsWith('#genre#')).map(l => l.split(',')[0].trim()).filter(Boolean));
   const oldNames = entryNames(curText), neuNames = entryNames(merged);
@@ -369,6 +370,17 @@ async function syncSources(log = () => {}) {
   summary.added = addedNames.length; summary.removed = removedNames.length;
   if (addedNames.length) summary.addedNames = addedNames.slice(0, 50);
   if (removedNames.length) summary.removedNames = removedNames.slice(0, 50);
+  // 消失台的 URL 集合（AIbot P3-1）：收藏点名按身份比对的第二通道——经维护面板本地改名的收藏台键名已换、
+  // 按名比对会漏，URL 快照仍对得上（身份公理）。台名内无逗号（同步硬约束），首个逗号即分隔；只收名单封顶内的台
+  const oldUrlOf = new Map();
+  for (const l of splitSections(curText).flatMap(s => s.lines)) {
+    const i = l.indexOf(','); if (i < 0) continue;
+    const nm = l.slice(0, i).trim();
+    if (!oldUrlOf.has(nm)) oldUrlOf.set(nm, []);
+    oldUrlOf.get(nm).push(l.slice(i + 1).trim());
+  }
+  const removedUrls = [...new Set(removedNames.slice(0, 50).flatMap(n => oldUrlOf.get(n) || []))].slice(0, 150);
+  if (removedUrls.length) summary.removedUrls = removedUrls;
 
   // 5) 台标（欧美成功重建时随行重写 logos.txt，双分类前缀；失败时保留旧文件不动）
   if (euLines) {

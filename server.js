@@ -149,14 +149,18 @@ http.createServer((req, res) => {
   }
   if (req.url.startsWith('/api/check?')) {
     if (crossOrigin(req)) return json(403, { error: '跨源请求被拒绝' }); // 带副作用的 GET 同样防跨源驱动（P2-9）
-    let urls;
-    try { urls = [...new URL(req.url, `http://${req.headers.host || 'localhost'}`).searchParams.getAll('url')]; }
+    let urls, sp;
+    try { sp = new URL(req.url, `http://${req.headers.host || 'localhost'}`); urls = [...sp.searchParams.getAll('url')]; }
     catch (_) { return json(400, { ok: false, detail: 'bad request' }); }
     if (urls.length > 4) return json(400, { ok: false, detail: '最多 4 个源' }); // 放大面封顶（P2-9）
     const targets = [...new Set(urls.map(safeTarget).filter(Boolean))];
     if (!targets.length) return json(400, { ok: false, detail: '仅允许公网 http(s) 地址' });
+    // 探活窗口可调（AIbot P1-1）：批量体检不传 → checkStream 默认 4.5s（ETA 按最坏校准，不能放慢）；
+    // 追加备选源传 t=12000 —— 蜻蜓系救援源建流 5-10s 属正常，与 /api/mystation 同口径。钳到 [1s, 30s] 防滥用
+    const tms = Math.min(Math.max(parseInt(sp.searchParams.get('t'), 10) || 0, 0), 30000);
+    const opt = tms >= 1000 ? { timeout: tms } : {};
     (async () => {
-      for (const t of targets) { const r = await checkStream(t); if (r.ok) return json(200, { ok: true, detail: r.detail }); }
+      for (const t of targets) { const r = await checkStream(t, 0, opt); if (r.ok) return json(200, { ok: true, detail: r.detail }); }
       json(200, { ok: false, detail: `${targets.length} 个源均不可用` });
     })();
     return;
@@ -209,5 +213,12 @@ http.createServer((req, res) => {
   if (rel.split('/').some(seg => seg.startsWith('.') || seg.endsWith('.bak'))) return res.writeHead(403).end('403');
   const p = path.join(ROOT, rel === '/' ? 'index.html' : rel);
   if (p !== ROOT && !p.startsWith(ROOT + path.sep)) return res.writeHead(403).end('403');
-  fs.readFile(p, (e, buf) => e ? res.writeHead(404).end('404') : (res.writeHead(200, { 'Content-Type': MIME[path.extname(p).toLowerCase()] || 'application/octet-stream' }).end(buf)));
+  fs.readFile(p, (e, buf) => {
+    if (e) return res.writeHead(404).end('404');
+    const h = { 'Content-Type': MIME[path.extname(p).toLowerCase()] || 'application/octet-stream' };
+    // radio-data.js 是同步才变的生成物（~200KB），http 模式每次刷新都会白拉一遍（列表实际走 radio.txt）——
+    // 定向给一天缓存（AIbot P3-5）；file:// 读本地文件不经 HTTP 缓存，不受影响。其余文件不缓存：开发改动即刷即生效
+    if (p === path.join(ROOT, 'radio-data.js')) h['Cache-Control'] = 'public, max-age=86400';
+    res.writeHead(200, h).end(buf);
+  });
 }).listen(PORT, HOST, () => console.log(`VRadio: http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}（仅本机监听；局域网需 HOST=0.0.0.0 自行承担风险）`));

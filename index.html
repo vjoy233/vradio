@@ -104,6 +104,10 @@
   /* 网格视图：精简卡片，宽屏一行多张，压缩整页纵向长度。
      单元放大（UI 审计 P2-8，owner 拍板 5 列@1280）：clamp 列宽 160~230px（390px 手机自动回 2 列），gap 8→12 */
   #list.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(clamp(160px,18vw,230px),1fr)); gap:12px; align-content:start; }
+  /* 长列表布局/绘制（audit C1）：离屏行/卡片跳过布局与绘制，1500+ 台整表 innerHTML 后的 layout/paint
+     大头由此吃掉；intrinsic-size 给近似高度防滚动条跳动（auto=记住首渲实际尺寸）；与台标 lazy/swap 淡入正交 */
+  #list.grid .card { content-visibility:auto; contain-intrinsic-size:auto 132px; }
+  #list:not(.grid) .row { content-visibility:auto; contain-intrinsic-size:auto 44px; }
   .card { border:1px solid var(--line); border-radius:10px; padding:12px; cursor:pointer; display:flex; flex-direction:column; gap:8px; min-height:100px; transition:background-color .15s, border-color .15s; }
   .card:hover, .card.playing { background:var(--panel); }
   .card.playing { border-color:var(--acc); position:relative; }

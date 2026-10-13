@@ -7,13 +7,21 @@
 // /api/store       前端持久层主源（GET 全量 / POST 覆盖写 data/store.json）：rev 服务端唯一发号（方案二/R4），
 //                  localStorage 只作镜像；白名单键集合 STORE_KEYS 与 store.js 的 KEYS 同步扩（AGENTS.md 契约）
 // 安全：默认仅监听 127.0.0.1；proxy/check 仅允许公网 http(s) 目标 —— safeTarget 字符串校验 + guardLookup
-//       连接级 IP 校验（防 DNS rebinding/TOCTOU），重定向逐跳复查；/api/sync、/api/check、/api/mystation、
-//       /api/store 校验 Origin/Sec-Fetch-Site（防跨源 CSRF/探活驱动）；静态服务拒绝目录穿越、dotfile、
-//       备份文件与 data/ 段（store.json 是全量个人数据，HOST=0.0.0.0 局域网模式下不可被直接 GET）。
+//       连接级 IP 校验（防 DNS rebinding/TOCTOU），重定向逐跳复查；/proxy 与全部 /api/* 校验
+//       Origin/Sec-Fetch-Site（防跨源 CSRF/探活驱动/把本机当流中继——媒体元素加载无需 CORS，audit A2）；
+//       回环监听模式下校验 Host 头（rebinding 页面 Origin==Host==攻击者域名，Origin 比对全失效，唯有
+//       握手层 Host 无从伪造，audit A3）；静态服务拒绝目录穿越、dotfile、备份文件与 data/ 段——段名比较
+//       先归一大小写与尾部点空格（Windows 大小写不敏感 + Win32 剥尾点曾实测绕过字面量比较，audit A1；
+//       store.json 是全量个人数据，HOST=0.0.0.0 局域网模式下不可被直接 GET）。
 const http = require('http'), https = require('https'), fs = require('fs'), path = require('path');
 const { syncSources, checkStream, safeTarget, guardLookup } = require('./update-sources');
 const ROOT = __dirname, PORT = process.env.PORT || 8137, HOST = process.env.HOST || '127.0.0.1';
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.txt': 'text/plain; charset=utf-8' };
+// Host 头白名单（audit A3，防 DNS rebinding）：回环监听（默认）下只认本机名——rebinding 攻击里页面
+// Origin==Host==攻击者域名，所有 Origin 比对失效，从握手层直接拒绝；HOST=0.0.0.0 显式局域网档自担
+// 风险不校验；HOST 指定具体地址时该地址随行放行（127.0.0.2 等其它环回变形会被拒，属可接受收紧）
+const hostName = h => { try { return new URL('http://' + h).hostname; } catch (_) { return null; } };
+const HOST_OK = HOST === '0.0.0.0' ? null : new Set(['localhost', '127.0.0.1', '[::1]', hostName(HOST)]);
 
 // 跨源请求识别：Sec-Fetch-Site（现代浏览器全覆盖）+ Origin 与 Host 比对（兜底）
 function crossOrigin(req) {
@@ -175,6 +183,7 @@ setInterval(() => {
 
 let syncInFlight = null;
 http.createServer((req, res) => {
+  if (HOST_OK && !HOST_OK.has(hostName(req.headers.host || '') || '')) return res.writeHead(403).end('403 unexpected Host'); // rebinding 面（audit A3）：Host 不在白名单一律拒
   const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(obj)); };
 
   if (req.method === 'POST' && req.url.split('?')[0] === '/api/sync') {
@@ -255,13 +264,14 @@ http.createServer((req, res) => {
     catch (_) { return json(400, { title: '' }); }
     const target = u && safeTarget(u);
     if (!target) return json(400, { title: '' }); // 仅公网 http(s)
-    if (/\.m3u8(\?|$)/.test(target)) return json(200, { title: '' }); // HLS 结构性无 ICY，不建旁路不耗探活
+    if (/\.m3u8(\?|$)/i.test(target)) return json(200, { title: '' }); // HLS 结构性无 ICY，不建旁路不耗探活（i：.M3U8 变形同判）
     const old = npSess.get(target);
     if (old && old.deadAt && Date.now() - old.deadAt > NP_RETRY) { if (old.req) old.req.destroy(); npSess.delete(target); } // 失败冷却后允许重建
     const s = npSess.get(target) || npStart(target);
     return json(200, { title: s.title || '', br: s.br || 0 });
   }
   if (req.url.startsWith('/proxy?url=')) {
+    if (crossOrigin(req)) return res.writeHead(403).end('403 cross-origin rejected'); // audit A2：任意网页可用 <audio>/媒体元素驱动本机代理当公开中继（加载无需 CORS）；同源页面 SFS=same-origin、地址栏直开 SFS=none 均不受影响
     let target;
     try { target = safeTarget(decodeURIComponent(req.url.slice('/proxy?url='.length))); }
     catch (_) { return res.writeHead(400).end('400 bad url'); }
@@ -269,16 +279,20 @@ http.createServer((req, res) => {
     return proxy(target, req, res);
   }
 
-  // 静态文件（拒绝目录穿越 + dotfile/备份文件/data 段——.git/.DS_Store/radio.txt.bak 不可读，P2-8；
-  // data/ 含 store.json 全量个人数据（收藏/歌史/健康标记），HOST=0.0.0.0 局域网模式下不可被直接 GET——外部 review P0-1）
+  // 静态文件（仅 GET/HEAD——audit A4；拒绝目录穿越 + dotfile/备份文件/data 段——.git/.DS_Store/radio.txt.bak
+  // 不可读，P2-8；data/ 含 store.json 全量个人数据（收藏/歌史/健康标记），HOST=0.0.0.0 局域网模式下不可被
+  // 直接 GET——外部 review P0-1。段名比较先归一：Windows 文件系统对 DATA/radio.txt.BAK/data. 等
+  // 大小写与尾点变形照读不误，字面量比较被实测击穿过——audit-2026-10-14 A1）
+  if (req.method !== 'GET' && req.method !== 'HEAD') return res.writeHead(405).end('405');
   let rel;
   try { rel = decodeURIComponent(req.url.split('?')[0]); } catch (_) { return res.writeHead(400).end('400'); }
-  if (rel.split('/').some(seg => seg.startsWith('.') || seg.endsWith('.bak') || seg === 'data')) return res.writeHead(403).end('403');
+  const norm = s => s.toLowerCase().replace(/[.\s]+$/, '');
+  if (rel.split('/').some(seg => seg.startsWith('.') || norm(seg).endsWith('.bak') || norm(seg) === 'data')) return res.writeHead(403).end('403');
   const p = path.join(ROOT, rel === '/' ? 'index.html' : rel);
   if (p !== ROOT && !p.startsWith(ROOT + path.sep)) return res.writeHead(403).end('403');
   fs.readFile(p, (e, buf) => {
     if (e) return res.writeHead(404).end('404');
-    const h = { 'Content-Type': MIME[path.extname(p).toLowerCase()] || 'application/octet-stream' };
+    const h = { 'Content-Type': MIME[path.extname(p).toLowerCase()] || 'application/octet-stream', 'X-Content-Type-Options': 'nosniff' }; // audit A6：本地文件类型可信堵嗅探；/proxy 转发上游类型不可信（错标 octet-stream 的流靠嗅探才能播），不加
     // radio-data.js 是同步才变的生成物（~200KB），http 模式每次刷新都会白拉一遍（列表实际走 radio.txt）——
     // 定向给一天缓存（AIbot P3-5）；file:// 读本地文件不经 HTTP 缓存，不受影响。其余文件不缓存：开发改动即刷即生效
     if (p === path.join(ROOT, 'radio-data.js')) h['Cache-Control'] = 'public, max-age=86400';

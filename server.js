@@ -77,6 +77,7 @@ const DATA_DIR = path.join(ROOT, 'data'), STORE_FILE = path.join(DATA_DIR, 'stor
 const STORE_KEYS = new Set(['radio.favs', 'radio.recents', 'radio.health', 'radio.cfg', 'radio.songs', 'radio.volperst', 'radio.srcmem2',
   'radio.vol', 'radio.view', 'radio.showdead', 'radio.theme', 'radio.baseline', 'radio.baselineProg']); // ⚠ 与 store.js KEYS 同步扩
 const STORE_MAX = 2 * 1024 * 1024, KEY_MAX = 512 * 1024;
+const KEY_MAXS = { 'radio.health': 1536 * 1024 }; // 分键上限（AIbot P2-3）：健康标记 FIFO 2000 条 × 多源 URL 快照最坏 ~0.9MB，512KB 会静默丢键——对账再把镜像一起抹掉，僵尸台问题换个形式回归
 let storeRev = 0, storeCache = null, storeQ = Promise.resolve();
 function storeRead() { // 懒加载：首访问读盘；坏文件视为空库（rev=0，前端镜像会重建推送）
   if (!storeCache) {
@@ -236,8 +237,9 @@ http.createServer((req, res) => {
         const clean = {};
         for (const k of Object.keys(d)) {
           if (!STORE_KEYS.has(k)) continue; // 白名单外的键静默丢弃（前端全量快照，漏扩键的改动不落盘但不炸）
-          const v = d[k];
-          if (typeof v === 'string' && v.length <= KEY_MAX) clean[k] = v;
+          const v = d[k], max = KEY_MAXS[k] || KEY_MAX;
+          if (typeof v !== 'string' || v.length > max) return json(413, { ok: false, error: `数据键 ${k} 超限（>${Math.round(max / 1024)}KB），写入被拒绝` }); // AIbot P2-3：白名单键超限显式拒绝——客户端收非 ok 置 dirty 保镜像；静默丢键会让对账把镜像一起抹掉
+          clean[k] = v;
         }
         storeWrite(clean).then(r => json(200, r)); // rev 在写成功后发（响应携带新号）
       });

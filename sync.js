@@ -111,13 +111,13 @@ const Sync = {
     const set = new Set(names), list = App.state.stations.filter(s => set.has(s.n) && !s.hidden);
     if (!list.length) return;
     this.busy = 'silent'; this.silentAbort = false;
-    App.toast(`后台体检新增电台 ${list.length} 台…`, { ms: 0 }); // ms=0 常驻，完成态接管
+    App.toast(`后台体检新增电台 ${list.length} 台…`, { ms: 0 }); // ms=0 常驻，完成态接管；让位/异常分支显式收起（AIbot P2-2）
     try {
       const cnt = await this.runCheck(list, { conc: 2, silent: true });
-      if (this.silentAbort) return; // 让位给手动：已测的标记有效（幂等），未测的下次同步再覆盖
+      if (this.silentAbort) { $('toast').hidden = true; return; } // 让位给手动：已测的标记有效（幂等），未测的下次同步再覆盖
       App.saveHealth(); App.render();
       App.toast(`新增 ${list.length} 台体检完成，${cnt.sus + cnt.perm} 台无效已隐藏`, { ms: 5000 });
-    } catch (_) {} finally { if (this.busy === 'silent') this.busy = ''; }
+    } catch (_) { $('toast').hidden = true; } finally { if (this.busy === 'silent') this.busy = ''; }
   },
 
   /* ---------- 首启基线（R3+R4 拍板）：存量老台一次清库。确认门槛 toast（开跑时间用户定）→ 后台全量（并发 2，
@@ -129,8 +129,9 @@ const Sync = {
     if (!list.length) return this.baselineDone(); // 纯欧美库存（同步期已实测）：无基线可建
     const min = Math.max(1, Math.round(list.length / 30)); // 混合速率粗估（死台快速失败为主）
     App.toast(`检测到 ${list.length} 台电台尚无体检基线（约 ${min} 分钟，后台静默、中断可续）`, {
-      ms: 9000,
+      ms: 0, // 常驻直到选择（AIbot P3-5：9s 自动消失来不及点，错过要等下轮 boot）；「暂不」= 本次放弃，下次 boot 再提示
       action: { label: '开始基线体检', fn: () => this.baseline() },
+      dismiss: '暂不',
     });
   },
   async baseline() {
@@ -144,7 +145,7 @@ const Sync = {
     try {
       const cnt = await this.runCheck(list, { conc: 2, silent: true, onTick: s => {
         prog.add(keyOf(s));
-        if (++pend >= 25) { pend = 0; Store.set('radio.baselineProg', JSON.stringify([...prog])); } // 每 25 台落盘一次进度
+        if (++pend >= 25) { pend = 0; Store.set('radio.baselineProg', JSON.stringify([...prog])); App.saveHealth(); } // 每 25 台落盘一次：进度与已确认标记必须同批持久化（AIbot P1-1——否则关页中断时 prog 说测过、死标只在内存，续跑跳过 + 基线置 done 后这批台永久无标记且不在任何自动复查通道里）
       } });
       if (this.silentAbort) return; // 让位中断：进度兜底落盘见 finally（防 pend <25 的尾巴丢失）
       Store.set('radio.baselineProg', JSON.stringify([...prog]));
@@ -153,7 +154,7 @@ const Sync = {
       App.toast(`基线体检完成：可用 ${cnt.ok}、疑似失效 ${cnt.sus}、已停运 ${cnt.perm}`, { ms: 6000 });
     } catch (_) {} finally {
       if (this.busy === 'silent') this.busy = '';
-      if (this.silentAbort) Store.set('radio.baselineProg', JSON.stringify([...prog])); // 中断兜底
+      if (this.silentAbort) { Store.set('radio.baselineProg', JSON.stringify([...prog])); App.saveHealth(); } // 中断兜底（同 P1-1 口径）
     }
   },
   baselineDone() { Store.set('radio.baseline', 'done'); Store.remove('radio.baselineProg'); },

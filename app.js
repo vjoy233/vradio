@@ -259,7 +259,7 @@ const App = {
   scopeDead(now = Date.now()) { // 死标记台复测范围（R4 节流拍板，语义全保留）：t 距今超档位间隔（疑似 24h/
     // 停运 7 天）才入列，最旧优先、每 boot 封顶 200 轮转——FIFO 顶格 2000 时把最坏单次后台探活从 1-2 小时
     // 压回分钟级，终止对已停运台的永久日级探测；档内标记多于 200 时按 t 轮转全覆盖
-    const out = [];
+    const out = []; // O(标记数×台数) 的 find（FIFO 顶格 2000×1600+≈3M 次）：每次 boot 一次性可接受（AIbot P3-6 备忘，量级上来再做 URL→台索引）
     for (const k of Object.keys(this.healthMarks)) {
       const e = this.healthMarks[k];
       if (now - (e.t || 0) < (e.perm ? 7 : 1) * DAY) continue;
@@ -274,13 +274,19 @@ const App = {
     return this.visible(true).filter(s => !['欧美音乐', '国际新闻·谈话'].includes(s.dCat || s.c));
   },
   toast(msg, opt = {}) { // 极简 toast（R1 拍板新增）：后台任务专用（增量体检/自动基线/多标签提示），
-    // 用户主动操作走 #status——两通道不双写，读屏器不念两遍（R4 分工规则）。action = {label, fn} 确认门槛用
+    // 用户主动操作走 #status——两通道不双写，读屏器不念两遍（R4 分工规则）。action = {label, fn} 确认门槛用；
+    // dismiss = 「暂不」类纯关闭按钮的文案（常驻 toast 的显式出口，AIbot P3-5）
     const t = $('toast');
     t.innerHTML = '';
     const sp = document.createElement('span'); sp.textContent = msg; t.appendChild(sp);
     if (opt.action) {
       const b = document.createElement('button'); b.type = 'button'; b.className = 'btn mbtn';
       b.textContent = opt.action.label; b.onclick = () => { t.hidden = true; opt.action.fn(); };
+      t.appendChild(b);
+    }
+    if (opt.dismiss) {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'btn mbtn';
+      b.textContent = opt.dismiss; b.onclick = () => { t.hidden = true; };
       t.appendChild(b);
     }
     t.hidden = false;
@@ -883,7 +889,7 @@ const App = {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify({ v: 1, at: Date.now(), data: Store.snapshot() }, null, 2)], { type: 'application/json' }));
     a.download = 'vradio-backup.json'; a.click(); URL.revokeObjectURL(a.href);
-    $('status').textContent = '已导出完整备份（vradio-backup.json：收藏/配置/健康标记/歌曲历史等全部本地数据）';
+    $('status').textContent = '已导出完整备份（vradio-backup.json：收藏/配置/健康标记/歌曲历史等持久数据；台标缓存可重建不包含）';
   },
   importAll(text) {
     let j; try { j = JSON.parse(text); } catch (_) { alert('导入失败：不是合法 JSON 文件'); return; }

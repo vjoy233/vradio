@@ -135,3 +135,22 @@
 | P1 AGENTS.md 补记 | ✅ 采纳 | 实施定案 |
 | 落地顺序建议 | ⚠️ 部分采纳:方案一先行实施(结构兼容只做一次)✅;「分批交付」不采——保持 owner 一次 PR 惯例 | D17 |
 | 总评「无静默假设残留说过满」 | ✅ 接受:grill 走决策语义树,实施机制层是盲区,本轮即其建议的「工程事实级实施定案评审」 | 状态行 |
+
+## 八、AIbot PR review 处置记录(2026-10-13,全部采纳直接修,无讨论项)
+
+其先核验通过 R4 处置(服务端 10 项实测/逐行对照属实),新发现如下并全部处置:
+
+| 条目 | 处置 |
+|---|---|
+| P0-新 BC 广播误暂停(实测确认:单标签拖音量即暂停自己的播放) | ✅ 修:player.js onmessage 过滤 `e.data !== 'on'`——'vradio' 通道已与 Store 'store' 消息共享,不看内容必误伤 |
+| P1-1 基线关页中断丢标记 | ✅ 修:onTick 每 25 台与让位兜底处,落 prog 同批调 App.saveHealth()(进度与已确认标记必须同批持久化) |
+| P1-2 dirty 不持久化(跨会话恒 false,失败期改动被回滚) | ✅ 修:dirty 改存 localStorage 的 radio.storeDirty;keepalive 64KB 上限降级 best-effort |
+| P2-1 pull 无条件清 dirty | ✅ 修:pull 开头脏页先 flush 重推 |
+| P2-2 incHealth 让位后常驻 toast 永不消失 | ✅ 修:让位/catch 分支显式收起 |
+| P2-3 health 512KB 超限静默丢键 + 对账抹镜像 | ✅ 修:分键上限(health 1.5MB);超限显式 413 拒绝让客户端置 dirty 保镜像 |
+| P3-1 radio.logos 例外未记录 | ✅ 补:AGENTS.md/store.js 注明;exportAll 文案校准 |
+| P3-2 对账后 gvol 不刷新 | ✅ 修:reloadMems 补 gvol 读取(不动滑杆 UI) |
+| P3-3 基线期间他页整表重渲 | ✅ 修:Store.apply 对「仅 baselineProg 变化」只落盘不重载 |
+| P3-4 rev 注释语义说重 | ✅ 校准:仲裁实质 = 后端为准 + dirty 重推,rev 降级调试信息 |
+| P3-5 基线确认 toast 9s 来不及点 | ✅ 修:ms=0 常驻 + 「暂不」按钮 |
+| P3-6 scopeDead O(3M) 一次性 | 备忘:注释记一笔,量级上来再做 URL→台索引 |

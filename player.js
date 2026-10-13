@@ -47,10 +47,12 @@ const Player = {
     el.addEventListener('ended', () => { if (this.station && !this.connecting) this.retryOrNext(); });
     try { localStorage.removeItem('radio.srcmem'); } catch (_) {} // 键升级一次性失效：旧记忆多记着「xmcdn 代理旧路」，留着会压住启发式直流优先
     // 多标签页防双播（N3/r2 ⑤）：后来者赢——新标签开播广播，旧标签正在播/建流中则让位暂停（非 stop，保留台位可续播）。
-    // 规范保证不回发发送者自身，无需自过滤；消息只发一个字面量
+    // 规范保证不回发发送者自身，无需自过滤；⚠ 通道 'vradio' 已与 Store 共享（'store' 重拉消息）——必须按字面量
+    // 过滤，否则同页 Store 的 bc 实例收到 'store' 时会把本页播放误暂停（AIbot P0-新，单标签拖音量即必现）
     try {
       this.bc = new BroadcastChannel('vradio');
-      this.bc.onmessage = () => {
+      this.bc.onmessage = e => {
+        if (e.data !== 'on') return; // 只认播放互斥消息；'store'（存储重拉）与本引擎无关
         if (this.isPaused()) return;
         this.connecting = null; // 建流期让位：清连接中指示，pause 事件才能走正常 UI 复位（否则 footer 卡在连接中）
         this.pause(); this.emit(true);
@@ -80,6 +82,8 @@ const Player = {
     if (vm && typeof vm === 'object' && !Array.isArray(vm))
       for (const k of Object.keys(vm)) { const v = +vm[k]; if (/^https?:\/\//.test(k) && Number.isFinite(v) && v >= 0 && v <= 100) this.volMem[k] = Math.round(v); } // 键须 URL、值须 0-100 数值，坏形状丢弃
     try { this.srcMem = JSON.parse(Store.get('radio.srcmem2') || '{}'); } catch (_) { this.srcMem = {}; }
+    const gv = Store.get('radio.vol'); const g = +gv; // 全局音量锚点随行重载（AIbot P3-2：他页改了 radio.vol，本页内存不更新则点播无记忆台仍用旧值；滑杆 UI 不动——正在播的台由台记忆主导）
+    if (gv !== null && Number.isFinite(g) && g >= 0 && g <= 100) this.gvol = g / 100;
   },
   setVolume(v) { this.vol = v; if (this.audio) this.audio.volume = v; },
   rememberVol(pct) { // 调音量分流（A3/r2 ②语义①，app 滑杆 oninput 调用）：正在播 → 只写当前台记忆（台首调时全局锚点随行，

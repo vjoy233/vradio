@@ -22,6 +22,7 @@ const STARTER = [
 
 const $ = id => document.getElementById(id);
 const keyOf = s => s.c + '|' + s.n;
+const DAY = 86400000; // 死台分档各时间阈值共用（TTL/升级跨度/复测间隔/孤儿清理）
 
 const App = {
   /* 集中状态（docs/review.md 架构-风险 2）：stations 数据 + 渲染哨兵 + 行索引（体检增量更新用，去 O(n²)）
@@ -46,17 +47,25 @@ const App = {
     if (last && !rec.some(r => r.k === last)) rec.unshift({ k: last, n: '', u: [] });
     localStorage.removeItem('radio.last');
     this.recents = rec.slice(0, 20).map(r => ({ k: String(r.k), n: r.n || String(r.k).split('|').pop() || '', u: Array.isArray(r.u) ? r.u : [] }));
-    // 死台标记持久化（radio.health）：键 → { u:[源URL快照], t }。TTL 7 天对齐 Logos 负缓存——流地址天然漂移，
-    // 陈年死标不值得永久埋台；✓ 标记不持久化（会话级反馈即可，隐藏只关心死台）
+    // 死台标记持久化（radio.health）：键 → { u:[源URL快照], t:最近确认, t0:首死, n:连续确认数, perm:1=停运档 }。
+    // 分档（grill R1-R4 拍板）：疑似档兜底 TTL 180 天（纯数据卫生——静默复测常态化下唯一触发场景 = 半年没开
+    // 页面，复活反而是合理探测）；停运档永不过期（复活只走复测撤销，即 patchHealth 的 ok 分支）；
+    // ✓ 标记不持久化（会话级反馈即可，隐藏只关心死台）。旧数据兼容：无 t0/n/perm 按「疑似档、n=1、t0=t」读
     let hp; try { hp = JSON.parse(localStorage.getItem('radio.health') || '{}'); } catch (_) { hp = {}; }
     this.healthMarks = {};
-    for (const k of Object.keys(hp || {})) { const e = hp[k]; if (e && Array.isArray(e.u) && Date.now() - (e.t || 0) < 7 * 86400000) this.healthMarks[k] = e; }
+    for (const k of Object.keys(hp || {})) {
+      const e = hp[k]; if (!e || !Array.isArray(e.u)) continue;
+      if (!e.perm && Date.now() - (e.t || 0) >= 180 * DAY) continue;
+      this.healthMarks[k] = { u: e.u, t: e.t || 0, t0: e.t0 || e.t || 0, n: Math.max(1, e.n | 0), perm: e.perm ? 1 : 0 };
+    }
   },
   saveFavs() { localStorage.setItem('radio.favs', JSON.stringify(this.favs)); },
   saveRecents() { localStorage.setItem('radio.recents', JSON.stringify(this.recents)); },
-  saveHealth() { // FIFO 500 封顶防膨胀（全量体检标死几百台的场景）
-    const keys = Object.keys(this.healthMarks).sort((a, b) => (this.healthMarks[a].t || 0) - (this.healthMarks[b].t || 0));
-    while (keys.length > 500) delete this.healthMarks[keys.shift()];
+  saveHealth() { // FIFO 分档封顶（R4 拍板：疑似 1000 + 停运 1000；时间序扫描，停运档最后才挤——只增不减的
+    // 停运台天然封顶于 radio.txt 在列数，2000 条合计约 1MB，5MB 配额内可控）
+    const ks = Object.keys(this.healthMarks).sort((a, b) => (this.healthMarks[a].t || 0) - (this.healthMarks[b].t || 0));
+    let n1 = 0, n2 = 0;
+    for (const k of ks) { if (this.healthMarks[k].perm) { if (++n2 > 1000) delete this.healthMarks[k]; } else if (++n1 > 1000) delete this.healthMarks[k]; }
     try { localStorage.setItem('radio.health', JSON.stringify(this.healthMarks)); } catch (_) {}
   },
 
@@ -187,14 +196,15 @@ const App = {
       .filter(r => { if (seen.has(r.k)) return false; seen.add(r.k); return r.u.length || this.state.stations.some(s => keyOf(s) === r.k); })
       .slice(0, 20);
     // 死台标记按 URL 身份回绑（上游改名/换分类后仍对得上）：命中即 s.health='dead'（刷新后依然默认隐藏），
-    // 键与 URL 快照随之刷新；对不上当前列表的休眠保留待 TTL 过期
+    // 键与 URL 快照随之刷新（t0/n/perm 档位随行，t 保留原值——回绑不是复测，不刷新确认时间）；
+    // 回绑不上的休眠孤儿 90 天清理（R4 拍板：上游都找不到这个台了，留着只占 FIFO 配额）
     const hm = {};
     for (const k of Object.keys(this.healthMarks)) {
       const e = this.healthMarks[k];
       const st = this.state.stations.find(s => keyOf(s) === k)
         || (e.u.length && this.state.stations.find(s => s.u.some(u => e.u.includes(u))));
-      if (st) { st.health = 'dead'; hm[keyOf(st)] = { u: st.u.slice(0, 6), t: e.t }; }
-      else hm[k] = e;
+      if (st) { st.health = 'dead'; st.perm = e.perm; hm[keyOf(st)] = { ...e, u: st.u.slice(0, 6) }; }
+      else if (Date.now() - e.t0 < 90 * DAY) hm[k] = e;
     }
     this.healthMarks = hm; this.saveHealth();
     this.saveFavs(); this.saveRecents();
@@ -237,6 +247,37 @@ const App = {
     for (const f of this.favs) push(f);
     for (const r of this.recents) push(r);
     return list.slice(0, max);
+  },
+  scopeDead(now = Date.now()) { // 死标记台复测范围（R4 节流拍板，语义全保留）：t 距今超档位间隔（疑似 24h/
+    // 停运 7 天）才入列，最旧优先、每 boot 封顶 200 轮转——FIFO 顶格 2000 时把最坏单次后台探活从 1-2 小时
+    // 压回分钟级，终止对已停运台的永久日级探测；档内标记多于 200 时按 t 轮转全覆盖
+    const out = [];
+    for (const k of Object.keys(this.healthMarks)) {
+      const e = this.healthMarks[k];
+      if (now - (e.t || 0) < (e.perm ? 7 : 1) * DAY) continue;
+      const st = this.state.stations.find(s => keyOf(s) === k)
+        || this.state.stations.find(s => s.u.some(u => e.u.includes(u)));
+      if (st && !st.hidden) out.push([e.t || 0, st]);
+    }
+    return out.sort((a, b) => a[0] - b[0]).slice(0, 200).map(x => x[1]);
+  },
+  baselineList() { // 首启基线范围（R4 拍板）：无体检证据的国内台——欧美两分类同步期已逐个实测跳过
+    // （dCat = 维护层套用前的默认分类留底，免疫分类重命名/单台移动的显示层改写）
+    return this.visible(true).filter(s => !['欧美音乐', '国际新闻·谈话'].includes(s.dCat || s.c));
+  },
+  toast(msg, opt = {}) { // 极简 toast（R1 拍板新增）：后台任务专用（增量体检/自动基线/多标签提示），
+    // 用户主动操作走 #status——两通道不双写，读屏器不念两遍（R4 分工规则）。action = {label, fn} 确认门槛用
+    const t = $('toast');
+    t.innerHTML = '';
+    const sp = document.createElement('span'); sp.textContent = msg; t.appendChild(sp);
+    if (opt.action) {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'btn mbtn';
+      b.textContent = opt.action.label; b.onclick = () => { t.hidden = true; opt.action.fn(); };
+      t.appendChild(b);
+    }
+    t.hidden = false;
+    clearTimeout(this._toastT);
+    if (opt.ms !== 0) this._toastT = setTimeout(() => { t.hidden = true; }, opt.ms || 4000);
   },
   showLast() {
     const s = this.recents[0] && this.resolve(this.recents[0]);
@@ -331,15 +372,15 @@ const App = {
     $('list').innerHTML = list.map((s, i) => {
       const k = keyOf(s), on = favs.has(k), playing = k === pk;
       const base = `${playing ? ' playing' : ''}${k === ck ? ' connecting' : ''}${s.health === 'dead' ? ' dead' : ''}`;
-      // title=全名（UI 审计 P3-9）：截断长名（最长 84 字）此前无处可看全名；死台叠加提示
-      const attrs = `data-k="${this.esc(k)}" data-i="${i}" role="listitem" tabindex="${i === ri ? 0 : -1}" aria-label="${this.esc(s.n)}${playing ? '（播放中）' : ''}"${playing ? ' aria-current="true"' : ''} title="${this.esc(s.n)}${s.health === 'dead' ? '（体检不可用，点击仍可尝试播放）' : ''}"`;
-      const hp = s.health ? `<span class="health ${s.health === 'ok' ? 'ok' : 'bad'}" title="体检${s.health === 'ok' ? '可用' : '不可用'}">${s.health === 'ok' ? '<svg class="ic"><use href="#i-check"/></svg>' : '<svg class="ic"><use href="#i-x"/></svg>'}</span>` : '';
+      // title=全名（UI 审计 P3-9）：截断长名（最长 84 字）此前无处可看全名；死台按档位叠加提示（R1 拍板分文案）
+      const attrs = `data-k="${this.esc(k)}" data-i="${i}" role="listitem" tabindex="${i === ri ? 0 : -1}" aria-label="${this.esc(s.n)}${playing ? '（播放中）' : ''}"${playing ? ' aria-current="true"' : ''} title="${this.esc(s.n)}${s.health === 'dead' ? (s.perm ? '（长期确认停运）' : '（疑似不可达，点击仍可尝试播放）') : ''}"`;
+      const hp = s.health ? `<span class="health ${s.health === 'ok' ? 'ok' : 'bad'}" title="体检${s.health === 'ok' ? '可用' : (s.perm ? '长期确认停运' : '疑似不可用')}">${s.health === 'ok' ? '<svg class="ic"><use href="#i-check"/></svg>' : '<svg class="ic"><use href="#i-x"/></svg>'}</span>` : '';
       // 信息降噪（UI 审计 P2-1/P2-2，owner 拍板）：① 台名剥离「[国别]」后缀进 meta（搜索/aria/身份仍用全名，
       // 数据层不动）；② meta 行按视图降级——分类 badge 只在 全部/收藏/最近 显示（分类视图下 100% 冗余），
       // 源数只在 ≥2 源时显示；国别在 meta 与源数并列展示
       const cm = s.n.match(/\s*\[([^\]]+)\]\s*$/), cn = cm ? cm[1] : '', dn = cm ? s.n.slice(0, s.n.length - cm[0].length) : s.n;
       const inCat = this.state.cat !== '全部' && this.state.cat !== '★收藏' && this.state.cat !== '最近';
-      const parts = `${!inCat ? `<span class="badge">${this.esc(s.c)}</span>` : ''}${cn ? `<span class="srcs" title="国家/地区">${this.esc(cn)}</span>` : ''}${s.u.length > 1 ? `<span class="srcs" title="备选源数量">${s.u.length}源</span>` : ''}`;
+      const parts = `${s.perm ? '<span class="badge permb" title="长期确认停运（复测可达会自动回归）">已停运</span>' : ''}${!inCat ? `<span class="badge">${this.esc(s.c)}</span>` : ''}${cn ? `<span class="srcs" title="国家/地区">${this.esc(cn)}</span>` : ''}${s.u.length > 1 ? `<span class="srcs" title="备选源数量">${s.u.length}源</span>` : ''}`;
       const cfoot = (parts || hp) ? `<div class="cfoot">${parts}${hp}</div>` : '';
       if (grid) return `<div class="card${base}" ${attrs}><div class="chead">${Logos.visual(s)}<span class="cname">${this.esc(dn)}</span>${this.favBtn(k, on, s)}</div>${cfoot}</div>`;
       const meta = parts ? `<div class="meta">${parts}</div>` : '';
@@ -372,25 +413,39 @@ const App = {
     this._swapT = setTimeout(() => l.classList.remove('swap'), 160);
   },
   /* 体检增量落库（sync.js 调用）：stamp 未变时顺手更新该行 DOM，否则只落数据由结束时的兜底 render 收口（P3-13）。
-     healthMarks 只改内存，落盘由 Sync.health 收尾统一一次——全量体检标死几百台时逐台全量写 localStorage 会卡主线程；
-     复活即撤销标记，体检结束的兜底 render 会让它回归列表 */
+     healthMarks 只改内存，落盘由 Sync 各收尾统一一次——全量体检标死几百台时逐台全量写 localStorage 会卡主线程；
+     复活即撤销标记，体检结束的兜底 render 会让它回归列表。返回档位（'ok'|'sus'|'perm'）供编排方分档统计 */
   patchHealth(s, ok, stamp) {
+    const k = keyOf(s);
     s.health = ok ? 'ok' : 'dead';
-    if (ok) delete this.healthMarks[keyOf(s)];
-    else { this.healthMarks[keyOf(s)] = { u: s.u.slice(0, 6), t: Date.now() }; $('deadBtn').hidden = false; } // 首个死台出现即亮开关
-    if (this.state.stamp !== stamp) return;
+    if (ok) { s.perm = 0; delete this.healthMarks[k]; }
+    else {
+      const old = this.healthMarks[k], now = Date.now();
+      const t0 = old ? old.t0 : now, n = old ? (old.n || 1) + 1 : 1;
+      // 升级停运档（D1 拍板）：复测连续确认 ≥3 次且首死 ≥30 天——单次探活分不出「停运」与「被墙/运维」，
+      // 分档证据只能来自持续复测（时长×次数），30 天跨度防短窗口网络抖动误升级
+      const perm = (old && old.perm) || (n >= 3 && now - t0 >= 30 * DAY) ? 1 : 0;
+      s.perm = perm;
+      this.healthMarks[k] = { u: s.u.slice(0, 6), t: now, t0, n, perm };
+      $('deadBtn').hidden = false; // 首个死台出现即亮开关
+    }
+    const r = ok ? 'ok' : (s.perm ? 'perm' : 'sus');
+    if (this.state.stamp !== stamp) return r;
     const row = $('list').querySelector(`[data-i="${this.state.index.get(s)}"]`); // 行/卡片通用
-    if (!row) return;
+    if (!row) return r;
     if (!ok && !this.state.showDead
-      && !(Player.station && keyOf(Player.station) === keyOf(s)) && !(Player.connecting && keyOf(Player.connecting) === keyOf(s))) {
-      row.remove(); return; // 默认隐藏：死台行当场消失，与 visible() 口径一致（正在播/连接中的台不消失）
+      && !(Player.station && keyOf(Player.station) === k) && !(Player.connecting && keyOf(Player.connecting) === k)) {
+      row.remove(); return r; // 默认隐藏：死台行当场消失，与 visible() 口径一致（正在播/连接中的台不消失）
     }
     row.classList.toggle('dead', !ok);
-    row.title = s.n + (ok ? '' : '（体检不可用，点击仍可尝试播放）'); // 与整表 render 的 title 口径一致（AIbot PR#9 review P3-5）
-    const old = row.querySelector('.health'); if (old) old.remove();
-    const sp = document.createElement('span'); sp.className = 'health ' + (ok ? 'ok' : 'bad'); sp.innerHTML = ok ? '<svg class="ic"><use href="#i-check"/></svg>' : '<svg class="ic"><use href="#i-x"/></svg>';
+    row.title = s.n + (ok ? '' : (s.perm ? '（长期确认停运）' : '（疑似不可达，点击仍可尝试播放）')); // 与整表 render 的 title 口径一致（AIbot PR#9 review P3-5）
+    const old2 = row.querySelector('.health'); if (old2) old2.remove();
+    const sp = document.createElement('span'); sp.className = 'health ' + (ok ? 'ok' : 'bad');
+    sp.title = ok ? '体检可用' : (s.perm ? '体检长期确认停运' : '体检疑似不可用');
+    sp.innerHTML = ok ? '<svg class="ic"><use href="#i-check"/></svg>' : '<svg class="ic"><use href="#i-x"/></svg>';
     // meta 行按视图降级后（UI 审计 P2-1）分类视图的卡片可能没有 cfoot：兜底挂到 chead（台名行）
     const tgt = row.querySelector('.cfoot, .l1, .chead'); if (tgt) tgt.appendChild(sp);
+    return r;
   },
 
   togglePlay(k) { // 再点当前台 = 暂停/继续；点其他台 = 切换
@@ -1133,8 +1188,8 @@ const App = {
         else $('hint').style.display = 'block';
       }
       this.logosEnsure();
-      // 开机静默体检（B-10）：首屏渲染/台标补全之后 4s 再跑收藏+最近范围，死台自动隐藏无需手动点「体检」
-      if (ok) setTimeout(() => Sync.silentHealth(), 4000);
+      // 开机后台编排（B-10 + R3/R4 拍板）：基线优先——未建基线（含确认过的中断续跑）不跑常规复测（基线是超集）
+      if (ok) setTimeout(() => Sync.bootQuiet(), 4000);
     });
     this.render(); this.showLast(); // file:// 降级模式下也补齐「上次收听」提示
   },

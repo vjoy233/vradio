@@ -5,24 +5,41 @@ const Player = {
   audio: null, hls: null, token: 0,
   station: null,    // 当前台（引用 app 数据里的 station 对象）
   connecting: null, // 连接中/换源重试中的台（抑制 pause 改图标的闪烁）
-  vol: 0.9,         // 逻辑音量（睡眠渐弱后恢复的基准）
+  vol: 0.9,         // 逻辑音量（睡眠渐弱后恢复的基准；点播时按台记忆重设，见 play）
+  gvol: 0.9,        // 全局默认音量（radio.vol 装载；无记忆台点播用它，「无记忆台首调」时随行更新——r2 ②语义①）
+  volMem: null,     // 每台音量记忆（radio.volperst，A3/r2 ②）：台主 URL → 0-100 整数，FIFO 300（插入序，URL 键不退化数组索引）
   sleepId: 0, sleepEnd: 0,
   srcMem: null,   // 成功源记忆（radio.srcmem，A-1）：台主 URL → {i,t}；多源台点播从上次试通的源先行
   pctx: null,     // 本次 play 的级联上下文 {urls:[{u,si}], i, my}（世代令牌防串台）
   wd: 0,          // 静默挂起看门狗（A-1）：stalled/waiting 后 N 秒无进展按断流处理
   retried: false, // 当前源是否已「先重连一次」（stall/ended 专属；error 级联照旧直接顺延）
+  halt: false,    // 有意暂停标志（AIbot P2-1）：用户/让位/睡眠定时走 pause() 置位。不能拿 isPaused() 判——
+                  // 媒体元素加载失败会自动置 paused=true，正常 error 级联会被误当暂停挡死
+  heldNext: false, // 暂停期间 error 级联被守卫挡住的标记：resume 时接回（error 事件只发一次，等 play() 再触发是等不到的）
   curSi: -1,      // 正在试的源序号（variants 展开前的 s.u 下标；playing 时记忆）
   curPlay: '',    // 当前装载的 variant URL（stall/ended 重连当前源用）
   curUrl: '',     // 正在播的远端原始 URL（app 曲讯轮询用；/proxy 形态已还原回远端）
+  bc: null,       // BroadcastChannel('vradio')：多标签页防双播（N3/r2 ⑤）；null = 不支持/异常，静默降级各自独立
   onstate: null,    // (full) 播放态变化回调；full=true 时 app 需整表重渲
   onstatus: null,   // (text) 底部状态栏文案
   onfail: null,     // 全部源失败的善后回调（footer 复位）；⚠ 提示文案由本引擎 say，不依赖回调方
   ontick: null,     // (msLeft) 睡眠定时倒计时回调（0 = 已关）
+  onvol: null,      // (v 0-1) 每台音量套用后回写滑杆 UI（A3/r2 ②）；由 app 注入，player 不碰 DOM
   onplaylast: null, // 媒体键 play 但当前无台时，转交 app 走「续播上次收听」（与 pp 按钮同语义）
+  onlogo: null,     // (station) → 台标 URL（锁屏 artwork 大图，r2 ⑩）；由 app 注入 Logos.get，player 不伸手进台标模块
+  onstepfav: null,  // (±1) 锁屏/媒体键 ⏮⏭ = 收藏间切台（A2/r2 ①）；由 app 注入 stepFav
 
   init(el, vol0) {
-    this.audio = el; this.vol = vol0; el.volume = vol0;
-    el.addEventListener('playing', () => { this.connecting = null; this.stopWatchdog(); this.onAir(); this.say('直播中'); this.emit(true); });
+    this.audio = el; this.vol = this.gvol = vol0; el.volume = vol0;
+    // 每台音量记忆（A3/r2 ②）：容错读取 + 形状清洗（键须 URL、值须 0-100 数值，坏形状丢弃）
+    let vm; try { vm = JSON.parse(localStorage.getItem('radio.volperst') || '{}'); } catch (_) { vm = {}; }
+    this.volMem = {};
+    if (vm && typeof vm === 'object' && !Array.isArray(vm))
+      for (const k of Object.keys(vm)) { const v = +vm[k]; if (/^https?:\/\//.test(k) && Number.isFinite(v) && v >= 0 && v <= 100) this.volMem[k] = Math.round(v); }
+    el.addEventListener('playing', () => {
+      this.connecting = null; this.stopWatchdog(); this.onAir(); this.say('直播中'); this.emit(true);
+      if (this.bc) this.bc.postMessage('on'); // 多标签页防双播（N3）：建流成功即广播，旧标签页让位
+    });
     el.addEventListener('play', () => this.emit(false));
     el.addEventListener('pause', () => { if (!this.connecting) { this.emit(false); if (this.station) this.say('已暂停'); } });
     // 断流自愈（A-1）：error 级联已覆盖「显式失败」，这里补「静默挂起」——
@@ -32,6 +49,17 @@ const Player = {
     el.addEventListener('waiting', () => this.armWatchdog());
     el.addEventListener('ended', () => { if (this.station && !this.connecting) this.retryOrNext(); });
     try { this.srcMem = JSON.parse(localStorage.getItem('radio.srcmem') || '{}'); } catch (_) { this.srcMem = {}; }
+    // 多标签页防双播（N3/r2 ⑤）：后来者赢——新标签开播广播，旧标签正在播/建流中则让位暂停（非 stop，保留台位可续播）。
+    // 规范保证不回发发送者自身，无需自过滤；消息只发一个字面量
+    try {
+      this.bc = new BroadcastChannel('vradio');
+      this.bc.onmessage = () => {
+        if (this.isPaused()) return;
+        this.connecting = null; // 建流期让位：清连接中指示，pause 事件才能走正常 UI 复位（否则 footer 卡在连接中）
+        this.pause(); this.emit(true);
+        setTimeout(() => this.say('另一标签页已开播，本页已自动暂停'), 0); // 等 pause 事件的「已暂停」先落地再覆盖成带原因的文案
+      };
+    } catch (_) { this.bc = null; } // 不支持/file:// 异常即静默降级
     // MediaSession（Tier 1 E1）：锁屏/蓝牙耳机/键盘媒体键控制 + 台名元数据
     if ('mediaSession' in navigator) {
       const ms = navigator.mediaSession;
@@ -40,12 +68,32 @@ const Player = {
         ms.setActionHandler('pause', () => this.pause());
         ms.setActionHandler('stop', () => this.stop());
       } catch (_) {} // 个别浏览器不支持部分 action，单独容错
+      try { // ⏮⏭ = 收藏间切台（A2/r2 ①）：与 ←/→ 键同语义；独立 try——这两个 action 的支持面更窄，挂了不连累上面三个
+        ms.setActionHandler('previoustrack', () => this.onstepfav && this.onstepfav(-1));
+        ms.setActionHandler('nexttrack', () => this.onstepfav && this.onstepfav(1));
+      } catch (_) {}
     }
   },
   emit(full) { if (this.onstate) this.onstate(full); },
   say(t) { if (this.onstatus) this.onstatus(t); },
   isPaused() { return !this.audio || this.audio.paused; },
   setVolume(v) { this.vol = v; if (this.audio) this.audio.volume = v; },
+  rememberVol(pct) { // 调音量分流（A3/r2 ②语义①，app 滑杆 oninput 调用）：正在播 → 只写当前台记忆（台首调时全局锚点随行，
+    // 锚点稳定后不再被有记忆台牵动）；无台 → 写全局。0 视为静音瞬态，同静音按钮一律不入记忆
+    if (!(pct > 0)) return;
+    const s = this.station;
+    if (!s) { this.gvol = pct / 100; try { localStorage.setItem('radio.vol', String(pct)); } catch (_) {} return; }
+    const fresh = this.volMem[s.u[0]] == null;
+    this.volMem[s.u[0]] = Math.round(pct);
+    if (fresh) { this.gvol = pct / 100; try { localStorage.setItem('radio.vol', String(pct)); } catch (_) {} }
+    const ks = Object.keys(this.volMem);
+    while (ks.length > 300) delete this.volMem[ks.shift()];
+    try { localStorage.setItem('radio.volperst', JSON.stringify(this.volMem)); } catch (_) {}
+  },
+  restoreVol() { // 取消静音的恢复值：当前台记忆 → 全局默认 → 0.9（坑①：有记忆时取记忆而非旧全局；切台后旧 lastVol 语义废除）
+    const s = this.station, pv = s && this.volMem[s.u[0]];
+    return pv > 0 ? pv / 100 : this.gvol > 0 ? this.gvol : 0.9;
+  },
 
   /* 三级播放策略（顺序不能乱，见 AGENTS.md）：
      ① mp3/AAC 直流（<audio> 原生跨域；蜻蜓 ls.qingting.fm/live/{id}.m3u8 自动换算同 id 的 lhttp 64k mp3）
@@ -61,6 +109,7 @@ const Player = {
 
   play(s) {
     this.stopWatchdog();
+    this.halt = this.heldNext = false; // 清上一轮的有意暂停/级联搁浅标记（AIbot P2-1）
     // 成功源记忆（A-1）：上次试通的源提到最前（流地址天然漂移，省一轮必败等待）；序号对齐原始 s.u
     const order = s.u.map((_, i) => i);
     const mem = this.srcMem[s.u[0]];
@@ -69,8 +118,14 @@ const Player = {
     for (const si of order) for (const v of this.variants(s.u[si])) urls.push({ u: v, si });
     this.pctx = { urls, i: 0, my: ++this.token }; // 世代令牌：快速连续点播时旧链路回调全部失效，防串台
     this.station = this.connecting = s; this.emit(true);
-    if ('mediaSession' in navigator) { // 锁屏/媒体键显示当前台（E1）
-      try { navigator.mediaSession.metadata = new MediaMetadata({ title: s.n, artist: 'VRadio · ' + s.c }); } catch (_) {}
+    // 每台音量记忆（A3/r2 ②）：有记忆用记忆、无记忆用全局默认；静音态切台保持静音（恢复值由 restoreVol 按新台取）。
+    // setVolume 同步 this.vol 基准——睡眠渐弱/中途取消的恢复都锚在它上
+    const pv = this.volMem[s.u[0]];
+    const want = pv != null ? pv / 100 : this.gvol;
+    if (this.vol > 0) this.setVolume(want);
+    if (this.onvol) this.onvol(this.vol > 0 ? want : 0);
+    if ('mediaSession' in navigator) { // 锁屏/媒体键显示当前台（E1）+ 台标大图（r2 ⑩）
+      this.meta(s.n);
       navigator.mediaSession.playbackState = 'playing';
     }
     this.next();
@@ -84,6 +139,11 @@ const Player = {
       if (this.onfail) this.onfail();
       return;
     }
+    // 有意暂停（用户/让位/睡眠定时）后不再装载下一个源（AIbot P2-1）：否则在飞源报错 → 级联 → audio.play()
+    // 会把暂停页自我复活、再广播 'on' 反杀对方（ping-pong）。i>0 区分级联续摊与 play() 首装载（后者时 i 尚为 0）。
+    // 耗尽分支不受限：它不起播只善后。heldNext 记级联被挡，resume 时接回——error 事件只发一次，
+    // 元素已停在错误态（且会自动置 paused），恢复时靠 play() 再触发 error 是等不到的
+    if (this.halt && this.pctx.i > 0) { this.heldNext = true; return; }
     const cur = urls[this.pctx.i++];
     this.curSi = cur.si; this.curPlay = cur.u; this.retried = false;
     this.connecting = this.station; this.emit(true); // 换源重试期间保持连接中指示
@@ -122,13 +182,19 @@ const Player = {
   },
   stopHls() { if (this.hls) { this.hls.destroy(); this.hls = null; } },
 
-  setSong(t) { // 曲讯（B-6）：锁屏/媒体键显示当前歌名；空串回退台名（app 轮询到曲名时调用）
+  meta(title) { // 锁屏元数据组装（E1 + r2 ⑩）：artwork 只给 src——台标 URL 后缀杂乱（jpg/png/无后缀），
+    // sizes/type 是可选提示字段，猜错反而挡路；URL 由浏览器直接取图不经 HTML 插值，无 XSS 面
+    const logo = this.onlogo && this.station ? this.onlogo(this.station) : '';
+    try { navigator.mediaSession.metadata = new MediaMetadata({ title, artist: 'VRadio · ' + this.station.c, artwork: logo ? [{ src: logo }] : [] }); } catch (_) {}
+  },
+  setSong(t) { // 曲讯（B-6）：锁屏/媒体键显示当前歌名；空串回退台名（app 轮询到曲名时调用）。
+    // 台标可能在开播后才由 Logos 运行时解析到（收藏+正在播优先补全），此处再取一次即覆盖
     if (!('mediaSession' in navigator) || !this.station) return;
-    try { navigator.mediaSession.metadata = new MediaMetadata({ title: t || this.station.n, artist: 'VRadio · ' + this.station.c }); } catch (_) {}
+    this.meta(t || this.station.n);
   },
 
   stop() {
-    this.token++; this.stopHls(); this.stopWatchdog();
+    this.token++; this.stopHls(); this.stopWatchdog(); this.halt = this.heldNext = false;
     this.audio.removeAttribute('src'); this.audio.load();
     this.station = this.connecting = null; this.cancelSleep();
     this.curSi = -1; this.curPlay = this.curUrl = '';
@@ -168,15 +234,19 @@ const Player = {
     while (ks.length > 300) delete this.srcMem[ks.shift()];
     try { localStorage.setItem('radio.srcmem', JSON.stringify(this.srcMem)); } catch (_) {}
   },
-  // 暂停恢复：直播流建流慢（蜻蜓 5-10s），先给连接中提示；失败由遗留 onerror 闭包接管换源
+  // 暂停恢复：直播流建流慢（蜻蜓 5-10s），先给连接中提示；失败由遗留 onerror 闭包接管换源。
+  // 暂停期间级联被 next() 守卫挡住过（源已报错、error 不再发）→ retryOrNext 接回：先重连当前源一次再顺延
   resume() {
     if (!this.station) return; // 无台可续：媒体键空台场景已转 onplaylast，此处兜底
+    this.halt = false;
     this.connecting = this.station; this.emit(true); this.say('连接中…');
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+    if (this.heldNext) { this.heldNext = false; this.retryOrNext(); return; }
     this.audio.play().catch(() => {});
   },
   pause() {
     this.stopWatchdog(); // 用户主动暂停是明确意图：武装中的看门狗一并撤（否则 12s 后 retryOrNext 会把流强拉起来——AIbot P2-3）
+    this.halt = true; // 有意暂停：挡住在飞 error 级联的续摊（AIbot P2-1）
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
     this.audio.pause();
   },

@@ -6,7 +6,8 @@
 //      过滤欧美国家后按类型榜(news/talk/sports/religious)拆成 欧美音乐 + 国际新闻·谈话，
 //      逐个实测可用性，只保留能持续吐数据的流（自动感知下线源）
 //   3. 合并写入 radio.txt（temp+rename 原子替换，旧文件备份为 radio.txt.bak），分类顺序 = CAT_ORDER；
-//      欧美获取失败时保留旧分类；合并结果低于下限时中止写盘
+//      欧美获取失败时保留旧分类；合并结果低于下限时中止写盘；
+//      随行产出 radio-data.js（radio.txt 全文包成 window.RADIO_DATA 经典 script，file:// 降级直读全库，N1/r2 ③）
 // 用法：node update-sources.js  或 页面上点「同步源」(POST /api/sync)
 const http = require('http'), https = require('https'), fs = require('fs'), path = require('path');
 const dns = require('dns');
@@ -14,6 +15,7 @@ const { execFile } = require('child_process');
 
 const ROOT = __dirname;
 const RADIO = path.join(ROOT, 'radio.txt');
+const RADIODATA = path.join(ROOT, 'radio-data.js'); // radio.txt 的经典 script 包装（N1/r2 ③）：file:// 下 fetch 必被拦、script 加载不会（hls.min.js 先例）
 const LOGOS = path.join(ROOT, 'logos.txt');
 const LOGOS_HEADER = '# 由 npm run sync 自动生成：欧美系台标（欧美音乐/国际新闻·谈话，源：Radio Browser 镜像 m3u 的 tvg-logo，按流 URL 匹配）。手工编辑会被覆盖。';
 const CN_REPO = 'gaotianliuyun/gao';                 // 国内直播源上游
@@ -346,8 +348,39 @@ async function syncSources(log = () => {}) {
     return summary;
   }
   if (fs.existsSync(RADIO)) fs.copyFileSync(RADIO, RADIO + '.bak');
-  fs.writeFileSync(RADIO + '.tmp', merged.join('\r\n') + '\r\n', 'utf8');
+  const outText = merged.join('\r\n') + '\r\n';
+  fs.writeFileSync(RADIO + '.tmp', outText, 'utf8');
   fs.renameSync(RADIO + '.tmp', RADIO);
+  // radio-data.js（N1/r2 ③）：JSON.stringify 产物即合法 JS 字符串字面量（ES2019 起 U+2028/2029 亦安全），
+  // </script> 序列只威胁内联脚本、外链 .js 无此面；与 radio.txt 同为 git 跟踪的生成物（clone 即用）。失败不影响主流程
+  try {
+    const js = 'window.RADIO_DATA=' + JSON.stringify(outText) + ';\r\n';
+    fs.writeFileSync(RADIODATA + '.tmp', js, 'utf8');
+    fs.renameSync(RADIODATA + '.tmp', RADIODATA);
+  } catch (e) { log('radio-data.js 写入失败（不影响电台列表）：' + (e.message || e)); }
+
+  // 4.5) 同步 diff 摘要（N4/r2 ⑥）：按台名集合对比旧文件与新列表——分类变化不算（重分类是本项目常规操作），
+  //      改名 = 消失+新增如实呈现；aborted 早退不产出（保留旧列表口径一致）。名单封顶 50 防爆——前端收藏
+  //      点名同样只看得到这 50 个，超出部分的消失收藏台不进点名（已知缺口，AIbot P3-2）
+  const entryNames = lines => new Set((Array.isArray(lines) ? lines : splitSections(lines).flatMap(s => s.lines))
+    .filter(l => !l.endsWith('#genre#')).map(l => l.split(',')[0].trim()).filter(Boolean));
+  const oldNames = entryNames(curText), neuNames = entryNames(merged);
+  const removedNames = [...oldNames].filter(n => !neuNames.has(n));
+  const addedNames = [...neuNames].filter(n => !oldNames.has(n));
+  summary.added = addedNames.length; summary.removed = removedNames.length;
+  if (addedNames.length) summary.addedNames = addedNames.slice(0, 50);
+  if (removedNames.length) summary.removedNames = removedNames.slice(0, 50);
+  // 消失台的 URL 集合（AIbot P3-1）：收藏点名按身份比对的第二通道——经维护面板本地改名的收藏台键名已换、
+  // 按名比对会漏，URL 快照仍对得上（身份公理）。台名内无逗号（同步硬约束），首个逗号即分隔；只收名单封顶内的台
+  const oldUrlOf = new Map();
+  for (const l of splitSections(curText).flatMap(s => s.lines)) {
+    const i = l.indexOf(','); if (i < 0) continue;
+    const nm = l.slice(0, i).trim();
+    if (!oldUrlOf.has(nm)) oldUrlOf.set(nm, []);
+    oldUrlOf.get(nm).push(l.slice(i + 1).trim());
+  }
+  const removedUrls = [...new Set(removedNames.slice(0, 50).flatMap(n => oldUrlOf.get(n) || []))].slice(0, 150);
+  if (removedUrls.length) summary.removedUrls = removedUrls;
 
   // 5) 台标（欧美成功重建时随行重写 logos.txt，双分类前缀；失败时保留旧文件不动）
   if (euLines) {
@@ -361,7 +394,7 @@ async function syncSources(log = () => {}) {
   }
 
   summary.total = after; summary.delta = after - before;
-  log(`完成：共 ${after} 台（${summary.delta >= 0 ? '+' : ''}${summary.delta}）`);
+  log(`完成：共 ${after} 台（${summary.delta >= 0 ? '+' : ''}${summary.delta}${(addedNames.length || removedNames.length) ? `；新增 ${addedNames.length}、消失 ${removedNames.length}` : ''}）`);
   return summary;
 }
 

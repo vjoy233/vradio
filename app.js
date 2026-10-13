@@ -32,7 +32,7 @@ const App = {
   rowIdx: 0, // 方向键导航落点（UI 审计 P2-5）：roving tabindex——仅此行 tabindex=0，Tab 不再穿全库停靠点
   favs: [],    // [{k, u:[源URL…]}] —— 带 URL 的条目永不回收（休眠待回绑），旧名字键回绑失败即刻回收
   recents: [], // [{k, n, u:[…]}] 最近在前、≤20；队首即「上次收听」（E3 与 lastKey 合并为单一队列）
-  cfg: null,   // 个人维护层（radio.cfg，owner 三批拍板）：分类重命名/隐藏/自建 + 电台移动/重命名/隐藏。
+  cfg: null,   // 个人维护层（radio.cfg，owner 三批拍板）：分类重命名/隐藏/自建 + 电台移动/重命名/隐藏 + 追加备选源（P1-a/r2 ⑨）。
                // 键 = 源 URL（身份公理），同步重建后自动复用；tag = URL→原始台名快照，仅供失配清单显示
   songFor: '', lastSong: '', // 曲讯（B-6/B-7）：songFor=曲讯归属台（切台即清零重取）；lastSong=最近一次拿到的曲名（换歌时旧歌入史）
 
@@ -71,6 +71,9 @@ const App = {
     c.renames = this.normStrMap(c.renames, true);                                                // 分类名 → 分类名（键非 URL，不做 URL 过滤）
     const urlKeys = m => Object.fromEntries(Object.entries(m).filter(([k]) => /^https?:\/\//.test(k)));
     c.hideS = c.hideS && typeof c.hideS === 'object' ? urlKeys(c.hideS) : {};                   // URL → 1（手藏电台）
+    // 追加备选源（P1-a/r2 ⑨）：URL → [追加源 URL…]。条数 6 / 单条 512 封顶对齐 mystation 护栏口径；只追加不动身份
+    const urlArrMap = m => { const o = {}; for (const [k, v] of Object.entries(m || {})) if (/^https?:\/\//.test(k) && Array.isArray(v)) { const a = [...new Set(v.map(x => String(x).trim().slice(0, 512)).filter(x => /^https?:\/\//.test(x)))].slice(0, 6); if (a.length) o[k.trim()] = a; } return o; };
+    c.srcs = urlArrMap(c.srcs);
     const strKeys = m => Object.fromEntries(Object.entries(m).filter(([k, v]) => typeof k === 'string' && k.trim() && v !== null && v !== false));
     c.hideC = c.hideC && typeof c.hideC === 'object' ? strKeys(c.hideC) : {};                   // 分类名 → 1（藏分类）
     if (!Array.isArray(c.cats)) c.cats = [];
@@ -123,17 +126,17 @@ const App = {
       else { byKey.set(keyOf(s), s); byName.add(s.n); }
     }
     this.state.stations = [...byKey.values()];
-    for (const s of this.state.stations) { s.dCat = s.c; s.dName = s.n; } // 同步默认口径留底（面板 ↺恢复/撤回移动用）
+    for (const s of this.state.stations) { s.dCat = s.c; s.dName = s.n; s.dU = s.u.slice(); } // 同步默认口径留底（面板 ↺恢复/撤回移动/撤回追加源用）
     this.applyCfg(); // 维护层最后套用（覆盖分类/台名/隐藏，收藏随后按 URL 回绑不受影响）
     this.rebind(); // 收藏/最近按 URL 回绑（债务 1）
     this.rebind(); this.render();
     if (!Player.station) this.showLast();
   },
-  /* 维护层套用：电台移动/重命名/手动隐藏按「任一源 URL 命中」（变体换序免疫）；
+  /* 维护层套用：电台移动/重命名/手动隐藏/追加源按「任一源 URL 命中」（变体换序免疫）；
      手动隐藏 = 彻底消失（全部/收藏/搜索/体检一律不可见，owner 拍板无正在播例外——手动是明确意图，
      与死台隐藏的「正在播例外」口径不同）；分类重命名最后映射（移动目标在改名时已级联改写） */
   applyCfg() {
-    const { moves, names, hideS, renames } = this.cfg;
+    const { moves, names, hideS, renames, srcs } = this.cfg;
     for (const s of this.state.stations) {
       s.hidden = false;
       for (const u of s.u) {
@@ -141,11 +144,17 @@ const App = {
         if (moves[u]) s.c = moves[u];
         if (names[u]) s.n = names[u];
       }
+      // 追加备选源（P1-a/r2 ⑨）：只挂到台尾——绝不插前/改删原源（s.u[0] 是 srcmem/收藏/健康标记的身份键，
+      // 动了四处回绑全断）；先收集后 push，避免遍历中修改 s.u。variants()/srcmem 天然吃新序列，无需另行接线
+      const add = [];
+      for (const u of s.u) { const a = srcs[u]; if (a) for (const x of a) if (!s.u.includes(x) && !add.includes(x)) add.push(x); }
+      if (add.length) s.u.push(...add);
       if (renames[s.c]) s.c = renames[s.c];
     }
   },
-  reapplyCfg() { // 面板改动后即时生效：回滚到装配默认再重套，并重走回绑/分类条/渲染/面板自身
-    for (const s of this.state.stations) { if (s.dCat !== undefined) { s.c = s.dCat; s.n = s.dName; } }
+  reapplyCfg() { // 面板改动后即时生效：回滚到装配默认再重套，并重走回绑/分类条/渲染/面板自身。
+    // u 也随留底回滚——追加源每次从 cfg 重放，撤除/移除即刻生效（P1-a）
+    for (const s of this.state.stations) { if (s.dCat !== undefined) { s.c = s.dCat; s.n = s.dName; s.u = s.dU.slice(); } }
     this.applyCfg();
     this.rebind(); this.render(); this.renderManage();
   },
@@ -191,6 +200,17 @@ const App = {
     this.saveFavs(); this.saveRecents();
   },
   favKeys() { return new Set(this.favs.map(f => f.k)); },
+  /* 同步消失名单 × 收藏比对（N4/r2 ⑥）：双通道——显示名 + 消失台 URL 集合（AIbot P3-1：经维护面板本地
+     改名的收藏台键名已换、按名会漏，URL 快照按身份公理仍对得上）。必须在 reloadMain 之后调用——
+     URL 回绑已救回「改名台」（新名不在消失名单，天然不误报），撞上名单/URL 且当前解析不到的才是真消失 */
+  favsGone(names, urls) {
+    const set = new Set(names || []), uset = new Set(urls || []), hits = [];
+    for (const f of this.favs) {
+      const nm = f.k.slice(f.k.lastIndexOf('|') + 1);
+      if ((set.has(nm) || f.u.some(u => uset.has(u))) && !this.resolve(f)) hits.push(nm);
+    }
+    return hits;
+  },
   toggleFav(s) {
     const k = keyOf(s);
     const i = this.favs.findIndex(f => f.k === k);
@@ -328,6 +348,11 @@ const App = {
     restore();
     const ae = document.activeElement; // 重渲后焦点行找回（keepFocus）：同步 roving 落点，防 Tab 跳回别行
     if (ae && ae.dataset && ae.dataset.i != null) this.rowIdx = +ae.dataset.i;
+    // 定位闪烁窗口（N5/r2 ⑦）：flash 生效期内的重渲保持高亮与视口（1s 超时后不干扰常规浏览）
+    if (this._flashK) {
+      const fr = $('list').querySelector(`[data-k="${CSS.escape(this._flashK)}"]`);
+      if (fr) { fr.classList.add('flash'); fr.scrollIntoView({ block: 'center' }); }
+    }
   },
   /* 方向键导航落点（UI 审计 P2-5）：焦点搬家 + 滚动跟随；搜索框 ↓ 也落到列表首行 */
   focusRow(i) {
@@ -387,13 +412,38 @@ const App = {
     const nx = cur < 0 ? (d > 0 ? 0 : list.length - 1) : (cur + d + list.length) % list.length;
     this.togglePlay(keyOf(list[nx]));
   },
-  /* 台标补全（收藏 + 正在播优先，请求量可控）：Logos.ensure 落库后回调重渲一次展示 */
+  /* 回到正在播（N5/r2 ⑦）：点 footer 台名定位列表行——当前分类/搜索词下不可见则先切「全部」+清搜索；
+     台被手动隐藏/死台隐藏时行不存在，静默不跳（与 visible() 口径一致，不报错） */
+  locatePlaying() {
+    const s = Player.station;
+    if (!s) return;
+    const k = keyOf(s);
+    if (!this.visible().some(x => keyOf(x) === k)) {
+      this.state.cat = '全部'; this.state.keyword = ''; $('q').value = '';
+    }
+    this.render(); // 整表重建：定位必须放在 render 之后
+    const row = $('list').querySelector(`[data-k="${CSS.escape(k)}"]`);
+    if (!row) return;
+    const rm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    row.scrollIntoView({ block: 'center', behavior: rm ? 'auto' : 'smooth' });
+    row.classList.add('flash'); // 立即挂（此时 _flashK 尚未设置，render 尾部管的是后续重渲）
+    this._flashK = k;
+    clearTimeout(this._flashT);
+    this._flashT = setTimeout(() => {
+      this._flashK = '';
+      for (const x of $('list').querySelectorAll('.flash')) x.classList.remove('flash');
+    }, 1000);
+  },
+
+  /* 台标补全（收藏 + 正在播优先，请求量可控）：Logos.ensure 落库后回调重渲一次展示；
+     正在播台的台标若此刻才解析到，顺手刷一次锁屏元数据（r2 ⑩——ICY 曲讯 setSong 只覆盖直流台，
+     m3u8 台等不到换歌，后解析的台标在这里补上） */
   logosEnsure() {
     if (!location.protocol.startsWith('http')) return;
     const seen = new Set(), list = [];
     for (const f of this.favs) { const s = this.resolve(f); if (s && !seen.has(keyOf(s))) { seen.add(keyOf(s)); list.push(s); } }
     if (Player.station && !seen.has(keyOf(Player.station))) list.push(Player.station);
-    Logos.ensure(list, () => this.render());
+    Logos.ensure(list, () => { this.render(); if (Player.station) Player.setSong(this.lastSong); });
   },
   /* 底部栏刷新（Player.onstate 用）：当前台名 + 播放/暂停态 + 均衡器动画 */
   playerNow() {
@@ -404,8 +454,10 @@ const App = {
         this.songFor = k; this.lastSong = '';
         $('song').hidden = true; $('song').textContent = '';
       }
-      $('nowline').textContent = s.n; $('pp').innerHTML = (Player.connecting || !Player.isPaused()) ? '<svg class="ic"><use href="#i-pause"/></svg>' : '<svg class="ic"><use href="#i-play"/></svg>'; // 台名不再带 ▶（UI 审计 P3-4）：与列表行的 ▶ 前缀重复，footer 已有按钮+均衡器表达状态
-    } else { $('pp').innerHTML = '<svg class="ic"><use href="#i-play"/></svg>'; this.showLast(); $('song').hidden = true; }
+      $('nowline').textContent = s.n;
+      $('nowline').classList.add('canfind'); $('nowline').title = '点击回到正在播的电台（N5）'; // 台名可点定位（r2 ⑦）
+      $('pp').innerHTML = (Player.connecting || !Player.isPaused()) ? '<svg class="ic"><use href="#i-pause"/></svg>' : '<svg class="ic"><use href="#i-play"/></svg>'; // 台名不再带 ▶（UI 审计 P3-4）：与列表行的 ▶ 前缀重复，footer 已有按钮+均衡器表达状态
+    } else { $('pp').innerHTML = '<svg class="ic"><use href="#i-play"/></svg>'; this.showLast(); $('song').hidden = true; $('nowline').classList.remove('canfind'); $('nowline').title = ''; }
     $('eq').classList.toggle('on', !!s && !Player.isPaused()); // 均衡器动画（E6）：活着且在播
   },
 
@@ -443,10 +495,30 @@ const App = {
     if (!Player.station) return;
     let songs; try { songs = JSON.parse(localStorage.getItem('radio.songs') || '{}'); } catch (_) { songs = {}; }
     const list = (songs[Player.station.u[0]] || []).slice(0, 12); // 同 pushSongHist 的 URL 键
-    el.innerHTML = '<b>本台最近播放</b>' + (list.length
+    el.innerHTML = '<div class="shhead"><b>本台最近播放</b><button type="button" class="btn mbtn" data-act="exportsongs" title="导出所有台的收听历史为 txt（拿去音乐 App 搜）">导出全部</button></div>' + (list.length
       ? list.map(x => `<div class="shrow">${this.esc(x.t)}</div>`).join('')
       : '<div class="shrow" style="color:var(--dim)">暂无历史（换歌后自动记录）</div>');
     el.hidden = false;
+    $('keys').hidden = true; // 与快捷键浮层互斥（AIbot P3-3）：同位会重叠，开一方关另一方
+    el.querySelector('[data-act="exportsongs"]').onclick = () => this.exportSongs();
+  },
+  exportSongs() { // 歌曲历史导出（N2/r2 ④）：全部台历史按时间倒序拼 txt；台名按台主 URL 反解，休眠台用 URL 截断兜底
+    let songs; try { songs = JSON.parse(localStorage.getItem('radio.songs') || '{}'); } catch (_) { songs = {}; }
+    const rows = [];
+    for (const u0 of Object.keys(songs)) {
+      const st = this.state.stations.find(s => s.u.includes(u0));
+      const nm = st ? st.n : u0.replace(/^https?:\/\//, '').slice(0, 40);
+      for (const it of songs[u0] || []) rows.push({ t: it.t, at: it.at, nm });
+    }
+    if (!rows.length) { $('status').textContent = '暂无歌曲历史（换歌后自动记录）'; return; }
+    rows.sort((a, b) => b.at - a.at);
+    const p = n => String(n).padStart(2, '0'), fmt = ts => { const d = new Date(ts); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+    const lines = rows.map(r => `${r.t}（${r.nm} · ${fmt(r.at)}）`); // 纯文本文件不过 HTML 转义（exportFavs 同口径）
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/plain' }));
+    a.download = 'vradio-songs.txt';
+    a.click(); URL.revokeObjectURL(a.href);
+    $('status').textContent = `已导出 ${rows.length} 条收听历史（vradio-songs.txt）`;
   },
 
   /* ---------- 收藏导出/导入（Tier 1 E4）：导出 = 带 #VRADIO:FAV 标记的 m3u（通用播放器可读），
@@ -469,6 +541,8 @@ const App = {
      分类页：重命名（撞名=合并，confirm 提示不易拆）/隐藏/删除自建（台撤回默认）；电台页：搜索定位后
      移动（含新建分类）/重命名/隐藏/单台 ↺ 恢复默认；失配清单：同步后 URL 漂移的个人调整可观测 ---------- */
   mTab: 'cats', mKw: '',
+  mExp: '',     // 电台页展开备选源管理的台（keyOf；P1-a/r2 ⑨）——innerHTML 全量重渲，展开态必须外置
+  mSrcVal: '',  // 展开行输入框内容（重渲不清输入，同 mq 持久做法）
   manageOpen() { this.mOpener = document.activeElement; $('manage').hidden = false; this.renderManage(); $('mClose').focus(); }, // 打开即移焦 + 记录归还点（P2-7）
   manageClose() {
     $('manage').hidden = true;
@@ -558,17 +632,72 @@ const App = {
       // moved 按 moves 键命中而非 s.c !== dC：分类级重命名会把整类台的 s.c 都改掉，但那不是单台移动，
       // ↺ 也撤不掉分类改名——按名字比较会让全类台误亮 ↺（PR#5 二轮 review 微小观察）
       const k = keyOf(s), moved = s.u.some(u => this.cfg.moves[u]), named = s.n !== dN;
+      const srcd = s.u.some(u => !s.dU.includes(u)); // 有追加源（P1-a）：↺ 一并撤销
       return `<div class="mrow${s.hidden ? ' hidden-item' : ''}" data-k="${this.esc(k)}">
         <span class="nm" title="${this.esc(named ? '原名：' + dN : s.n)}${s.hidden ? '（已隐藏）' : ''}">${this.esc(s.n)}</span>
         <select data-act="move" aria-label="「${this.esc(s.n)}」的分类">${opts.map(c => `<option value="${this.esc(c)}"${c === s.c ? ' selected' : ''}>${this.esc(c)}${this.cfg.hideC[c] ? '（已隐藏）' : ''}</option>`).join('')}<option value="__new">＋新建分类…</option><option value="__def">↺ 默认（${this.esc(this.cfg.renames[dC] || dC)}）</option></select>
-        ${(moved || named || s.hidden) ? `<button type="button" class="btn mbtn" data-act="reset" title="撤销此台全部个人调整（回到默认分类/默认名/显示）"><svg class="ic"><use href="#i-undo"/></svg></button>` : ''}
+        ${(moved || named || s.hidden || srcd) ? `<button type="button" class="btn mbtn" data-act="reset" title="撤销此台全部个人调整（回到默认分类/默认名/显示/移除全部追加源）"><svg class="ic"><use href="#i-undo"/></svg></button>` : ''}
         <button type="button" class="btn mbtn" data-act="rename" title="重命名电台（仅显示层，收藏按 URL 不受影响；台标若因改名失配可重新收藏触发解析）"><svg class="ic"><use href="#i-pencil"/></svg></button>
         <button type="button" class="btn mbtn" data-act="hide" title="${s.hidden ? '取消隐藏' : '隐藏电台（彻底消失，含全部/搜索）'}">${s.hidden ? '<svg class="ic"><use href="#i-eye"/></svg>' : '<svg class="ic"><use href="#i-eye-off"/></svg>'}</button>
+        <button type="button" class="btn mbtn" data-act="srcs" aria-expanded="${k === this.mExp}" title="备选源管理：查看全部源 / 探活追加（流地址漂移的手动救援） / 移除追加"><svg class="ic"><use href="#i-dots"/></svg></button>
+        ${k === this.mExp ? this.srcRowHtml(s) : ''}
       </div>`;
     }).join('') || '<div class="empty">没有匹配的电台</div>';
     if (!kw && all.length > 100) box.innerHTML += '<div class="empty" style="padding:8px 30px;">电台较多，仅列前 100 台——用上方搜索缩小范围</div>';
     box.scrollTop = keepScroll;
   },
+  /* —— 备选源管理（P1-a/r2 ⑨）：展开行内列出全部源（追加的可移除，原源只读——身份公理：s.u[0] 是
+     srcmem/收藏/健康标记的身份键）+ 先 /api/check 探活再收的追加输入（拒绝假流/死链，口径同 A-2 添加电台） —— */
+  srcRowHtml(s) {
+    const rows = s.u.map((u, i) => `<div class="srcline">
+      <i class="idx">${i + 1}</i><span class="u" title="${this.esc(u)}">${this.esc(u)}</span>
+      ${s.dU.includes(u) ? '' : `<span class="badge">追加</span><button type="button" class="btn mbtn" data-act="srcdel" data-u="${this.esc(u)}" title="移除这条追加源（原源不可删）"><svg class="ic"><use href="#i-x"/></svg></button>`}
+    </div>`).join('');
+    const ok = location.protocol.startsWith('http'); // 探活依赖后端，file:// 降级禁用（同添加电台口径）
+    return `<div class="msrc">
+      <div class="msrc-t">备选源 ${s.u.length} 条——点播失败自动逐个切换；追加源只挂本台，不动原源与收藏</div>
+      ${rows}
+      <div class="msrc-add">
+        <input type="url" value="${this.esc(this.mSrcVal || '')}" placeholder="追加流地址 http(s)://…（mp3/aac 直流或 m3u8）" aria-label="追加备选源地址"${ok ? '' : ' disabled title="file:// 降级模式无后端探活，npm start 后可用"'}>
+        <button type="button" class="btn mbtn" data-act="srcadd"${ok ? '' : ' disabled'}>探活并追加</button>
+      </div>
+    </div>`;
+  },
+  async srcAppend(s, btn) {
+    const inp = btn.closest('.msrc-add').querySelector('input');
+    const u = (inp.value || '').trim().replace(/\s+/g, ''); // URL 内不该有空白/换行，容错顺手清（坑③）
+    if (!/^https?:\/\//.test(u)) { $('status').textContent = '追加源需以 http(s):// 开头'; return; }
+    if (s.u.includes(u)) { $('status').textContent = '该地址已在源列表中'; return; }
+    // 挂键 = 台上任一已有 srcs 键（变体换序免疫，与移动/改名同机制），否则主 URL；判满前置到探活之前——
+    // 否则第 7 条会过完探活才被 slice(0,6) 静默砍掉、状态栏还报成功（AIbot P1-2）
+    const key = s.u.find(x => this.cfg.srcs[x]) || s.u[0];
+    const arr = this.cfg.srcs[key] || [];
+    if (arr.length >= 6) { $('status').textContent = '该台追加源已达上限（6 条），先移除一条再追加'; return; }
+    btn.disabled = true; btn.textContent = '探活中…';
+    let r = null;
+    // t=12000 与 /api/mystation 同口径（AIbot P1-1）：主打场景是给蜻蜓系慢源救援，建流 5-10s 属正常，
+    // 默认 4.5s 窗口会整类误拒；批量体检路径不带 t 仍是 4.5s（ETA 按最坏校准不能放慢）
+    try { r = await fetch('/api/check?t=12000&url=' + encodeURIComponent(u)).then(x => x.json()); }
+    catch (e) { $('status').textContent = '追加失败（探活请求）：' + (e && e.message || e); }
+    if (!r || !r.ok) {
+      if (r) $('status').textContent = '探活未通过，未追加：' + (r.detail || '源不可用（假流/死链）');
+      btn.disabled = false; btn.textContent = '探活并追加';
+      return;
+    }
+    if (!arr.includes(u)) arr.push(u);
+    this.cfg.srcs[key] = arr;
+    this.cfgTag(s); this.mSrcVal = ''; this.saveCfg(); this.reapplyCfg(); // reapplyCfg 内含面板重渲
+    $('status').textContent = `已追加备选源（${r.detail || '探活通过'}）——点播时进入自动切换序列`;
+  },
+  srcRemove(u) {
+    for (const k of Object.keys(this.cfg.srcs)) {
+      const i = this.cfg.srcs[k].indexOf(u); // 原源不在 cfg.srcs 值域里，能找到的必是追加源（UI 也只对追加放 ✕）
+      if (i >= 0) { this.cfg.srcs[k].splice(i, 1); if (!this.cfg.srcs[k].length) delete this.cfg.srcs[k]; break; }
+    }
+    this.saveCfg(); this.reapplyCfg();
+    $('status').textContent = '已移除该追加源';
+  },
+
   stMove(s, v) {
     if (v === s.c) return;
     // 选中「等同默认分类」的目标视同 ↺ 默认：只删 moves 键，不写 moves[u]=默认分类——
@@ -598,14 +727,15 @@ const App = {
   },
   cfgResetStation(s) {
     for (const u of s.u) { delete this.cfg.moves[u]; delete this.cfg.names[u]; delete this.cfg.hideS[u]; delete this.cfg.tag[u]; } // tag 只在失配清单用，恢复默认即清（防只增不减）
+    for (const k of Object.keys(this.cfg.srcs)) if (s.u.includes(k)) delete this.cfg.srcs[k]; // 追加源一并撤（键=任一源 URL，均在此台 s.u 内）
     this.saveCfg(); this.reapplyCfg();
   },
 
-  /* —— 失配清单：moves/names/hideS 的键没命中任何当前台的源 URL = 上游 URL 漂移（欧美台同步重建常见） —— */
+  /* —— 失配清单：moves/names/hideS/srcs 的键没命中任何当前台的源 URL = 上游 URL 漂移（欧美台同步重建常见） —— */
   missList() {
     const used = new Set(); for (const s of this.state.stations) for (const u of s.u) used.add(u);
     const bad = [];
-    for (const [m, kind] of [[this.cfg.moves, '移动'], [this.cfg.names, '改名'], [this.cfg.hideS, '隐藏']])
+    for (const [m, kind] of [[this.cfg.moves, '移动'], [this.cfg.names, '改名'], [this.cfg.hideS, '隐藏'], [this.cfg.srcs, '备源']])
       for (const u of Object.keys(m)) if (!used.has(u)) bad.push({ u, kind, name: this.cfg.tag[u] || u.replace(/^https?:\/\//, '').slice(0, 40) });
     return bad;
   },
@@ -615,7 +745,7 @@ const App = {
   },
 
   /* —— 配置导入导出（owner 拍板：只含维护层；收藏另有 m3u 导出）—— */
-  cfgCount(c) { return Object.keys(c.moves).length + Object.keys(c.names).length + Object.keys(c.hideS).length + Object.keys(c.renames).length + Object.keys(c.hideC).length + c.cats.length; },
+  cfgCount(c) { return Object.keys(c.moves).length + Object.keys(c.names).length + Object.keys(c.hideS).length + Object.keys(c.renames).length + Object.keys(c.hideC).length + Object.keys(c.srcs).length + c.cats.length; },
   exportCfg() {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify({ v: 1, cfg: this.cfg }, null, 2)], { type: 'application/json' }));
@@ -648,6 +778,8 @@ const App = {
     Player.onstate = full => { this.playerNow(); if (full) this.render(); };
     Player.onstatus = t => { $('status').textContent = t; };
     Player.onfail = () => this.showLast();
+    Player.onlogo = s => Logos.get(s); // 锁屏 artwork 台标（r2 ⑩）：同步窥探绝不发请求，无台标回空数组静默缺省
+    Player.onstepfav = d => this.stepFav(d); // 锁屏/媒体键 ⏮⏭ = 收藏间切台（r2 ①）：无收藏时 stepFav 自身走状态栏提示
     // 睡眠定时（E2 + UI 审计 P3-7）：菜单一次点选 15/30/60（循环模式要点三下才到 60）；进行中点击按钮直接取消
     $('sleepBtn').onclick = () => {
       if (Player.sleepId) { Player.sleep(0); return; }
@@ -671,7 +803,17 @@ const App = {
     document.addEventListener('visibilitychange', () => { if (!document.hidden) this.tickSong(); });
     // 歌曲历史浮层（B-7）：点曲名行开关；点别处收起
     $('song').onclick = () => this.toggleSongHist();
-    document.addEventListener('click', e => { if (!e.target.closest('#songhist,#song')) $('songhist').hidden = true; });
+    // 快捷键帮助（N8/r2 ⑧）：? 呼出，Esc/点外关闭，焦点归还呼出点；与歌曲历史浮层互斥（AIbot P3-3）
+    const keysOpen = () => { this.kOpener = document.activeElement; $('songhist').hidden = true; $('keys').hidden = false; $('keys').focus(); };
+    const keysClose = () => {
+      if ($('keys').hidden) return;
+      $('keys').hidden = true;
+      const b = this.kOpener && this.kOpener.isConnected ? this.kOpener : null;
+      if (b && b.focus) b.focus();
+    };
+    document.addEventListener('click', e => { if (!e.target.closest('#songhist,#song,#keys')) { $('songhist').hidden = true; keysClose(); } });
+    // footer 台名可点（N5/r2 ⑦）：回到正在播行并高亮一闪
+    $('nowline').onclick = () => this.locatePlaying();
 
     // 搜索：120ms 防抖，避免 1600+ 行列表每键整表重渲；Esc 清空；任意位置按 / 聚焦；↓ 接力列表首行（P2-5）
     let timer = 0;
@@ -683,9 +825,11 @@ const App = {
     document.addEventListener('keydown', e => { // 全局快捷键（A-5）：/ 聚焦搜索、空格 播放/暂停、←/→ 收藏间切台
       if (e.ctrlKey || e.altKey || e.metaKey) return; // 不抢组合键（Ctrl+/ 等）
       const t = e.target, tag = t && t.tagName;
-      // 焦点在交互件/列表行/维护面板/歌曲浮层上：让位原生行为（行内 Enter/Space 已有处理、面板有自己的 Esc 语义、按钮空格原生触发 click）
-      if (/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(tag) || t.isContentEditable || (t.closest && t.closest('#list,#manage,#songhist'))) return;
+      // 焦点在交互件/列表行/维护面板/歌曲浮层/快捷键浮层上：让位原生行为（行内 Enter/Space 已有处理、面板有自己的 Esc 语义、按钮空格原生触发 click）。
+      // #keys 进让位（AIbot P3-4）：dialog 持焦点时空格/←/→ 不再直控播放（与 songhist 口径一致）；关浮层走 Esc/点外（cheatsheet 自述）
+      if (/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(tag) || t.isContentEditable || (t.closest && t.closest('#list,#manage,#songhist,#keys'))) return;
       if (e.key === '/') { e.preventDefault(); $('q').focus(); return; }
+      if (e.key === '?') { e.preventDefault(); $('keys').hidden ? keysOpen() : keysClose(); return; } // cheatsheet（N8）
       if (e.key === ' ') { e.preventDefault(); $('pp').click(); return; }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); this.stepFav(e.key === 'ArrowRight' ? 1 : -1); }
     });
@@ -752,12 +896,13 @@ const App = {
     this.loadCfg();
     // file:// 降级模式（reloadMain 必失败）下 stations 停留在 STARTER、不走 applySources 的留底循环——
     // 此处补快照，否则维护面板「电台」页读 s.dName 直接抛错（渲染处另有 || 兜底双保险）
-    for (const s of this.state.stations) { if (s.dCat === undefined) { s.dCat = s.c; s.dName = s.n; } }
+    for (const s of this.state.stations) { if (s.dCat === undefined) { s.dCat = s.c; s.dName = s.n; s.dU = s.u.slice(); } }
     $('manageBtn').onclick = () => this.manageOpen();
     $('mClose').onclick = () => this.manageClose();
     $('manage').onclick = e => { if (e.target === $('manage')) this.manageClose(); }; // 点遮罩关闭
-    document.addEventListener('keydown', e => { // Esc 关面板（焦点在输入框/下拉里时不抢，让它们先清自身）+ 收起两个浮层菜单
+    document.addEventListener('keydown', e => { // Esc 关面板（焦点在输入框/下拉里时不抢，让它们先清自身）+ 收起浮层菜单
       if (e.key === 'Escape') {
+        keysClose(); // 快捷键浮层（N8）：最上层，先关
         if (!$('manage').hidden && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) this.manageClose();
         $('lowfreq').classList.remove('open'); $('moreBtn').setAttribute('aria-expanded', 'false');
         $('sleepMenu').hidden = true;
@@ -804,10 +949,27 @@ const App = {
       if (b.dataset.act === 'rename') this.stRename(s);
       else if (b.dataset.act === 'hide') this.stHide(s);
       else if (b.dataset.act === 'reset') this.cfgResetStation(s);
+      else if (b.dataset.act === 'srcs') { // 展开/收起备选源管理（P1-a/r2 ⑨）；换台展开时清输入残留
+        this.mExp = this.mExp === keyOf(s) ? '' : keyOf(s);
+        this.mSrcVal = '';
+        this.renderMStations();
+        const i = $('mlist').querySelector('.msrc-add input');
+        if (i && this.mExp) i.focus();
+      }
+      else if (b.dataset.act === 'srcadd') this.srcAppend(s, b);
+      else if (b.dataset.act === 'srcdel') this.srcRemove(b.dataset.u);
     };
+    $('mlist').addEventListener('input', e => { if (e.target.matches('.msrc-add input')) this.mSrcVal = e.target.value; }); // 重渲不清输入（坑④）
+    $('mlist').addEventListener('keydown', e => { // Enter 直接触发探活追加
+      if (e.key === 'Enter' && e.target.matches('.msrc-add input')) {
+        e.preventDefault();
+        const b2 = e.target.closest('.msrc-add').querySelector('[data-act="srcadd"]');
+        if (b2 && !b2.disabled) b2.click();
+      }
+    });
     $('mMiss').onclick = e => {
       if (!e.target.closest('[data-act="missclear"]')) return;
-      for (const b of this.missList()) { delete this.cfg.moves[b.u]; delete this.cfg.names[b.u]; delete this.cfg.hideS[b.u]; delete this.cfg.tag[b.u]; }
+      for (const b of this.missList()) { delete this.cfg.moves[b.u]; delete this.cfg.names[b.u]; delete this.cfg.hideS[b.u]; delete this.cfg.srcs[b.u]; delete this.cfg.tag[b.u]; }
       this.saveCfg(); this.renderManage();
     };
     $('mExport').onclick = () => this.exportCfg();
@@ -855,21 +1017,21 @@ const App = {
       if (!Player.station) return resumeLast();
       Player.isPaused() ? Player.resume() : Player.pause();
     };
-    // 音量：静音键 + 拖动百分比反馈（UI 审计 P3-6）；静音记忆恢复值，radio.vol 只存非静音音量
+    // 音量：静音键 + 拖动百分比反馈（UI 审计 P3-6）；每台音量记忆（A3/r2 ②语义①）——
+    // 拖动经 rememberVol 分流（正在播写台记忆、台首调全局锚点随行、无台写全局），0 与静音同为瞬态不入记忆
     const syncMute = () => {
       const muted = !+$('vol').value;
       $('muteBtn').innerHTML = muted ? '<svg class="ic"><use href="#i-mute"/></svg>' : '<svg class="ic"><use href="#i-vol"/></svg>';
       $('muteBtn').setAttribute('aria-label', muted ? '取消静音' : '静音');
     };
-    let lastVol = vol / 100;
+    Player.onvol = v => { $('vol').value = Math.round(v * 100); syncMute(); }; // 点播套用每台音量后回写滑杆（r2 ②）
     $('muteBtn').onclick = () => {
-      const v = +$('vol').value;
-      if (v > 0) { lastVol = v / 100; Player.setVolume(0); $('vol').value = 0; $('status').textContent = '已静音'; }
-      else { const r = lastVol > 0 ? lastVol : 0.9; Player.setVolume(r); $('vol').value = Math.round(r * 100); $('status').textContent = '音量 ' + Math.round(r * 100) + '%'; }
+      if (+$('vol').value > 0) { Player.setVolume(0); $('vol').value = 0; $('status').textContent = '已静音'; }
+      else { const r = Player.restoreVol(); Player.setVolume(r); $('vol').value = Math.round(r * 100); $('status').textContent = '音量 ' + Math.round(r * 100) + '%'; }
       syncMute();
     };
     syncMute();
-    $('vol').oninput = e => { Player.setVolume(e.target.value / 100); localStorage.setItem('radio.vol', e.target.value); $('status').textContent = '音量 ' + e.target.value + '%'; syncMute(); };
+    $('vol').oninput = e => { const v = +e.target.value; Player.setVolume(v / 100); Player.rememberVol(v); $('status').textContent = '音量 ' + v + '%'; syncMute(); };
 
     // 导入列表：csv 风格 txt 与标准 m3u 双格式（P1-1）；本项目导出的收藏备份（#VRADIO:FAV 标记）另恢复收藏态（E4）
     $('importBtn').onclick = () => $('file').click();
@@ -901,9 +1063,13 @@ const App = {
       r.readAsText(f, 'utf-8');
     };
 
-    // 初始数据：radio.txt + my-radio.txt（http 下），file:// 下回退内置精选 + 手动导入
+    // 初始数据：radio.txt + my-radio.txt（http 下）；file:// 降级链（N1/r2 ③）：radio-data.js 全库直读
+    // （同步产出的经典 script 全局，fetch 被拦但 script 加载不会）→ 再退内置精选；hint 只在两者皆无时提示
     this.reloadMain().then(ok => {
-      if (!ok) $('hint').style.display = 'block';
+      if (!ok) {
+        if (window.RADIO_DATA) this.applySources(this.parse(window.RADIO_DATA), []); // 代理级 m3u8 台播不了，直流台照常
+        else $('hint').style.display = 'block';
+      }
       this.logosEnsure();
       // 开机静默体检（B-10）：首屏渲染/台标补全之后 4s 再跑收藏+最近范围，死台自动隐藏无需手动点「体检」
       if (ok) setTimeout(() => Sync.silentHealth(), 4000);

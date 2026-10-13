@@ -17,7 +17,14 @@ const Sync = {
       } else {
         await App.reloadMain(); // 决策 B：主列表 replace + 个人层常驻（radio.txt 与 my-radio.txt 重拉重并）
         const eu = r.euKept != null ? `欧美音乐 ${r.euKept} 个实测可用` : '欧美音乐未更新（已保留旧列表）';
-        $('status').textContent = `同步完成：共 ${r.total} 台（${r.delta >= 0 ? '+' : ''}${r.delta}；${eu}）`;
+        const dd = (r.added || r.removed) ? `；新增 ${r.added} 台、消失 ${r.removed} 台` : ''; // 同步 diff 摘要（N4/r2 ⑥）
+        let msg = `同步完成：共 ${r.total} 台（${r.delta >= 0 ? '+' : ''}${r.delta}${dd}；${eu}）`;
+        const gone = r.removedNames && App.favsGone(r.removedNames, r.removedUrls); // 消失台含收藏台单独点名（收藏在 localStorage，比对必须在前端；名+URL 双通道，AIbot P3-1）
+        if (gone && gone.length) {
+          const show = gone.length > 5 ? gone.slice(0, 5).join('、') + ` 等 ${gone.length} 个` : gone.join('、');
+          msg += ` ⚠ 收藏台已不在新列表：${show}`; // textContent 直写不经 HTML，注入面不存在
+        }
+        $('status').textContent = msg;
       }
     } catch (e) {
       const msg = String(e.message || e);

@@ -12,3 +12,8 @@ my-radio.txt
 # 同步前的源列表备份
 radio.txt.bak
 docs/ui-audit-assets/
+
+# 前端持久层主源（方案二 /api/store 写入，个人数据：收藏/健康标记/歌史，换机时随目录迁移或走「备份全部」导出）
+data/
+# 本地代码索引（工具产物）
+.codegraph/

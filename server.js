@@ -4,9 +4,12 @@
 // /api/check?url=  可用性探测（url 参数可重复=多源、任一活即 OK，最多 4 个；服务端检测无 CORS 限制）
 // /api/mystation   添加自定义电台（POST JSON {n,u,c}：先探活拒绝假流/死链，再原子写入 my-radio.txt）
 // /api/nowplaying?url=  曲讯（ICY StreamTitle）：对 mp3/AAC 直流旁路建会话持续读取；HLS 结构性无 ICY 直接返回空
+// /api/store       前端持久层主源（GET 全量 / POST 覆盖写 data/store.json）：rev 服务端唯一发号（方案二/R4），
+//                  localStorage 只作镜像；白名单键集合 STORE_KEYS 与 store.js 的 KEYS 同步扩（AGENTS.md 契约）
 // 安全：默认仅监听 127.0.0.1；proxy/check 仅允许公网 http(s) 目标 —— safeTarget 字符串校验 + guardLookup
-//       连接级 IP 校验（防 DNS rebinding/TOCTOU），重定向逐跳复查；/api/sync、/api/check 校验 Origin/
-//       Sec-Fetch-Site（防跨源 CSRF/探活驱动）；静态服务拒绝目录穿越与 dotfile/备份文件。
+//       连接级 IP 校验（防 DNS rebinding/TOCTOU），重定向逐跳复查；/api/sync、/api/check、/api/mystation、
+//       /api/store 校验 Origin/Sec-Fetch-Site（防跨源 CSRF/探活驱动）；静态服务拒绝目录穿越、dotfile、
+//       备份文件与 data/ 段（store.json 是全量个人数据，HOST=0.0.0.0 局域网模式下不可被直接 GET）。
 const http = require('http'), https = require('https'), fs = require('fs'), path = require('path');
 const { syncSources, checkStream, safeTarget, guardLookup } = require('./update-sources');
 const ROOT = __dirname, PORT = process.env.PORT || 8137, HOST = process.env.HOST || '127.0.0.1';
@@ -64,6 +67,38 @@ function myStationWrite(n, u, c) {
     const tmp = MY_FILE + '.tmp';
     fs.writeFile(tmp, out, e => e ? done({ ok: false, error: '写入失败' })
       : fs.rename(tmp, MY_FILE, e2 => done(e2 ? { ok: false, error: '写入失败' } : { ok: true })));
+  })).catch(() => ({ ok: false, error: '写入失败' }));
+}
+
+// ---------- data/store.json（方案二/R4 拍板）：前端持久层主源。仲裁 = 服务端唯一发号（rev 由 POST 成功才分配，
+// 客户端永不自造）——跨浏览器/换机窗口不会「同 rev 不同数据」静默压掉一端改动，并发退化为显式 last-write-wins。
+// 写入复用 my-radio 口径：tmp+rename 原子替换 + 串行队列；结构白名单只收已知键（值形状前端自管，键集合即边界） ----------
+const DATA_DIR = path.join(ROOT, 'data'), STORE_FILE = path.join(DATA_DIR, 'store.json');
+const STORE_KEYS = new Set(['radio.favs', 'radio.recents', 'radio.health', 'radio.cfg', 'radio.songs', 'radio.volperst', 'radio.srcmem2',
+  'radio.vol', 'radio.view', 'radio.showdead', 'radio.theme', 'radio.baseline', 'radio.baselineProg']); // ⚠ 与 store.js KEYS 同步扩
+const STORE_MAX = 2 * 1024 * 1024, KEY_MAX = 512 * 1024;
+const KEY_MAXS = { 'radio.health': 1536 * 1024 }; // 分键上限（AIbot P2-3）：健康标记 FIFO 2000 条 × 多源 URL 快照最坏 ~0.9MB，512KB 会静默丢键——对账再把镜像一起抹掉，僵尸台问题换个形式回归
+let storeRev = 0, storeCache = null, storeQ = Promise.resolve();
+function storeRead() { // 懒加载：首访问读盘；坏文件视为空库（rev=0，前端镜像会重建推送）
+  if (!storeCache) {
+    try { storeCache = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8')); } catch (_) { storeCache = null; }
+    if (!storeCache || typeof storeCache !== 'object' || typeof storeCache.data !== 'object' || !Number.isFinite(storeCache.rev)) storeCache = { rev: 0, data: {} };
+    storeRev = storeCache.rev;
+  }
+  return storeCache;
+}
+function storeWrite(data) {
+  return storeQ = storeQ.then(() => new Promise(done => {
+    const rev = storeRev + 1, out = JSON.stringify({ rev, data }), tmp = STORE_FILE + '.tmp';
+    fs.mkdir(DATA_DIR, { recursive: true }, e => {
+      if (e) return done({ ok: false, error: '写入失败' });
+      fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
+        : fs.rename(tmp, STORE_FILE, e3 => {
+          if (e3) return done({ ok: false, error: '写入失败' });
+          storeRev = rev; storeCache = { rev, data };
+          done({ ok: true, rev });
+        }));
+    });
   })).catch(() => ({ ok: false, error: '写入失败' }));
 }
 
@@ -188,6 +223,31 @@ http.createServer((req, res) => {
     });
     return;
   }
+  if (req.url.split('?')[0] === '/api/store') { // 前端持久层主源（方案二）：GET 全量 / POST 覆盖写；同 mystation 防跨源
+    if (crossOrigin(req)) return json(403, { error: '跨源请求被拒绝' });
+    if (req.method === 'GET') { const s = storeRead(); return json(200, { rev: s.rev, data: s.data }); }
+    if (req.method === 'POST') {
+      let body = '', big = false;
+      req.on('data', c => { body += c; if (body.length > STORE_MAX) { big = true; json(413, { ok: false, error: '请求体过大' }); req.destroy(); } }); // 超限先写响应再断连（与 mystation 同口径）
+      req.on('end', () => {
+        if (big) return;
+        let j; try { j = JSON.parse(body); } catch (_) { return json(400, { ok: false, error: 'bad request' }); }
+        const d = j && j.data;
+        if (!d || typeof d !== 'object' || Array.isArray(d)) return json(400, { ok: false, error: 'bad request' });
+        const clean = {};
+        for (const k of Object.keys(d)) {
+          if (!STORE_KEYS.has(k)) continue; // 白名单外的键静默丢弃（前端全量快照，漏扩键的改动不落盘但不炸）
+          const v = d[k], max = KEY_MAXS[k] || KEY_MAX;
+          if (typeof v !== 'string' || v.length > max) return json(413, { ok: false, error: `数据键 ${k} 超限（>${Math.round(max / 1024)}KB），写入被拒绝` }); // AIbot P2-3：白名单键超限显式拒绝——客户端收非 ok 置 dirty 保镜像；静默丢键会让对账把镜像一起抹掉
+          clean[k] = v;
+        }
+        storeWrite(clean).then(r => json(200, r)); // rev 在写成功后发（响应携带新号）
+      });
+      return;
+    }
+    return json(405, { ok: false, error: 'method not allowed' });
+  }
+
   if (req.url.startsWith('/api/nowplaying?')) { // 曲讯（B-6）：带副作用 GET（驱动服务端上行连接），与 check 同口径防跨源驱动
     if (crossOrigin(req)) return json(403, { error: '跨源请求被拒绝' });
     let u;
@@ -209,10 +269,11 @@ http.createServer((req, res) => {
     return proxy(target, req, res);
   }
 
-  // 静态文件（拒绝目录穿越 + dotfile/备份文件——.git/.DS_Store/radio.txt.bak 不可读，P2-8）
+  // 静态文件（拒绝目录穿越 + dotfile/备份文件/data 段——.git/.DS_Store/radio.txt.bak 不可读，P2-8；
+  // data/ 含 store.json 全量个人数据（收藏/歌史/健康标记），HOST=0.0.0.0 局域网模式下不可被直接 GET——外部 review P0-1）
   let rel;
   try { rel = decodeURIComponent(req.url.split('?')[0]); } catch (_) { return res.writeHead(400).end('400'); }
-  if (rel.split('/').some(seg => seg.startsWith('.') || seg.endsWith('.bak'))) return res.writeHead(403).end('403');
+  if (rel.split('/').some(seg => seg.startsWith('.') || seg.endsWith('.bak') || seg === 'data')) return res.writeHead(403).end('403');
   const p = path.join(ROOT, rel === '/' ? 'index.html' : rel);
   if (p !== ROOT && !p.startsWith(ROOT + path.sep)) return res.writeHead(403).end('403');
   fs.readFile(p, (e, buf) => {

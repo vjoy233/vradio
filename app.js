@@ -464,22 +464,31 @@ const App = {
     $('eq').classList.toggle('on', !!s && !Player.isPaused()); // 均衡器动画（E6）：活着且在播
     // 选源按钮（②a）：多源台且播/暂停中才亮（按次渲染动态判定——同步后单源变多源自动出现）；切台后浮层过期即收起
     $('srcWrap').hidden = !(s && s.u.length > 1);
-    if (!$('srcMenu').hidden && this.srcPopK !== (s ? keyOf(s) : '')) { $('srcMenu').hidden = true; $('srcBtn').setAttribute('aria-expanded', 'false'); }
+    if (!$('srcMenu').hidden && this.srcPopK !== (s ? keyOf(s) : '')) this.srcPopClose();
   },
 
   /* ---------- footer 选源浮层（②a/grill 拍板）：正在听时发现源不好，四步深的 ⚙ 面板救不了急——
      这里是主入口（⚙ 为管理+预选源的双入口副）。内容随打开时刻重算，级联中不自动跳变 ---------- */
   srcPopK: '',
+  srcPopClose() { // 收起选源浮层统一口（Esc/点外/行点击/切台收起，AIbot P2-1/P3-4）：焦点原在浮层内则还给源按钮，键盘流连续开关不掉焦
+    const m = $('srcMenu');
+    if (m.hidden) return;
+    const back = m.contains(document.activeElement);
+    m.hidden = true; $('srcBtn').setAttribute('aria-expanded', 'false');
+    if (back && !$('srcWrap').hidden) $('srcBtn').focus(); // 单源台切台收起时按钮已隐藏，focus 无落点则跳过
+  },
   renderSrcPop() {
     const s = Player.station;
     if (!s || s.u.length < 2) return;
     this.srcPopK = keyOf(s);
     const dft = Player.srcOrder(s)[0], mem = Player.srcMem[s.u[0]];
+    const okMem = mem && Number.isInteger(mem.i) && mem.i >= 0 && mem.i < s.u.length; // 与 play() 同口径（AIbot P3-2）：坏形状/越界按无记忆，序号不再经 innerHTML 进 DOM
     const rows = s.u.map((u, i) => `<button type="button" class="btn srcrow${Player.curSi === i ? ' cur' : ''}" data-i="${i}" title="${this.esc(u)}">
       <i class="idx">${i + 1}</i><span class="u">${this.esc(u)}</span>${this.srcBadges(s, i, dft)}
     </button>`).join('');
     $('srcMenu').innerHTML = `<div class="st">${this.esc(s.n)} · ${s.u.length} 个源，点行切换（失败自动顺延）</div>` + rows
-      + (mem ? `<button type="button" class="btn srcrow" data-act="srcreset" title="清掉「上次成功的源」记忆，立即从默认源（直流优先）重播"><svg class="ic"><use href="#i-undo"/></svg><span>恢复默认源（忘掉源 ${mem.i + 1} 的记忆）</span></button>` : '');
+      // 记忆源=默认源时按钮自指（清了又立刻记回同源，AIbot P3-1），不渲染
+      + (okMem && mem.i !== dft ? `<button type="button" class="btn srcrow" data-act="srcreset" title="清掉「上次成功的源」记忆，立即从默认源（直流优先）重播"><svg class="ic"><use href="#i-undo"/></svg><span>恢复默认源（忘掉源 ${mem.i + 1} 的记忆）</span></button>` : '');
     $('srcMenu').hidden = false;
     $('srcBtn').setAttribute('aria-expanded', 'true');
     $('srcMenu').querySelector('button')?.focus(); // 与睡眠菜单同口径：开即移焦
@@ -679,13 +688,16 @@ const App = {
   /* —— 备选源管理（P1-a/r2 ⑨ + ②手动选源）：展开行内列出全部源（追加的可移除，原源只读——身份公理：s.u[0] 是
      srcmem/收藏/健康标记的身份键）+ 「▶ 用此源播放」（与 footer 浮层双入口）+ 先 /api/check 探活再收的追加输入 —— */
   srcBadges(s, i, dft) { // 源行徽标片段（⚙ 面板与 footer 浮层共用）：默认=启发式首选（①）、正在用=curSi 所在源、追加=个人补充源
+    // 正在用按 keyOf 而非引用相等（AIbot P3-3）：同步重建 stations 后 Player.station 仍指旧对象，引用比较会丢高亮
+    const on = Player.station && keyOf(Player.station) === keyOf(s);
     return (i === dft ? '<span class="badge">默认</span>' : '')
-      + (Player.station === s && Player.curSi === i ? '<span class="badge acc">正在用</span>' : '')
+      + (on && Player.curSi === i ? '<span class="badge acc">正在用</span>' : '')
       + (s.dU.includes(s.u[i]) ? '' : '<span class="badge">追加</span>');
   },
   srcRowHtml(s) {
     const dft = Player.srcOrder(s)[0]; // 与 play() 同一决策基座，「默认」徽标/「恢复默认」的落点
-    const rows = s.u.map((u, i) => `<div class="srcline${Player.station === s && Player.curSi === i ? ' cur' : ''}">
+    const on = Player.station && keyOf(Player.station) === keyOf(s); // keyOf 口径（AIbot P3-3），同 srcBadges
+    const rows = s.u.map((u, i) => `<div class="srcline${on && Player.curSi === i ? ' cur' : ''}">
       <i class="idx">${i + 1}</i><span class="u" title="${this.esc(u)}">${this.esc(u)}</span>${this.srcBadges(s, i, dft)}
       ${s.dU.includes(u) ? '' : `<button type="button" class="btn mbtn" data-act="srcdel" data-u="${this.esc(u)}" title="移除这条追加源（原源不可删）"><svg class="ic"><use href="#i-x"/></svg></button>`}
       <button type="button" class="btn mbtn" data-act="srcplay" data-i="${i}" title="用此源立即播放（失败自动顺延，成功后记住此源）"><svg class="ic"><use href="#i-play"/></svg></button>
@@ -831,15 +843,15 @@ const App = {
     document.addEventListener('click', e => { if (!e.target.closest('#sleepWrap')) $('sleepMenu').hidden = true; });
     // footer 选源浮层（②a）：正在听的多源台一键切源（一律立即起播，暂停态同）；行点击 = 用此源播放，底部 = 恢复默认
     $('srcBtn').onclick = () => {
-      if (!$('srcMenu').hidden) { $('srcMenu').hidden = true; $('srcBtn').setAttribute('aria-expanded', 'false'); return; }
+      if (!$('srcMenu').hidden) { this.srcPopClose(); return; }
       this.renderSrcPop();
     };
     $('srcMenu').onclick = e => {
       const row = e.target.closest('[data-i]');
-      if (row) { const s = Player.station; $('srcMenu').hidden = true; $('srcBtn').setAttribute('aria-expanded', 'false'); if (s) this.startPlay(s, +row.dataset.i); return; }
-      if (e.target.closest('[data-act="srcreset"]')) { $('srcMenu').hidden = true; $('srcBtn').setAttribute('aria-expanded', 'false'); this.srcReset(); }
+      if (row) { const s = Player.station; this.srcPopClose(); if (s) this.startPlay(s, +row.dataset.i); return; }
+      if (e.target.closest('[data-act="srcreset"]')) { this.srcPopClose(); this.srcReset(); }
     };
-    document.addEventListener('click', e => { if (!e.target.closest('#srcWrap')) { $('srcMenu').hidden = true; $('srcBtn').setAttribute('aria-expanded', 'false'); } });
+    document.addEventListener('click', e => { if (!e.target.closest('#srcWrap')) this.srcPopClose(); });
     Player.ontick = ms => {
       const b = $('sleepBtn'), lab = $('sleepLab');
       if (ms > 0) { const s = Math.ceil(ms / 1000); lab.textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); b.title = '睡眠定时进行中，点击取消'; }
@@ -954,6 +966,7 @@ const App = {
         if (!$('manage').hidden && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) this.manageClose();
         $('lowfreq').classList.remove('open'); $('moreBtn').setAttribute('aria-expanded', 'false');
         $('sleepMenu').hidden = true;
+        this.srcPopClose(); // 选源浮层（AIbot P2-1）：Esc 收起 + 焦点归还，与 ? 帮助的 Esc 自述一致
       }
       if (e.key === 'Tab' && !$('manage').hidden) { // 焦点困在弹窗内（UI 审计 P2-7）：aria-modal 此前 Tab 可穿透到被遮罩的主页
         const f = [...$('manage').querySelectorAll('button,input,select')].filter(x => !x.disabled && x.offsetParent !== null);

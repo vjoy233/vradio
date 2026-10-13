@@ -1,6 +1,6 @@
 # AGENTS.md
 
-VRadio — 零依赖本地网络电台 Web 播放器（国内电台为主、欧美音乐台为辅，面向国内直连环境）。共 8 个源码文件 + 3 个数据文件，**无 npm 依赖、无构建步骤、无测试/lint 配置**。背景与实测记录详见 README.md，评审与实施依据见 docs/review.md，r2 批次决策见 docs/roadmap-research-r2.md，全面体检见 docs/audit-2026-10-13.md 与 docs/audit-2026-10-14.md。
+VRadio — 零依赖本地网络电台 Web 播放器（国内电台为主、欧美音乐台为辅，面向国内直连环境）。共 8 个源码文件 + 3 个数据文件，**无 npm 依赖、无构建步骤**（`npm test` 零依赖烟雾测试，lint/typecheck 无配置）。背景与实测记录详见 README.md，评审与实施依据见 docs/review.md，r2 批次决策见 docs/roadmap-research-r2.md，全面体检见 docs/audit-2026-10-13.md 与 docs/audit-2026-10-14.md。
 
 ## 常用命令
 
@@ -8,16 +8,17 @@ VRadio — 零依赖本地网络电台 Web 播放器（国内电台为主、欧�
 npm start        # = node server.js，启动后访问 http://localhost:8137（换端口：PORT=9000）
 npm run sync     # = node update-sources.js，同步电台源（约 1 分钟，含欧美台逐个实测 + 台标随行更新）
 npm run sync -- --logos   # = node update-sources.js --logos，只重建 logos.txt 台标（数秒）
+npm test         # = node test/smoke.js，离线冒烟：安全护栏矩阵/幂等/store 发号（秒级）
 ```
 
 - **零依赖是核心设计**：只用 Node ≥ 14 内置模块 + 本地化的 hls.min.js，不要引入任何 npm 依赖。
-- 没有可跑的 test / lint / typecheck；验证改动 = 启动服务后在浏览器里实际点播。
+- lint / typecheck 无配置；改动先跑 `npm test` 烟雾回归，行为验证 = 启动服务后在浏览器里实际点播。
 
 ## 文件与职责
 
 | 文件 | 职责 |
 |---|---|
-| `index.html` | 结构壳：DOM + 样式（浅/深主题、双视图/台标/无效源开关、⚙ 维护面板、safe-area）；逻辑全部外置四文件，经典 script 顺序引入 |
+| `index.html` | 结构壳：DOM + 样式（浅/深主题、双视图/台标/无效源开关、⚙ 维护面板、safe-area）；逻辑全部外置五文件，经典 script 顺序引入 |
 | `store.js` | 存储收敛层：radio.* 持久键的唯一读写出口。http 形态下 data/store.json（`/api/store`）为主源、localStorage 永远留镜像；file:// 或后端不可用纯 localStorage（与旧版行为一致）。仲裁 = 服务端唯一发号（rev 由 POST 成功分配，客户端不自造；后端写失败标 dirty、boot 先重推 pending 再对账，并发退化为显式 last-write-wins）。多标签 BroadcastChannel 'store' 重拉（debounce 三规则：flush 时读当前内存/收消息作废 pending/beforeunload+visibilitychange flush）。**⚠ 新增任何 radio.* 持久键必须同步扩 store.js 的 KEYS 与 server.js 的 STORE_KEYS**（白名单外的键不落盘，漏扩表现为换浏览器丢该键；已知例外：`radio.logos` 台标缓存可重建不入主源、`radio.storeDirty` 是 Store 自身状态键）。写放大护栏：set 即写镜像 + 300ms debounce 攒批推后端（音量条拖动连续写安全） |
 | `player.js` | 播放引擎：audio/hls/播放态/睡眠定时/MediaSession（台名+曲讯+台标 artwork+⏮⏭ 切台键）/每台音量记忆（`radio.volperst`）/多标签页防双播（BroadcastChannel）/默认源决策链（手动 `prefer` > 成功源记忆 > 直流优先启发式 `srcOrder`；`forgetSrc` 恢复默认）的唯一所有者（世代令牌防串台；断流自愈看门狗；成功源记忆 `radio.srcmem2`，键升级即旧记忆一次性失效） |
 | `logos.js` | 台标数据唯一所有者：三级来源（STARTER 内置 → logos.txt → 运行时解析）/永久缓存/收藏+正在播优先补全/负缓存 7 天 |
@@ -25,6 +26,7 @@ npm run sync -- --logos   # = node update-sources.js --logos，只重建 logos.t
 | `sync.js` | 同步/体检编排（手动全量 + 开机静默体检，`busy` 互斥手动优先；同步 diff 摘要 + 消失收藏台前端点名）：只调用 App/Player 暴露的接口，不改对方状态 |
 | `server.js` | 静态服务（拒 dotfile/`.bak`/`data` 段——store.json 全量个人数据不可被直接 GET）+ `/proxy?url=` 流代理（绕 CORS）+ `POST /api/sync`（响应含 addedCheck 体检测名单）+ `/api/check?url=` 探活（≤4 源）+ `POST /api/mystation`（添加电台：探活先行 + 原子写 my-radio.txt）+ `/api/nowplaying?url=`（ICY 曲讯 + icy-br 码率旁路）+ `/api/store`（GET 全量 / POST 覆盖写 data/store.json：Origin 校验 + 键白名单 + 2MB 封顶 + tmp+rename 串行队列 + rev 唯一发号） |
 | `update-sources.js` | 源同步引擎 + 网络安全护栏（`safeTarget`/`guardLookup` 导出供 server.js 复用）+ 欧美台台标提取（tvg-logo→logos.txt）+ 同步 diff 摘要（台名集合 added/removed）+ radio-data.js 随行产出；可独立作 CLI 运行（改它时两种入口都不能坏，另有 `--logos` 只重建台标） |
+| `test/smoke.js` | 零依赖冒烟测试（audit R1）：静态拦截矩阵（大小写/尾点变形、方法、nosniff）/ 跨源与 Host 白名单 / safeTarget+guardLookup / classifyCn 幂等 / store 白名单+发号 round-trip；离线秒级，已有 data/store.json 自动备份还原 |
 | `radio.txt` | 电台数据库（1600+ 台）。**数据文件，由同步生成**，不要手工维护 |
 | `radio-data.js` | radio.txt 的经典 script 包装（`window.RADIO_DATA`=全文，同步随行生成，tmp+rename 原子写）。**数据文件，由同步生成**，file:// 降级模式的全库数据源 |
 | `logos.txt` | 台标数据（欧美音乐/国际新闻·谈话两分类，同步自动生成/`--logos` 重建），行格式 `分类|台名,图片URL`。**数据文件，勿手工维护** |

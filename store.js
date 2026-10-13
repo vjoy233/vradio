@@ -55,15 +55,20 @@ const Store = {
     } catch (_) {} // 后端不可用：留 local 模式，镜像即全部
   },
 
-  /* 后端为准全量应用：进度类键（基线续跑进度）单独变化时只落盘不重载内存——否则基线期间他页每 ~25 台
-     被广播触发一次整表重渲，打断滚动/阅读（AIbot P3-3）；其余键变化才走 App.applyServerStore 内存重载 */
+  /* 后端为准应用（键级合并，基线开跑前置修复）：后端有该键 = 该键最新写入在后端（覆盖本地）；后端快照缺键
+     = 后端侧从未写过该键——**保留本地，随下次 flush 汇合**，绝不能 removeItem：多浏览器首次迁移窗口
+     （各浏览器旧 localStorage 尚未汇合到主源）里全量覆盖会把后端没见过的键（收藏/配置）静默抹掉。
+     删除语义靠值表达（收藏清空 = favs 空数组、重置 = cfg 空对象），键消失仅 baselineProg 一种且自愈
+     （复活 → 续跑空表 → 再置 done）。
+     进度类键（基线续跑进度）单独变化时只落盘不重载内存——否则基线期间他页每 ~25 台被广播触发一次
+     整表重渲，打断滚动/阅读（AIbot P3-3）；其余键变化才走 App.applyServerStore 内存重载 */
   apply(data) {
     let changed = false;
     const diff = [];
     for (const k of this.KEYS) {
       const v = data[k];
-      if (v == null) { if (localStorage.getItem(k) != null) { localStorage.removeItem(k); changed = true; diff.push(k); } }
-      else if (localStorage.getItem(k) !== v) { localStorage.setItem(k, v); changed = true; diff.push(k); }
+      if (v == null) continue; // 后端缺键 = 未见过的本地数据，保留待汇合（见上）
+      if (localStorage.getItem(k) !== v) { localStorage.setItem(k, v); changed = true; diff.push(k); }
     }
     if (changed && diff.some(k => k !== 'radio.baselineProg')) App.applyServerStore();
     return changed;

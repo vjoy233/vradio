@@ -188,6 +188,12 @@
   #srcMenu .srcrow.cur { color:var(--acc); }
   .badge.acc { color:var(--acc); border-color:var(--acc); } /* 「正在用」徽标（⚙ 面板与浮层共用） */
   .srcline.cur .u { color:var(--acc); opacity:1; }
+  .badge.permb { color:var(--warn); border-color:var(--warn); } /* 「已停运」徽标（R1 拍板分档区分，排查场景一眼分清没救的） */
+  /* toast（R1 拍板新增）：后台任务专用通告（增量体检/自动基线），与 #status 分工不双写（读屏不念两遍）；
+     action 按钮 = 一次性确认门槛（基线开跑）。常驻实例用 bottom 上移避开 footer */
+  #toast { position:fixed; right:14px; bottom:76px; display:flex; gap:10px; align-items:center; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 14px; max-width:min(400px,84vw); font-size:12px; line-height:1.5; box-shadow:0 8px 24px rgba(0,0,0,.25); z-index:11; }
+  #toast span { flex:1; min-width:0; }
+  @media (prefers-reduced-motion: no-preference) { #toast:not([hidden]) { animation:fadein .14s ease-out; } }
   @media (max-width:640px) {
     header { padding:8px 10px; gap:8px; }
     #lowfreq { display:none; position:absolute; top:100%; right:8px; margin-top:6px; flex-direction:column; gap:2px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:6px; min-width:9em; box-shadow:0 8px 24px rgba(0,0,0,.25); z-index:6; }
@@ -280,6 +286,8 @@
 </footer>
 <audio id="audio" preload="none"></audio>
 <div id="songhist" hidden></div>
+<!-- toast：后台任务通告（增量体检/自动基线），与 #status 分工——用户主动操作的反馈不走这里 -->
+<div id="toast" role="status" aria-live="polite" hidden></div>
 <!-- 快捷键帮助（N8/r2 ⑧）：按 ? 呼出；键位集合与 app.js 实际绑定一一对应，改键位时两处同步 -->
 <div id="keys" hidden tabindex="-1" role="dialog" aria-label="快捷键一览">
   <b>快捷键一览</b>

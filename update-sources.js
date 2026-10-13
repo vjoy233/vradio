@@ -370,6 +370,18 @@ async function syncSources(log = () => {}) {
   summary.added = addedNames.length; summary.removed = removedNames.length;
   if (addedNames.length) summary.addedNames = addedNames.slice(0, 50);
   if (removedNames.length) summary.removedNames = removedNames.slice(0, 50);
+  // 体检测名单（D4/R4 拍板）：新增台里的国内台（欧美两节同步期已逐个实测，跳过）——供前端同步后增量体检。
+  // 不封顶口径（解「不设上限 vs 封顶 50」自相矛盾，外部 review P0-3），极端 500 封顶防滥用；UI 摘要仍是上面的 50
+  const addedSet = new Set(addedNames), cnAdded = [];
+  for (const sec of splitSections(merged)) {
+    if (sec.cat === EU_CAT || sec.cat === INTL_CAT) continue;
+    for (const l of sec.lines) {
+      if (l.endsWith('#genre#')) continue;
+      const nm = l.split(',')[0].trim();
+      if (nm && addedSet.has(nm) && !cnAdded.includes(nm)) cnAdded.push(nm);
+    }
+  }
+  if (cnAdded.length) summary.addedCheck = cnAdded.slice(0, 500);
   // 消失台的 URL 集合（AIbot P3-1）：收藏点名按身份比对的第二通道——经维护面板本地改名的收藏台键名已换、
   // 按名比对会漏，URL 快照仍对得上（身份公理）。台名内无逗号（同步硬约束），首个逗号即分隔；只收名单封顶内的台
   const oldUrlOf = new Map();

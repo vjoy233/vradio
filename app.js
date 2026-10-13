@@ -137,8 +137,8 @@ const App = {
     this.state.stations = [...byKey.values()];
     for (const s of this.state.stations) { s.dCat = s.c; s.dName = s.n; s.dU = s.u.slice(); } // 同步默认口径留底（面板 ↺恢复/撤回移动/撤回追加源用）
     this.applyCfg(); // 维护层最后套用（覆盖分类/台名/隐藏，收藏随后按 URL 回绑不受影响）
-    this.rebind(); // 收藏/最近按 URL 回绑（债务 1）
-    this.rebind(); this.render();
+    this.rebind(); // 收藏/最近按 URL 回绑（债务 1）——一轮即够（audit B1：历史双调，幂等但白做一遍全量回绑 + 3 次落盘）
+    this.render();
     if (!Player.station) this.showLast();
   },
   /* 维护层套用：电台移动/重命名/手动隐藏/追加源按「任一源 URL 命中」（变体换序免疫）；
@@ -170,7 +170,7 @@ const App = {
   /* 主列表（radio.txt）+ 个人层（my-radio.txt）重拉重并；仅 http:// 下可用（file:// 下 fetch 必失败，P3-12 同源守卫） */
   async reloadMain() {
     if (!location.protocol.startsWith('http')) return false;
-    const get = f => fetch(f + (f === 'radio.txt' ? '?t=' + Date.now() : '')).then(r => r.ok ? r.text() : Promise.reject()).catch(() => null);
+    const get = f => fetch(f + '?t=' + Date.now()).then(r => r.ok ? r.text() : Promise.reject()).catch(() => null); // 双文件同口径穿透缓存（audit D2：添台后 my-radio 旧缓存会让新台不出现）
     const main = await get('radio.txt');
     if (main === null) return false; // 主列表拉不到就不动（保底，绝不清空）
     const my = await get('my-radio.txt');
@@ -212,10 +212,35 @@ const App = {
   favKeys() { return new Set(this.favs.map(f => f.k)); },
   /* Store 对账后的内存全量重载（方案二：boot 异步对账/多标签重拉/恢复备份共用）——station 对象本身不动
      （Player 引用着），只重载收藏/最近/健康标记/配置与 Player 记忆，再回绑渲染 */
+  /* UI 态三键（view/showdead/theme）DOM 同步 + 镜像读取（audit C4）：boot 装载与他页 Store 对账联动
+     （applyServerStore）共用——他页改写后本页即时跟随，此前要刷新才生效 */
+  syncViewUI() {
+    $('gridBtn').classList.toggle('on', this.state.view === 'grid'); $('gridBtn').setAttribute('aria-pressed', String(this.state.view === 'grid'));
+    $('listBtn').classList.toggle('on', this.state.view === 'list'); $('listBtn').setAttribute('aria-pressed', String(this.state.view === 'list'));
+  },
+  syncDeadUI() {
+    $('deadBtn').classList.toggle('on', this.state.showDead); $('deadBtn').setAttribute('aria-pressed', String(this.state.showDead));
+  },
+  syncThemeUI() { // this.mq 由 boot 装配（auto 态系统切换监听也在那）；未装配时现取（matches 只读，无副作用）
+    const mq = this.mq || matchMedia('(prefers-color-scheme: light)');
+    document.documentElement.dataset.theme = this.state.theme === 'auto' ? (mq.matches ? 'light' : 'dark') : this.state.theme;
+    const tn = { auto: '跟随系统', light: '浅色', dark: '深色' }[this.state.theme];
+    $('themeBtn').innerHTML = { auto: '<svg class="ic"><use href="#i-auto"/></svg>', light: '<svg class="ic"><use href="#i-sun"/></svg>', dark: '<svg class="ic"><use href="#i-moon"/></svg>' }[this.state.theme];
+    $('themeBtn').setAttribute('aria-label', '主题：' + tn + '，点击切换');
+    $('themeBtn').title = '主题：' + tn + '（点击循环：跟随系统 → 浅色 → 深色）';
+  },
+  loadUi3() { // 三键从镜像读入 + 刷 DOM（boot 装载与 applyServerStore 对账联动共用）
+    this.state.view = Store.get('radio.view') === 'list' ? 'list' : 'grid'; // 网格为默认
+    this.state.showDead = Store.get('radio.showdead') === '1'; // 默认隐藏无效台
+    const th = Store.get('radio.theme');
+    this.state.theme = ['auto', 'light', 'dark'].includes(th) ? th : 'auto';
+    this.syncViewUI(); this.syncDeadUI(); this.syncThemeUI();
+  },
   applyServerStore() {
     this.loadStore(); this.loadCfg();
     Player.reloadMems();
     for (const s of this.state.stations) { s.health = ''; s.perm = 0; } // 清旧标记由 rebind 按 healthMarks 重挂
+    this.loadUi3(); // view/showdead/theme 三 UI 态随对账联动（audit C4）
     this.rebind(); this.render(); this.renderManage();
   },
   /* 同步消失名单 × 收藏比对（N4/r2 ⑥）：双通道——显示名 + 消失台 URL 集合（AIbot P3-1：经维护面板本地
@@ -479,7 +504,7 @@ const App = {
   stepFav(d) { // ←/→ 在收藏间切台（A-5）：顺序取当前可见列表内的收藏台；当前台不在收藏则从队首/队尾起步
     const favs = this.favKeys();
     const list = this.visible().filter(s => favs.has(keyOf(s)));
-    if (!list.length) { $('status').textContent = '还没有收藏电台——点电台左侧 ☆ 收藏后可用 ←/→ 键切换'; return; }
+    if (!list.length) { $('status').textContent = '还没有收藏电台——点电台旁 ☆ 收藏后可用 ←/→ 键切换'; return; } // 「旁」：网格视图收藏钮在卡片右侧（audit C5）
     const cur = Player.station ? list.findIndex(s => keyOf(s) === keyOf(Player.station)) : -1;
     const nx = cur < 0 ? (d > 0 ? 0 : list.length - 1) : (cur + d + list.length) % list.length;
     this.togglePlay(keyOf(list[nx]));
@@ -576,7 +601,7 @@ const App = {
     const s = Player.station;
     if (!s || Player.isPaused() || document.hidden || !location.protocol.startsWith('http')) return;
     const raw = Player.curUrl;
-    if (!raw || /\.m3u8(\?|$)/.test(raw)) return;
+    if (!raw || /\.m3u8(\?|$)/i.test(raw)) return;
     let j;
     try { j = await fetch('/api/nowplaying?url=' + encodeURIComponent(raw)).then(x => x.json()); } catch (_) { return; }
     const t = (j && j.title) || '';
@@ -812,6 +837,9 @@ const App = {
       const i = this.cfg.srcs[k].indexOf(u); // 原源不在 cfg.srcs 值域里，能找到的必是追加源（UI 也只对追加放 ✕）
       if (i >= 0) { this.cfg.srcs[k].splice(i, 1); if (!this.cfg.srcs[k].length) delete this.cfg.srcs[k]; break; }
     }
+    // 移除后该台已无任何个人调整时，tag 快照一并清（audit B2：tag 只增不减的口之二）
+    const st = this.state.stations.find(x => x.u.includes(u));
+    if (st && !st.u.some(x => this.cfg.moves[x] || this.cfg.names[x] || this.cfg.hideS[x] || this.cfg.srcs[x])) for (const x of st.u) delete this.cfg.tag[x];
     this.saveCfg(); this.reapplyCfg();
     $('status').textContent = '已移除该追加源';
   },
@@ -821,7 +849,7 @@ const App = {
     // 选中「等同默认分类」的目标视同 ↺ 默认：只删 moves 键，不写 moves[u]=默认分类——
     // 否则位置没变却留下键，↺ 亮起且点了无效果（PR#8 review P3-1；默认分类重命名后按现名比对）
     const def = this.cfg.renames[s.dCat || s.c] || s.dCat || s.c;
-    if (v === '__def' || v === def) { for (const u of s.u) delete this.cfg.moves[u]; }
+    if (v === '__def' || v === def) { for (const u of s.u) { delete this.cfg.moves[u]; delete this.cfg.tag[u]; } } // 撤回默认：tag 快照一并清且不再补写（audit B2——无调整即无失配可挂）
     else {
       if (v === '__new') {
         v = this.askName('新建分类并移入');
@@ -829,8 +857,9 @@ const App = {
         if (!this.cfg.cats.includes(v) && !this.mCatOptions().includes(v)) this.cfg.cats.push(v);
       }
       for (const u of s.u) this.cfg.moves[u] = v;
+      this.cfgTag(s);
     }
-    this.cfgTag(s); this.saveCfg(); this.reapplyCfg();
+    this.saveCfg(); this.reapplyCfg();
   },
   stRename(s) {
     const neu = this.askName(`重命名「${s.n}」`, s.n); if (!neu || neu === s.n) return;
@@ -1011,37 +1040,18 @@ const App = {
       e.preventDefault(); this.focusRow(to);
     };
 
-    // 视图切换（网格=精简卡片 / 列表=两行详情）与无效源显隐，均持久化到 localStorage
-    const syncView = () => {
-      $('gridBtn').classList.toggle('on', this.state.view === 'grid'); $('gridBtn').setAttribute('aria-pressed', String(this.state.view === 'grid'));
-      $('listBtn').classList.toggle('on', this.state.view === 'list'); $('listBtn').setAttribute('aria-pressed', String(this.state.view === 'list'));
-    };
-    const setView = v => { if (this.state.view === v) return; this.state.view = v; Store.set('radio.view', v); syncView(); this.swapRender(); };
+    // 视图切换（网格=精简卡片 / 列表=两行详情）与无效源显隐/主题，均持久化到 localStorage——
+    // 读取与 DOM 同步统一走 loadUi3（与他页 Store 对账联动共用，audit C4），交互入口只改 state 再点对刷新
+    const setView = v => { if (this.state.view === v) return; this.state.view = v; Store.set('radio.view', v); this.syncViewUI(); this.swapRender(); };
     $('gridBtn').onclick = () => setView('grid');
     $('listBtn').onclick = () => setView('list');
-    this.state.view = Store.get('radio.view') === 'list' ? 'list' : 'grid'; // 网格为默认
-    syncView();
-    const syncDead = () => {
-      $('deadBtn').classList.toggle('on', this.state.showDead); $('deadBtn').setAttribute('aria-pressed', String(this.state.showDead));
-    };
-    $('deadBtn').onclick = () => { this.state.showDead = !this.state.showDead; Store.set('radio.showdead', this.state.showDead ? '1' : '0'); syncDead(); this.render(); };
-    this.state.showDead = Store.get('radio.showdead') === '1'; // 默认隐藏无效台
-    syncDead();
-
+    $('deadBtn').onclick = () => { this.state.showDead = !this.state.showDead; Store.set('radio.showdead', this.state.showDead ? '1' : '0'); this.syncDeadUI(); this.render(); };
     // 主题：🌓 跟随系统（默认）→ ☀️ 浅色 → 🌙 深色 循环，持久化 radio.theme；
     // 生效值写 <html data-theme>，浅色变量只认它（auto 由 matchMedia 实时换算，系统切换即时跟随）
-    const mq = matchMedia('(prefers-color-scheme: light)');
-    const themeName = { auto: '跟随系统', light: '浅色', dark: '深色' };
-    const applyTheme = () => {
-      document.documentElement.dataset.theme = this.state.theme === 'auto' ? (mq.matches ? 'light' : 'dark') : this.state.theme;
-      $('themeBtn').innerHTML = { auto: '<svg class="ic"><use href="#i-auto"/></svg>', light: '<svg class="ic"><use href="#i-sun"/></svg>', dark: '<svg class="ic"><use href="#i-moon"/></svg>' }[this.state.theme];
-      $('themeBtn').setAttribute('aria-label', '主题：' + themeName[this.state.theme] + '，点击切换');
-      $('themeBtn').title = '主题：' + themeName[this.state.theme] + '（点击循环：跟随系统 → 浅色 → 深色）';
-    };
-    this.state.theme = ['auto', 'light', 'dark'].includes(Store.get('radio.theme')) ? Store.get('radio.theme') : 'auto';
-    $('themeBtn').onclick = () => { this.state.theme = { auto: 'light', light: 'dark', dark: 'auto' }[this.state.theme]; Store.set('radio.theme', this.state.theme); applyTheme(); };
-    mq.addEventListener('change', () => { if (this.state.theme === 'auto') applyTheme(); });
-    applyTheme();
+    this.mq = matchMedia('(prefers-color-scheme: light)');
+    $('themeBtn').onclick = () => { this.state.theme = { auto: 'light', light: 'dark', dark: 'auto' }[this.state.theme]; Store.set('radio.theme', this.state.theme); this.syncThemeUI(); };
+    this.mq.addEventListener('change', () => { if (this.state.theme === 'auto') this.syncThemeUI(); });
+    this.loadUi3();
 
     // 维护面板（⚙）：个人分类/电台调整，全部落 radio.cfg（localStorage），同步重跑后按 URL 回绑自动复用
     this.loadCfg();

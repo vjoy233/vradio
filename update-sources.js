@@ -371,15 +371,16 @@ async function syncSources(log = () => {}) {
   if (addedNames.length) summary.addedNames = addedNames.slice(0, 50);
   if (removedNames.length) summary.removedNames = removedNames.slice(0, 50);
   // 体检测名单（D4/R4 拍板）：新增台里的国内台（欧美两节同步期已逐个实测，跳过）——供前端同步后增量体检。
-  // 不封顶口径（解「不设上限 vs 封顶 50」自相矛盾，外部 review P0-3），极端 500 封顶防滥用；UI 摘要仍是上面的 50
+  // 不封顶口径（解「不设上限 vs 封顶 50」自相矛盾，外部 review P0-3），极端 500 封顶防滥用；UI 摘要仍是上面的 50。
+  // ⚠ merged 是行数组（节头 + 台行交替），不是文本——不能喂 splitSections（其期望 string，数组无 .split，
+  // PR #12 上线后首次全量同步即在此抛 TypeError，owner 实测报告；数据已落盘只是摘要段 500）
   const addedSet = new Set(addedNames), cnAdded = [];
-  for (const sec of splitSections(merged)) {
-    if (sec.cat === EU_CAT || sec.cat === INTL_CAT) continue;
-    for (const l of sec.lines) {
-      if (l.endsWith('#genre#')) continue;
-      const nm = l.split(',')[0].trim();
-      if (nm && addedSet.has(nm) && !cnAdded.includes(nm)) cnAdded.push(nm);
-    }
+  let secCat = '';
+  for (const l of merged) {
+    if (l.endsWith('#genre#')) { secCat = l.slice(0, -',#genre#'.length); continue; }
+    if (secCat === EU_CAT || secCat === INTL_CAT) continue;
+    const nm = l.split(',')[0].trim();
+    if (nm && addedSet.has(nm) && !cnAdded.includes(nm)) cnAdded.push(nm);
   }
   if (cnAdded.length) summary.addedCheck = cnAdded.slice(0, 500);
   // 消失台的 URL 集合（AIbot P3-1）：收藏点名按身份比对的第二通道——经维护面板本地改名的收藏台键名已换、

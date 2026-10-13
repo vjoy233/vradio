@@ -177,6 +177,17 @@
   #sleepMenu { position:absolute; right:0; bottom:calc(100% + 8px); display:flex; flex-direction:column; gap:2px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:6px; min-width:8em; box-shadow:0 8px 24px rgba(0,0,0,.25); z-index:6; }
   #sleepMenu .btn { border:none; background:none; justify-content:flex-start; }
   #sleepMenu .btn:hover { background:var(--bg); } /* 浮层菜单项无默认边框/底色，hover 给底色反馈（AIbot PR#9 review P3-2） */
+  /* 选源浮层（②a）：同 sleepMenu 范式；源行整行可点，URL 截断 title 全显（与 ⚙ 面板同口径） */
+  #srcWrap { position:relative; display:inline-flex; }
+  #srcMenu { position:absolute; right:0; bottom:calc(100% + 8px); display:flex; flex-direction:column; gap:2px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:6px; min-width:min(24em,88vw); max-width:min(88vw,38em); max-height:46vh; overflow-y:auto; box-shadow:0 8px 24px rgba(0,0,0,.25); z-index:6; }
+  #srcMenu .st { font-size:12px; color:var(--dim); padding:2px 6px 6px; }
+  #srcMenu .btn { border:none; background:none; justify-content:flex-start; }
+  #srcMenu .btn:hover { background:var(--bg); }
+  #srcMenu .srcrow { width:100%; font-size:12px; gap:6px; }
+  #srcMenu .srcrow .u { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left; }
+  #srcMenu .srcrow.cur { color:var(--acc); }
+  .badge.acc { color:var(--acc); border-color:var(--acc); } /* 「正在用」徽标（⚙ 面板与浮层共用） */
+  .srcline.cur .u { color:var(--acc); opacity:1; }
   @media (max-width:640px) {
     header { padding:8px 10px; gap:8px; }
     #lowfreq { display:none; position:absolute; top:100%; right:8px; margin-top:6px; flex-direction:column; gap:2px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:6px; min-width:9em; box-shadow:0 8px 24px rgba(0,0,0,.25); z-index:6; }
@@ -257,6 +268,11 @@
       <button type="button" class="btn" data-min="30">30 分钟</button>
       <button type="button" class="btn" data-min="60">60 分钟</button>
     </span>
+  </span>
+  <span id="srcWrap" hidden>
+    <button class="btn" id="srcBtn" title="备选源：切换当前电台的播放源 / 恢复默认" aria-label="备选源" aria-haspopup="true" aria-expanded="false"><svg class="ic"><use href="#i-dots"/></svg></button>
+    <!-- 选源浮层（②a）：正在听的多源台一键切源；点行 = 用此源播放，底部 ↺ 恢复默认源 -->
+    <span id="srcMenu" hidden></span>
   </span>
   <button class="btn" id="muteBtn" aria-label="静音" title="静音 / 取消静音"><svg class="ic"><use href="#i-vol"/></svg></button>
   <span id="status" role="status" aria-live="polite"></span>

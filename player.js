@@ -9,7 +9,8 @@ const Player = {
   gvol: 0.9,        // 全局默认音量（radio.vol 装载；无记忆台点播用它，「无记忆台首调」时随行更新——r2 ②语义①）
   volMem: null,     // 每台音量记忆（radio.volperst，A3/r2 ②）：台主 URL → 0-100 整数，FIFO 300（插入序，URL 键不退化数组索引）
   sleepId: 0, sleepEnd: 0,
-  srcMem: null,   // 成功源记忆（radio.srcmem，A-1）：台主 URL → {i,t}；多源台点播从上次试通的源先行
+  srcMem: null,   // 成功源记忆（radio.srcmem2，A-1）：台主 URL → {i,t}；多源台点播从上次试通的源先行。
+                  // 键带 2 = 决策链改版（手动>记忆>启发式）时一次性失效旧记忆，防止存量「xmcdn 代理旧路」压住启发式
   pctx: null,     // 本次 play 的级联上下文 {urls:[{u,si}], i, my}（世代令牌防串台）
   wd: 0,          // 静默挂起看门狗（A-1）：stalled/waiting 后 N 秒无进展按断流处理
   retried: false, // 当前源是否已「先重连一次」（stall/ended 专属；error 级联照旧直接顺延）
@@ -48,7 +49,8 @@ const Player = {
     el.addEventListener('stalled', () => this.armWatchdog());
     el.addEventListener('waiting', () => this.armWatchdog());
     el.addEventListener('ended', () => { if (this.station && !this.connecting) this.retryOrNext(); });
-    try { this.srcMem = JSON.parse(localStorage.getItem('radio.srcmem') || '{}'); } catch (_) { this.srcMem = {}; }
+    try { this.srcMem = JSON.parse(localStorage.getItem('radio.srcmem2') || '{}'); } catch (_) { this.srcMem = {}; }
+    try { localStorage.removeItem('radio.srcmem'); } catch (_) {} // 键升级一次性失效：旧记忆多记着「xmcdn 代理旧路」，留着会压住启发式直流优先
     // 多标签页防双播（N3/r2 ⑤）：后来者赢——新标签开播广播，旧标签正在播/建流中则让位暂停（非 stop，保留台位可续播）。
     // 规范保证不回发发送者自身，无需自过滤；消息只发一个字面量
     try {
@@ -107,13 +109,19 @@ const Player = {
     return vs;
   },
 
-  play(s) {
+  /* 默认源决策链（grill 拍板，单次点播内从高到低）：手动指定 prefer > 成功源记忆 srcmem > 静态启发式
+     > 级联自愈顺延。启发式零网络成本只看形态：首个 variant 是直流（mp3/aac 直达，或蜻蜓 m3u8 换算出的
+     64k mp3）优先——不经代理、低延迟、有曲讯；102 台「xmcdn 首源+蜻蜓次源」由此首播直接命中直流 */
+  srcRank(u) { return /\.m3u8(\?|$)/.test(this.variants(u)[0]) ? 1 : 0; },
+  srcOrder(s) { return s.u.map((_, i) => i).sort((a, b) => this.srcRank(s.u[a]) - this.srcRank(s.u[b])); }, // sort 稳定（ES2019）：同级保持上游行序
+
+  play(s, prefer) {
     this.stopWatchdog();
     this.halt = this.heldNext = false; // 清上一轮的有意暂停/级联搁浅标记（AIbot P2-1）
-    // 成功源记忆（A-1）：上次试通的源提到最前（流地址天然漂移，省一轮必败等待）；序号对齐原始 s.u
-    const order = s.u.map((_, i) => i);
+    const order = this.srcOrder(s); // 启发式基座（①）；记忆/手动在其上叠加，序号对齐原始 s.u
     const mem = this.srcMem[s.u[0]];
-    if (mem && Number.isInteger(mem.i) && mem.i > 0 && mem.i < s.u.length) { order.splice(order.indexOf(mem.i), 1); order.unshift(mem.i); }
+    if (mem && Number.isInteger(mem.i) && mem.i >= 0 && mem.i < s.u.length) { order.splice(order.indexOf(mem.i), 1); order.unshift(mem.i); } // 上次试通的源先行（流地址天然漂移，省一轮必败等待）
+    if (Number.isInteger(prefer) && prefer >= 0 && prefer < s.u.length) { order.splice(order.indexOf(prefer), 1); order.unshift(prefer); } // 手动选源（②）：当次点播最高优先
     const urls = [];
     for (const si of order) for (const v of this.variants(s.u[si])) urls.push({ u: v, si });
     this.pctx = { urls, i: 0, my: ++this.token }; // 世代令牌：快速连续点播时旧链路回调全部失效，防串台
@@ -232,7 +240,14 @@ const Player = {
     this.srcMem[s.u[0]] = { i: this.curSi, t: Date.now() };
     const ks = Object.keys(this.srcMem).sort((a, b) => this.srcMem[a].t - this.srcMem[b].t);
     while (ks.length > 300) delete this.srcMem[ks.shift()];
-    try { localStorage.setItem('radio.srcmem', JSON.stringify(this.srcMem)); } catch (_) {}
+    try { localStorage.setItem('radio.srcmem2', JSON.stringify(this.srcMem)); } catch (_) {}
+  },
+  forgetSrc() { // 「恢复默认源」（②c）：清当前台成功源记忆并落盘，重播由调用方（app）发起——无 prefer 且记忆已空 = 纯启发式序
+    const s = this.station;
+    if (!s || this.srcMem[s.u[0]] == null) return false;
+    delete this.srcMem[s.u[0]];
+    try { localStorage.setItem('radio.srcmem2', JSON.stringify(this.srcMem)); } catch (_) {}
+    return true;
   },
   // 暂停恢复：直播流建流慢（蜻蜓 5-10s），先给连接中提示；失败由遗留 onerror 闭包接管换源。
   // 暂停期间级联被 next() 守卫挡住过（源已报错、error 不再发）→ retryOrNext 接回：先重连当前源一次再顺延

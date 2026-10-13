@@ -1,6 +1,6 @@
 # AGENTS.md
 
-VRadio — 零依赖本地网络电台 Web 播放器（国内电台为主、欧美音乐台为辅，面向国内直连环境）。共 8 个源码文件 + 3 个数据文件，**无 npm 依赖、无构建步骤、无测试/lint 配置**。背景与实测记录详见 README.md，评审与实施依据见 docs/review.md，r2 批次决策见 docs/roadmap-research-r2.md。
+VRadio — 零依赖本地网络电台 Web 播放器（国内电台为主、欧美音乐台为辅，面向国内直连环境）。共 8 个源码文件 + 3 个数据文件，**无 npm 依赖、无构建步骤、无测试/lint 配置**。背景与实测记录详见 README.md，评审与实施依据见 docs/review.md，r2 批次决策见 docs/roadmap-research-r2.md，全面体检见 docs/audit-2026-10-13.md 与 docs/audit-2026-10-14.md。
 
 ## 常用命令
 

@@ -89,8 +89,8 @@ const Sync = {
 
   /* ---------- 开机后台编排（R3/R4 拍板）：基线优先——未建基线（含已确认过的中断续跑）不跑常规复测（基线是超集） ---------- */
   bootQuiet() {
-    if (localStorage.getItem('radio.baselineProg')) return this.baseline(); // 确认过的中断续跑：不再打扰直接续
-    if (!localStorage.getItem('radio.baseline')) return this.baselinePrompt(); // 从未建基线：toast 确认门槛
+    if (Store.get('radio.baselineProg')) return this.baseline(); // 确认过的中断续跑：不再打扰直接续
+    if (!Store.get('radio.baseline')) return this.baselinePrompt(); // 从未建基线：toast 确认门槛
     this.silentHealth();
   },
 
@@ -124,7 +124,7 @@ const Sync = {
      排除欧美两分类）→ 中断续跑（radio.baselineProg 记已确认台，重跑跳过）→ 完成置 radio.baseline；
      手动让位即中断（进度已存，下次 boot 无声续跑）；file:// 不跑不置位 ---------- */
   baselinePrompt() {
-    if (!location.protocol.startsWith('http') || localStorage.getItem('radio.baseline')) return;
+    if (!location.protocol.startsWith('http') || Store.get('radio.baseline')) return;
     const list = App.baselineList();
     if (!list.length) return this.baselineDone(); // 纯欧美库存（同步期已实测）：无基线可建
     const min = Math.max(1, Math.round(list.length / 30)); // 混合速率粗估（死台快速失败为主）
@@ -135,7 +135,7 @@ const Sync = {
   },
   async baseline() {
     if (!location.protocol.startsWith('http') || this.busy) return;
-    let prog; try { prog = new Set(JSON.parse(localStorage.getItem('radio.baselineProg') || '[]')); } catch (_) { prog = new Set(); }
+    let prog; try { prog = new Set(JSON.parse(Store.get('radio.baselineProg') || '[]')); } catch (_) { prog = new Set(); }
     const list = App.baselineList().filter(s => !prog.has(keyOf(s))); // 续跑：跳过已确认的（R4 拍板，幂等探活重跑无副作用只是浪费时间）
     if (!list.length) return this.baselineDone();
     this.busy = 'silent'; this.silentAbort = false;
@@ -144,19 +144,19 @@ const Sync = {
     try {
       const cnt = await this.runCheck(list, { conc: 2, silent: true, onTick: s => {
         prog.add(keyOf(s));
-        if (++pend >= 25) { pend = 0; try { localStorage.setItem('radio.baselineProg', JSON.stringify([...prog])); } catch (_) {} } // 每 25 台落盘一次进度
+        if (++pend >= 25) { pend = 0; Store.set('radio.baselineProg', JSON.stringify([...prog])); } // 每 25 台落盘一次进度
       } });
       if (this.silentAbort) return; // 让位中断：进度兜底落盘见 finally（防 pend <25 的尾巴丢失）
-      try { localStorage.setItem('radio.baselineProg', JSON.stringify([...prog])); } catch (_) {}
+      Store.set('radio.baselineProg', JSON.stringify([...prog]));
       this.baselineDone();
       App.saveHealth(); App.render();
       App.toast(`基线体检完成：可用 ${cnt.ok}、疑似失效 ${cnt.sus}、已停运 ${cnt.perm}`, { ms: 6000 });
     } catch (_) {} finally {
       if (this.busy === 'silent') this.busy = '';
-      if (this.silentAbort) { try { localStorage.setItem('radio.baselineProg', JSON.stringify([...prog])); } catch (_) {} } // 中断兜底
+      if (this.silentAbort) Store.set('radio.baselineProg', JSON.stringify([...prog])); // 中断兜底
     }
   },
-  baselineDone() { try { localStorage.setItem('radio.baseline', 'done'); localStorage.removeItem('radio.baselineProg'); } catch (_) {} },
+  baselineDone() { Store.set('radio.baseline', 'done'); Store.remove('radio.baselineProg'); },
 };
 
 $('syncBtn').onclick = () => Sync.doSync();

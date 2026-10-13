@@ -39,9 +39,9 @@ const App = {
 
   /* ---------- 持久化（localStorage 全部容错读取 + 旧格式迁移） ---------- */
   loadStore() {
-    let favs; try { favs = JSON.parse(localStorage.getItem('radio.favs') || '[]'); } catch (_) { favs = []; }
+    let favs; try { favs = JSON.parse(Store.get('radio.favs') || '[]'); } catch (_) { favs = []; }
     this.favs = (Array.isArray(favs) ? favs : []).map(f => typeof f === 'string' ? { k: f, u: [] } : { k: String(f.k), u: Array.isArray(f.u) ? f.u : [] });
-    let rec; try { rec = JSON.parse(localStorage.getItem('radio.recents') || '[]'); } catch (_) { rec = []; }
+    let rec; try { rec = JSON.parse(Store.get('radio.recents') || '[]'); } catch (_) { rec = []; }
     rec = Array.isArray(rec) ? rec : [];
     const last = localStorage.getItem('radio.last'); // 旧「上次收听」键 → 并入 recents 队首
     if (last && !rec.some(r => r.k === last)) rec.unshift({ k: last, n: '', u: [] });
@@ -51,7 +51,7 @@ const App = {
     // 分档（grill R1-R4 拍板）：疑似档兜底 TTL 180 天（纯数据卫生——静默复测常态化下唯一触发场景 = 半年没开
     // 页面，复活反而是合理探测）；停运档永不过期（复活只走复测撤销，即 patchHealth 的 ok 分支）；
     // ✓ 标记不持久化（会话级反馈即可，隐藏只关心死台）。旧数据兼容：无 t0/n/perm 按「疑似档、n=1、t0=t」读
-    let hp; try { hp = JSON.parse(localStorage.getItem('radio.health') || '{}'); } catch (_) { hp = {}; }
+    let hp; try { hp = JSON.parse(Store.get('radio.health') || '{}'); } catch (_) { hp = {}; }
     this.healthMarks = {};
     for (const k of Object.keys(hp || {})) {
       const e = hp[k]; if (!e || !Array.isArray(e.u)) continue;
@@ -59,19 +59,19 @@ const App = {
       this.healthMarks[k] = { u: e.u, t: e.t || 0, t0: e.t0 || e.t || 0, n: Math.max(1, e.n | 0), perm: e.perm ? 1 : 0 };
     }
   },
-  saveFavs() { localStorage.setItem('radio.favs', JSON.stringify(this.favs)); },
-  saveRecents() { localStorage.setItem('radio.recents', JSON.stringify(this.recents)); },
+  saveFavs() { Store.set('radio.favs', JSON.stringify(this.favs)); },
+  saveRecents() { Store.set('radio.recents', JSON.stringify(this.recents)); },
   saveHealth() { // FIFO 分档封顶（R4 拍板：疑似 1000 + 停运 1000；时间序扫描，停运档最后才挤——只增不减的
     // 停运台天然封顶于 radio.txt 在列数，2000 条合计约 1MB，5MB 配额内可控）
     const ks = Object.keys(this.healthMarks).sort((a, b) => (this.healthMarks[a].t || 0) - (this.healthMarks[b].t || 0));
     let n1 = 0, n2 = 0;
     for (const k of ks) { if (this.healthMarks[k].perm) { if (++n2 > 1000) delete this.healthMarks[k]; } else if (++n1 > 1000) delete this.healthMarks[k]; }
-    try { localStorage.setItem('radio.health', JSON.stringify(this.healthMarks)); } catch (_) {}
+    Store.set('radio.health', JSON.stringify(this.healthMarks));
   },
 
   /* ---------- 维护配置（radio.cfg）：localStorage 全部容错读取，结构与导入共用一套校验 ---------- */
   loadCfg() {
-    let c; try { c = JSON.parse(localStorage.getItem('radio.cfg') || 'null'); } catch (_) { c = null; }
+    let c; try { c = JSON.parse(Store.get('radio.cfg') || 'null'); } catch (_) { c = null; }
     this.cfg = this.normCfg(c);
   },
   normCfg(c) { // 结构校验/补齐（导入的 JSON 也走这里，坏形状回退空配置）
@@ -90,7 +90,7 @@ const App = {
     return c;
   },
   normStrMap(m, anyKey) { const o = {}; for (const [k, v] of Object.entries(m || {})) if (typeof v === 'string' && v.trim() && (anyKey || /^https?:\/\//.test(k))) o[k.trim()] = v.trim(); return o; },
-  saveCfg() { try { localStorage.setItem('radio.cfg', JSON.stringify(this.cfg)); } catch (_) {} },
+  saveCfg() { Store.set('radio.cfg', JSON.stringify(this.cfg)); },
 
   /* ---------- 列表解析：radio.txt（"分类,#genre#" 分节 + 名字,地址 行）与 m3u（#EXTINF + URL 行）双格式 ---------- */
   parse(text) {
@@ -210,6 +210,14 @@ const App = {
     this.saveFavs(); this.saveRecents();
   },
   favKeys() { return new Set(this.favs.map(f => f.k)); },
+  /* Store 对账后的内存全量重载（方案二：boot 异步对账/多标签重拉/恢复备份共用）——station 对象本身不动
+     （Player 引用着），只重载收藏/最近/健康标记/配置与 Player 记忆，再回绑渲染 */
+  applyServerStore() {
+    this.loadStore(); this.loadCfg();
+    Player.reloadMems();
+    for (const s of this.state.stations) { s.health = ''; s.perm = 0; } // 清旧标记由 rebind 按 healthMarks 重挂
+    this.rebind(); this.render(); this.renderManage();
+  },
   /* 同步消失名单 × 收藏比对（N4/r2 ⑥）：双通道——显示名 + 消失台 URL 集合（AIbot P3-1：经维护面板本地
      改名的收藏台键名已换、按名会漏，URL 快照按身份公理仍对得上）。必须在 reloadMain 之后调用——
      URL 回绑已救回「改名台」（新名不在消失名单，天然不误报），撞上名单/URL 且当前解析不到的才是真消失 */
@@ -576,18 +584,18 @@ const App = {
   /* ---------- 歌曲历史（B-7）：换歌时旧歌入史（当前曲只显示不入史），按台主 URL 存 localStorage（radio.songs，身份公理——AIbot P3-6） ---------- */
   pushSongHist(u0, title) {
     if (!title) return;
-    let songs; try { songs = JSON.parse(localStorage.getItem('radio.songs') || '{}'); } catch (_) { songs = {}; }
+    let songs; try { songs = JSON.parse(Store.get('radio.songs') || '{}'); } catch (_) { songs = {}; }
     const list = songs[u0] || [];
     if (!list.length || list[0].t !== title) { list.unshift({ t: title, at: Date.now() }); songs[u0] = list.slice(0, 12); } // 每台 12 首封顶
     const ks = Object.keys(songs).sort((a, b) => (songs[b][0] ? songs[b][0].at : 0) - (songs[a][0] ? songs[a][0].at : 0));
     for (const x of ks.slice(50)) delete songs[x]; // 台数 50 FIFO（按最近有歌活动排序砍最旧）
-    try { localStorage.setItem('radio.songs', JSON.stringify(songs)); } catch (_) {}
+    Store.set('radio.songs', JSON.stringify(songs));
   },
   toggleSongHist() { // 点击曲名行：本台最近播放浮层（当前曲在曲名行本身，不入列）
     const el = $('songhist');
     if (!el.hidden) { el.hidden = true; return; }
     if (!Player.station) return;
-    let songs; try { songs = JSON.parse(localStorage.getItem('radio.songs') || '{}'); } catch (_) { songs = {}; }
+    let songs; try { songs = JSON.parse(Store.get('radio.songs') || '{}'); } catch (_) { songs = {}; }
     const list = (songs[Player.station.u[0]] || []).slice(0, 12); // 同 pushSongHist 的 URL 键
     el.innerHTML = '<div class="shhead"><b>本台最近播放</b><button type="button" class="btn mbtn" data-act="exportsongs" title="导出所有台的收听历史为 txt（拿去音乐 App 搜）">导出全部</button></div>' + (list.length
       ? list.map(x => `<div class="shrow">${this.esc(x.t)}</div>`).join('')
@@ -597,7 +605,7 @@ const App = {
     el.querySelector('[data-act="exportsongs"]').onclick = () => this.exportSongs();
   },
   exportSongs() { // 歌曲历史导出（N2/r2 ④）：全部台历史按时间倒序拼 txt；台名按台主 URL 反解，休眠台用 URL 截断兜底
-    let songs; try { songs = JSON.parse(localStorage.getItem('radio.songs') || '{}'); } catch (_) { songs = {}; }
+    let songs; try { songs = JSON.parse(Store.get('radio.songs') || '{}'); } catch (_) { songs = {}; }
     const rows = [];
     for (const u0 of Object.keys(songs)) {
       const st = this.state.stations.find(s => s.u.includes(u0));
@@ -869,11 +877,33 @@ const App = {
     $('status').textContent = '已重置维护配置';
   },
 
+  /* —— 完整备份导出/导入（方案二/R4 拍板）：全部 radio.* 打包单 JSON——不走后端的迁移通道（换浏览器/换机兜底，
+     与既有三个单项导出并存：m3u 给外部播放器、songs 给音乐 App、config 给轻量迁移，本项给完整恢复） —— */
+  exportAll() {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify({ v: 1, at: Date.now(), data: Store.snapshot() }, null, 2)], { type: 'application/json' }));
+    a.download = 'vradio-backup.json'; a.click(); URL.revokeObjectURL(a.href);
+    $('status').textContent = '已导出完整备份（vradio-backup.json：收藏/配置/健康标记/歌曲历史等全部本地数据）';
+  },
+  importAll(text) {
+    let j; try { j = JSON.parse(text); } catch (_) { alert('导入失败：不是合法 JSON 文件'); return; }
+    const d = j && j.data && typeof j.data === 'object' ? j.data : null;
+    if (!d) { alert('导入失败：不是 vradio 完整备份文件'); return; }
+    const n = Store.KEYS.filter(k => typeof d[k] === 'string').length;
+    if (!n) { alert('导入失败：备份中无有效数据'); return; }
+    if (!confirm(`导入将覆盖本地全部数据（备份含 ${n} 个数据项：收藏/维护配置/健康标记/歌曲历史全部替换）。继续？`)) return;
+    for (const k of Store.KEYS) { if (typeof d[k] === 'string') localStorage.setItem(k, d[k]); else localStorage.removeItem(k); } // 白名单键直接落镜像（原生写）
+    Store.flush(); // 推后端（http 形态）；file:// 下 no-op
+    this.applyServerStore();
+    $('status').textContent = '已恢复完整备份';
+  },
+
   boot() {
+    Store.init(); // 存储收敛层（方案二）：BC 监听 + 关页 flush 兜底，须在 Player.init 读记忆之前
     this.loadStore();
     localStorage.removeItem('radio.epg'); // 节目单（EPG）功能已移除：顺手清掉旧版留下的缓存（不存在则 no-op）
     // 音量持久化（读取夹取 0-100，坏值回退 90）
-    const savedVol = localStorage.getItem('radio.vol'), vol0 = +savedVol;
+    const savedVol = Store.get('radio.vol'), vol0 = +savedVol;
     const vol = savedVol !== null && Number.isFinite(vol0) && vol0 >= 0 && vol0 <= 100 ? vol0 : 90;
     $('vol').value = vol;
     Player.init($('audio'), vol / 100);
@@ -980,16 +1010,16 @@ const App = {
       $('gridBtn').classList.toggle('on', this.state.view === 'grid'); $('gridBtn').setAttribute('aria-pressed', String(this.state.view === 'grid'));
       $('listBtn').classList.toggle('on', this.state.view === 'list'); $('listBtn').setAttribute('aria-pressed', String(this.state.view === 'list'));
     };
-    const setView = v => { if (this.state.view === v) return; this.state.view = v; localStorage.setItem('radio.view', v); syncView(); this.swapRender(); };
+    const setView = v => { if (this.state.view === v) return; this.state.view = v; Store.set('radio.view', v); syncView(); this.swapRender(); };
     $('gridBtn').onclick = () => setView('grid');
     $('listBtn').onclick = () => setView('list');
-    this.state.view = localStorage.getItem('radio.view') === 'list' ? 'list' : 'grid'; // 网格为默认
+    this.state.view = Store.get('radio.view') === 'list' ? 'list' : 'grid'; // 网格为默认
     syncView();
     const syncDead = () => {
       $('deadBtn').classList.toggle('on', this.state.showDead); $('deadBtn').setAttribute('aria-pressed', String(this.state.showDead));
     };
-    $('deadBtn').onclick = () => { this.state.showDead = !this.state.showDead; localStorage.setItem('radio.showdead', this.state.showDead ? '1' : '0'); syncDead(); this.render(); };
-    this.state.showDead = localStorage.getItem('radio.showdead') === '1'; // 默认隐藏无效台
+    $('deadBtn').onclick = () => { this.state.showDead = !this.state.showDead; Store.set('radio.showdead', this.state.showDead ? '1' : '0'); syncDead(); this.render(); };
+    this.state.showDead = Store.get('radio.showdead') === '1'; // 默认隐藏无效台
     syncDead();
 
     // 主题：🌓 跟随系统（默认）→ ☀️ 浅色 → 🌙 深色 循环，持久化 radio.theme；
@@ -1002,8 +1032,8 @@ const App = {
       $('themeBtn').setAttribute('aria-label', '主题：' + themeName[this.state.theme] + '，点击切换');
       $('themeBtn').title = '主题：' + themeName[this.state.theme] + '（点击循环：跟随系统 → 浅色 → 深色）';
     };
-    this.state.theme = ['auto', 'light', 'dark'].includes(localStorage.getItem('radio.theme')) ? localStorage.getItem('radio.theme') : 'auto';
-    $('themeBtn').onclick = () => { this.state.theme = { auto: 'light', light: 'dark', dark: 'auto' }[this.state.theme]; localStorage.setItem('radio.theme', this.state.theme); applyTheme(); };
+    this.state.theme = ['auto', 'light', 'dark'].includes(Store.get('radio.theme')) ? Store.get('radio.theme') : 'auto';
+    $('themeBtn').onclick = () => { this.state.theme = { auto: 'light', light: 'dark', dark: 'auto' }[this.state.theme]; Store.set('radio.theme', this.state.theme); applyTheme(); };
     mq.addEventListener('change', () => { if (this.state.theme === 'auto') applyTheme(); });
     applyTheme();
 
@@ -1093,6 +1123,9 @@ const App = {
     $('mImport').onclick = () => $('mfile').click();
     $('mfile').onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => this.importCfg(String(r.result)); r.readAsText(f, 'utf-8'); e.target.value = ''; };
     $('mReset').onclick = () => this.resetCfg();
+    $('mBackup').onclick = () => this.exportAll();
+    $('mRestore').onclick = () => $('mfile2').click();
+    $('mfile2').onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => this.importAll(String(r.result)); r.readAsText(f, 'utf-8'); e.target.value = ''; };
 
     // 添加自定义电台（A-2）：面板内表单 → /api/mystation（服务端先探活拒绝假流/死链，再原子写 my-radio.txt；
     // 与 cfg 的分工 = cfg 调整既有台的显示层（localStorage），这里新增列表里不存在的台（数据层文件，跨浏览器持久））
@@ -1182,6 +1215,7 @@ const App = {
 
     // 初始数据：radio.txt + my-radio.txt（http 下）；file:// 降级链（N1/r2 ③）：radio-data.js 全库直读
     // （同步产出的经典 script 全局，fetch 被拦但 script 加载不会）→ 再退内置精选；hint 只在两者皆无时提示
+    Store.boot(); // 主源对账（异步，镜像先行渲染不阻塞首屏）：后端较新应用之/首次迁移回填/dirty 重推
     this.reloadMain().then(ok => {
       if (!ok) {
         if (window.RADIO_DATA) this.applySources(this.parse(window.RADIO_DATA), []); // 代理级 m3u8 台播不了，直流台照常

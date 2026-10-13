@@ -32,11 +32,7 @@ const Player = {
 
   init(el, vol0) {
     this.audio = el; this.vol = this.gvol = vol0; el.volume = vol0;
-    // 每台音量记忆（A3/r2 ②）：容错读取 + 形状清洗（键须 URL、值须 0-100 数值，坏形状丢弃）
-    let vm; try { vm = JSON.parse(localStorage.getItem('radio.volperst') || '{}'); } catch (_) { vm = {}; }
-    this.volMem = {};
-    if (vm && typeof vm === 'object' && !Array.isArray(vm))
-      for (const k of Object.keys(vm)) { const v = +vm[k]; if (/^https?:\/\//.test(k) && Number.isFinite(v) && v >= 0 && v <= 100) this.volMem[k] = Math.round(v); }
+    this.reloadMems(); // 每台音量/成功源记忆装载（Store 收敛层出口，方案二：http 下随 /api/store 对账后可重载）
     el.addEventListener('playing', () => {
       this.connecting = null; this.stopWatchdog(); this.onAir(); this.say('直播中'); this.emit(true);
       if (this.bc) this.bc.postMessage('on'); // 多标签页防双播（N3）：建流成功即广播，旧标签页让位
@@ -49,7 +45,6 @@ const Player = {
     el.addEventListener('stalled', () => this.armWatchdog());
     el.addEventListener('waiting', () => this.armWatchdog());
     el.addEventListener('ended', () => { if (this.station && !this.connecting) this.retryOrNext(); });
-    try { this.srcMem = JSON.parse(localStorage.getItem('radio.srcmem2') || '{}'); } catch (_) { this.srcMem = {}; }
     try { localStorage.removeItem('radio.srcmem'); } catch (_) {} // 键升级一次性失效：旧记忆多记着「xmcdn 代理旧路」，留着会压住启发式直流优先
     // 多标签页防双播（N3/r2 ⑤）：后来者赢——新标签开播广播，旧标签正在播/建流中则让位暂停（非 stop，保留台位可续播）。
     // 规范保证不回发发送者自身，无需自过滤；消息只发一个字面量
@@ -79,18 +74,25 @@ const Player = {
   emit(full) { if (this.onstate) this.onstate(full); },
   say(t) { if (this.onstatus) this.onstatus(t); },
   isPaused() { return !this.audio || this.audio.paused; },
+  reloadMems() { // 记忆装载（init 与 Store 对账后重载共用）：容错读取 + 形状清洗
+    let vm; try { vm = JSON.parse(Store.get('radio.volperst') || '{}'); } catch (_) { vm = {}; }
+    this.volMem = {};
+    if (vm && typeof vm === 'object' && !Array.isArray(vm))
+      for (const k of Object.keys(vm)) { const v = +vm[k]; if (/^https?:\/\//.test(k) && Number.isFinite(v) && v >= 0 && v <= 100) this.volMem[k] = Math.round(v); } // 键须 URL、值须 0-100 数值，坏形状丢弃
+    try { this.srcMem = JSON.parse(Store.get('radio.srcmem2') || '{}'); } catch (_) { this.srcMem = {}; }
+  },
   setVolume(v) { this.vol = v; if (this.audio) this.audio.volume = v; },
   rememberVol(pct) { // 调音量分流（A3/r2 ②语义①，app 滑杆 oninput 调用）：正在播 → 只写当前台记忆（台首调时全局锚点随行，
     // 锚点稳定后不再被有记忆台牵动）；无台 → 写全局。0 视为静音瞬态，同静音按钮一律不入记忆
     if (!(pct > 0)) return;
     const s = this.station;
-    if (!s) { this.gvol = pct / 100; try { localStorage.setItem('radio.vol', String(pct)); } catch (_) {} return; }
+    if (!s) { this.gvol = pct / 100; Store.set('radio.vol', String(pct)); return; }
     const fresh = this.volMem[s.u[0]] == null;
     this.volMem[s.u[0]] = Math.round(pct);
-    if (fresh) { this.gvol = pct / 100; try { localStorage.setItem('radio.vol', String(pct)); } catch (_) {} }
+    if (fresh) { this.gvol = pct / 100; Store.set('radio.vol', String(pct)); }
     const ks = Object.keys(this.volMem);
     while (ks.length > 300) delete this.volMem[ks.shift()];
-    try { localStorage.setItem('radio.volperst', JSON.stringify(this.volMem)); } catch (_) {}
+    Store.set('radio.volperst', JSON.stringify(this.volMem));
   },
   restoreVol() { // 取消静音的恢复值：当前台记忆 → 全局默认 → 0.9（坑①：有记忆时取记忆而非旧全局；切台后旧 lastVol 语义废除）
     const s = this.station, pv = s && this.volMem[s.u[0]];
@@ -240,13 +242,13 @@ const Player = {
     this.srcMem[s.u[0]] = { i: this.curSi, t: Date.now() };
     const ks = Object.keys(this.srcMem).sort((a, b) => this.srcMem[a].t - this.srcMem[b].t);
     while (ks.length > 300) delete this.srcMem[ks.shift()];
-    try { localStorage.setItem('radio.srcmem2', JSON.stringify(this.srcMem)); } catch (_) {}
+    Store.set('radio.srcmem2', JSON.stringify(this.srcMem));
   },
   forgetSrc() { // 「恢复默认源」（②c）：清当前台成功源记忆并落盘，重播由调用方（app）发起——无 prefer 且记忆已空 = 纯启发式序
     const s = this.station;
     if (!s || this.srcMem[s.u[0]] == null) return false;
     delete this.srcMem[s.u[0]];
-    try { localStorage.setItem('radio.srcmem2', JSON.stringify(this.srcMem)); } catch (_) {}
+    Store.set('radio.srcmem2', JSON.stringify(this.srcMem));
     return true;
   },
   // 暂停恢复：直播流建流慢（蜻蜓 5-10s），先给连接中提示；失败由遗留 onerror 闭包接管换源。

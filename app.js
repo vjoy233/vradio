@@ -399,10 +399,13 @@ const App = {
       Player.isPaused() ? Player.resume() : Player.pause();
       return;
     }
+    this.startPlay(s);
+  },
+  startPlay(s, prefer) { // 点播装配共用（remember + 台标 + 最近重排）；prefer=手动指定源序号（②：footer 浮层/⚙ 面板传入，当次最高优先）
     this.remember(s);
     this.logosEnsure(); // 正在播的台也优先补台标
     if (this.state.cat === '最近') this.render(); // 最近队列头插后刷新顺序
-    Player.play(s);
+    Player.play(s, prefer);
   },
   stepFav(d) { // ←/→ 在收藏间切台（A-5）：顺序取当前可见列表内的收藏台；当前台不在收藏则从队首/队尾起步
     const favs = this.favKeys();
@@ -459,6 +462,33 @@ const App = {
       $('pp').innerHTML = (Player.connecting || !Player.isPaused()) ? '<svg class="ic"><use href="#i-pause"/></svg>' : '<svg class="ic"><use href="#i-play"/></svg>'; // 台名不再带 ▶（UI 审计 P3-4）：与列表行的 ▶ 前缀重复，footer 已有按钮+均衡器表达状态
     } else { $('pp').innerHTML = '<svg class="ic"><use href="#i-play"/></svg>'; this.showLast(); $('song').hidden = true; $('nowline').classList.remove('canfind'); $('nowline').title = ''; }
     $('eq').classList.toggle('on', !!s && !Player.isPaused()); // 均衡器动画（E6）：活着且在播
+    // 选源按钮（②a）：多源台且播/暂停中才亮（按次渲染动态判定——同步后单源变多源自动出现）；切台后浮层过期即收起
+    $('srcWrap').hidden = !(s && s.u.length > 1);
+    if (!$('srcMenu').hidden && this.srcPopK !== (s ? keyOf(s) : '')) { $('srcMenu').hidden = true; $('srcBtn').setAttribute('aria-expanded', 'false'); }
+  },
+
+  /* ---------- footer 选源浮层（②a/grill 拍板）：正在听时发现源不好，四步深的 ⚙ 面板救不了急——
+     这里是主入口（⚙ 为管理+预选源的双入口副）。内容随打开时刻重算，级联中不自动跳变 ---------- */
+  srcPopK: '',
+  renderSrcPop() {
+    const s = Player.station;
+    if (!s || s.u.length < 2) return;
+    this.srcPopK = keyOf(s);
+    const dft = Player.srcOrder(s)[0], mem = Player.srcMem[s.u[0]];
+    const rows = s.u.map((u, i) => `<button type="button" class="btn srcrow${Player.curSi === i ? ' cur' : ''}" data-i="${i}" title="${this.esc(u)}">
+      <i class="idx">${i + 1}</i><span class="u">${this.esc(u)}</span>${this.srcBadges(s, i, dft)}
+    </button>`).join('');
+    $('srcMenu').innerHTML = `<div class="st">${this.esc(s.n)} · ${s.u.length} 个源，点行切换（失败自动顺延）</div>` + rows
+      + (mem ? `<button type="button" class="btn srcrow" data-act="srcreset" title="清掉「上次成功的源」记忆，立即从默认源（直流优先）重播"><svg class="ic"><use href="#i-undo"/></svg><span>恢复默认源（忘掉源 ${mem.i + 1} 的记忆）</span></button>` : '');
+    $('srcMenu').hidden = false;
+    $('srcBtn').setAttribute('aria-expanded', 'true');
+    $('srcMenu').querySelector('button')?.focus(); // 与睡眠菜单同口径：开即移焦
+  },
+  srcReset() { // 恢复默认源（②c/grill 拍板）：清当前台 srcmem + 立即按启发式默认重播
+    const s = Player.station; if (!s) return;
+    const had = Player.forgetSrc();
+    this.startPlay(s); // 无 prefer 且记忆已清 → 纯启发式序
+    $('status').textContent = had ? '已恢复默认源，从默认源重播' : '本无源记忆，按默认序重播';
   },
 
   /* ---------- 曲讯（B-6）：轮询 /api/nowplaying 取正在播台的 ICY 曲名 ----------
@@ -476,7 +506,7 @@ const App = {
     if (t === this.lastSong) return;
     if (this.lastSong && t) this.pushSongHist(s.u[0], this.lastSong); // 换歌：旧歌入史（B-7，键=台主 URL——身份公理，改名/换分类不丢）
     this.lastSong = t;
-    if (t) { $('song').textContent = '♪ ' + t; $('song').hidden = false; Player.setSong(t); }
+    if (t) { $('song').textContent = '♪ ' + t + (j && +j.br > 0 ? ' · ' + j.br + 'kbps' : ''); $('song').hidden = false; Player.setSong(t); } // 码率（③）：ICY 直流才有，随曲讯同帧到达
   },
 
   /* ---------- 歌曲历史（B-7）：换歌时旧歌入史（当前曲只显示不入史），按台主 URL 存 localStorage（radio.songs，身份公理——AIbot P3-6） ---------- */
@@ -646,12 +676,19 @@ const App = {
     if (!kw && all.length > 100) box.innerHTML += '<div class="empty" style="padding:8px 30px;">电台较多，仅列前 100 台——用上方搜索缩小范围</div>';
     box.scrollTop = keepScroll;
   },
-  /* —— 备选源管理（P1-a/r2 ⑨）：展开行内列出全部源（追加的可移除，原源只读——身份公理：s.u[0] 是
-     srcmem/收藏/健康标记的身份键）+ 先 /api/check 探活再收的追加输入（拒绝假流/死链，口径同 A-2 添加电台） —— */
+  /* —— 备选源管理（P1-a/r2 ⑨ + ②手动选源）：展开行内列出全部源（追加的可移除，原源只读——身份公理：s.u[0] 是
+     srcmem/收藏/健康标记的身份键）+ 「▶ 用此源播放」（与 footer 浮层双入口）+ 先 /api/check 探活再收的追加输入 —— */
+  srcBadges(s, i, dft) { // 源行徽标片段（⚙ 面板与 footer 浮层共用）：默认=启发式首选（①）、正在用=curSi 所在源、追加=个人补充源
+    return (i === dft ? '<span class="badge">默认</span>' : '')
+      + (Player.station === s && Player.curSi === i ? '<span class="badge acc">正在用</span>' : '')
+      + (s.dU.includes(s.u[i]) ? '' : '<span class="badge">追加</span>');
+  },
   srcRowHtml(s) {
-    const rows = s.u.map((u, i) => `<div class="srcline">
-      <i class="idx">${i + 1}</i><span class="u" title="${this.esc(u)}">${this.esc(u)}</span>
-      ${s.dU.includes(u) ? '' : `<span class="badge">追加</span><button type="button" class="btn mbtn" data-act="srcdel" data-u="${this.esc(u)}" title="移除这条追加源（原源不可删）"><svg class="ic"><use href="#i-x"/></svg></button>`}
+    const dft = Player.srcOrder(s)[0]; // 与 play() 同一决策基座，「默认」徽标/「恢复默认」的落点
+    const rows = s.u.map((u, i) => `<div class="srcline${Player.station === s && Player.curSi === i ? ' cur' : ''}">
+      <i class="idx">${i + 1}</i><span class="u" title="${this.esc(u)}">${this.esc(u)}</span>${this.srcBadges(s, i, dft)}
+      ${s.dU.includes(u) ? '' : `<button type="button" class="btn mbtn" data-act="srcdel" data-u="${this.esc(u)}" title="移除这条追加源（原源不可删）"><svg class="ic"><use href="#i-x"/></svg></button>`}
+      <button type="button" class="btn mbtn" data-act="srcplay" data-i="${i}" title="用此源立即播放（失败自动顺延，成功后记住此源）"><svg class="ic"><use href="#i-play"/></svg></button>
     </div>`).join('');
     const ok = location.protocol.startsWith('http'); // 探活依赖后端，file:// 降级禁用（同添加电台口径）
     return `<div class="msrc">
@@ -792,6 +829,17 @@ const App = {
       $('sleepMenu').hidden = true; Player.sleep(+b.dataset.min);
     };
     document.addEventListener('click', e => { if (!e.target.closest('#sleepWrap')) $('sleepMenu').hidden = true; });
+    // footer 选源浮层（②a）：正在听的多源台一键切源（一律立即起播，暂停态同）；行点击 = 用此源播放，底部 = 恢复默认
+    $('srcBtn').onclick = () => {
+      if (!$('srcMenu').hidden) { $('srcMenu').hidden = true; $('srcBtn').setAttribute('aria-expanded', 'false'); return; }
+      this.renderSrcPop();
+    };
+    $('srcMenu').onclick = e => {
+      const row = e.target.closest('[data-i]');
+      if (row) { const s = Player.station; $('srcMenu').hidden = true; $('srcBtn').setAttribute('aria-expanded', 'false'); if (s) this.startPlay(s, +row.dataset.i); return; }
+      if (e.target.closest('[data-act="srcreset"]')) { $('srcMenu').hidden = true; $('srcBtn').setAttribute('aria-expanded', 'false'); this.srcReset(); }
+    };
+    document.addEventListener('click', e => { if (!e.target.closest('#srcWrap')) { $('srcMenu').hidden = true; $('srcBtn').setAttribute('aria-expanded', 'false'); } });
     Player.ontick = ms => {
       const b = $('sleepBtn'), lab = $('sleepLab');
       if (ms > 0) { const s = Math.ceil(ms / 1000); lab.textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); b.title = '睡眠定时进行中，点击取消'; }
@@ -956,6 +1004,7 @@ const App = {
         const i = $('mlist').querySelector('.msrc-add input');
         if (i && this.mExp) i.focus();
       }
+      else if (b.dataset.act === 'srcplay') { this.manageClose(); this.startPlay(s, +b.dataset.i); } // 用此源播放（②）：关面板起播，状态栏可见连接进展
       else if (b.dataset.act === 'srcadd') this.srcAppend(s, b);
       else if (b.dataset.act === 'srcdel') this.srcRemove(b.dataset.u);
     };

@@ -83,7 +83,7 @@ function npStart(url) { // 建会话（或复用已有）；并发封顶时 LRU 
   if (s) { s.hit = Date.now(); return s; }
   for (const [u, x] of [...npSess]) if (Date.now() - x.hit > NP_IDLE) { if (x.req) x.req.destroy(); npSess.delete(u); } // 空闲回收
   if (npSess.size >= NP_MAX) npEvictOldest();
-  s = { title: '', hit: Date.now(), req: null, noIcy: false, deadAt: 0 };
+  s = { title: '', hit: Date.now(), req: null, noIcy: false, deadAt: 0, br: 0 };
   npSess.set(url, s);
   const go = (t, depth) => { // 重定向逐跳复查（旁路连接同样过 SSRF 护栏，不豁免）
     if (depth > 3) { s.deadAt = Date.now(); return; }
@@ -96,6 +96,8 @@ function npStart(url) { // 建会话（或复用已有）；并发封顶时 LRU 
       }
       s.req = creq;
       const mi = parseInt(r.headers['icy-metaint'], 10);
+      const br = parseInt(r.headers['icy-br'], 10); // 码率（③/grill 拍板）：ICY 响应头随曲讯一起返回，footer 曲名旁显示「· Nkbps」
+      s.br = br > 0 ? br : 0;
       if (!(mi > 0)) { s.noIcy = true; r.destroy(); creq.destroy(); return; } // 协议无曲讯（普通文件流/部分服务器）：请求+响应双销毁防双倍带宽（resume 会把整条音频流在服务端放空下载——AIbot P1-1），Map 条目即负缓存
       // ICY 帧状态机：mi 个音频字节 → 1 字节长度(值×16) → meta 载荷，取 StreamTitle='…'（\' 转义）
       let pos = 'a', left = mi, mlen = 0, mbuf = [];
@@ -197,7 +199,7 @@ http.createServer((req, res) => {
     const old = npSess.get(target);
     if (old && old.deadAt && Date.now() - old.deadAt > NP_RETRY) { if (old.req) old.req.destroy(); npSess.delete(target); } // 失败冷却后允许重建
     const s = npSess.get(target) || npStart(target);
-    return json(200, { title: s.title || '' });
+    return json(200, { title: s.title || '', br: s.br || 0 });
   }
   if (req.url.startsWith('/proxy?url=')) {
     let target;

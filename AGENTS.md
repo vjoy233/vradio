@@ -19,7 +19,7 @@ npm test         # = node test/smoke.js，离线冒烟：安全护栏矩阵/幂�
 | 文件 | 职责 |
 |---|---|
 | `index.html` | 结构壳：DOM + 样式（浅/深主题、双视图/台标/无效源开关、⚙ 维护面板、safe-area）；逻辑全部外置五文件，经典 script 顺序引入 |
-| `store.js` | 存储收敛层：radio.* 持久键的唯一读写出口。http 形态下 data/store.json（`/api/store`）为主源、localStorage 永远留镜像；file:// 或后端不可用纯 localStorage（与旧版行为一致）。仲裁 = 服务端唯一发号（rev 由 POST 成功分配，客户端不自造；后端写失败标 dirty、boot 先重推 pending 再对账，并发退化为显式 last-write-wins）。多标签 BroadcastChannel 'store' 重拉（debounce 三规则：flush 时读当前内存/收消息作废 pending/beforeunload+visibilitychange flush）。**⚠ 新增任何 radio.* 持久键必须同步扩 store.js 的 KEYS 与 server.js 的 STORE_KEYS**（白名单外的键不落盘，漏扩表现为换浏览器丢该键；已知例外：`radio.logos` 台标缓存可重建不入主源、`radio.storeDirty` 是 Store 自身状态键）。写放大护栏：set 即写镜像 + 300ms debounce 攒批推后端（音量条拖动连续写安全） |
+| `store.js` | 存储收敛层：radio.* 持久键的唯一读写出口。http 形态下 data/store.json（`/api/store`）为主源、localStorage 永远留镜像；file:// 或后端不可用纯 localStorage（与旧版行为一致）。仲裁 = 服务端唯一发号（rev 由 POST 成功分配，客户端不自造；后端写失败标 dirty、boot 先重推 pending 再对账，并发退化为显式 last-write-wins）。多标签 BroadcastChannel 'store' 重拉（debounce 三规则：flush 时读当前内存/收消息作废 pending/beforeunload+visibilitychange flush）。**⚠ 新增任何 radio.\* 持久键必须同步扩 store.js 的 KEYS、server.js 的 STORE_KEYS 与 android/ 侧 Store 白名单（`android/app/src/main/java/.../consts/Consts.kt` 的 C.KEYS）**（白名单外的键不落盘，漏扩表现为换浏览器丢该键；已知例外：`radio.logos` 台标缓存可重建不入主源、`radio.storeDirty` 是 Store 自身状态键）。写放大护栏：set 即写镜像 + 300ms debounce 攒批推后端（音量条拖动连续写安全） |
 | `player.js` | 播放引擎：audio/hls/播放态/睡眠定时/MediaSession（台名+曲讯+台标 artwork+⏮⏭ 切台键）/每台音量记忆（`radio.volperst`）/多标签页防双播（BroadcastChannel）/默认源决策链（手动 `prefer` > 成功源记忆 > 直流优先启发式 `srcOrder`；`forgetSrc` 恢复默认）的唯一所有者（世代令牌防串台；断流自愈看门狗；成功源记忆 `radio.srcmem2`，键升级即旧记忆一次性失效） |
 | `logos.js` | 台标数据唯一所有者：三级来源（STARTER 内置 → logos.txt → 运行时解析）/永久缓存/收藏+正在播优先补全/负缓存 7 天 |
 | `app.js` | 应用层：列表/搜索/分类/收藏/最近播放/导入导出/网格+列表双视图渲染/无效源默认隐藏/明暗主题切换/⚙ 维护面板（个人分类与电台调整 + 添加自定义电台 + 追加备选源 + 行内 ▶ 用此源播放）/footer 选源浮层（正在听的多源台切源/恢复默认）/曲讯轮询+码率显示+歌曲历史（含导出）/键盘快捷键+`?` 帮助/回到正在播；集中 state 对象 + 单一 render 入口 |
@@ -32,6 +32,7 @@ npm test         # = node test/smoke.js，离线冒烟：安全护栏矩阵/幂�
 | `logos.txt` | 台标数据（欧美音乐/国际新闻·谈话两分类，同步自动生成/`--logos` 重建），行格式 `分类|台名,图片URL`。**数据文件，勿手工维护** |
 | `hls.min.js` | 本地化的 hls.js v1.5.20（Apache-2.0 第三方库），勿改 |
 | `my-radio.txt` | 用户个人补充列表（gitignored），同步/导入后常驻重并，永不被覆盖 |
+| `android/` | 安卓原生版（Kotlin+Compose+Media3，monorepo 子目录，ADR-0002）。分层/环境搭建/国内镜像/命令见 [android/README.md](android/README.md)，并行开发契约见 [android/CONTRACTS.md](android/CONTRACTS.md)；依赖白名单封闭清单制（okhttp 是 D6 唯一破例）。radio.txt/logos.txt 由仓库根数据文件经 gradle task 打包进 assets，**两侧共同消费同一份数据**；改动 android/ 后跑 `cd android && ./gradlew test`（CI 另有干净环境验证，path filter `android/**`） |
 
 ## 架构要点
 

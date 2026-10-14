@@ -1,0 +1,37 @@
+# 安卓端 CI（M0 拍板：path filter android/** —— Web 提交不烧安卓 CI，review Q5/A12）
+# 本机镜像环境「能编」不作数，CI 是唯一干净环境验证。
+name: android
+
+on:
+  push:
+    branches: [main]
+    paths: ['android/**', '.github/workflows/android.yml']
+  pull_request:
+    paths: ['android/**', '.github/workflows/android.yml']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      # android runner 镜像自带 SDK 与已接受的 licenses；缺件由 AGP 自动补装
+      - name: 单元测试（parser/classifyCn 金样/store/cfg/backup/health）
+        run: android/gradlew --project-dir android test
+      - name: 构建 debug APK
+        run: android/gradlew --project-dir android assembleDebug
+      - name: APK 体积哨兵（M5：<5MB 事故哨兵——R8 忘开/资源误打包会爆线）
+        run: |
+          SIZE=$(stat -c%s android/app/build/outputs/apk/debug/app-debug.apk)
+          MB=$((SIZE / 1048576))
+          echo "debug APK: ${MB}MB (${SIZE} bytes)"
+          # debug 不含 R8 收缩，哨兵按 debug 放宽到 12MB；release 的 5MB 线在发布流程里验
+          if [ "$SIZE" -gt 12582912 ]; then echo "::error::debug APK 超过 12MB 哨兵线"; exit 1; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vradio-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14

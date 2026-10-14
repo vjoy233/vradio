@@ -77,6 +77,7 @@ const Player = {
   say(t) { if (this.onstatus) this.onstatus(t); },
   isPaused() { return !this.audio || this.audio.paused; },
   reloadMems() { // 记忆装载（init 与 Store 对账后重载共用）：容错读取 + 形状清洗
+    if (this.volT) { clearTimeout(this.volT); delete this.volT; Store.set('radio.volperst', JSON.stringify(this.volMem)); } // 先落未攒完的音量（AIbot P3-2）：防对账重载 volMem 后，300ms 窗口内到点的旧值回写压掉本次拖动
     let vm; try { vm = JSON.parse(Store.get('radio.volperst') || '{}'); } catch (_) { vm = {}; }
     this.volMem = {};
     if (vm && typeof vm === 'object' && !Array.isArray(vm))
@@ -96,7 +97,10 @@ const Player = {
     if (fresh) { this.gvol = pct / 100; Store.set('radio.vol', String(pct)); }
     const ks = Object.keys(this.volMem);
     while (ks.length > 300) delete this.volMem[ks.shift()];
-    Store.set('radio.volperst', JSON.stringify(this.volMem));
+    // 写放大（audit C2）：volperst 300 键全量序列化随拖动事件频发（每秒几十次），尾随 300ms 攒批一写——
+    // 崩溃最多丢最后一段音量拖动，无感损失；server 侧推流 Store.set 内部本就有同款 debounce
+    clearTimeout(this.volT);
+    this.volT = setTimeout(() => { delete this.volT; Store.set('radio.volperst', JSON.stringify(this.volMem)); }, 300);
   },
   restoreVol() { // 取消静音的恢复值：当前台记忆 → 全局默认 → 0.9（坑①：有记忆时取记忆而非旧全局；切台后旧 lastVol 语义废除）
     const s = this.station, pv = s && this.volMem[s.u[0]];
@@ -118,7 +122,7 @@ const Player = {
   /* 默认源决策链（grill 拍板，单次点播内从高到低）：手动指定 prefer > 成功源记忆 srcmem > 静态启发式
      > 级联自愈顺延。启发式零网络成本只看形态：首个 variant 是直流（mp3/aac 直达，或蜻蜓 m3u8 换算出的
      64k mp3）优先——不经代理、低延迟、有曲讯；102 台「xmcdn 首源+蜻蜓次源」由此首播直接命中直流 */
-  srcRank(u) { return /\.m3u8(\?|$)/.test(this.variants(u)[0]) ? 1 : 0; },
+  srcRank(u) { return /\.m3u8(\?|$)/i.test(this.variants(u)[0]) ? 1 : 0; },
   srcOrder(s) { return s.u.map((_, i) => i).sort((a, b) => this.srcRank(s.u[a]) - this.srcRank(s.u[b])); }, // sort 稳定（ES2019）：同级保持上游行序
 
   play(s, prefer) {
@@ -171,7 +175,7 @@ const Player = {
     const viaProxy = u.startsWith('/proxy');
     const raw = viaProxy ? decodeURIComponent(u.replace(/^\/proxy\?url=/, '')) : u;
     this.curUrl = raw; // 正在播的远端原始 URL（曲讯轮询取 ICY 用）
-    const isHls = /\.m3u8(\?|$)/.test(raw);
+    const isHls = /\.m3u8(\?|$)/i.test(raw);
     // 走代理时的远端基准：相对分片要拼回远端（hls.js 会把相对分片解析到 localhost）
     const proxyBase = viaProxy ? new URL(raw).href : null;
     audio.onerror = onFail;

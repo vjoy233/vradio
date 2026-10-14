@@ -60,6 +60,7 @@ fun StationList(vm: AppVm) {
   val cat by vm.cat.collectAsState()
   val view by vm.view.collectAsState()
   val showDead by vm.showDead.collectAsState()
+  val favKeys by vm.favKeys.collectAsState()   // 行级收藏星状态源（在 items 外层捕获，改收藏才能逐行重渲）
   val locate by vm.locate.collectAsState()
   var flash by remember { mutableStateOf<String?>(null) }
 
@@ -124,12 +125,12 @@ fun StationList(vm: AppVm) {
         modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp),
         contentPadding = PaddingValues(bottom = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp),
-      ) { gridItems(lu.list, key = { it.key }) { s -> StationCard(vm, s, ui, flash) } }
+      ) { gridItems(lu.list, key = { it.key }) { s -> StationCard(vm, s, ui, flash, favKeys.contains(s.key), inCat(cat)) } }
     } else {
       LazyColumn(
         state = listState, modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp),
         contentPadding = PaddingValues(bottom = 12.dp),
-      ) { items(lu.list, key = { it.key }) { s -> StationRow(vm, s, ui, flash) } }
+      ) { items(lu.list, key = { it.key }) { s -> StationRow(vm, s, ui, flash, favKeys.contains(s.key), inCat(cat)) } }
     }
   }
 }
@@ -148,11 +149,13 @@ private fun FavStar(on: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun metaBadges(vm: AppVm, s: Station) {
+private fun inCat(cat: String) = cat != "全部" && cat != "★收藏" && cat != "最近" // 分类视图（徽标里分类名 100% 冗余不显）
+
+@Composable
+private fun metaBadges(vm: AppVm, s: Station, inCat: Boolean) {
   val pal = LocalVrPalette.current
   Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
     if (s.health == "dead") VrBadge(if (vm.permOf(s)) "已停运" else "疑似不可达", 2)   // R1 分档分文案
-    val inCat = vm.cat.value.let { it != "全部" && it != "★收藏" && it != "最近" }
     if (!inCat) VrBadge(s.c)                                            // 分类视图下 100% 冗余不显（P2-2）
     val (_, cn) = displayParts(s.n)
     if (cn != null) VrBadge(cn)
@@ -160,14 +163,13 @@ private fun metaBadges(vm: AppVm, s: Station) {
   }
 }
 
-/* 网格卡片：精简两行（台名+星 / 徽标行），正在播边框高亮 + ▶ 前缀 */
+/* 网格卡片：精简两行（台名+星 / 徽标行），正在播边框高亮 + ▶ 前缀；fav 由外层响应式传入（勿在行内直读 lib） */
 @Composable
-private fun StationCard(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?) {
+private fun StationCard(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?, fav: Boolean, inCat: Boolean) {
   val pal = LocalVrPalette.current
   val k = s.key
   val playing = ui.station?.key == k && ui.st != PState.IDLE && ui.st != PState.CONNECTING
   val connecting = ui.station?.key == k && ui.st == PState.CONNECTING
-  val fav = vm.lib.isFav(s)
   val (dn, _) = displayParts(s.n)
   val dead = s.health == "dead"
   val shape = RoundedCornerShape(10.dp)
@@ -191,20 +193,19 @@ private fun StationCard(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?
       FavStar(fav) { vm.toggleFav(s) }
     }
     Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-      metaBadges(vm, s)
+      metaBadges(vm, s, inCat)
       if (connecting) { PulseDot(pal.acc); Text("连接中", fontSize = 11.sp, color = pal.dim) }
     }
   }
 }
 
-/* 列表行：两行详情（台名/徽标），正在播底色高亮 */
+/* 列表行：两行详情（台名/徽标），正在播底色高亮；fav 由外层响应式传入 */
 @Composable
-private fun StationRow(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?) {
+private fun StationRow(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?, fav: Boolean, inCat: Boolean) {
   val pal = LocalVrPalette.current
   val k = s.key
   val playing = ui.station?.key == k && ui.st != PState.IDLE && ui.st != PState.CONNECTING
   val connecting = ui.station?.key == k && ui.st == PState.CONNECTING
-  val fav = vm.lib.isFav(s)
   val (dn, _) = displayParts(s.n)
   val dead = s.health == "dead"
   Row(
@@ -228,7 +229,7 @@ private fun StationRow(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?)
         if (connecting) { PulseDot(pal.acc); Text(" 连接中", fontSize = 11.sp, color = pal.dim) }
       }
       Row(Modifier.padding(start = 30.dp, top = 1.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-        metaBadges(vm, s)
+        metaBadges(vm, s, inCat)
       }
     }
   }

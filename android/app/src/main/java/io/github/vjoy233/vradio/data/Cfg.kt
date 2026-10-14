@@ -84,7 +84,8 @@ object CfgCodec {
     return out
   }
 
-  /* hideC：键须非空字符串、值非 null/false（Web strKeys 同判），存 Boolean */
+  /* hideC：键须非空字符串、值真值才收（Web strKeys 同判，AIbot P2-4：falsy 值 0/"" 在 Web=显示，
+     此处若留键会被 containsKey 判成隐藏——导入通道能产生 falsy，语义必须对齐） */
   private fun strBoolMap(o: JSONObject?): Map<String, Boolean> {
     if (o == null) return emptyMap()
     val out = LinkedHashMap<String, Boolean>()
@@ -92,8 +93,8 @@ object CfgCodec {
       val kt = k.trim()
       if (kt.isEmpty()) continue
       val v = o.opt(k)
-      if (v == null || v is Boolean && !v) continue
-      out[kt] = truthy(v)
+      if (v == null || !truthy(v)) continue
+      out[kt] = true
     }
     return out
   }

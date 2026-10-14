@@ -1,6 +1,7 @@
 package io.github.vjoy233.vradio.sync
 
 import io.github.vjoy233.vradio.check.CheckStream
+import io.github.vjoy233.vradio.data.writeTextAtomic
 import io.github.vjoy233.vradio.consts.C
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch

@@ -17,6 +17,7 @@ import io.github.vjoy233.vradio.data.Library
 import io.github.vjoy233.vradio.data.Logos
 import io.github.vjoy233.vradio.data.MyRadio
 import io.github.vjoy233.vradio.data.RadioTxt
+import io.github.vjoy233.vradio.data.SafeTarget
 import io.github.vjoy233.vradio.data.Store
 import io.github.vjoy233.vradio.check.OkHttpRaw
 import io.github.vjoy233.vradio.data.OkHttpText
@@ -91,7 +92,6 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   val confirmReq = MutableStateFlow<String?>(null)           // 导入覆盖确认门槛
   private val manualRun = AtomicBoolean(false)                // 手动体检在跑（静默版让位标志）
   private var pendingImp: Pair<Imp, Any?>? = null
-  private var lastVol = C.DEFAULT_VOL                         // 取消静音恢复值（web restoreVol 近似）
   private var assetsStamp = ""
 
   enum class Imp { BACKUP, M3U, CFG }
@@ -134,13 +134,10 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     lib.myText = myRadio.readText()
     runCatching { lib.reload() }
     runCatching { logos.loadBuiltins(light.logosText() ?: aLogos) }
-    view.value = if (Store.get(C.K_VIEW) == "list") "list" else "grid"   // 网格默认
-    showDead.value = Store.get(C.K_SHOWDEAD) == "1"                      // 死台默认隐藏
-    theme.value = listOf("auto", "light", "dark").firstOrNull { it == Store.get(C.K_THEME) } ?: "auto"
+    refreshUi3()                                                          // view/showdead/theme 三键恢复（app.js loadUi3 同款）
     stamp.value++
     primeAll()
-    delay(4000)                                                          // 首屏后 4s 静默复查（B-10）
-    if (unmetered()) silentCheck()                                       // 仅 WiFi（D10）；移动数据静默跳过
+    delay(4000)                                                          // 首屏后 4s 静默复查（B-10）    if (unmetered()) silentCheck()                                       // 仅 WiFi（D10）；移动数据静默跳过
   }
 
   private fun readAsset(name: String): String? = runCatching {
@@ -165,6 +162,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       if (seen.add(s.key)) runCatching { logos.prime(s, true) }
     }
     cur.station?.let { s -> if (seen.add(s.key)) runCatching { logos.prime(s, true) } }
+    // AIbot P2-7：台标若在开播后才解析到，锁屏 artwork 需补刷（app.js:545 ensure 回调 → setSong 同款）
+    if (PlayerHolder.ui.value.st == PState.PLAYING) PlayerHolder.setSong(PlayerHolder.ui.value.song)
     stamp.value++
   }
 
@@ -285,18 +284,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   /* ---------- 选源（web ②a/②c：立即切播；↺ 恢复默认 = forgetSrc + 重播） ---------- */
 
-  private val M3U8_RE = Regex("""\.m3u8(\?|$)""", RegexOption.IGNORE_CASE)
-  private val QT_RE = Regex("""ls\.qingting\.fm/live/\d+\.m3u8""")
-
-  /* 默认源启发式（player.js srcRank/srcOrder 平移，决策链的静态基座）：
-     蜻蜓 ls.m3u8 可换算 64k mp3 直流 = rank0；其余 m3u8 = rank1；稳定排序取首个 rank0 */
-  fun srcDefault(s: Station): Int {
-    if (s.u.isEmpty()) return 0
-    return s.u.indices.minByOrNull { i ->
-      val u = s.u[i]
-      if (M3U8_RE.containsMatchIn(u) && !QT_RE.containsMatchIn(u)) 1 else 0
-    } ?: 0
-  }
+  /* 默认源启发式：直接复用 PlayerHolder.srcOrder（AIbot P3——本层复刻一份会与决策链漂移） */
+  fun srcDefault(s: Station): Int = PlayerHolder.srcOrder(s).firstOrNull() ?: 0
 
   fun srcReset() {
     val s = cur.station ?: return
@@ -305,12 +294,21 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     status.value = if (had) "已恢复默认源，从默认源重播" else "本无源记忆，按默认序重播"
   }
 
-  /* ---------- 音量（每台音量记忆在 PlayerHolder；取消静音的恢复值由本层兜底记） ---------- */
+  /* ---------- 音量（每台音量记忆在 PlayerHolder；取消静音的恢复值走 restoreVolPct——AIbot P1-5） ---------- */
 
-  fun setVol(pct: Int) { if (pct > 0) lastVol = pct; PlayerHolder.setVolPct(pct) }
-  fun toggleMute() {
+  private fun refreshUi3() {                                              // view/showdead/theme 三键恢复（boot 与备份导入共用，app.js loadUi3 同款）
+    view.value = if (Store.get(C.K_VIEW) == "list") "list" else "grid"    // 网格默认
+    showDead.value = Store.get(C.K_SHOWDEAD) == "1"                       // 死台默认隐藏
+    theme.value = listOf("auto", "light", "dark").firstOrNull { it == Store.get(C.K_THEME) } ?: "auto"
+  }
+
+  fun setVol(pct: Int) { PlayerHolder.setVolPct(pct) }  fun toggleMute() {
     if (cur.volPct > 0) { PlayerHolder.setVolPct(0); status.value = "已静音" }
-    else { PlayerHolder.setVolPct(lastVol); status.value = "音量 $lastVol%" }
+    else {
+      // restoreVolPct = 当前台记忆 → 全局 → 默认（player.js restoreVol 同语义）；会话内近似值会把台记忆覆盖坏
+      val rv = PlayerHolder.restoreVolPct()
+      PlayerHolder.setVolPct(rv); status.value = "音量 $rv%"
+    }
   }
 
   /* ---------- 只读透出 ---------- */
@@ -330,17 +328,22 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
      （Library/HashMap 非线程安全）。网络层整体故障（全部失败且样本量够）不落标记——
      移动网络抖动不该把整库标死（Web 无此问题：探活走本机后端恒可达）。 */
 
-  private suspend fun probe(s: Station): Boolean {
+  private enum class Probe { OK, DEAD, NET }   // AIbot P1-4：NET=探测请求自身失败（sync.js:23 口径——请求失败不落标，
+                                               // 与「台真的死」分开；防中途断网把整片台 n+1 误升停运档）
+
+  private suspend fun probe(s: Station): Probe {
+    var allNet = true                       // 全部源都「网络失败」→ 本台无判定依据
     for (u in s.u.take(4)) {
-      val ok = runCatching { checker.check(u, C.CHECK_WINDOW_MS).ok }.getOrDefault(false)
-      if (ok) return true
+      val v = runCatching { checker.check(u, C.CHECK_WINDOW_MS) }.getOrNull() ?: return Probe.NET
+      if (v.ok) return Probe.OK
+      if (v.why != "网络失败") allNet = false // 有任一源给出真应答（HTTP/超阈拒），死结论才有据
     }
-    return false
+    return if (allNet) Probe.NET else Probe.DEAD
   }
 
-  private suspend fun probeAll(list: List<Station>, conc: Int, stop: () -> Boolean, onProg: (Int, Int) -> Unit): List<Pair<Station, Boolean>> {
+  private suspend fun probeAll(list: List<Station>, conc: Int, stop: () -> Boolean, onProg: (Int, Int) -> Unit): List<Pair<Station, Probe>> {
     val q = ConcurrentLinkedQueue(list)
-    val out = ConcurrentLinkedQueue<Pair<Station, Boolean>>()
+    val out = ConcurrentLinkedQueue<Pair<Station, Probe>>()
     val done = AtomicInteger(); val total = list.size
     coroutineScope {
       repeat(conc) {
@@ -356,16 +359,17 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     return out.toList()
   }
 
-  /** 主线程统一套用分档生命周期并计数（0=ok 1=疑似 2=停运） */
-  private fun applyMarks(res: List<Pair<Station, Boolean>>): IntArray {
-    val c = IntArray(3)
+  /** 主线程统一套用分档生命周期并计数（0=ok 1=疑似 2=停运 3=网络失败跳过——不落标不计数） */
+  private fun applyMarks(res: List<Pair<Station, Probe>>): IntArray {
+    val c = IntArray(4)
     val marks = lib.healthMarks
-    for ((s, ok) in res) {
-      if (ok) { runCatching { Health.onAlive(marks, s.key) }; c[0]++ }
-      else {
+    for ((s, p) in res) when (p) {
+      Probe.OK -> { runCatching { Health.onAlive(marks, s.key) }; c[0]++ }
+      Probe.DEAD -> {
         runCatching { Health.onDead(marks, s.key, s.u.take(6), System.currentTimeMillis()) }
         if (marks[s.key]?.perm == 1) c[2]++ else c[1]++
       }
+      Probe.NET -> c[3]++
     }
     return c
   }
@@ -386,13 +390,14 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         val list = runCatching { lib.visible(true, playKey(), connKey()) }.getOrDefault(emptyList())   // 连默认隐藏的死台一起复查
         healthProg.value = "体检中 0/${list.size}"
         val res = probeAll(list, 6, { false }) { d, t -> healthProg.value = "体检中 $d/$t" }
-        if (res.size >= 5 && res.all { !it.second }) {                    // 网络层故障兜底：不落任何标记
+        if (res.size >= 5 && res.all { it.second == Probe.NET }) {         // 网络层整体故障兜底：不落任何标记
           healthResult.value = "体检未完成：全部探测失败（疑似网络不可用），未标记任何电台"
           toast(healthResult.value); return@launch
         }
         val c = applyMarks(res)
         persistHealth()
-        healthResult.value = "体检完成：正常 ${c[0]} · 疑似不可达 ${c[1]} · 已停运 ${c[2]}"
+        healthResult.value = "体检完成：正常 ${c[0]} · 疑似不可达 ${c[1]} · 已停运 ${c[2]}" +
+          (if (c[3] > 0) " · 网络失败跳过 ${c[3]}（不落标记）" else "")
         toast(healthResult.value)
       } catch (e: Exception) { healthResult.value = "体检异常：${e.message ?: e.toString()}" }
       finally { manualRun.set(false); healthBusy.value = false }
@@ -403,17 +408,19 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     viewModelScope.launch(Dispatchers.IO) {
       if (manualRun.get() || healthBusy.value) return@launch
       val scope = runCatching {
-        Health.bootScope(lib.healthMarks, lib.favs, lib.recents, lib.stations, System.currentTimeMillis())
+        // AIbot P2-1：IO 线程遍历 maps 与主线程 onDead/onAlive 并发 → LinkedHashMap CME 被 runCatching
+        // 吞成「静默体检悄悄没跑」；先做只读快照再算范围
+        Health.bootScope(LinkedHashMap(lib.healthMarks), lib.favs.toList(), lib.recents.toList(), lib.stations.toList(), System.currentTimeMillis())
       }.getOrNull() ?: return@launch
       if (scope.isEmpty()) return@launch
       healthBusy.value = true
       try {
         val res = probeAll(scope, 2, { manualRun.get() }) { _, _ -> }
         if (manualRun.get()) return@launch                                // 让位手动：已测结果由手动收尾统一落
-        if (res.size >= 5 && res.all { !it.second }) return@launch
+        if (res.size >= 5 && res.all { it.second == Probe.NET }) return@launch
         withContext(Dispatchers.Main) { applyMarks(res) }
         persistHealth()
-      } catch (_: Exception) { } finally { if (!manualRun.get()) healthBusy.value = false }
+      } catch (_: Exception) { } finally { healthBusy.value = false } // AIbot P1-1：无条件清——条件清会在「静默让位手动」时把三通道锁死到进程重启（手动方已持 manualRun 在等，清标志即接管无竞态）
     }
   }
 
@@ -428,11 +435,11 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       try {
         val res = probeAll(list, 2, { manualRun.get() }) { _, _ -> }
         if (manualRun.get()) return@launch
-        if (res.size >= 5 && res.all { !it.second }) return@launch
+        if (res.size >= 5 && res.all { it.second == Probe.NET }) return@launch
         val c = withContext(Dispatchers.Main) { applyMarks(res) }
         persistHealth()
         toast("新增 ${list.size} 台体检完成，${c[1] + c[2]} 台无效已隐藏")
-      } catch (_: Exception) { } finally { if (!manualRun.get()) healthBusy.value = false }
+      } catch (_: Exception) { } finally { healthBusy.value = false } // AIbot P1-1：同上，无条件清
     }
   }
 
@@ -444,9 +451,11 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       updateBusy.value = true; updateMsg.value = "检查更新中…"
       try {
         val base = light.stamp() ?: assetsStamp
-        // 契约：check 抛异常=网络失败（明示）；返回 null=无更新
+        // AIbot P1-3：check 的真契约 = 返回 null 且从不抛异常（网络失败填 light.lastFailWhy）——
+        // 失败必须明示「检查失败」（plan 5.2：网络失败一律明示不静默），null 一律当「已是最新」会误导
         val newer = withContext(Dispatchers.IO) { light.check(base) }
         if (newer == null) {
+          if (light.lastFailWhy.isNotEmpty()) { updateMsg.value = "检查失败：${light.lastFailWhy}"; return@launch }
           updateMsg.value = if (base.isEmpty()) "已是最新" else "已是最新（数据基线 ${base.take(10)}）"
           return@launch
         }
@@ -512,7 +521,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     val u = url.trim().replace(Regex("\\s+"), "")                          // URL 内不该有空白（坑③）
     val c = customCat.trim().take(24).ifEmpty { catIn }
     if (n.isEmpty()) { addMsg.value = "请填写电台名"; return }
-    if (!Regex("^https?://").containsMatchIn(u)) { addMsg.value = "流地址需以 http(s):// 开头"; return }
+    if (!SafeTarget.ok(u)) { addMsg.value = "流地址需为公网 http(s) 地址（内网/回环/变形 IP 不收）"; return }   // AIbot P2-5：与 server.js safeTarget 同口径（MyRadio.append 兜底同判）
     if (c.isEmpty()) { addMsg.value = "请选择或填写分类"; return }
     viewModelScope.launch {
       addBusy.value = true; addMsg.value = "探活中…（最长 12 秒，蜻蜓系建流慢属正常）"
@@ -581,6 +590,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
             val has = runCatching { lib.isFav(s) }.getOrDefault(false)
             if (!has) { runCatching { lib.toggleFav(s) }; added++ }
           }
+          runCatching { lib.rebind() }                                    // AIbot P3：导入后立即回绑（改名台休眠条目不等下次 reload 自愈）
           stamp.value++
           toast("已恢复收藏：${list.size} 个电台（其中新增收藏 $added）")
         }
@@ -619,13 +629,20 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         when (p.first) {
           Imp.BACKUP -> {
             val pay = p.second as Backup.ImportPayload
+            var myOk = true
             withContext(Dispatchers.IO) {
               Store.applyAll(pay.data)                                    // 白名单键写入/缺键 remove
-              pay.my?.let { runCatching { myRadio.replace(it.joinToString("\n")) } }   // v2 含 my-radio（v1 无则不动）
+              pay.my?.let { myOk = runCatching { myRadio.replace(it.joinToString("\n")) }.getOrDefault(false) }   // v2 含 my-radio（v1 无则不动）
               lib.myText = myRadio.readText()
             }
-            lib.reload(); stamp.value++; primeAll()
-            toast("已恢复完整备份")
+            // AIbot P1-2：Store 已被整体替换，三层内存态必须显式刷新——缺一层 = 重启才生效，
+            // 且播放层旧 volperst/srcmem 内存会在下次调音量/换源时整体回写冲掉刚导入的值（数据损坏向）
+            lib.reloadStore()                                             // 收藏/最近/健康标记/cfg 内存重载
+            lib.reload()                                                  // 主列表/my 层重装配 + 回绑
+            PlayerHolder.reloadMems()                                     // volperst/srcmem2/vol 重载（public 化入口）
+            refreshUi3()
+            stamp.value++; primeAll()
+            toast(if (myOk) "已恢复完整备份" else "已恢复完整备份（my-radio 超限未恢复：500 行/64KB）")   // AIbot P3：超限失败明示不静默
           }
           Imp.M3U -> {}
           Imp.CFG -> {

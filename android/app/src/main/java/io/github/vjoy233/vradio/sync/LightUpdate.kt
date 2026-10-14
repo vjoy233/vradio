@@ -1,6 +1,7 @@
 package io.github.vjoy233.vradio.sync
 
 import io.github.vjoy233.vradio.consts.C
+import io.github.vjoy233.vradio.data.writeTextAtomic   // AIbot P2-6：原子写收敛到 data 层单实现（本包原同款副本已删）
 import org.json.JSONObject
 import java.io.File
 import java.time.Instant
@@ -12,14 +13,6 @@ import java.time.OffsetDateTime
    diff 的台名集合口径 = keyOf（分类|台名，安卓契约拍板——与 Web update-sources 纯台名口径不同，
    分类挪动如实呈现 added/removed）；addedCheck = 新增国内台（欧美两节过滤，同步期已实测）封顶 500。
    所有失败返回 null 不抛，UI 层据 lastFailWhy 明示 toast 不静默。 */
-
-internal fun writeTextAtomic(f: File, text: String) {
-  // tmp+rename 原子替换（A3 纪律：进程写一半被杀不留半个文件）；同包供 SyncEngine 复用
-  val tmp = File(f.parentFile, f.name + ".tmp")
-  tmp.writeText(text)
-  if (f.isFile) f.delete()                                  // Windows 下目标已存在 rename 会拒：先删再换
-  if (!tmp.renameTo(f)) { tmp.delete(); f.writeText(text) }   // 极端兜底：rename 失败退直写（内容仍完整）
-}
 
 class LightUpdate(private val gh: Gh, private val filesDir: File) {
 

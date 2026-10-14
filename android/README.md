@@ -38,7 +38,7 @@
    export ANDROID_HOME="D:/Dev/android-sdk"
    ```
 
-版本基线（2026-10 锁定）：AGP 8.13.2 / Kotlin 2.2.21 / Gradle 8.14.6 / compose-bom 2026.09.00 / Media3 1.11.1 / minSdk 26 / target & compileSdk 36。**依赖白名单封闭清单制**（plan §四）：新增依赖一律先议事；okhttp 是 D6 拍板的唯一破例（Icecast `ICY 200 OK` 非标状态行）。
+版本基线（2026-10 锁定）：AGP 8.13.2 / Kotlin 2.2.21 / Gradle 8.14.6 / compose-bom 2026.06.01（09.00 的 material-ripple 要求 compileSdk 37 > AGP 8.13 上限 36，故钉 06.01）/ core-ktx 1.17.0（同理）/ Media3 1.11.1 / minSdk 26 / target & compileSdk 36。**依赖白名单封闭清单制**（plan §四）：新增依赖一律先议事；okhttp 是 D6 拍板的唯一破例（Icecast `ICY 200 OK` 非标状态行）。
 
 ## 模块结构（对应 Web 五文件精神的分层，语义契约见 ../CONTRACTS.md）
 

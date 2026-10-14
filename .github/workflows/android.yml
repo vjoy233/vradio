@@ -13,23 +13,35 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth 0：assets 打包基线 data-stamp.txt 取 radio.txt 的 git log 最后提交时刻，
+      # 浅检出在 HEAD 未动过 radio.txt 时取不到历史会退回构建时刻（AIbot P3）
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
       # android runner 镜像自带 SDK 与已接受的 licenses；缺件由 AGP 自动补装
-      - name: 单元测试（parser/classifyCn 金样/store/cfg/backup/health）
+      - name: 单元测试（parser/classifyCn 金样/store/cfg/backup/health/myradio）
         run: android/gradlew --project-dir android test
       - name: 构建 debug APK
         run: android/gradlew --project-dir android assembleDebug
-      - name: APK 体积哨兵（M5：事故哨兵而非功能预算）
+      - name: debug APK 体积哨兵（事故哨兵而非功能预算）
         run: |
           SIZE=$(stat -c%s android/app/build/outputs/apk/debug/app-debug.apk)
           MB=$((SIZE / 1048576))
           echo "debug APK: ${MB}MB (${SIZE} bytes)"
-          # debug 不含 R8 收缩（实测 ~15MB 属正常），CI 哨兵按 20MB 防资源误打包；release 的 5MB 线在发布流程验
+          # debug 不含 R8 收缩（实测 ~15MB 属正常），哨兵按 20MB 防资源误打包
           if [ "$SIZE" -gt 20971520 ]; then echo "::error::debug APK 超过 20MB 哨兵线"; exit 1; fi
+      - name: 构建 release APK（R8）+ M5 体积哨兵 5MB
+        run: |
+          android/gradlew --project-dir android assembleRelease
+          SIZE=$(stat -c%s android/app/build/outputs/apk/release/app-release.apk)
+          MB=$((SIZE / 1048576))
+          echo "release APK: ${MB}MB (${SIZE} bytes)"
+          # M5 哨兵：R8 忘开/资源误打包会爆线（合规基线实测 2.7MB；keystore 缺席时 debug 签名，包可装）
+          if [ "$SIZE" -gt 5242880 ]; then echo "::error::release APK 超过 5MB 哨兵线"; exit 1; fi
       - uses: actions/upload-artifact@v4
         with:
           name: vradio-debug-apk

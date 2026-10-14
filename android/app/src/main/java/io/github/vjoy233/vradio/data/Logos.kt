@@ -13,8 +13,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.net.URLEncoder
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 import java.util.concurrent.TimeUnit
 
 /* 文本拉取接口（台标解析与 sync 层 Gh 复用）：超时/字节封顶/失败 null。
@@ -85,7 +83,8 @@ class Logos(private val filesDir: File, private val http: HttpText, private val 
       val u = QT_IMG.find(html)?.groupValues?.get(1)
       if (u != null && !BAD_CHARS.containsMatchIn(u)) return u
     }
-    val r = px("https://de1.api.radio-browser.info/json/stations/byurl?url=" + URLEncoder.encode(s.u0, "UTF-8")) { t -> t.trim().startsWith("[") }
+    val r = px("https://de1.api.radio-browser.info/json/stations/byurl?url=" +
+      URLEncoder.encode(s.u0, "UTF-8").replace("+", "%20")) { t -> t.trim().startsWith("[") }  // AIbot P3：与 Web encodeURIComponent 同形（空格 %20 非 +）
     val f = runCatching { JSONArray(r).optJSONObject(0)?.optString("favicon") }.getOrNull() ?: ""
     return if ((f.startsWith("http://") || f.startsWith("https://")) && !BAD_CHARS.containsMatchIn(f)) f else ""
   }
@@ -111,7 +110,7 @@ class Logos(private val filesDir: File, private val http: HttpText, private val 
     }
   }
 
-  private fun save() { // 总量封顶 600（FIFO by t，logos.js cap 同款）+ tmp+rename 原子写
+  private fun save() { // 总量封顶 600（FIFO by t，logos.js cap 同款）+ 统一原子写（AIbot P2-6）
     synchronized(mem) {
       for (k in mem.keys.sortedBy { mem[it]?.t ?: 0L }) { if (mem.size <= C.LOGOS_CAP) break; mem.remove(k) }
       runCatching {
@@ -122,10 +121,8 @@ class Logos(private val filesDir: File, private val http: HttpText, private val 
           o.put(k, e)
         }
         filesDir.mkdirs()
-        val tmp = File(filesDir, "$CACHE.tmp")
-        tmp.writeText(o.toString())
-        Files.move(tmp.toPath(), File(filesDir, CACHE).toPath(), StandardCopyOption.ATOMIC_MOVE)
-      }
+        writeTextAtomic(File(filesDir, CACHE), o.toString())
+      }.onFailure { println("[vradio] logos-cache 落盘失败（缓存可重建，不影响主数据）: $it") }
     }
   }
 

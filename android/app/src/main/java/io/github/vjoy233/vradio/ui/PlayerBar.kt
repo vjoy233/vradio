@@ -22,6 +22,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.vjoy233.vradio.model.PState
 import io.github.vjoy233.vradio.model.PlayerUiState
+import kotlinx.coroutines.delay
 import io.github.vjoy233.vradio.player.PlayerHolder
 import io.github.vjoy233.vradio.ui.theme.LocalVrPalette
 
@@ -46,6 +48,8 @@ import io.github.vjoy233.vradio.ui.theme.LocalVrPalette
 fun PlayerBar(vm: AppVm, ui: PlayerUiState) {
   val pal = LocalVrPalette.current
   val vstatus by vm.status.collectAsState()
+  // AIbot P2-2：用户操作反馈（「已静音」等）6s 自清——否则永久压住引擎的「直播中/连接中…」文案
+  LaunchedEffect(vstatus) { if (vstatus.isNotEmpty()) { delay(6000); vm.status.value = "" } }
   var sleepMenu by remember { mutableStateOf(false) }
   var dragVol by remember { mutableStateOf<Float?>(null) }
 

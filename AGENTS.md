@@ -1,6 +1,6 @@
 # AGENTS.md
 
-VRadio — 零依赖本地网络电台 Web 播放器（国内电台为主、欧美音乐台为辅，面向国内直连环境）。共 9 个源码文件（含 test/smoke.js）+ 3 个数据文件，**无 npm 依赖、无构建步骤**（`npm test` 零依赖烟雾测试，lint/typecheck 无配置）。背景与实测记录详见 README.md，评审与实施依据见 docs/review.md，r2 批次决策见 docs/roadmap-research-r2.md，全面体检见 docs/audit-2026-10-13.md 与 docs/audit-2026-10-14.md。
+VRadio — 零依赖本地网络电台 Web 播放器（国内电台为主、欧美音乐台为辅，面向国内直连环境）。共 9 个源码文件（含 test/smoke.js）+ 3 个数据文件，**无 npm 依赖、无构建步骤**（`npm test` 零依赖烟雾测试，lint/typecheck 无配置）。背景与实测记录详见 README.md，评审与实施依据见 docs/review.md，r2 批次决策见 docs/roadmap-research-r2.md，全面体检见 docs/audit-2026-10-13.md 与 docs/audit-2026-10-14.md。安卓版已立项拍板（2026-10-14，docs/plan-android.md + docs/adr/0001、0002）：原生 Kotlin+Compose+Media3、monorepo `android/` 子目录——**radio.txt/logos.txt 行格式、`radio.*` 持久键、vradio-backup.json 格式为 Web/安卓两侧共同契约，改契约须两侧同步**。
 
 ## 常用命令
 
@@ -58,6 +58,7 @@ npm test         # = node test/smoke.js，离线冒烟：安全护栏矩阵/幂�
 ```
 
 - 同步写入用 CRLF；电台名内不能含逗号（同步时会替换为空格）。
+- 行格式是 Web/安卓两侧契约（安卓端解析取前两字段、3+ 字段容错跳过）——将来扩展列（如回听）时两侧同步改（docs/plan-android.md 5.2）。
 - 同步前自动备份为 `radio.txt.bak`（gitignored）；同步随行产出 radio-data.js（radio.txt 全文包成 `window.RADIO_DATA` 经典 script）与 diff 摘要（按台名集合算 added/removed，名单封顶 50，收藏台消失在前端 `favsGone` 点名——收藏在 localStorage，服务端碰不到）。
 - 双击 `index.html` 以 file:// 打开是**部分降级**模式（http:// 才是支持形态）：列表走 radio-data.js 全库（最后跑过同步时的快照），直流台可播；代理/同步/体检/my-radio/追加源探活不可用（体检会明确提示而非标死台），仅 m3u8 的台点播失败给既有提示不崩坏。调试播放务必走 `npm start` 的 http://。
 

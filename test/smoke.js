@@ -1,12 +1,13 @@
 // VRadio 烟雾测试（audit-2026-10-14 R1 落地）—— 零依赖：node 内置 assert + 子进程起真服务打真端口，离线秒级。
 // 覆盖面：静态拦截矩阵（dotfile/.bak/data 段的大小写与尾点变形、方法校验、nosniff）、/proxy 与 /api/* 跨源
-// 拒绝、Host 头白名单（rebinding 面）、safeTarget/guardLookup 双层护栏、classifyCn 幂等、
-// /api/store 白名单 + rev 发号 round-trip + 重启续发号（AIbot P2-1 回归）+ 超限显式拒绝。
+// 拒绝、Host 头白名单（rebinding 面）、safeTarget/guardLookup/tryUrl（畸形 Location 头归 null 不抛，audit-r2 P2-1）
+// 双层护栏、classifyCn 幂等、/api/store 白名单 + rev 发号 round-trip + 重启续发号（AIbot P2-1 回归）+ 超限显式拒绝、
+// /api/check 与 /api/nowplaying 方法校验（audit-r2 P3-1）。
 // 用户数据保护（AIbot P2-4）：已有 data/store.json 先备份为 .smokebak 落盘（硬中断可恢复，SIGINT 自动还原）、
 // 只写 store.json 相关文件、跑完还原现场（原无 data/ 则整目录清掉）。跑法：npm test。全部离线。
 const assert = require('assert'), http = require('http'), net = require('net'), fs = require('fs'), path = require('path');
 const { spawn } = require('child_process');
-const { safeTarget, guardLookup, classifyCn, splitSections, countEntries } = require('../update-sources');
+const { safeTarget, guardLookup, tryUrl, classifyCn, splitSections, countEntries } = require('../update-sources');
 
 let pass = 0, fail = 0;
 const ok = (name, fn) => Promise.resolve().then(fn).then(
@@ -49,6 +50,11 @@ const boot = () => new Promise(async (resolve, reject) => { // 起服 + 就绪�
   await ok('放行公网 http(s)（含 172.32+/100.128 边界外）', () => {
     for (const u of ['http://example.com/', 'https://a.b/c?d=1', 'http://8.8.8.8/', 'http://172.32.0.1/', 'http://100.128.0.1/'])
       assert.ok(safeTarget(u), u);
+  });
+  await ok('重定向头安全解析 tryUrl：畸形 Location → null 不抛（audit-r2 P2-1，裸 new URL 抛 TypeError 即崩进程）', () => {
+    for (const bad of ['http://[', 'http://[::1', 'http://h:port/', 'http://ex ample.com/'])
+      assert.strictEqual(tryUrl(bad, 'http://up.stream/a'), null, bad);
+    assert.strictEqual(tryUrl('rel/x', 'http://up.stream/a/b'), 'http://up.stream/a/rel/x'); // 正常相对解析不受影响
   });
 
   console.log('[2] 连接级护栏 guardLookup');
@@ -103,6 +109,10 @@ const boot = () => new Promise(async (resolve, reject) => { // 起服 + 就绪�
     await ok('静态方法校验：POST /index.html → 405（audit A4）', async () => assert.strictEqual((await req('POST', '/index.html')).status, 405));
     await ok('/proxy 方法校验：POST → 405（AIbot P3-4）', async () =>
       assert.strictEqual((await req('POST', '/proxy?url=' + encodeURIComponent('http://example.com/'))).status, 405));
+    await ok('/api/check 方法校验：POST → 405（audit-r2 P3-1）', async () =>
+      assert.strictEqual((await req('POST', '/api/check?url=x')).status, 405));
+    await ok('/api/nowplaying 方法校验：DELETE → 405（audit-r2 P3-1）', async () =>
+      assert.strictEqual((await req('DELETE', '/api/nowplaying?url=x')).status, 405));
     await ok('radio-data.js 一天缓存头', async () => {
       const r = await req('GET', '/radio-data.js');
       assert.ok(/max-age=86400/.test(r.headers['cache-control'] || ''), r.headers['cache-control']);

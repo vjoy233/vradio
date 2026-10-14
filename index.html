@@ -39,6 +39,7 @@
   ::-webkit-scrollbar-thumb { background:var(--line); border-radius:4px; }
   ::-webkit-scrollbar-track { background:transparent; }
   .row { display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:8px; cursor:pointer; transition:background-color .15s; }
+  .row, .card { touch-action: manipulation; } /* 双击收藏（audit-r2 拍板）：关移动端双击缩放，双击/长按手势语义稳定 */
   .row:hover, .row.playing { background:var(--panel); }
   .row.playing .name { color:var(--acc); }
   .row.playing .name::before { content:'▶ '; color:var(--acc); }
@@ -269,7 +270,7 @@
   <div id="prog" hidden><i></i></div>
   <button class="btn" id="pp" aria-label="播放 / 暂停"><svg class="ic"><use href="#i-play"/></svg></button>
   <span id="eq" aria-hidden="true"><i></i><i></i><i></i></span>
-  <div id="now" aria-live="polite"><div id="nowline">未在播放</div><div id="song" hidden></div></div>
+  <div id="now" aria-live="polite"><div id="nowline" role="button" tabindex="0">未在播放</div><div id="song" role="button" tabindex="0" hidden></div></div> <!-- 两行：台名 + 曲讯（B-6）；键盘可达（audit-r2 P3-2）：可点 div 补 role/tabindex，Enter/Space 在 app.js 接线 -->
   <span id="sleepWrap">
     <button class="btn" id="sleepBtn" title="睡眠定时：到点渐弱停止" aria-label="睡眠定时"><svg class="ic"><use href="#i-sleep"/></svg><span id="sleepLab"></span></button>
     <!-- 睡眠菜单（UI 审计 P3-7）：一次点选替代 15→30→60 循环（想设 60 分钟原要按三下）；进行中点击按钮直接取消 -->
@@ -300,6 +301,7 @@
   <div class="krow"><span><kbd>←</kbd><kbd>→</kbd></span>收藏间切台</div>
   <div class="krow"><span><kbd>↑</kbd><kbd>↓</kbd></span>列表行导航（<kbd>Home</kbd>/<kbd>End</kbd> 跳首尾）</div>
   <div class="krow"><span><kbd>Enter</kbd>/<kbd>空格</kbd></span>播放聚焦行</div>
+  <div class="krow"><span><kbd>双击</kbd></span>播放并收藏该电台（移动端长按行 = 收藏）</div>
   <div class="krow"><span><kbd>Esc</kbd></span>清空搜索 / 关闭浮层与面板</div>
   <div class="krow"><span><kbd>?</kbd></span>本帮助</div>
   <div class="knote">锁屏 / 蓝牙媒体键：<kbd>⏮</kbd><kbd>⏭</kbd> = 收藏间切台</div>

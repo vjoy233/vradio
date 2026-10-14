@@ -78,6 +78,7 @@ function safeTarget(raw) {
   if (!/^https?:$/.test(u.protocol)) return null;
   const h = u.hostname.toLowerCase();
   if (h === 'localhost' || h === '::1' || h === '[::1]' || h.endsWith('.local')) return null;
+  if (h.startsWith('[') && h.endsWith(']') && isPrivateIp(h.slice(1, -1))) return null; // IPv6 字面量 fail-fast（audit A5）：[fc/fd/fe8~b::…] 字符串层直拒——连接级 guardLookup 本就兜底，这里省一次建连、让两层校验名实相符
   if (/^(10\.|127\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h)) return null;
   return u.href;
 }
@@ -121,7 +122,7 @@ function request(url, { timeout = 10000, headers = {}, maxBytes = 1 << 20, maxRe
 // 流可用性探测：按「持续吐数据 + 非HTML」判定活流（m3u8 先取清单再测分片，master playlist 递归解一层）
 async function checkStream(url, depth = 0, opts = {}) {
   const T = opts.timeout || 4500; // 探活窗口：默认 4.5s；调用方可放宽（server.js /api/mystation 传 12s——蜻蜓系建流 5-10s 属正常，见 AGENTS.md 已知坑）
-  const isHls = /\.m3u8?(\?|$)/.test(url);
+  const isHls = /\.m3u8?(\?|$)/i.test(url);
   if (!isHls) {
     try {
       const r = await request(url, { timeout: T, maxBytes: 24000 });
@@ -135,7 +136,7 @@ async function checkStream(url, depth = 0, opts = {}) {
     const seg = pl.body.toString('utf8').split(/\r?\n/).map(l => l.trim()).find(l => l && !l.startsWith('#'));
     if (!seg) return { ok: false, detail: '清单无分片' };
     const segUrl = new URL(seg, url).href;
-    if (/\.m3u8?(\?|$)/.test(segUrl) && depth < 2) return checkStream(segUrl, depth + 1, opts); // master → variant 再解一层（参数透传）
+    if (/\.m3u8?(\?|$)/i.test(segUrl) && depth < 2) return checkStream(segUrl, depth + 1, opts); // master → variant 再解一层（参数透传；i：.M3U8 变形同判）
     const r2 = await request(segUrl, { timeout: T, maxBytes: 16000 });
     return { ok: r2.bytes >= 6000 && !/text\/html/i.test(r2.ct), detail: `hls分片 ${r2.bytes}B` };
   } catch (e) { return { ok: false, detail: String(e.message || e).slice(0, 40) }; }
@@ -421,4 +422,4 @@ if (require.main === module) {
       .catch(e => { console.error('同步失败:', e); process.exit(1); });
   }
 }
-module.exports = { syncSources, checkStream, safeTarget, guardLookup, buildLogoFile, classifyCn };
+module.exports = { syncSources, checkStream, safeTarget, guardLookup, buildLogoFile, classifyCn, splitSections, countEntries }; // splitSections/countEntries 供 test/smoke.js 复用（R1）

@@ -44,6 +44,10 @@ android {
     }
   }
 
+  // lint 纪律 = 单测 + 冒烟（AGENTS 口径，无 lint 配置）；release 默认挂的 lintVital 会解析
+  // jaxb/commons-compress 等 lint 自身依赖——镜像瞬时 502 即红脸（CI 实测），关掉去随机性
+  lint { checkReleaseBuilds = false }
+
   buildFeatures {
     compose = true
     buildConfig = true             // 版本号单一来源（设置页「关于」读 BuildConfig.VERSION_NAME，AIbot P3）

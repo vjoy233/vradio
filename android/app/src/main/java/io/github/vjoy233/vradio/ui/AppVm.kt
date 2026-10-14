@@ -110,6 +110,13 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   val listUi: StateFlow<ListUi> = combine(cat, keyword, showDead, playKeys, stamp) { _, _, _, _, _ -> computeListUi() }
     .stateIn(viewModelScope, SharingStarted.Eagerly, ListUi(emptyList(), emptyList(), false, null))
 
+  /* 收藏键集（响应式）：行级收藏星的状态源——不能在行内直读 lib.isFav（行参数不变时 LazyColumn 会跳过
+     行重组，星星永远不翻面——实机收藏「无反应」的根因）；经 items lambda 外层捕获才能触发逐行重渲 */
+  val favKeys: StateFlow<Set<String>> = listUi
+    .map { runCatching { lib.favKeys() }.getOrDefault(emptySet()) }
+    .distinctUntilChanged()
+    .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
   init {
     wirePlayer()
     viewModelScope.launch(Dispatchers.IO) { boot() }

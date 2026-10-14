@@ -97,6 +97,7 @@ function storeRead() { // 懒加载：首访问读盘；坏文件视为空库（
 }
 function storeWrite(data) {
   return storeQ = storeQ.then(() => new Promise(done => {
+    storeRead(); // 先装载磁盘态（AIbot P2-1）：rev 只在 GET 路径懒装载——重启后首请求若是 POST 会从 0 重发号，旧窗口高 rev 镜像被静默压掉，违反「rev 服务端唯一发号」公理
     const rev = storeRev + 1, out = JSON.stringify({ rev, data }), tmp = STORE_FILE + '.tmp';
     fs.mkdir(DATA_DIR, { recursive: true }, e => {
       if (e) return done({ ok: false, error: '写入失败' });
@@ -271,7 +272,11 @@ http.createServer((req, res) => {
     return json(200, { title: s.title || '', br: s.br || 0 });
   }
   if (req.url.startsWith('/proxy?url=')) {
-    if (crossOrigin(req)) return res.writeHead(403).end('403 cross-origin rejected'); // audit A2：任意网页可用 <audio>/媒体元素驱动本机代理当公开中继（加载无需 CORS）；同源页面 SFS=same-origin、地址栏直开 SFS=none 均不受影响
+    if (req.method !== 'GET') return res.writeHead(405).end('405'); // 与静态同口径（AIbot P3-4）：媒体/hls 请求全是 GET
+    if (crossOrigin(req)) return res.writeHead(403).end('403 cross-origin rejected'); // audit A2：任意网页可用 <audio>/媒体元素驱动本机代理当公开中继（加载无需 CORS）；同源页面 SFS=same-origin、地址栏直开 SFS=none 均不受影响。
+    // ⚠ 覆盖边界（AIbot P2-3，owner 拍板只标注不加固）：Sec-Fetch-Site 仅 Chromium 系必发——Firefox/Safari
+    // 的跨站 <audio> 不带 SFS/Origin，此校验对最弱浏览器不闭环（Referer 校验可被 referrerpolicy=no-referrer
+    // 绕过、且空 Referer 与地址栏直开不可区分，不采纳）；localhost 威胁模型下残余危害 = 带宽中继
     let target;
     try { target = safeTarget(decodeURIComponent(req.url.slice('/proxy?url='.length))); }
     catch (_) { return res.writeHead(400).end('400 bad url'); }

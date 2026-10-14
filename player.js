@@ -77,6 +77,7 @@ const Player = {
   say(t) { if (this.onstatus) this.onstatus(t); },
   isPaused() { return !this.audio || this.audio.paused; },
   reloadMems() { // 记忆装载（init 与 Store 对账后重载共用）：容错读取 + 形状清洗
+    if (this.volT) { clearTimeout(this.volT); delete this.volT; Store.set('radio.volperst', JSON.stringify(this.volMem)); } // 先落未攒完的音量（AIbot P3-2）：防对账重载 volMem 后，300ms 窗口内到点的旧值回写压掉本次拖动
     let vm; try { vm = JSON.parse(Store.get('radio.volperst') || '{}'); } catch (_) { vm = {}; }
     this.volMem = {};
     if (vm && typeof vm === 'object' && !Array.isArray(vm))

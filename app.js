@@ -374,19 +374,21 @@ const App = {
     c.classList.toggle('fade-r', c.scrollLeft + c.clientWidth < c.scrollWidth - 4);
   },
   visible(all) {
-    const st = this.state, kw = st.keyword.toLowerCase(), favs = this.favKeys();
+    const st = this.state, favs = this.favKeys();
+    const kws = st.keyword.toLowerCase().split(/\s+/).filter(Boolean); // 多词 AND（audit-r2 拍板四-1）：空格分词全命中，「音乐 北京」→ 北京音乐广播
+    const hit = n => kws.every(w => n.includes(w));
     // 手动维护层（隐藏台/隐藏分类）彻底消失（owner 拍板：全部/收藏/搜索/体检均不可见）；
     // 死台默认隐藏的「正在播例外」只豁免自动标记，不豁免手动隐藏。all=true 供空态判断「只是被死台隐藏」
     const show = s => !s.hidden && !this.cfg.hideC[s.c] && (all || st.showDead || s.health !== 'dead'
       || (Player.station && keyOf(Player.station) === keyOf(s)) || (Player.connecting && keyOf(Player.connecting) === keyOf(s)));
     if (st.cat === '最近') { // 最近播放（E3）：按 recents 队序（键或 URL 回绑解析），上限 20
       const hits = [];
-      for (const r of this.recents.slice(0, 20)) { const s = this.resolve(r); if (s && (!kw || s.n.toLowerCase().includes(kw)) && show(s)) hits.push(s); }
+      for (const r of this.recents.slice(0, 20)) { const s = this.resolve(r); if (s && (!kws.length || hit(s.n.toLowerCase())) && show(s)) hits.push(s); }
       return hits;
     }
     return st.stations.filter(s =>
       (st.cat === '全部' || (st.cat === '★收藏' ? favs.has(keyOf(s)) : s.c === st.cat)) &&
-      (!kw || s.n.toLowerCase().includes(kw)) && show(s));
+      (!kws.length || hit(s.n.toLowerCase())) && show(s));
   },
   // 电台名/分类来自远程上游仓库，渲染前必须转义（防注入）
   esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); },
@@ -997,6 +999,10 @@ const App = {
     document.addEventListener('click', e => { if (!e.target.closest('#songhist,#song,#keys')) { $('songhist').hidden = true; keysClose(); } });
     // footer 台名可点（N5/r2 ⑦）：回到正在播行并高亮一闪
     $('nowline').onclick = () => this.locatePlaying();
+    // 键盘可达（audit-r2 P3-2）：#nowline/#song 是可点 div（index.html 已补 role=button+tabindex），Enter/Space 接同款动作
+    const keyAct = (id, fn) => $(id).addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); } });
+    keyAct('nowline', () => this.locatePlaying());
+    keyAct('song', () => this.toggleSongHist());
 
     // 搜索：120ms 防抖，避免 1600+ 行列表每键整表重渲；Esc 清空；任意位置按 / 聚焦；↓ 接力列表首行（P2-5）
     let timer = 0;
@@ -1008,9 +1014,10 @@ const App = {
     document.addEventListener('keydown', e => { // 全局快捷键（A-5）：/ 聚焦搜索、空格 播放/暂停、←/→ 收藏间切台
       if (e.ctrlKey || e.altKey || e.metaKey) return; // 不抢组合键（Ctrl+/ 等）
       const t = e.target, tag = t && t.tagName;
-      // 焦点在交互件/列表行/维护面板/歌曲浮层/快捷键浮层上：让位原生行为（行内 Enter/Space 已有处理、面板有自己的 Esc 语义、按钮空格原生触发 click）。
-      // #keys 进让位（AIbot P3-4）：dialog 持焦点时空格/←/→ 不再直控播放（与 songhist 口径一致）；关浮层走 Esc/点外（cheatsheet 自述）
-      if (/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(tag) || t.isContentEditable || (t.closest && t.closest('#list,#manage,#songhist,#keys'))) return;
+      // 焦点在交互件/列表行/维护面板/歌曲浮层/快捷键浮层/footer 两可点行上：让位原生行为（行内 Enter/Space 已有处理、面板有自己的 Esc 语义、按钮空格原生触发 click）。
+      // #keys 进让位（AIbot P3-4）：dialog 持焦点时空格/←/→ 不再直控播放（与 songhist 口径一致）；关浮层走 Esc/点外（cheatsheet 自述）；
+      // #nowline/#song 进让位（audit-r2 P3-2）：焦点移入后空格触发自身动作（回到正在播/歌曲历史），不再直控播放
+      if (/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(tag) || t.isContentEditable || (t.closest && t.closest('#list,#manage,#songhist,#keys,#nowline,#song'))) return;
       if (e.key === '/') { e.preventDefault(); $('q').focus(); return; }
       if (e.key === '?') { e.preventDefault(); $('keys').hidden ? keysOpen() : keysClose(); return; } // cheatsheet（N8）
       if (e.key === ' ') { e.preventDefault(); $('pp').click(); return; }
@@ -1022,14 +1029,55 @@ const App = {
     addEventListener('resize', () => this.updateCatsFade());
     $('cats').onclick = e => { const c = e.target.closest('.chip'); if (c) { this.state.cat = c.dataset.c; this.swapRender(); } };
     $('list').onclick = e => {
+      if (this._lpSup) { this._lpSup = false; return; } // 长按触发后的合成 click 吞一次（review P3-3）：「长按只收藏不播放」从依赖目标脱离的未规范行为变为显式保证
+      if (e.detail > 1) return; // 双击的第二次 click 跳过（audit-r2 四-2）：否则「点播→再点暂停」，由 ondblclick 统一收口收藏
       const fav = e.target.closest('.fav');
       if (fav) {
         const s = this.state.stations.find(x => keyOf(x) === fav.dataset.fav);
         if (s) this.toggleFav(s);
         return;
       }
-      const row = e.target.closest('.row,.card'); if (row) this.togglePlay(row.dataset.k);
+      const row = e.target.closest('.row,.card');
+      if (row) { this._clickK = row.dataset.k; this.togglePlay(row.dataset.k); } // 记首击对象（review P2-A）：「最近」视图首击即 remember 重排队首+整表重渲，第二次击的坐标已换台——双击收藏锚定首击 key，对重排免疫
     };
+    // 双击行收藏（audit-r2 拍板四-2）：单击已起播、双击补收藏 = 「播放并收藏」——刻意不做单击延迟消歧（伤点播主路径）；
+    // 收藏钮自身不参与（它的 click 有独立处理）；cheatsheet/README 已同步该手势。
+    // 双击必以 detail=1 的首击为前提、首击必已记 _clickK——收藏按首击 key 解析而非坐标 hit-test（review P2-A：
+    // 「最近」首击重排后同坐标已是别台行，按坐标会把收藏落在别的台上）
+    $('list').ondblclick = e => {
+      if (e.target.closest('.fav')) return;
+      if (!this._clickK) return;
+      const s = this.state.stations.find(x => keyOf(x) === this._clickK);
+      if (s) this.toggleFav(s);
+    };
+    // 移动端长按行收藏（audit-r2 拍板四-2）：500ms 计时，位移超 10px（滚动/手势）或抬手即取消；
+    // touch-action:manipulation 已关双击缩放（index.html），双击/长按两手势互不抢。
+    // stamp 作废（review P2-B）：按压窗口内穿插过任何整表重渲（台标落库/体检回调/他标签对账）即放弃本次长按——
+    // 重渲后旧行节点脱离文档，touch 事件 target 已锁定旧节点、冒泡不到 list，touchend 的 lpOff 会漏取消、计时器带出误收藏
+    {
+      let lpT = 0, lpx = 0, lpy = 0;
+      const lpOff = () => { if (lpT) { clearTimeout(lpT); lpT = 0; } };
+      $('list').addEventListener('touchstart', e => {
+        lpOff();
+        const row = e.target.closest('.row,.card'); if (!row) return;
+        const t = e.touches[0], stamp = this.state.stamp;
+        lpx = t.clientX; lpy = t.clientY;
+        lpT = setTimeout(() => {
+          lpT = 0;
+          if (stamp !== this.state.stamp) return; // 窗口内发生过重渲：目标行已被替换/位移，放弃（保守侧，误放弃好过误收藏）
+          this._lpSup = true; setTimeout(() => { this._lpSup = false; }, 300); // 吞随后的合成 click，300ms 自清防误吞下一次正常点按（review P3-3）
+          const s = this.state.stations.find(x => keyOf(x) === row.dataset.k);
+          if (s) this.toggleFav(s);
+        }, 500);
+      }, { passive: true });
+      $('list').addEventListener('touchmove', e => { // 位移超阈值视为手势，取消长按
+        if (!lpT) return;
+        const t = e.touches[0];
+        if (Math.hypot(t.clientX - lpx, t.clientY - lpy) > 10) lpOff();
+      }, { passive: true });
+      $('list').addEventListener('touchend', lpOff);
+      $('list').addEventListener('touchcancel', lpOff);
+    }
     $('list').onkeydown = e => { // Enter/Space 播放 + ↑↓/Home/End 方向键导航（UI 审计 P2-5）
       const row = e.target.closest && e.target.closest('.row,.card');
       if (!row || e.target !== row) return;
@@ -1169,6 +1217,9 @@ const App = {
       } catch (e) { $('status').textContent = '添加失败：' + (e && e.message || e); }
       $('mAddBtn').disabled = false; $('mAddBtn').querySelector('span').textContent = '添加';
     };
+    $('mAdd').addEventListener('keydown', e => { // Enter 提交（audit-r2 P3-3）：与备选源追加输入同口径，键盘流添台不被迫找按钮
+      if (e.key === 'Enter' && e.target.matches('input') && !$('mAddBtn').disabled) { e.preventDefault(); $('mAddBtn').click(); }
+    });
 
     // 台标：缓存 + 数据文件（http 下才有后端/代理）
     Logos.load();

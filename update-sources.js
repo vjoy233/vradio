@@ -82,6 +82,10 @@ function safeTarget(raw) {
   if (/^(10\.|127\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h)) return null;
   return u.href;
 }
+// 重定向头安全解析（audit-r2 P2-1）：畸形 Location（未闭合 IPv6 括号/非法端口/含空格 host）会让
+// new URL 抛 TypeError——响应回调里裸解析即进程级 uncaughtException，整服务当场死。统一经此口：解析失败 = null，
+// 调用方按「重定向目标拒绝」处理（proxy 403 / 同步 reject / 旁路 deadAt）
+function tryUrl(u, base) { try { return new URL(u, base).href; } catch (_) { return null; } }
 // 连接级校验（TOCTOU 安全，P2-7 修法）：包成自定义 lookup 传给 http(s).get，
 // 校验的就是实际用于建立连接的那次 DNS 解析；rebinding 换 IP 也逃不过
 function guardLookup(host, opts, cb) {
@@ -102,7 +106,7 @@ function request(url, { timeout = 10000, headers = {}, maxBytes = 1 << 20, maxRe
     const req = mod.get(url, { timeout, lookup: guardLookup, headers: { 'User-Agent': 'vradio/0.1 (+local radio player)', ...headers } }, res => {
       if ([301, 302, 303, 307].includes(res.statusCode) && res.headers.location) {
         res.resume();
-        const next = safeTarget(new URL(res.headers.location, url).href); // 重定向逐跳复查（P2-6）
+        const next = safeTarget(tryUrl(res.headers.location, url)); // 重定向逐跳复查（P2-6）；畸形头经 tryUrl 归 null 一并拒绝（audit-r2 P2-1）
         if (!next) return reject(new Error('重定向目标非公网'));
         return request(next, { timeout, headers, maxBytes, maxRedirect }, depth + 1).then(resolve, reject);
       }
@@ -422,4 +426,4 @@ if (require.main === module) {
       .catch(e => { console.error('同步失败:', e); process.exit(1); });
   }
 }
-module.exports = { syncSources, checkStream, safeTarget, guardLookup, buildLogoFile, classifyCn, splitSections, countEntries }; // splitSections/countEntries 供 test/smoke.js 复用（R1）
+module.exports = { syncSources, checkStream, safeTarget, guardLookup, tryUrl, buildLogoFile, classifyCn, splitSections, countEntries }; // splitSections/countEntries 供 test/smoke.js 复用（R1）；tryUrl 供 server.js/测试复用（audit-r2 P2-1）

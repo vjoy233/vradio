@@ -44,7 +44,11 @@ const Player = {
     el.addEventListener('timeupdate', () => { if (this.wd && !el.paused) this.stopWatchdog(); }); // 有实际进展即撤看门狗
     el.addEventListener('stalled', () => this.armWatchdog());
     el.addEventListener('waiting', () => this.armWatchdog());
-    el.addEventListener('ended', () => { if (this.station && !this.connecting) this.retryOrNext(); });
+    el.addEventListener('ended', () => { // halt 守卫（三审 B3，audit-r2 P2-2 证实未落地）：暂停/让位页不得被 ended 自愈复活——retryOrNext 重连分支 audio.play() 会广播 'on' 反杀对方标签（AIbot P2-1 的 ping-pong）
+      if (!this.station || this.connecting) return;
+      if (this.halt) { this.heldNext = true; return; } // 暂停期上游断流：置搁浅标记，resume 走 retryOrNext 立即重连（review P3-1）——否则对已 ended 元素 play() 无效，最坏要等看门狗 12s
+      this.retryOrNext();
+    });
     try { localStorage.removeItem('radio.srcmem'); } catch (_) {} // 键升级一次性失效：旧记忆多记着「xmcdn 代理旧路」，留着会压住启发式直流优先
     // 多标签页防双播（N3/r2 ⑤）：后来者赢——新标签开播广播，旧标签正在播/建流中则让位暂停（非 stop，保留台位可续播）。
     // 规范保证不回发发送者自身，无需自过滤；⚠ 通道 'vradio' 已与 Store 共享（'store' 重拉消息）——必须按字面量
@@ -176,8 +180,10 @@ const Player = {
     const raw = viaProxy ? decodeURIComponent(u.replace(/^\/proxy\?url=/, '')) : u;
     this.curUrl = raw; // 正在播的远端原始 URL（曲讯轮询取 ICY 用）
     const isHls = /\.m3u8(\?|$)/i.test(raw);
-    // 走代理时的远端基准：相对分片要拼回远端（hls.js 会把相对分片解析到 localhost）
-    const proxyBase = viaProxy ? new URL(raw).href : null;
+    // 走代理时的远端基准：相对分片要拼回远端（hls.js 会把相对分片解析到 localhost）。
+    // 畸形 URL（导入列表可带过 parse 的前缀校验）在此裸解析会抛错炸掉 play 链、UI 卡「连接中」——按源失败顺延（audit-r2 P2-1 附带）
+    let proxyBase = null;
+    if (viaProxy) { try { proxyBase = new URL(raw).href; } catch (_) { return onFail(); } }
     audio.onerror = onFail;
     if (isHls && window.Hls && Hls.isSupported()) {
       this.hls = new Hls({

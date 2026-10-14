@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- Compose 全权绘制，框架主题只管窗口底色/状态栏色调（DayNight 随系统，radio.theme 语义在 Compose 层再裁决） -->
+  <style name="Theme.VRadio" parent="android:Theme.Material.NoActionBar">
+    <item name="android:windowBackground">@android:color/background_dark</item>
+    <item name="android:statusBarColor">@android:color/transparent</item>
+    <item name="android:navigationBarColor">@android:color/transparent</item>
+  </style>
+</resources>

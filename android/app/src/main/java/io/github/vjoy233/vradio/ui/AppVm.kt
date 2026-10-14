@@ -1,0 +1,637 @@
+package io.github.vjoy233.vradio.ui
+
+import android.app.Application
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Uri
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import io.github.vjoy233.vradio.MainActivity
+import io.github.vjoy233.vradio.check.CheckStream
+import io.github.vjoy233.vradio.check.Health
+import io.github.vjoy233.vradio.consts.C
+import io.github.vjoy233.vradio.data.Backup
+import io.github.vjoy233.vradio.data.CfgCodec
+import io.github.vjoy233.vradio.data.HttpText
+import io.github.vjoy233.vradio.data.Library
+import io.github.vjoy233.vradio.data.Logos
+import io.github.vjoy233.vradio.data.MyRadio
+import io.github.vjoy233.vradio.data.RadioTxt
+import io.github.vjoy233.vradio.data.Store
+import io.github.vjoy233.vradio.check.OkHttpRaw
+import io.github.vjoy233.vradio.data.OkHttpText
+import io.github.vjoy233.vradio.model.Cfg
+import io.github.vjoy233.vradio.model.PState
+import io.github.vjoy233.vradio.model.Station
+import io.github.vjoy233.vradio.model.SongRec
+import io.github.vjoy233.vradio.player.PlayerHolder
+import io.github.vjoy233.vradio.sync.Gh
+import io.github.vjoy233.vradio.sync.LightUpdate
+import io.github.vjoy233.vradio.sync.SyncEngine
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+
+/* AppVm —— 集中 state 对象 + 单一渲染入口精神（app.js App.state 的安卓形态）。
+   持有数据层（Library/Logos/MyRadio）并编排：boot 装配、手动/boot 静默/同步后增量体检、
+   D7 轻更新、M4 端内同步、导入导出、播放交互。
+   纪律：全部主线程交互，网络/体检在 viewModelScope + Dispatchers.IO；
+   toast = 后台任务反馈、status = 用户主动操作反馈（sync.js/App.toast 分工，两通道不双写）。 */
+
+enum class Nav { LIST, SETTINGS, ADD }   // 手写导航态（无导航库，契约）
+
+class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
+
+  /* ---------- 依赖层装配（契约 API，收口后口径） ---------- */
+  private val http: HttpText = OkHttpText()
+  private val gh = Gh(http)
+  private val myRadio = MyRadio(ctx.filesDir)
+  val lib = Library(Store, ctx.filesDir)                     // mainText/myText 由 boot 装载后 reload
+  val logos = Logos(ctx.filesDir, http, System::currentTimeMillis)
+  private val checker = CheckStream(OkHttpRaw())
+  private val light = LightUpdate(gh, ctx.filesDir)
+  // SyncEngine.run(curText)：写 filesDir 副本 + 返回 SyncResult（ok=false=合并低于下限已中止未动文件）
+  private val engine by lazy { SyncEngine(gh, checker, ctx.filesDir) }
+
+  /* ---------- 列表态（radio.view/showdead/theme 三键持久化，app.js loadUi3 同款） ---------- */
+  val cat = MutableStateFlow("全部")
+  val keyword = MutableStateFlow("")
+  val view = MutableStateFlow("grid")
+  val showDead = MutableStateFlow(false)
+  val theme = MutableStateFlow("auto")
+  private val stamp = MutableStateFlow(0)                    // 渲染哨兵（app.js state.stamp）
+  val nav = MutableStateFlow(Nav.LIST)
+  val showSrc = MutableStateFlow(false)
+  val showSongs = MutableStateFlow(false)
+  val locate = MutableStateFlow<String?>(null)               // 回到正在播（web locatePlaying）
+  val status = MutableStateFlow("")                          // 用户主动操作反馈（#status 同款）
+
+  /* ---------- 进行态/结果文案 ---------- */
+  val healthBusy = MutableStateFlow(false); val healthProg = MutableStateFlow(""); val healthResult = MutableStateFlow("")
+  val updateBusy = MutableStateFlow(false); val updateMsg = MutableStateFlow("")
+  val syncBusy = MutableStateFlow(false); val syncMsg = MutableStateFlow("")
+  val addBusy = MutableStateFlow(false); val addMsg = MutableStateFlow("")
+  val confirmReq = MutableStateFlow<String?>(null)           // 导入覆盖确认门槛
+  private val manualRun = AtomicBoolean(false)                // 手动体检在跑（静默版让位标志）
+  private var pendingImp: Pair<Imp, Any?>? = null
+  private var lastVol = C.DEFAULT_VOL                         // 取消静音恢复值（web restoreVol 近似）
+  private var assetsStamp = ""
+
+  enum class Imp { BACKUP, M3U, CFG }
+  enum class Exp { BACKUP, M3U, SONGS, CFG }
+
+  private val toastCh = Channel<String>(Channel.BUFFERED)
+  val toasts: Flow<String> = toastCh.receiveAsFlow()
+  fun toast(msg: String) { toastCh.trySend(msg) }
+
+  private val cur get() = PlayerHolder.ui.value
+  private val playKeys = PlayerHolder.ui.map { it.st to it.station?.key }.distinctUntilChanged()
+
+  /** 渲染快照（唯一渲染入口精神：列表 + 分类角标 + 死台开关可见性 + 空态文案） */
+  data class ListUi(val list: List<Station>, val chips: List<Pair<String, Int>>, val hasDead: Boolean, val empty: String?)
+
+  val listUi: StateFlow<ListUi> = combine(cat, keyword, showDead, playKeys, stamp) { _, _, _, _, _ -> computeListUi() }
+    .stateIn(viewModelScope, SharingStarted.Eagerly, ListUi(emptyList(), emptyList(), false, null))
+
+  init {
+    wirePlayer()
+    viewModelScope.launch(Dispatchers.IO) { boot() }
+  }
+
+  /* ---------- boot 编排（app.js boot + sync.js bootQuiet 平移；安卓不跑首启基线，plan M3 拍板）：
+     assets 读 radio.txt/logos.txt/data-stamp.txt → D7 filesDir 副本优先（LightUpdate.radioText 非空用之）→
+     my-radio 装载 → Library.reload 装配 → Logos 装载 → UI 三键恢复 → 台标预取（收藏+正在播）→
+     4s 后静默体检（收藏+最近 ∪ 死标记台范围，Health.bootScope 节流；仅 WiFi，D10） ---------- */
+  private suspend fun boot() {
+    assetsStamp = readAsset("data-stamp.txt")?.trim() ?: ""
+    val aRadio = readAsset("radio.txt") ?: ""
+    val aLogos = readAsset("logos.txt") ?: ""
+    lib.mainText = light.radioText() ?: aRadio
+    lib.myText = myRadio.readText()
+    runCatching { lib.reload() }
+    runCatching { logos.loadBuiltins(light.logosText() ?: aLogos) }
+    view.value = if (Store.get(C.K_VIEW) == "list") "list" else "grid"   // 网格默认
+    showDead.value = Store.get(C.K_SHOWDEAD) == "1"                      // 死台默认隐藏
+    theme.value = listOf("auto", "light", "dark").firstOrNull { it == Store.get(C.K_THEME) } ?: "auto"
+    stamp.value++
+    primeAll()
+    delay(4000)                                                          // 首屏后 4s 静默复查（B-10）
+    if (unmetered()) silentCheck()                                       // 仅 WiFi（D10）；移动数据静默跳过
+  }
+
+  private fun readAsset(name: String): String? = runCatching {
+    ctx.assets.open(name).bufferedReader().use { it.readText() }
+  }.getOrNull()
+
+  /* PlayerHolder 回调接线（player 不反向伸手进 UI，方向照抄 Web） */
+  private fun wirePlayer() {
+    PlayerHolder.onStepFav = { d -> stepFav(d) }                          // ⏮⏭ / ←→ 收藏间切台
+    PlayerHolder.onPlayLast = { resumeLast() }                            // 媒体键 play 空台 → 续播上次
+    PlayerHolder.onSong = { u0, t ->                                     // ICY 换歌（PlayerHolder 已做换歌判定）：入史
+      viewModelScope.launch(Dispatchers.IO) { runCatching { lib.pushSong(u0, t) }; stamp.value++ }
+    }
+    PlayerHolder.logoProvider = { s -> logos.get(s) }                     // 锁屏 artwork 同步窥探口径
+  }
+
+  /* 台标预取（收藏 + 正在播优先，请求量可控）；完成后重渲一次取新解析到的 URL */
+  private fun primeAll() = viewModelScope.launch(Dispatchers.IO) {
+    val seen = HashSet<String>()
+    for (f in lib.favs) {
+      val s = runCatching { lib.resolve(f.k) }.getOrNull() ?: continue
+      if (seen.add(s.key)) runCatching { logos.prime(s, true) }
+    }
+    cur.station?.let { s -> if (seen.add(s.key)) runCatching { logos.prime(s, true) } }
+    stamp.value++
+  }
+
+  /* WiFi-only 判定（D10）：isActiveNetworkMetered==false 视为 WiFi（无网时系统报计量，自然跳过） */
+  private fun unmetered(): Boolean {
+    val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
+    return !cm.isActiveNetworkMetered
+  }
+
+  /* ---------- 列表计算（app.js visible/catCounts/emptyHtml 平移；分类/关键词口径叠加在 Library.visible 之上） ---------- */
+
+  private fun playKey(): String? { val u = cur; return if (u.st == PState.PLAYING || u.st == PState.PAUSED) u.station?.key else null }
+  private fun connKey(): String? { val u = cur; return if (u.st == PState.CONNECTING) u.station?.key else null }
+
+  private fun recentList(vis: List<Station>): List<Station> {
+    val keys = vis.mapTo(HashSet()) { it.key }
+    return lib.recents.mapNotNull { r -> runCatching { lib.resolve(r.k) }.getOrNull() }
+      .filter { keys.contains(it.key) }.distinctBy { it.key }
+  }
+
+  private fun filteredList(includeDead: Boolean): List<Station> {
+    var list = runCatching { lib.visible(includeDead, playKey(), connKey()) }.getOrDefault(emptyList())
+    list = when (val c = cat.value) {
+      "最近" -> recentList(list)
+      "★收藏" -> list.filter { runCatching { lib.isFav(it) }.getOrDefault(false) }
+      "全部" -> list
+      else -> list.filter { it.c == c }
+    }
+    val kw = keyword.value.trim().lowercase()
+    if (kw.isNotEmpty()) {                                                // 多词空格 AND（audit-r2 口径）
+      val ws = kw.split(Regex("\\s+"))
+      list = list.filter { s -> val n = s.n.lowercase(); ws.all { n.contains(it) } }
+    }
+    return list
+  }
+
+  private fun computeListUi(): ListUi {
+    val vis = runCatching { lib.visible(showDead.value, playKey(), connKey()) }.getOrDefault(emptyList())
+    val byCat = vis.groupingBy { it.c }.eachCount()
+    val chips = ArrayList<Pair<String, Int>>(10)
+    chips.add("全部" to vis.size)
+    chips.add("★收藏" to vis.count { runCatching { lib.isFav(it) }.getOrDefault(false) })
+    chips.add("最近" to recentList(vis).size)
+    val cats = runCatching { lib.cats() }.getOrDefault(emptyList())
+    for (c in cats) chips.add(c to (byCat[c] ?: 0))
+    if (cat.value != "全部" && cat.value != "★收藏" && cat.value != "最近" && chips.none { it.first == cat.value })
+      cat.value = "全部"                                                  // 数据更新/分类被藏后回退全部（buildCats 同款）
+    val list = filteredList(showDead.value)
+    val empty = if (list.isEmpty()) emptyMsg() else null
+    val hasDead = runCatching { lib.stations.any { it.health == "dead" } }.getOrDefault(false)
+    return ListUi(list, chips, hasDead, empty)
+  }
+
+  private fun emptyMsg(): String {                                        // emptyHtml 平移（空态给原因和下一步）
+    if (cat.value == "★收藏" && lib.favs.isEmpty()) return "还没有收藏电台——点电台旁 ☆ 即可收藏"
+    if (cat.value == "最近" && lib.recents.isEmpty()) return "还没有播放记录——点任意电台即开始收听"
+    if (filteredList(true).isNotEmpty()) return "当前筛选的电台均已体检不可用（默认隐藏）——到设置打开「显示无效源」"
+    return if (keyword.value.isNotBlank()) "没有匹配「${keyword.value}」的电台，换个关键词试试" else "该分类暂无电台"
+  }
+
+  /* ---------- 交互入口（用户主动操作，反馈走 status） ---------- */
+
+  fun setCat(c: String) { cat.value = c }
+  fun setKeyword(k: String) { keyword.value = k }
+  fun setView(v: String) { view.value = v; viewModelScope.launch(Dispatchers.IO) { Store.set(C.K_VIEW, v) } }
+  fun toggleDead() {
+    showDead.value = !showDead.value
+    viewModelScope.launch(Dispatchers.IO) { Store.set(C.K_SHOWDEAD, if (showDead.value) "1" else "0") }
+  }
+  fun setTheme(t: String) { theme.value = t; viewModelScope.launch(Dispatchers.IO) { Store.set(C.K_THEME, t) } }
+
+  fun startPlay(s: Station, prefer: Int = -1) {
+    MainActivity.reqNotif?.invoke()                                       // 通知权限首播申请（拒绝不阻断，只问一次）
+    viewModelScope.launch(Dispatchers.IO) {                               // 最近重排 + 正在播台标优先补全
+      runCatching { lib.recordRecent(s) }
+      runCatching { logos.prime(s, true) }
+      stamp.value++
+    }
+    PlayerHolder.play(s, prefer)
+  }
+
+  fun togglePlay(k: String) {                                             // 再点当前台 = 暂停/继续；点其他台 = 切换
+    val s = runCatching { lib.stations.firstOrNull { it.key == k } }.getOrNull() ?: return
+    val u = cur
+    if (u.station?.key == k && u.st != PState.IDLE) { PlayerHolder.toggle(); return }
+    startPlay(s)
+  }
+
+  fun toggleFav(s: Station) {
+    viewModelScope.launch(Dispatchers.IO) {
+      runCatching { lib.toggleFav(s) }
+      if (runCatching { lib.isFav(s) }.getOrDefault(false)) runCatching { logos.prime(s, true) }   // 新收藏优先补台标
+      stamp.value++
+    }
+  }
+
+  fun stepFav(d: Int) {                                                   // ←/→ 收藏间切台（A-5）
+    val favsIn = filteredList(showDead.value).filter { runCatching { lib.isFav(it) }.getOrDefault(false) }
+    if (favsIn.isEmpty()) { status.value = "还没有收藏电台——点电台旁 ☆ 收藏后可用收藏间切换"; return }
+    val curIdx = cur.station?.let { c -> favsIn.indexOfFirst { it.key == c.key } } ?: -1
+    val nx = if (curIdx < 0) (if (d > 0) 0 else favsIn.size - 1) else (curIdx + d + favsIn.size) % favsIn.size
+    togglePlay(favsIn[nx].key)
+  }
+
+  fun resumeLast() {                                                      // ▶ 空台 = 续播上次收听
+    val r = lib.recents.firstOrNull()
+    val s = r?.let { runCatching { lib.resolve(it.k) }.getOrNull() }
+    if (s == null) { status.value = if (r == null) "还没有播放记录" else "上次收听的电台已不在列表中，请直接点播"; return }
+    startPlay(s)
+  }
+
+  fun locatePlaying() {                                                   // 回到正在播（N5）：不可见先回全部+清搜索
+    val s = cur.station ?: return
+    cat.value = "全部"; keyword.value = ""
+    nav.value = Nav.LIST
+    locate.value = s.key
+  }
+
+  /* ---------- 选源（web ②a/②c：立即切播；↺ 恢复默认 = forgetSrc + 重播） ---------- */
+
+  private val M3U8_RE = Regex("""\.m3u8(\?|$)""", RegexOption.IGNORE_CASE)
+  private val QT_RE = Regex("""ls\.qingting\.fm/live/\d+\.m3u8""")
+
+  /* 默认源启发式（player.js srcRank/srcOrder 平移，决策链的静态基座）：
+     蜻蜓 ls.m3u8 可换算 64k mp3 直流 = rank0；其余 m3u8 = rank1；稳定排序取首个 rank0 */
+  fun srcDefault(s: Station): Int {
+    if (s.u.isEmpty()) return 0
+    return s.u.indices.minByOrNull { i ->
+      val u = s.u[i]
+      if (M3U8_RE.containsMatchIn(u) && !QT_RE.containsMatchIn(u)) 1 else 0
+    } ?: 0
+  }
+
+  fun srcReset() {
+    val s = cur.station ?: return
+    val had = PlayerHolder.forgetSrc()
+    startPlay(s)                                                          // 无 prefer 且记忆已清 → 纯启发式序
+    status.value = if (had) "已恢复默认源，从默认源重播" else "本无源记忆，按默认序重播"
+  }
+
+  /* ---------- 音量（每台音量记忆在 PlayerHolder；取消静音的恢复值由本层兜底记） ---------- */
+
+  fun setVol(pct: Int) { if (pct > 0) lastVol = pct; PlayerHolder.setVolPct(pct) }
+  fun toggleMute() {
+    if (cur.volPct > 0) { PlayerHolder.setVolPct(0); status.value = "已静音" }
+    else { PlayerHolder.setVolPct(lastVol); status.value = "音量 $lastVol%" }
+  }
+
+  /* ---------- 只读透出 ---------- */
+
+  fun logoOf(s: Station): String = runCatching { logos.get(s) }.getOrDefault("")
+  fun songsOf(u0: String): List<SongRec> = runCatching { lib.songsOf(u0) }.getOrDefault(emptyList())
+  fun permOf(s: Station): Boolean = runCatching { lib.healthMarks[s.key]?.perm == 1 }.getOrDefault(false)
+  fun catOptions(): List<String> = runCatching { lib.cats() }.getOrDefault(emptyList())
+  fun lastLine(): String {
+    val r = lib.recents.firstOrNull() ?: return "未在播放"
+    val s = runCatching { lib.resolve(r.k) }.getOrNull() ?: return "未在播放"
+    return "上次收听：${s.n}"
+  }
+
+  /* ---------- 体检编排（sync.js 四通道的安卓面：手动全量 / boot 静默 / 同步后增量；busy 互斥手动优先） ----------
+     网络探测在 IO 并发（前 4 源任一活即 OK，web runCheck 口径），结果回主线程统一落标记
+     （Library/HashMap 非线程安全）。网络层整体故障（全部失败且样本量够）不落标记——
+     移动网络抖动不该把整库标死（Web 无此问题：探活走本机后端恒可达）。 */
+
+  private suspend fun probe(s: Station): Boolean {
+    for (u in s.u.take(4)) {
+      val ok = runCatching { checker.check(u, C.CHECK_WINDOW_MS).ok }.getOrDefault(false)
+      if (ok) return true
+    }
+    return false
+  }
+
+  private suspend fun probeAll(list: List<Station>, conc: Int, stop: () -> Boolean, onProg: (Int, Int) -> Unit): List<Pair<Station, Boolean>> {
+    val q = ConcurrentLinkedQueue(list)
+    val out = ConcurrentLinkedQueue<Pair<Station, Boolean>>()
+    val done = AtomicInteger(); val total = list.size
+    coroutineScope {
+      repeat(conc) {
+        launch(Dispatchers.IO) {
+          while (!stop()) {
+            val s = q.poll() ?: return@launch
+            out.add(s to probe(s))
+            onProg(done.incrementAndGet(), total)
+          }
+        }
+      }
+    }
+    return out.toList()
+  }
+
+  /** 主线程统一套用分档生命周期并计数（0=ok 1=疑似 2=停运） */
+  private fun applyMarks(res: List<Pair<Station, Boolean>>): IntArray {
+    val c = IntArray(3)
+    val marks = lib.healthMarks
+    for ((s, ok) in res) {
+      if (ok) { runCatching { Health.onAlive(marks, s.key) }; c[0]++ }
+      else {
+        runCatching { Health.onDead(marks, s.key, s.u.take(6), System.currentTimeMillis()) }
+        if (marks[s.key]?.perm == 1) c[2]++ else c[1]++
+      }
+    }
+    return c
+  }
+
+  private suspend fun persistHealth() {                                  // 落盘走 IO、内存态套用回主线程（调用方上下文不定，此处自归位）
+    withContext(Dispatchers.IO) { runCatching { lib.saveHealth() } }
+    withContext(Dispatchers.Main) { runCatching { lib.applyHealthToStations() }; stamp.value++ }
+  }
+
+  fun manualHealth() {                                                    // 手动全量（并发 6；反馈走设置页文案 + 完成 toast）
+    if (manualRun.get()) return
+    viewModelScope.launch {
+      manualRun.set(true)
+      try {
+        while (healthBusy.value) delay(250)                               // 静默版让位收尾（手动优先，B-10 互斥）
+        healthBusy.value = true
+        healthResult.value = ""
+        val list = runCatching { lib.visible(true, playKey(), connKey()) }.getOrDefault(emptyList())   // 连默认隐藏的死台一起复查
+        healthProg.value = "体检中 0/${list.size}"
+        val res = probeAll(list, 6, { false }) { d, t -> healthProg.value = "体检中 $d/$t" }
+        if (res.size >= 5 && res.all { !it.second }) {                    // 网络层故障兜底：不落任何标记
+          healthResult.value = "体检未完成：全部探测失败（疑似网络不可用），未标记任何电台"
+          toast(healthResult.value); return@launch
+        }
+        val c = applyMarks(res)
+        persistHealth()
+        healthResult.value = "体检完成：正常 ${c[0]} · 疑似不可达 ${c[1]} · 已停运 ${c[2]}"
+        toast(healthResult.value)
+      } catch (e: Exception) { healthResult.value = "体检异常：${e.message ?: e.toString()}" }
+      finally { manualRun.set(false); healthBusy.value = false }
+    }
+  }
+
+  private fun silentCheck() {                                             // boot 静默复测（并发 2；不碰状态栏/toast）
+    viewModelScope.launch(Dispatchers.IO) {
+      if (manualRun.get() || healthBusy.value) return@launch
+      val scope = runCatching {
+        Health.bootScope(lib.healthMarks, lib.favs, lib.recents, lib.stations, System.currentTimeMillis())
+      }.getOrNull() ?: return@launch
+      if (scope.isEmpty()) return@launch
+      healthBusy.value = true
+      try {
+        val res = probeAll(scope, 2, { manualRun.get() }) { _, _ -> }
+        if (manualRun.get()) return@launch                                // 让位手动：已测结果由手动收尾统一落
+        if (res.size >= 5 && res.all { !it.second }) return@launch
+        withContext(Dispatchers.Main) { applyMarks(res) }
+        persistHealth()
+      } catch (_: Exception) { } finally { if (!manualRun.get()) healthBusy.value = false }
+    }
+  }
+
+  private fun incCheck(names: List<String>) {                             // 同步后增量体检（D4）：diff 新增国内台
+    viewModelScope.launch(Dispatchers.IO) {
+      if (manualRun.get() || healthBusy.value) return@launch
+      val set = names.toHashSet()
+      val list = runCatching { lib.stations.filter { set.contains(it.n) && !it.hidden } }.getOrDefault(emptyList())
+      if (list.isEmpty()) return@launch
+      healthBusy.value = true
+      toast("后台体检新增电台 ${list.size} 台…")
+      try {
+        val res = probeAll(list, 2, { manualRun.get() }) { _, _ -> }
+        if (manualRun.get()) return@launch
+        if (res.size >= 5 && res.all { !it.second }) return@launch
+        val c = withContext(Dispatchers.Main) { applyMarks(res) }
+        persistHealth()
+        toast("新增 ${list.size} 台体检完成，${c[1] + c[2]} 台无效已隐藏")
+      } catch (_: Exception) { } finally { if (!manualRun.get()) healthBusy.value = false }
+    }
+  }
+
+  /* ---------- D7 轻更新（设置页手动触发；判新旧 = GitHub commits vs 打包基线/assets 副本 stamp） ---------- */
+
+  fun checkUpdate() {
+    viewModelScope.launch {
+      if (updateBusy.value) return@launch
+      updateBusy.value = true; updateMsg.value = "检查更新中…"
+      try {
+        val base = light.stamp() ?: assetsStamp
+        // 契约：check 抛异常=网络失败（明示）；返回 null=无更新
+        val newer = withContext(Dispatchers.IO) { light.check(base) }
+        if (newer == null) {
+          updateMsg.value = if (base.isEmpty()) "已是最新" else "已是最新（数据基线 ${base.take(10)}）"
+          return@launch
+        }
+        updateMsg.value = "发现新数据（${newer.take(10)}），下载中…"
+        val before = lib.favs.mapNotNull { f -> runCatching { lib.resolve(f.k) }.getOrNull()?.let { f to it } }
+        val res = withContext(Dispatchers.IO) { runCatching { light.apply(lib.mainText) }.getOrNull() }
+        if (res == null) { updateMsg.value = "更新失败：下载未完成（已保留原数据）"; return@launch }
+        val texts = withContext(Dispatchers.IO) { light.radioText() to light.logosText() }
+        texts.first?.let { lib.mainText = it }
+        texts.second?.let { runCatching { logos.loadBuiltins(it) } }
+        lib.reload(); stamp.value++
+        primeAll()
+        updateMsg.value = "已更新到 ${res.commitIso.take(10)} · 台数 +${res.added}/-${res.removed}"
+        toast(updateMsg.value)
+        pointGone(before)                                                 // 收藏台消失点名（removed ∩ 收藏）
+      } catch (e: Exception) { updateMsg.value = "检查更新失败：${e.message ?: "网络错误"}" }
+      finally { updateBusy.value = false }
+    }
+  }
+
+  /* ---------- M4 端内同步（WiFi-only：移动数据给提示不跑；完成后 diff 摘要 + 收藏点名 + 增量体检） ---------- */
+
+  fun fullSyncNow() {
+    viewModelScope.launch {
+      if (syncBusy.value) return@launch
+      if (!unmetered()) {
+        syncMsg.value = "移动数据下不同步（欧美台逐个实测流量大）——连 WiFi 后再试"
+        toast(syncMsg.value); return@launch
+      }
+      syncBusy.value = true
+      syncMsg.value = "同步中：国内上游 + 欧美台逐个实测，约 1 分钟…"
+      try {
+        val before = lib.favs.mapNotNull { f -> runCatching { lib.resolve(f.k) }.getOrNull()?.let { f to it } }
+        val d = withContext(Dispatchers.IO) { engine.run(lib.mainText) }
+        if (!d.ok) {
+          syncMsg.value = "同步失败：合并结果异常，已保留原列表"; toast(syncMsg.value); return@launch
+        }
+        val texts = withContext(Dispatchers.IO) { light.radioText() to light.logosText() }
+        texts.first?.let { lib.mainText = it }
+        texts.second?.let { runCatching { logos.loadBuiltins(it) } }
+        lib.reload(); stamp.value++
+        primeAll()
+        syncMsg.value = "同步完成：新增 ${d.added} 台、消失 ${d.removed} 台"
+        toast(syncMsg.value)
+        pointGone(before)
+        if (d.addedCheck.isNotEmpty()) { delay(800); incCheck(d.addedCheck.take(C.ADDED_CHECK_CAP)) }   // D4
+      } catch (e: Exception) { syncMsg.value = "同步失败：${e.message ?: "网络错误"}"; toast(syncMsg.value) }
+      finally { syncBusy.value = false }
+    }
+  }
+
+  /** 收藏台消失点名：更新前能解析、更新后失联的收藏台（不依赖 diff 明细字段） */
+  private fun pointGone(before: List<Pair<io.github.vjoy233.vradio.model.FavEntry, Station>>) {
+    val gone = before.filter { runCatching { lib.resolve(it.first.k) }.getOrNull() == null }.map { it.second.n }
+    if (gone.isEmpty()) return
+    toast("⚠ 收藏台已不在新列表：" + gone.take(5).joinToString("、") + if (gone.size > 5) " 等 ${gone.size} 个" else "")
+  }
+
+  /* ---------- 添加自定义电台（A-2）：探活先行（12s 窗，蜻蜓系慢源救援口径），失败明示不静默 ---------- */
+
+  fun addStation(name: String, catIn: String, customCat: String, url: String, onOk: () -> Unit) {
+    val n = name.trim().replace(Regex("[,\\r\\n|]"), " ").take(40)        // csv 分隔符清洗（server.js 同款）
+    val u = url.trim().replace(Regex("\\s+"), "")                          // URL 内不该有空白（坑③）
+    val c = customCat.trim().take(24).ifEmpty { catIn }
+    if (n.isEmpty()) { addMsg.value = "请填写电台名"; return }
+    if (!Regex("^https?://").containsMatchIn(u)) { addMsg.value = "流地址需以 http(s):// 开头"; return }
+    if (c.isEmpty()) { addMsg.value = "请选择或填写分类"; return }
+    viewModelScope.launch {
+      addBusy.value = true; addMsg.value = "探活中…（最长 12 秒，蜻蜓系建流慢属正常）"
+      try {
+        val v = withContext(Dispatchers.IO) { runCatching { checker.check(u, C.MYSTATION_TIMEOUT_MS) }.getOrNull() }
+        if (v == null || !v.ok) {
+          addMsg.value = "探活未通过：${v?.why?.takeIf { it.isNotEmpty() } ?: "源不可用（假流/死链）"}——未写入"
+          return@launch
+        }
+        val ok = withContext(Dispatchers.IO) { runCatching { myRadio.append(n, c, u) }.getOrDefault(false) }
+        if (!ok) { addMsg.value = "写入失败：个人列表超限（500 行 / 64KB）"; return@launch }
+        withContext(Dispatchers.IO) { lib.myText = myRadio.readText() }
+        lib.reload(); stamp.value++
+        toast("已添加「$n」到「$c」（持久于 my-radio.txt，同步不覆盖）")
+        onOk()
+      } catch (e: Exception) { addMsg.value = "添加失败：${e.message ?: e.toString()}" }
+      finally { addBusy.value = false }
+    }
+  }
+
+  /* ---------- 导入导出（SAF；backup v2 / m3u 收藏 / songs txt / config json 四件导出 + 三件导入） ---------- */
+
+  fun exportTo(uri: Uri, kind: Exp) {
+    viewModelScope.launch(Dispatchers.IO) {
+      try {
+        val content = when (kind) {
+          Exp.BACKUP -> Backup.exportAll(lib, myRadio.readText(), System.currentTimeMillis())
+          Exp.M3U -> {
+            if (lib.favs.isEmpty()) { toast("还没有收藏，先点 ☆ 收藏再导出"); return@launch }
+            Backup.m3uFavs(lib)
+          }
+          Exp.SONGS -> Backup.songsTxt(lib) { System.currentTimeMillis() }
+          Exp.CFG -> Backup.cfgJson(lib.cfg)
+        }
+        val w = ctx.contentResolver.openOutputStream(uri, "wt")
+        if (w == null) { toast("导出失败：无法写入文件"); return@launch }
+        w.use { it.write(content.toByteArray(Charsets.UTF_8)) }
+        toast("已导出 ${expName(kind)}")
+      } catch (e: Exception) { toast("导出失败：${e.message ?: e.toString()}") }
+    }
+  }
+
+  private fun expName(kind: Exp) = when (kind) {
+    Exp.BACKUP -> "vradio-backup.json"; Exp.M3U -> "vradio-favorites.m3u"
+    Exp.SONGS -> "vradio-songs.txt"; Exp.CFG -> "vradio-config.json"
+  }
+
+  fun importFrom(uri: Uri, kind: Imp) {
+    viewModelScope.launch(Dispatchers.IO) {
+      val text = readUri(uri) ?: run { toast("读取文件失败"); return@launch }
+      when (kind) {
+        Imp.BACKUP -> {
+          val p = runCatching { Backup.parseImport(text) }.getOrNull()
+          if (p == null) { toast("导入失败：不是 vradio 完整备份文件"); return@launch }
+          val n = C.KEYS.count { p.data[it] != null }
+          if (n == 0) { toast("导入失败：备份中无有效数据"); return@launch }
+          pendingImp = Imp.BACKUP to p
+          confirmReq.value = "导入将覆盖本地全部数据（备份含 $n 个数据项：收藏/维护配置/健康标记/歌曲历史全部替换）。继续？"
+        }
+        Imp.M3U -> {                                                      // 收藏恢复（E4）：主列表不动，只恢复收藏态
+          if (!text.contains("#VRADIO:FAV")) { toast("导入失败：不是本项目导出的收藏 m3u（缺 #VRADIO:FAV 标记）"); return@launch }
+          val list = runCatching { RadioTxt.parse(text) }.getOrDefault(emptyList())
+          if (list.isEmpty()) { toast("导入失败：未解析到任何电台"); return@launch }
+          var added = 0
+          for (s in list) {
+            val has = runCatching { lib.isFav(s) }.getOrDefault(false)
+            if (!has) { runCatching { lib.toggleFav(s) }; added++ }
+          }
+          stamp.value++
+          toast("已恢复收藏：${list.size} 个电台（其中新增收藏 $added）")
+        }
+        Imp.CFG -> {
+          val j = runCatching { JSONObject(text) }.getOrNull()
+          if (j == null) { toast("导入失败：不是合法 JSON 文件"); return@launch }
+          val c = runCatching { CfgCodec.parse(j.optJSONObject("cfg")?.toString()) }.getOrDefault(Cfg())
+          val n = runCatching { CfgCodec.count(c) }.getOrDefault(0)
+          pendingImp = Imp.CFG to c
+          confirmReq.value = "导入将覆盖本地全部维护配置（新配置共 $n 项，含 ${c.cats.size} 个自建分类）。继续？"
+        }
+      }
+    }
+  }
+
+  private fun readUri(uri: Uri): String? = runCatching {
+    ctx.contentResolver.openInputStream(uri)?.use { ins ->
+      val cap = C.BACKUP_MAX_BYTES.toInt()                                // 2MB 封顶（server.js 同款口径）
+      val bos = java.io.ByteArrayOutputStream()
+      val buf = ByteArray(8192); var total = 0
+      while (total < cap) {
+        val n = ins.read(buf); if (n < 0) break
+        val take = minOf(n, cap - total); bos.write(buf, 0, take); total += take
+      }
+      String(bos.toByteArray(), Charsets.UTF_8)
+    }
+  }.getOrNull()
+
+  fun cancelConfirm() { confirmReq.value = null; pendingImp = null }
+
+  fun applyConfirmed() {
+    val p = pendingImp ?: return
+    confirmReq.value = null; pendingImp = null
+    viewModelScope.launch {
+      try {
+        when (p.first) {
+          Imp.BACKUP -> {
+            val pay = p.second as Backup.ImportPayload
+            withContext(Dispatchers.IO) {
+              Store.applyAll(pay.data)                                    // 白名单键写入/缺键 remove
+              pay.my?.let { runCatching { myRadio.replace(it.joinToString("\n")) } }   // v2 含 my-radio（v1 无则不动）
+              lib.myText = myRadio.readText()
+            }
+            lib.reload(); stamp.value++; primeAll()
+            toast("已恢复完整备份")
+          }
+          Imp.M3U -> {}
+          Imp.CFG -> {
+            val c = p.second as Cfg
+            withContext(Dispatchers.IO) { Store.set(C.K_CFG, CfgCodec.toJson(c)) }
+            lib.cfg = c
+            runCatching { lib.reapplyCfg() }
+            stamp.value++
+            toast("已导入维护配置")
+          }
+        }
+      } catch (e: Exception) { toast("导入失败：${e.message ?: e.toString()}") }
+    }
+  }
+}
+

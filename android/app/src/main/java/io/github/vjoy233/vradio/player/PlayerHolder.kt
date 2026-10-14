@@ -293,7 +293,7 @@ object PlayerHolder {
     val cur = p.urls[p.i++]
     curSi = cur.si; curPlay = cur.u; retried = false
     connecting = station // 换源重试期间保持连接中指示（player.js:167）
-    uiMut.update { it.copy(st = PState.CONNECTING, srcIdx = cur.si, status = "连接中… 源" + p.i + "/" + p.urls.size) }
+    uiMut.update { it.copy(st = PState.CONNECTING, srcIdx = cur.si, kbps = 0, status = "连接中… 源" + p.i + "/" + p.urls.size) } // AIbot P3：换源清旧码率（无 ICY 的源残留上一源 kbps）
     markProgress() // 看门狗计时起点：建流期连接挂死同覆盖（player.js:224-225 口径）
     loadVariant(cur.u)
   }
@@ -456,7 +456,8 @@ object PlayerHolder {
 
   /* ---------- 记忆装载与落盘（radio.volperst/radio.srcmem2/radio.vol 经 Store） ---------- */
 
-  private fun reloadMems() { // player.js:79-88：容错读取 + 形状清洗
+  fun reloadMems() { // player.js:79-88：容错读取 + 形状清洗。公开入口（AIbot P1-2）：备份导入 Store 整体替换后
+                     // 必须重载——否则旧内存 Map 会在下次调音量（300ms 攒批）/换源成功时回写冲掉新导入的值
     if (volTOn) { volTOn = false; main.removeCallbacks(volPersist); volPersist.run() } // 先落未攒完的音量（player.js:80）
     volMem = LinkedHashMap()
     runCatching { JSONObject(Store.get(C.K_VOLPERST) ?: "{}") }.getOrNull()?.let { o ->

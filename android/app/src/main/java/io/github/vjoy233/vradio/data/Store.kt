@@ -3,8 +3,6 @@ package io.github.vjoy233.vradio.data
 import io.github.vjoy233.vradio.consts.C
 import org.json.JSONObject
 import java.io.File
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 
 /* 存储收敛层（对标 store.js，安卓单进程大幅简化）：无 rev 发号/脏标记/多标签广播——白名单 13 键 +
    tmp+rename 原子落盘即全部。get/set 值恒为 JSON 字符串（与 Web localStorage 镜像 / data/store.json 完全同格式），
@@ -57,9 +55,7 @@ object Store {
   private fun persist() { // 全量落盘：tmp+rename 原子写，进程写一半被杀不丢收藏（A3 纪律）。
     val f = file ?: return // 未 init：仅内存（正常流程不会走到）
     runCatching {           // 单进程低频写，不做 debounce（Web 的 300ms 攒批是音量条连写护栏，安卓侧同场景写入量毫秒级）
-      val tmp = File(f.parentFile, f.name + ".tmp")
-      tmp.writeText(JSONObject(mem).toString())
-      Files.move(tmp.toPath(), f.toPath(), StandardCopyOption.ATOMIC_MOVE)
-    }
+      writeTextAtomic(f, JSONObject(mem).toString())          // AIbot P2-6：统一原子写实现（含 rename 拒绝降级）
+    }.onFailure { println("[vradio] store.json 落盘失败（内存态仍在，下次写入重试）: $it") }
   }
 }

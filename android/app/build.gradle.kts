@@ -38,11 +38,16 @@ android {
       isMinifyEnabled = true       // R8 收缩（M5 体积哨兵 <5MB 的前提）
       isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      if (ks != null) signingConfig = signingConfigs.getByName("release")
+      // AIbot P2-3：keystore.properties 缺席时回退 debug 签名——unsigned 包装不上；本地/CI 的
+      // assembleRelease 直接可用（正式发布仍走 keystore，见 README 发布节）
+      signingConfig = if (ks != null) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
     }
   }
 
-  buildFeatures { compose = true }
+  buildFeatures {
+    compose = true
+    buildConfig = true             // 版本号单一来源（设置页「关于」读 BuildConfig.VERSION_NAME，AIbot P3）
+  }
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17

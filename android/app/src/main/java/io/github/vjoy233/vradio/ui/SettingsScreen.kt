@@ -1,5 +1,7 @@
 package io.github.vjoy233.vradio.ui
 
+import io.github.vjoy233.vradio.BuildConfig
+
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -125,7 +127,7 @@ fun SettingsScreen(vm: AppVm) {
       }
       item {
         Section("关于")
-        Info("VRadio 0.1.0 · 零依赖本地网络电台（国内电台为主）· 数据来自公开仓库同步\n" +
+        Info("VRadio ${BuildConfig.VERSION_NAME} · 零依赖本地网络电台（国内电台为主）· 数据来自公开仓库同步\n" +
           "流地址天然漂移：播不了先体检或同步源，再怀疑网络")
       }
     }

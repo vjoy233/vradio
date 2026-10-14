@@ -74,7 +74,7 @@ object Health {
     // ② 死标记台（节流 + 最旧优先 + 封顶）
     val dead = ArrayList<Pair<Long, Station>>()
     for ((k, e) in marks) {
-      val gap = (if (e.perm != 0) C.HEALTH_RECHECK_DAYS else 1L) * C.DAY_MS   // 疑似 24h / 停运 7 天
+      val gap = if (e.perm != 0) C.HEALTH_RECHECK_DAYS * C.DAY_MS else C.BOOT_CHECK_COOLDOWN   // 疑似 24h / 停运 7 天（AIbot P3：常数去重）
       if (now - e.t < gap) continue
       val st = find(k, e.u) ?: continue
       if (st.hidden) continue

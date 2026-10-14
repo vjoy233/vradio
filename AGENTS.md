@@ -1,6 +1,6 @@
 # AGENTS.md
 
-VRadio — 零依赖本地网络电台 Web 播放器（国内电台为主、欧美音乐台为辅，面向国内直连环境）。共 9 个源码文件（含 test/smoke.js）+ 3 个数据文件，**无 npm 依赖、无构建步骤**（`npm test` 零依赖烟雾测试，lint/typecheck 无配置）。背景与实测记录详见 README.md，评审与实施依据见 docs/review.md，r2 批次决策见 docs/roadmap-research-r2.md，全面体检见 docs/audit-2026-10-13.md 与 docs/audit-2026-10-14.md。
+VRadio — 零依赖本地网络电台 Web 播放器（国内电台为主、欧美音乐台为辅，面向国内直连环境）。共 9 个源码文件（含 test/smoke.js）+ 3 个数据文件，**无 npm 依赖、无构建步骤**（`npm test` 零依赖烟雾测试，lint/typecheck 无配置）。背景与实测记录详见 README.md，评审与实施依据见 docs/review.md，r2 批次决策见 docs/roadmap-research-r2.md，全面体检见 docs/audit-2026-10-13.md、docs/audit-2026-10-14.md 与 docs/audit-2026-10-14-r2.md（第四轮）。
 
 ## 常用命令
 
@@ -22,11 +22,11 @@ npm test         # = node test/smoke.js，离线冒烟：安全护栏矩阵/幂�
 | `store.js` | 存储收敛层：radio.* 持久键的唯一读写出口。http 形态下 data/store.json（`/api/store`）为主源、localStorage 永远留镜像；file:// 或后端不可用纯 localStorage（与旧版行为一致）。仲裁 = 服务端唯一发号（rev 由 POST 成功分配，客户端不自造；后端写失败标 dirty、boot 先重推 pending 再对账，并发退化为显式 last-write-wins）。多标签 BroadcastChannel 'store' 重拉（debounce 三规则：flush 时读当前内存/收消息作废 pending/beforeunload+visibilitychange flush）。**⚠ 新增任何 radio.* 持久键必须同步扩 store.js 的 KEYS 与 server.js 的 STORE_KEYS**（白名单外的键不落盘，漏扩表现为换浏览器丢该键；已知例外：`radio.logos` 台标缓存可重建不入主源、`radio.storeDirty` 是 Store 自身状态键）。写放大护栏：set 即写镜像 + 300ms debounce 攒批推后端（音量条拖动连续写安全） |
 | `player.js` | 播放引擎：audio/hls/播放态/睡眠定时/MediaSession（台名+曲讯+台标 artwork+⏮⏭ 切台键）/每台音量记忆（`radio.volperst`）/多标签页防双播（BroadcastChannel）/默认源决策链（手动 `prefer` > 成功源记忆 > 直流优先启发式 `srcOrder`；`forgetSrc` 恢复默认）的唯一所有者（世代令牌防串台；断流自愈看门狗；成功源记忆 `radio.srcmem2`，键升级即旧记忆一次性失效） |
 | `logos.js` | 台标数据唯一所有者：三级来源（STARTER 内置 → logos.txt → 运行时解析）/永久缓存/收藏+正在播优先补全/负缓存 7 天 |
-| `app.js` | 应用层：列表/搜索/分类/收藏/最近播放/导入导出/网格+列表双视图渲染/无效源默认隐藏/明暗主题切换/⚙ 维护面板（个人分类与电台调整 + 添加自定义电台 + 追加备选源 + 行内 ▶ 用此源播放）/footer 选源浮层（正在听的多源台切源/恢复默认）/曲讯轮询+码率显示+歌曲历史（含导出）/键盘快捷键+`?` 帮助/回到正在播；集中 state 对象 + 单一 render 入口 |
+| `app.js` | 应用层：列表/搜索（多词空格 AND）/分类/收藏（行内 ☆ + 双击行/移动端长按行收藏）/最近播放/导入导出/网格+列表双视图渲染/无效源默认隐藏/明暗主题切换/⚙ 维护面板（个人分类与电台调整 + 添加自定义电台 + 追加备选源 + 行内 ▶ 用此源播放）/footer 选源浮层（正在听的多源台切源/恢复默认）/曲讯轮询+码率显示+歌曲历史（含导出）/键盘快捷键+`?` 帮助/回到正在播；集中 state 对象 + 单一 render 入口 |
 | `sync.js` | 同步/体检编排（手动全量 + 开机静默体检，`busy` 互斥手动优先；同步 diff 摘要 + 消失收藏台前端点名）：只调用 App/Player 暴露的接口，不改对方状态 |
 | `server.js` | 静态服务（拒 dotfile/`.bak`/`data` 段——store.json 全量个人数据不可被直接 GET）+ `/proxy?url=` 流代理（绕 CORS）+ `POST /api/sync`（响应含 addedCheck 体检测名单）+ `/api/check?url=` 探活（≤4 源）+ `POST /api/mystation`（添加电台：探活先行 + 原子写 my-radio.txt）+ `/api/nowplaying?url=`（ICY 曲讯 + icy-br 码率旁路）+ `/api/store`（GET 全量 / POST 覆盖写 data/store.json：Origin 校验 + 键白名单 + 2MB 封顶 + tmp+rename 串行队列 + rev 唯一发号） |
-| `update-sources.js` | 源同步引擎 + 网络安全护栏（`safeTarget`/`guardLookup` 导出供 server.js 复用）+ 欧美台台标提取（tvg-logo→logos.txt）+ 同步 diff 摘要（台名集合 added/removed）+ radio-data.js 随行产出；可独立作 CLI 运行（改它时两种入口都不能坏，另有 `--logos` 只重建台标） |
-| `test/smoke.js` | 零依赖冒烟测试（audit R1）：静态拦截矩阵（大小写/尾点变形、方法、nosniff）/ 跨源与 Host 白名单 / safeTarget+guardLookup / classifyCn 幂等 / store 白名单+发号 round-trip；离线秒级，已有 data/store.json 自动备份还原 |
+| `update-sources.js` | 源同步引擎 + 网络安全护栏（`safeTarget`/`guardLookup`/`tryUrl`（畸形重定向头归 null，audit-r2 P2-1）导出供 server.js 复用）+ 欧美台台标提取（tvg-logo→logos.txt）+ 同步 diff 摘要（台名集合 added/removed）+ radio-data.js 随行产出；可独立作 CLI 运行（改它时两种入口都不能坏，另有 `--logos` 只重建台标） |
+| `test/smoke.js` | 零依赖冒烟测试（audit R1）：静态拦截矩阵（大小写/尾点变形、方法、nosniff）/ 跨源与 Host 白名单 / safeTarget+guardLookup+tryUrl（畸形 Location 不抛）/ classifyCn 幂等 / store 白名单+发号 round-trip / 探活与曲讯 API 的 405；离线秒级，已有 data/store.json 自动备份还原 |
 | `radio.txt` | 电台数据库（1600+ 台）。**数据文件，由同步生成**，不要手工维护 |
 | `radio-data.js` | radio.txt 的经典 script 包装（`window.RADIO_DATA`=全文，同步随行生成，tmp+rename 原子写）。**数据文件，由同步生成**，file:// 降级模式的全库数据源 |
 | `logos.txt` | 台标数据（欧美音乐/国际新闻·谈话两分类，同步自动生成/`--logos` 重建），行格式 `分类|台名,图片URL`。**数据文件，勿手工维护** |
@@ -46,8 +46,8 @@ npm test         # = node test/smoke.js，离线冒烟：安全护栏矩阵/幂�
 - **台标数据链**（`logos.js`）：`Logos.get/peek` 同步渲染（绝不发请求），三级来源 = STARTER 的 `l` 字段 → logos.txt（欧美系台，同步按流 URL 确定性匹配、双分类前缀）→ 运行时解析（**只对「收藏 + 正在播」的台**：蜻蜓台取频道页封面 `<img class="img">`、其它台查 Radio Browser `byurl` favicon，经 /proxy，负缓存 7 天）。图片本体 `<img>` 直连加载不受 CORS 限制（file:// 也能显示），坏图 onerror 移除回退纯文字；勿改成全量抓取（1600+ 台请求量不可控，owner 明确「收藏优先」）。
 - **同步双上游 + 内容分类体系**（`update-sources.js`）：国内源拉取 gaotianliuyun/gao 的 radio.txt 后**不再透传上游分类**，由 `classifyCn` 按台名关键词重分类（`CN_RULES` 顺序即优先级，兜底 `综合·其他`）——对上游改版免疫；藏在国内外表里的国际台（BBC Radio 系/NPR News/CGTN…）会被捞回欧美系分类。欧美台从 AlonDrilich/radio-playlists（Radio Browser 镜像，官方 API 国内不可达）top-500 过滤欧美国家后**逐个实测重建**，并按类型榜（`genres/` 的 news/talk/sports/religious，每类封顶 300）拆成 `欧美音乐` + `国际新闻·谈话` 两分类——关联键 = m3u 每条目前的 72FM 电台 UUID（比 URL 可靠，同台不同码率变体常见），`EU_TALK_NAMES` 是类型榜榜外漏网品牌兜底。旧「世界」分类已撤销（新闻向并入国际新闻·谈话、其余进 `亚洲·港台`）。同步 diff 摘要含 `addedCheck`（新增国内台名单，欧美节过滤、500 封顶，供前端增量体检）；radio.txt 分类装配顺序 = `CAT_ORDER`（= 界面分类条顺序，`华语音乐`/`欧美音乐` 由 app.js `order` 置顶）；`欧美音乐`/`国际新闻·谈话` 每次同步整体重建，手工编辑会被覆盖。
 - GitHub 取文件：api.github.com 直连，失败回退 `gh` CLI（异步 `execFile`，不阻塞事件循环）。
-- **服务端安全护栏**：`safeTarget`（字符串级）+ `guardLookup`（连接级 DNS 校验，防 rebinding/TOCTOU）双层校验，重定向逐跳复查；`/api/sync`、`/api/check`、`/api/mystation`、`/api/nowplaying` 拒跨源（CSRF/跨源驱动）；`/api/mystation` 只写固定文件 my-radio.txt（tmp+rename 原子替换 + 串行写队列；台名/分类去 csv 分隔符，500 行/64KB 封顶）；`/api/nowplaying` 旁路连接同样过双护栏且并发封顶 2；静态服务拒 dotfile 与 `*.bak`；`/proxy` 不加 ACAO。改这些时安全回归见 docs/review.md G 组清单。
-- **快捷键**（A-5 + N8）：`/` 聚焦搜索、空格 播放/暂停、`←`/`→` 收藏间切台、`?` 快捷键帮助浮层（键位表写死在 index.html `#keys`，改键位两处同步）；焦点在 INPUT/TEXTAREA/SELECT/BUTTON/列表行/⚙ 面板内一律让位原生行为。锁屏/媒体键：⏮⏭ 经 `onstepfav` 回调转 `App.stepFav`（与 ←/→ 同语义，注册独立 try 容错）。
+- **服务端安全护栏**：`safeTarget`（字符串级）+ `guardLookup`（连接级 DNS 校验，防 rebinding/TOCTOU）双层校验，重定向逐跳复查（畸形 `Location` 头经 `tryUrl` 归 null 一并拒绝——裸 `new URL` 在回调里抛 TypeError 即崩进程，audit-r2 P2-1）；`/api/sync`、`/api/check`、`/api/mystation`、`/api/nowplaying` 拒跨源（CSRF/跨源驱动），全 API 方法校验收口（探活/曲讯仅 GET，audit-r2 P3-1）；`/api/mystation` 只写固定文件 my-radio.txt（tmp+rename 原子替换 + 串行写队列；台名/分类去 csv 分隔符，500 行/64KB 封顶）；`/api/nowplaying` 旁路连接同样过双护栏且并发封顶 2；静态服务拒 dotfile 与 `*.bak`；`/proxy` 不加 ACAO。改这些时安全回归见 docs/review.md G 组清单。
+- **快捷键**（A-5 + N8）：`/` 聚焦搜索、空格 播放/暂停、`←`/`→` 收藏间切台、`?` 快捷键帮助浮层（键位表写死在 index.html `#keys`，改键位两处同步）；焦点在 INPUT/TEXTAREA/SELECT/BUTTON/列表行/⚙ 面板/footer 可点行（`#nowline`/`#song`，audit-r2 P3-2 补键盘可达）内一律让位原生行为。锁屏/媒体键：⏮⏭ 经 `onstepfav` 回调转 `App.stepFav`（与 ←/→ 同语义，注册独立 try 容错）。鼠标/触屏：**双击列表行 = 播放并收藏**（单击第二次 click 按 `e.detail>1` 跳过防「播了又暂停」；移动端长按行 500ms = 收藏、位移 >10px 取消；audit-r2 四-2，配套 `touch-action:manipulation` 关双击缩放）。
 
 ## radio.txt 格式
 

@@ -1,0 +1,12 @@
+# 构建产物 / 本地环境（换机重建见 README.md 环境节）
+.gradle/
+build/
+local.properties
+env.local.sh
+keystore.properties
+*.jks
+*.keystore
+*.apk
+*.aab
+.cxx/
+.kotlin/

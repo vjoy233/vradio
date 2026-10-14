@@ -14,7 +14,7 @@
 //       先归一大小写与尾部点空格（Windows 大小写不敏感 + Win32 剥尾点曾实测绕过字面量比较，audit A1；
 //       store.json 是全量个人数据，HOST=0.0.0.0 局域网模式下不可被直接 GET）。
 const http = require('http'), https = require('https'), fs = require('fs'), path = require('path');
-const { syncSources, checkStream, safeTarget, guardLookup } = require('./update-sources');
+const { syncSources, checkStream, safeTarget, guardLookup, tryUrl } = require('./update-sources');
 const ROOT = __dirname, PORT = process.env.PORT || 8137, HOST = process.env.HOST || '127.0.0.1';
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.txt': 'text/plain; charset=utf-8' };
 // Host 头白名单（audit A3，防 DNS rebinding）：回环监听（默认）下只认本机名——rebinding 攻击里页面
@@ -41,7 +41,7 @@ function proxy(target, req, res, depth = 0) {
   }, r => {
     if ([301, 302, 303, 307].includes(r.statusCode) && r.headers.location) {
       r.resume();
-      const next = safeTarget(new URL(r.headers.location, target).href); // 重定向逐跳复查（P2-6）
+      const next = safeTarget(tryUrl(r.headers.location, target)); // 重定向逐跳复查（P2-6）；畸形头经 tryUrl 归 null 按拒绝处理（audit-r2 P2-1：裸 new URL 抛 TypeError 即崩进程）
       if (!next) return res.writeHead(403).end('403 redirect target rejected');
       return proxy(next, req, res, depth + 1);
     }
@@ -134,7 +134,7 @@ function npStart(url) { // 建会话（或复用已有）；并发封顶时 LRU 
     const creq = (t.startsWith('https') ? https : http).get(t, { timeout: 15000, lookup: guardLookup, headers: { 'User-Agent': NP_UA, Accept: '*/*', 'Icy-MetaData': '1' } }, r => {
       if ([301, 302, 303, 307].includes(r.statusCode) && r.headers.location) {
         r.resume();
-        const nx = safeTarget(new URL(r.headers.location, t).href);
+        const nx = safeTarget(tryUrl(r.headers.location, t)); // 畸形头经 tryUrl 归 null（audit-r2 P2-1）
         if (nx) go(nx, depth + 1); else s.deadAt = Date.now();
         return;
       }
@@ -195,6 +195,7 @@ http.createServer((req, res) => {
     return;
   }
   if (req.url.startsWith('/api/check?')) {
+    if (req.method !== 'GET') return json(405, { ok: false, detail: 'method not allowed' }); // 探活只该被 GET 驱动（audit-r2 P3-1，与 /proxy、静态同口径）
     if (crossOrigin(req)) return json(403, { error: '跨源请求被拒绝' }); // 带副作用的 GET 同样防跨源驱动（P2-9）
     let urls, sp;
     try { sp = new URL(req.url, `http://${req.headers.host || 'localhost'}`); urls = [...sp.searchParams.getAll('url')]; }
@@ -259,6 +260,7 @@ http.createServer((req, res) => {
   }
 
   if (req.url.startsWith('/api/nowplaying?')) { // 曲讯（B-6）：带副作用 GET（驱动服务端上行连接），与 check 同口径防跨源驱动
+    if (req.method !== 'GET') return json(405, { title: '' }); // 旁路只该被 GET 驱动（audit-r2 P3-1，同 /api/check）
     if (crossOrigin(req)) return json(403, { error: '跨源请求被拒绝' });
     let u;
     try { u = [...new URL(req.url, `http://${req.headers.host || 'localhost'}`).searchParams.getAll('url')][0]; }

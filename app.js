@@ -1029,6 +1029,7 @@ const App = {
     addEventListener('resize', () => this.updateCatsFade());
     $('cats').onclick = e => { const c = e.target.closest('.chip'); if (c) { this.state.cat = c.dataset.c; this.swapRender(); } };
     $('list').onclick = e => {
+      if (this._lpSup) { this._lpSup = false; return; } // 长按触发后的合成 click 吞一次（review P3-3）：「长按只收藏不播放」从依赖目标脱离的未规范行为变为显式保证
       if (e.detail > 1) return; // 双击的第二次 click 跳过（audit-r2 四-2）：否则「点播→再点暂停」，由 ondblclick 统一收口收藏
       const fav = e.target.closest('.fav');
       if (fav) {
@@ -1036,26 +1037,38 @@ const App = {
         if (s) this.toggleFav(s);
         return;
       }
-      const row = e.target.closest('.row,.card'); if (row) this.togglePlay(row.dataset.k);
+      const row = e.target.closest('.row,.card');
+      if (row) { this._clickK = row.dataset.k; this.togglePlay(row.dataset.k); } // 记首击对象（review P2-A）：「最近」视图首击即 remember 重排队首+整表重渲，第二次击的坐标已换台——双击收藏锚定首击 key，对重排免疫
     };
     // 双击行收藏（audit-r2 拍板四-2）：单击已起播、双击补收藏 = 「播放并收藏」——刻意不做单击延迟消歧（伤点播主路径）；
-    // 收藏钮自身不参与（它的 click 有独立处理）；cheatsheet/README 已同步该手势
+    // 收藏钮自身不参与（它的 click 有独立处理）；cheatsheet/README 已同步该手势。
+    // 双击必以 detail=1 的首击为前提、首击必已记 _clickK——收藏按首击 key 解析而非坐标 hit-test（review P2-A：
+    // 「最近」首击重排后同坐标已是别台行，按坐标会把收藏落在别的台上）
     $('list').ondblclick = e => {
       if (e.target.closest('.fav')) return;
-      const row = e.target.closest('.row,.card'); if (!row) return;
-      const s = this.state.stations.find(x => keyOf(x) === row.dataset.k);
+      if (!this._clickK) return;
+      const s = this.state.stations.find(x => keyOf(x) === this._clickK);
       if (s) this.toggleFav(s);
     };
     // 移动端长按行收藏（audit-r2 拍板四-2）：500ms 计时，位移超 10px（滚动/手势）或抬手即取消；
-    // touch-action:manipulation 已关双击缩放（index.html），双击/长按两手势互不抢
+    // touch-action:manipulation 已关双击缩放（index.html），双击/长按两手势互不抢。
+    // stamp 作废（review P2-B）：按压窗口内穿插过任何整表重渲（台标落库/体检回调/他标签对账）即放弃本次长按——
+    // 重渲后旧行节点脱离文档，touch 事件 target 已锁定旧节点、冒泡不到 list，touchend 的 lpOff 会漏取消、计时器带出误收藏
     {
       let lpT = 0, lpx = 0, lpy = 0;
       const lpOff = () => { if (lpT) { clearTimeout(lpT); lpT = 0; } };
       $('list').addEventListener('touchstart', e => {
         lpOff();
         const row = e.target.closest('.row,.card'); if (!row) return;
-        const t = e.touches[0]; lpx = t.clientX; lpy = t.clientY;
-        lpT = setTimeout(() => { lpT = 0; const s = this.state.stations.find(x => keyOf(x) === row.dataset.k); if (s) this.toggleFav(s); }, 500);
+        const t = e.touches[0], stamp = this.state.stamp;
+        lpx = t.clientX; lpy = t.clientY;
+        lpT = setTimeout(() => {
+          lpT = 0;
+          if (stamp !== this.state.stamp) return; // 窗口内发生过重渲：目标行已被替换/位移，放弃（保守侧，误放弃好过误收藏）
+          this._lpSup = true; setTimeout(() => { this._lpSup = false; }, 300); // 吞随后的合成 click，300ms 自清防误吞下一次正常点按（review P3-3）
+          const s = this.state.stations.find(x => keyOf(x) === row.dataset.k);
+          if (s) this.toggleFav(s);
+        }, 500);
       }, { passive: true });
       $('list').addEventListener('touchmove', e => { // 位移超阈值视为手势，取消长按
         if (!lpT) return;

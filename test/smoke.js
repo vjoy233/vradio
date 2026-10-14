@@ -1,9 +1,10 @@
 // VRadio 烟雾测试（audit-2026-10-14 R1 落地）—— 零依赖：node 内置 assert + 子进程起真服务打真端口，离线秒级。
 // 覆盖面：静态拦截矩阵（dotfile/.bak/data 段的大小写与尾点变形、方法校验、nosniff）、/proxy 与 /api/* 跨源
 // 拒绝、Host 头白名单（rebinding 面）、safeTarget/guardLookup 双层护栏、classifyCn 幂等、
-// /api/store 白名单 + rev 发号 round-trip + 超限显式拒绝（已有 data/store.json 自动备份还原，用户数据零污染）。
-// 跑法：npm test（或 node test/smoke.js）。全部离线——不触网、不跑真同步、不播真流。
-const assert = require('assert'), http = require('http'), fs = require('fs'), path = require('path');
+// /api/store 白名单 + rev 发号 round-trip + 重启续发号（AIbot P2-1 回归）+ 超限显式拒绝。
+// 用户数据保护（AIbot P2-4）：已有 data/store.json 先备份为 .smokebak 落盘（硬中断可恢复，SIGINT 自动还原）、
+// 只写 store.json 相关文件、跑完还原现场（原无 data/ 则整目录清掉）。跑法：npm test。全部离线。
+const assert = require('assert'), http = require('http'), net = require('net'), fs = require('fs'), path = require('path');
 const { spawn } = require('child_process');
 const { safeTarget, guardLookup, classifyCn, splitSections, countEntries } = require('../update-sources');
 
@@ -12,14 +13,29 @@ const ok = (name, fn) => Promise.resolve().then(fn).then(
   () => { pass++; console.log('  ✓', name); },
   e => { fail++; console.error('  ✗', name, '\n     ', String(e && e.message || e).split('\n')[0]); });
 
-// 小工具：对本地端口发请求（Node ≥14 无全局 fetch，用 http 模块）
-const PORT = 18395; // 被占则换一个再跑
+// 空闲端口探测（AIbot P3-3：固定端口被占会整场假红，两轮会话各取新口避开 kill 后端口释放竞态）
+const freePort = () => new Promise((resolve, reject) => {
+  const s = net.createServer();
+  s.on('error', reject); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); });
+});
+let PORT = 0;
 const req = (m, p, headers = {}, body = null) => new Promise((resolve, reject) => {
   if (body != null && !headers['Content-Length']) headers['Content-Length'] = Buffer.byteLength(body);
   const r = http.request({ host: '127.0.0.1', port: PORT, method: m, path: p, headers }, res => {
     let b = ''; res.on('data', c => b += c); res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: b }));
   });
   r.on('error', reject); r.end(body);
+});
+const UP = path.join(__dirname, '..');
+const boot = () => new Promise(async (resolve, reject) => { // 起服 + 就绪轮询（替代裸 sleep）
+  // HOST 显式钉死（AIbot P2-2）：宿主机若导出 HOST=0.0.0.0，子进程按自担风险档跳过白名单，用例假红
+  const srv = spawn(process.execPath, [path.join(UP, 'server.js')], { env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1' }, stdio: 'ignore' });
+  for (let i = 0; i < 60; i++) { // 最多 ~6s，慢机不假败
+    await new Promise(r => setTimeout(r, 100));
+    try { const r = await req('GET', '/'); if (r.status === 200) return resolve(srv); } catch (_) {}
+    if (srv.exitCode !== null) return reject(new Error('server 启动即退出'));
+  }
+  srv.kill(); reject(new Error('server 6s 未就绪'));
 });
 
 (async () => {
@@ -57,12 +73,18 @@ const req = (m, p, headers = {}, body = null) => new Promise((resolve, reject) =
   });
   await ok('countEntries 计数跳过节头', () => assert.strictEqual(countEntries(FIXTURE.split(/\r?\n/)), 6));
 
-  console.log('[4] 真服务端到端（子进程 PORT=' + PORT + '，自动起停）');
-  const DATA = path.join(__dirname, '..', 'data'), STORE = path.join(DATA, 'store.json');
-  const backup = fs.existsSync(STORE) ? fs.readFileSync(STORE) : null; // 已有用户数据先备份，跑完还原
-  const srv = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], { env: { ...process.env, PORT: String(PORT) }, stdio: 'ignore' });
-  await new Promise(r => setTimeout(r, 900)); // 等监听
+  console.log('[4] 真服务端到端（子进程，空闲端口自动探测）');
+  const DATA = path.join(UP, 'data'), STORE = path.join(DATA, 'store.json'), BAK = STORE + '.smokebak';
+  const hadStore = fs.existsSync(STORE), hadDir = fs.existsSync(DATA);
+  if (hadStore) { fs.copyFileSync(STORE, BAK); fs.unlinkSync(STORE); } // 备份落盘不进内存（AIbot P2-4 硬中断可恢复）+ 干净库起测（AIbot P2-1：「rev 从 1 发号」断言才有确定语义）
+  process.on('SIGINT', () => { // 中断兜底：先还原用户数据再退
+    try { if (fs.existsSync(BAK)) { fs.copyFileSync(BAK, STORE); fs.unlinkSync(BAK); } } catch (_) {}
+    process.exit(130);
+  });
+  let srv = null, srv2 = null;
   try {
+    PORT = await freePort();
+    srv = await boot();
     await ok('GET / 200（含 nosniff，audit A6）', async () => {
       const r = await req('GET', '/');
       assert.strictEqual(r.status, 200); assert.ok(r.body.includes('VRadio'));
@@ -79,11 +101,13 @@ const req = (m, p, headers = {}, body = null) => new Promise((resolve, reject) =
         assert.strictEqual((await req('GET', p)).status, 403, p);
     });
     await ok('静态方法校验：POST /index.html → 405（audit A4）', async () => assert.strictEqual((await req('POST', '/index.html')).status, 405));
+    await ok('/proxy 方法校验：POST → 405（AIbot P3-4）', async () =>
+      assert.strictEqual((await req('POST', '/proxy?url=' + encodeURIComponent('http://example.com/'))).status, 405));
     await ok('radio-data.js 一天缓存头', async () => {
       const r = await req('GET', '/radio-data.js');
       assert.ok(/max-age=86400/.test(r.headers['cache-control'] || ''), r.headers['cache-control']);
     });
-    await ok('/proxy 拒跨站驱动（Sec-Fetch-Site: cross-site → 403，audit A2）', async () =>
+    await ok('/proxy 拒跨站驱动（Sec-Fetch-Site: cross-site → 403，audit A2，仅 Chromium 闭环见 server 注释）', async () =>
       assert.strictEqual((await req('GET', '/proxy?url=' + encodeURIComponent('http://example.com/'), { 'Sec-Fetch-Site': 'cross-site' })).status, 403));
     await ok('/proxy 拒私网目标（字符串层）', async () =>
       assert.strictEqual((await req('GET', '/proxy?url=' + encodeURIComponent('http://127.0.0.1/'))).status, 403));
@@ -101,7 +125,7 @@ const req = (m, p, headers = {}, body = null) => new Promise((resolve, reject) =
       const r = await req('GET', '/api/nowplaying?url=' + encodeURIComponent('http://example.com/live.M3U8'));
       assert.strictEqual(r.status, 200); assert.strictEqual(JSON.parse(r.body).title, '');
     });
-    await ok('/api/store 白名单 + rev 发号 round-trip', async () => {
+    await ok('/api/store 白名单 + rev 发号 round-trip（干净库从 1 起）', async () => {
       const p1 = JSON.stringify({ data: { 'radio.favs': '[]', 'radio.nope': 'x' } });
       const w1 = await req('POST', '/api/store', { 'Content-Type': 'application/json' }, p1);
       assert.strictEqual(JSON.parse(w1.body).rev, 1, 'rev 由服务端发号');
@@ -113,10 +137,23 @@ const req = (m, p, headers = {}, body = null) => new Promise((resolve, reject) =
       const big = JSON.stringify({ data: { 'radio.favs': 'x'.repeat(600 * 1024) } });
       assert.strictEqual((await req('POST', '/api/store', { 'Content-Type': 'application/json' }, big)).status, 413);
     });
+
+    // 重启续发号回归（AIbot P2-1）：预置 rev=5，重启后首个请求直接 POST → 应发 6 而非从 1 重发。
+    // 旧实现 storeWrite 不先读盘、rev 只在 GET 懒装载——重启后首 POST 覆写 rev=1，旧窗口高 rev 镜像被静默压掉
+    PORT = await freePort();
+    fs.mkdirSync(DATA, { recursive: true });
+    fs.writeFileSync(STORE, JSON.stringify({ rev: 5, data: { 'radio.vol': '50' } }));
+    srv2 = await boot();
+    await ok('重启后首 POST rev 续发（预置 rev=5 → 发 6，AIbot P2-1）', async () => {
+      const w = await req('POST', '/api/store', { 'Content-Type': 'application/json' }, JSON.stringify({ data: { 'radio.favs': '[]' } }));
+      assert.strictEqual(JSON.parse(w.body).rev, 6);
+    });
   } finally {
-    srv.kill();
-    try { fs.rmSync(DATA, { recursive: true, force: true }); } catch (_) {} // 清掉测试写入
-    if (backup !== null) { fs.mkdirSync(DATA, { recursive: true }); fs.writeFileSync(STORE, backup); } // 用户数据还原
+    if (srv) srv.kill(); if (srv2) srv2.kill();
+    // 现场还原（AIbot P2-4）：只动测试涉及的文件，原无 data/ 才整目录清掉
+    try { fs.unlinkSync(STORE); fs.unlinkSync(STORE + '.tmp'); } catch (_) {}
+    if (hadStore) { try { fs.copyFileSync(BAK, STORE); fs.unlinkSync(BAK); } catch (_) {} }
+    if (!hadDir) { try { fs.rmSync(DATA, { recursive: true, force: true }); } catch (_) {} }
   }
 
   console.log(`\n${pass} 通过，${fail} 失败`);

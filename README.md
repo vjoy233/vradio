@@ -158,12 +158,13 @@ vradio/
 ├── sync.js           # 同步/体检编排（手动全量 + 开机静默体检收藏/最近范围；同步 diff 摘要 + 收藏台点名）：只调用 App/Player 暴露的接口
 ├── server.js         # 静态服务 + 流代理 + /api/sync + /api/check + /api/mystation + /api/nowplaying（SSRF/CSRF/dotfile 防护齐备）
 ├── update-sources.js # 源同步引擎：双上游拉取 + 欧美台实测过滤 + 台标提取 + diff 摘要 + 合并备份 + 网络安全护栏
+├── test/smoke.js     # 零依赖冒烟测试：安全护栏矩阵/classifyCn 幂等/store 发号（npm test，离线秒级）
 ├── radio.txt         # 电台数据库（1600+ 台，按内容分 9 类；同步生成）
 ├── radio-data.js     # radio.txt 的经典 script 包装（window.RADIO_DATA，同步随行生成）：file:// 双击打开直读全库
 ├── logos.txt         # 台标数据（欧美音乐/国际新闻·谈话分类，同步自动生成；node update-sources.js --logos 可单独重建）
 ├── hls.min.js        # 本地化的 hls.js v1.5.20（Apache-2.0）
 ├── data/             # 前端持久层主源 store.json（/api/store 写入；运行生成，gitignored）
-├── package.json      # npm start / npm run sync
+├── package.json      # npm start / npm run sync / npm test
 └── LICENSE           # MIT
 ```
 

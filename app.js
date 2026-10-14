@@ -849,7 +849,10 @@ const App = {
     // 选中「等同默认分类」的目标视同 ↺ 默认：只删 moves 键，不写 moves[u]=默认分类——
     // 否则位置没变却留下键，↺ 亮起且点了无效果（PR#8 review P3-1；默认分类重命名后按现名比对）
     const def = this.cfg.renames[s.dCat || s.c] || s.dCat || s.c;
-    if (v === '__def' || v === def) { for (const u of s.u) { delete this.cfg.moves[u]; delete this.cfg.tag[u]; } } // 撤回默认：tag 快照一并清且不再补写（audit B2——无调整即无失配可挂）
+    if (v === '__def' || v === def) { // 撤回默认：moves 清掉；tag 与 srcRemove 同口径——该台已无任何个人调整才清（仍有改名/隐藏/备源时保留，失配清单才有台名可显，AIbot P3-1）
+      for (const u of s.u) delete this.cfg.moves[u];
+      if (!s.u.some(x => this.cfg.names[x] || this.cfg.hideS[x] || this.cfg.srcs[x])) for (const u of s.u) delete this.cfg.tag[u];
+    }
     else {
       if (v === '__new') {
         v = this.askName('新建分类并移入');

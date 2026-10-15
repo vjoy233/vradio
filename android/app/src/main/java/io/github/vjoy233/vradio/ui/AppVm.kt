@@ -80,6 +80,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   private val stamp = MutableStateFlow(0)                    // 渲染哨兵（app.js state.stamp）
   val nav = MutableStateFlow(Nav.LIST)
   val showSrc = MutableStateFlow(false)
+  val srcKey = MutableStateFlow<String?>(null)                // 选源浮层打开时的台 key（换台即收起，srcPopK 同款）
   val showSongs = MutableStateFlow(false)
   val locate = MutableStateFlow<String?>(null)               // 回到正在播（web locatePlaying）
   val status = MutableStateFlow("")                          // 用户主动操作反馈（#status 同款）
@@ -90,7 +91,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   val syncBusy = MutableStateFlow(false); val syncMsg = MutableStateFlow("")
   val addBusy = MutableStateFlow(false); val addMsg = MutableStateFlow("")
   val confirmReq = MutableStateFlow<String?>(null)           // 导入覆盖确认门槛
-  private val manualRun = AtomicBoolean(false)                // 手动体检在跑（静默版让位标志）
+  val manualRun = MutableStateFlow(false)                     // 手动体检在跑（静默版让位标志；StateFlow 供设置页「取消体检」按钮态，B3）
+  private val healthAbort = AtomicBoolean(false)              // 手动体检取消（Web sync.js this.abort 同款：已确认的标记保留）
   private var pendingImp: Pair<Imp, Any?>? = null
   private var assetsStamp = ""
 
@@ -104,11 +106,14 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   private val cur get() = PlayerHolder.ui.value
   private val playKeys = PlayerHolder.ui.map { it.st to it.station?.key }.distinctUntilChanged()
 
-  /** 渲染快照（唯一渲染入口精神：列表 + 分类角标 + 死台开关可见性 + 空态文案） */
-  data class ListUi(val list: List<Station>, val chips: List<Pair<String, Int>>, val hasDead: Boolean, val empty: String?)
+  /** 渲染快照（唯一渲染入口精神：列表 + 分类角标 + 死台开关可见性 + 空态文案）；
+   *  ver = stamp 哨兵进值域（审计 P2）：StateFlow 按相等合并，内容未变的 stamp++ 会被判等丢弃——
+   *  台标后解析补渲/体检升档徽标翻面就靠它（收藏星 b1dfed6 事故的同族另一半） */
+  data class ListUi(val list: List<Station>, val chips: List<Pair<String, Int>>, val hasDead: Boolean, val empty: String?, val ver: Int = 0)
 
-  val listUi: StateFlow<ListUi> = combine(cat, keyword, showDead, playKeys, stamp) { _, _, _, _, _ -> computeListUi() }
-    .stateIn(viewModelScope, SharingStarted.Eagerly, ListUi(emptyList(), emptyList(), false, null))
+  val listUi: StateFlow<ListUi> = combine(cat, keyword, showDead, playKeys, stamp) { _, _, _, _, st ->
+    computeListUi().copy(ver = st)
+  }.stateIn(viewModelScope, SharingStarted.Eagerly, ListUi(emptyList(), emptyList(), false, null))
 
   /* 收藏键集（响应式）：行级收藏星的状态源——不能在行内直读 lib.isFav（行参数不变时 LazyColumn 会跳过
      行重组，星星永远不翻面——实机收藏「无反应」的根因）；经 items lambda 外层捕获才能触发逐行重渲 */
@@ -116,6 +121,12 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     .map { runCatching { lib.favKeys() }.getOrDefault(emptySet()) }
     .distinctUntilChanged()
     .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
+  /* 添加电台页的分类候选（审计 P3：catOptions() 直读无订阅，boot 未完成进页则 chips 永远空——从 listUi 派生响应式） */
+  val addCats: StateFlow<List<String>> = listUi
+    .map { lu -> lu.chips.drop(3).map { c -> c.first } }                 // 掐头去「全部/★收藏/最近」
+    .distinctUntilChanged()
+    .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
   init {
     wirePlayer()
@@ -130,10 +141,15 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     assetsStamp = readAsset("data-stamp.txt")?.trim() ?: ""
     val aRadio = readAsset("radio.txt") ?: ""
     val aLogos = readAsset("logos.txt") ?: ""
-    lib.mainText = light.radioText() ?: aRadio
-    lib.myText = myRadio.readText()
-    runCatching { lib.reload() }
-    runCatching { logos.loadBuiltins(light.logosText() ?: aLogos) }
+    val mainTxt = light.radioText() ?: aRadio                 // 文件读取留 IO
+    val myTxt = myRadio.readText()
+    val logosTxt = light.logosText() ?: aLogos
+    withContext(Dispatchers.Main) {                           // Library 装配收敛主线程（审计 P2：非线程安全集合与渲染读侧单线程化）
+      lib.mainText = mainTxt
+      lib.myText = myTxt
+      runCatching { lib.reload() }
+      runCatching { logos.loadBuiltins(logosTxt) }
+    }
     refreshUi3()                                                          // view/showdead/theme 三键恢复（app.js loadUi3 同款）
     stamp.value++
     primeAll()
@@ -157,8 +173,11 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   /* 台标预取（收藏 + 正在播优先，请求量可控）；完成后重渲一次取新解析到的 URL */
   private fun primeAll() = viewModelScope.launch(Dispatchers.IO) {
+    val favs = withContext(Dispatchers.Main) {                             // favs 快照归 Main（审计 P2：IO 迭代与 Main 变异并发 CME）
+      runCatching { lib.favs.toList() }.getOrDefault(emptyList())
+    }
     val seen = HashSet<String>()
-    for (f in lib.favs) {
+    for (f in favs) {
       val s = runCatching { lib.resolve(f.k) }.getOrNull() ?: continue
       if (seen.add(s.key)) runCatching { logos.prime(s, true) }
     }
@@ -238,11 +257,11 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   fun startPlay(s: Station, prefer: Int = -1) {
     MainActivity.reqNotif?.invoke()                                       // 通知权限首播申请（拒绝不阻断，只问一次）
-    viewModelScope.launch(Dispatchers.IO) {                               // 最近重排 + 正在播台标优先补全
+    viewModelScope.launch {                                               // 最近重排归 Main（审计 P2：Library 变异收敛，防与 computeListUi 迭代并发 CME）
       runCatching { lib.recordRecent(s) }
-      runCatching { logos.prime(s, true) }
       stamp.value++
     }
+    viewModelScope.launch(Dispatchers.IO) { runCatching { logos.prime(s, true) } }   // 正在播台标优先补全
     PlayerHolder.play(s, prefer)
   }
 
@@ -254,10 +273,11 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   }
 
   fun toggleFav(s: Station) {
-    viewModelScope.launch(Dispatchers.IO) {
+    viewModelScope.launch {                                               // Library 变异归 Main（审计 P2：与 favKeys/computeListUi 迭代并发 CME）
       runCatching { lib.toggleFav(s) }
-      if (runCatching { lib.isFav(s) }.getOrDefault(false)) runCatching { logos.prime(s, true) }   // 新收藏优先补台标
+      val fav = runCatching { lib.isFav(s) }.getOrDefault(false)
       stamp.value++
+      if (fav) viewModelScope.launch(Dispatchers.IO) { runCatching { logos.prime(s, true) } }   // 新收藏优先补台标
     }
   }
 
@@ -276,9 +296,10 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     startPlay(s)
   }
 
-  fun locatePlaying() {                                                   // 回到正在播（N5）：不可见先回全部+清搜索
+  fun locatePlaying() {                                                   // 回到正在播（N5）：当前筛选下不可见才回全部+清搜索（app.js:519 同判，保留浏览上下文）
     val s = cur.station ?: return
-    cat.value = "全部"; keyword.value = ""
+    val invisible = runCatching { filteredList(showDead.value).none { it.key == s.key } }.getOrDefault(true)
+    if (invisible) { cat.value = "全部"; keyword.value = "" }
     nav.value = Nav.LIST
     locate.value = s.key
   }
@@ -287,6 +308,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   /* 默认源启发式：直接复用 PlayerHolder.srcOrder（AIbot P3——本层复刻一份会与决策链漂移） */
   fun srcDefault(s: Station): Int = PlayerHolder.srcOrder(s).firstOrNull() ?: 0
+
+  fun openSrc() { srcKey.value = cur.station?.key; showSrc.value = true }  // 打开选源浮层记台 key——换台（⏮⏭/线控）即收起（srcPopK 同款，app.js:563）
 
   fun srcReset() {
     val s = cur.station ?: return
@@ -319,7 +342,6 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   fun logoOf(s: Station): String = runCatching { logos.get(s) }.getOrDefault("")
   fun songsOf(u0: String): List<SongRec> = runCatching { lib.songsOf(u0) }.getOrDefault(emptyList())
   fun permOf(s: Station): Boolean = runCatching { lib.healthMarks[s.key]?.perm == 1 }.getOrDefault(false)
-  fun catOptions(): List<String> = runCatching { lib.cats() }.getOrDefault(emptyList())
   fun lastLine(): String {
     val r = lib.recents.firstOrNull() ?: return "未在播放"
     val s = runCatching { lib.resolve(r.k) }.getOrNull() ?: return "未在播放"
@@ -385,17 +407,24 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   }
 
   fun manualHealth() {                                                    // 手动全量（并发 5=Web runCheck 口径；反馈走设置页文案 + 完成 toast）
-    if (manualRun.get()) return
+    if (manualRun.value) return
     viewModelScope.launch {
-      manualRun.set(true)
+      manualRun.value = true
+      healthAbort.set(false)
       try {
-        if (healthBusy.value) healthProg.value = "等待后台体检收尾…"       // G P3：让位等待最坏 30-40s，零反馈观感像卡死
-        while (healthBusy.value) delay(250)                               // 静默版让位收尾（手动优先，B-10 互斥）
+        if (healthBusy.value) healthProg.value = "等待后台体检收尾…（可点「取消体检」中止）"   // G P3：让位等待最坏 30-40s，零反馈观感像卡死
+        while (healthBusy.value && !healthAbort.get()) delay(250)         // 静默版让位收尾（手动优先，B-10 互斥）
+        if (healthAbort.get()) { healthResult.value = "体检已取消"; toast(healthResult.value); return@launch }
         healthBusy.value = true
         healthResult.value = ""
         val list = runCatching { lib.visible(true, playKey(), connKey()) }.getOrDefault(emptyList())   // 连默认隐藏的死台一起复查
         healthProg.value = "体检中 0/${list.size}"
-        val res = probeAll(list, 5, { false }) { d, t -> healthProg.value = "体检中 $d/$t" }
+        val res = probeAll(list, 5, { healthAbort.get() }) { d, t -> if (!healthAbort.get()) healthProg.value = "体检中 $d/$t" }
+        if (healthAbort.get()) {                                          // B3 取消：已探完的结果照常落标（sync.js 取消也走收尾 saveHealth——「已确认的标记已保留」）
+          applyMarks(res); persistHealth()
+          healthResult.value = "体检已取消：完成 ${res.size}/${list.size}（已确认的标记已保留）"
+          toast(healthResult.value); return@launch
+        }
         if (res.size >= 5 && res.all { it.second == Probe.NET }) {         // 网络层整体故障兜底：不落任何标记
           healthResult.value = "体检未完成：全部探测失败（疑似网络不可用），未标记任何电台"
           toast(healthResult.value); return@launch
@@ -406,23 +435,30 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
           (if (c[3] > 0) " · 网络失败跳过 ${c[3]}（不落标记）" else "")
         toast(healthResult.value)
       } catch (e: Exception) { healthResult.value = "体检异常：${e.message ?: e.toString()}" }
-      finally { manualRun.set(false); healthBusy.value = false }
+      finally { manualRun.value = false; healthAbort.set(false); healthBusy.value = false }
     }
+  }
+
+  fun cancelHealth() {                                                    // B3：取消手动体检（Web「取消体检」同款；在飞探测收尾后停，已确认标记保留）
+    if (!manualRun.value) return
+    healthAbort.set(true)
+    healthProg.value = "正在取消体检…（等在飞探测收尾）"
   }
 
   private fun silentCheck() {                                             // boot 静默复测（并发 2；不碰状态栏/toast）
     viewModelScope.launch(Dispatchers.IO) {
-      if (manualRun.get() || healthBusy.value) return@launch
-      val scope = runCatching {
-        // AIbot P2-1：IO 线程遍历 maps 与主线程 onDead/onAlive 并发 → LinkedHashMap CME 被 runCatching
-        // 吞成「静默体检悄悄没跑」；先做只读快照再算范围
-        Health.bootScope(LinkedHashMap(lib.healthMarks), lib.favs.toList(), lib.recents.toList(), lib.stations.toList(), System.currentTimeMillis())
-      }.getOrNull() ?: return@launch
+      if (manualRun.value || healthBusy.value) return@launch
+      val scope = withContext(Dispatchers.Main) {
+        // AIbot P2-1 + 审计 P2：快照拷贝归 Main——LinkedHashMap(map)/toList 拷贝本身也迭代源集合，与 IO 变异并发同样 CME
+        runCatching {
+          Health.bootScope(LinkedHashMap(lib.healthMarks), lib.favs.toList(), lib.recents.toList(), lib.stations.toList(), System.currentTimeMillis())
+        }.getOrNull()
+      } ?: return@launch
       if (scope.isEmpty()) return@launch
       healthBusy.value = true
       try {
-        val res = probeAll(scope, 2, { manualRun.get() }) { _, _ -> }
-        if (manualRun.get()) return@launch                                // 让位手动：已测结果由手动收尾统一落
+        val res = probeAll(scope, 2, { manualRun.value }) { _, _ -> }
+        if (manualRun.value) return@launch                                // 让位手动：已测结果由手动收尾统一落
         if (res.size >= 5 && res.all { it.second == Probe.NET }) return@launch
         withContext(Dispatchers.Main) { applyMarks(res) }
         persistHealth()
@@ -432,15 +468,15 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   private fun incCheck(names: List<String>) {                             // 同步后增量体检（D4）：diff 新增国内台
     viewModelScope.launch(Dispatchers.IO) {
-      if (manualRun.get() || healthBusy.value) return@launch
+      if (manualRun.value || healthBusy.value) return@launch
       val set = names.toHashSet()
       val list = runCatching { lib.stations.filter { set.contains(it.n) && !it.hidden } }.getOrDefault(emptyList())
       if (list.isEmpty()) return@launch
       healthBusy.value = true
       toast("后台体检新增电台 ${list.size} 台…")
       try {
-        val res = probeAll(list, 2, { manualRun.get() }) { _, _ -> }
-        if (manualRun.get()) return@launch
+        val res = probeAll(list, 2, { manualRun.value }) { _, _ -> }
+        if (manualRun.value) return@launch
         if (res.size >= 5 && res.all { it.second == Probe.NET }) return@launch
         val c = withContext(Dispatchers.Main) { applyMarks(res) }
         persistHealth()
@@ -454,6 +490,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   fun checkUpdate() {
     viewModelScope.launch {
       if (updateBusy.value) return@launch
+      if (syncBusy.value) { updateMsg.value = "同步进行中，等同步完成后再检查更新（两通道写同一份 filesDir 数据，并发会互相覆盖）"; return@launch }   // 审计 P2：互锁
       updateBusy.value = true; updateMsg.value = "检查更新中…"
       try {
         val base = light.stamp() ?: assetsStamp
@@ -477,6 +514,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         updateMsg.value = "已更新到 ${res.commitIso.take(10)} · 台数 +${res.added}/-${res.removed}"
         toast(updateMsg.value)
         pointGone(before)                                                 // 收藏台消失点名（removed ∩ 收藏）
+        if (res.addedCheck.isNotEmpty()) { delay(800); incCheck(res.addedCheck.take(C.ADDED_CHECK_CAP)) }   // D4 增量体检（审计 P2）：D7 是主更新通道且安卓无首启基线——缺此调用 D7 新增国内台永远零体检（Web 唯一同步路径必跑 incHealth）
       } catch (e: Exception) { updateMsg.value = "检查更新失败：${e.message ?: "网络错误"}" }
       finally { updateBusy.value = false }
     }
@@ -487,6 +525,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   fun fullSyncNow() {
     viewModelScope.launch {
       if (syncBusy.value) return@launch
+      if (updateBusy.value) { syncMsg.value = "数据更新进行中，稍后再同步"; return@launch }   // 审计 P2：互锁（与 checkUpdate 对称）
       if (!unmetered()) {
         syncMsg.value = "移动数据下不同步（欧美台逐个实测流量大）——连 WiFi 后再试"
         toast(syncMsg.value); return@launch
@@ -601,12 +640,14 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
           val list = runCatching { RadioTxt.parse(text) }.getOrDefault(emptyList())
           if (list.isEmpty()) { toast("导入失败：未解析到任何电台"); return@launch }
           var added = 0
-          for (s in list) {
-            val has = runCatching { lib.isFav(s) }.getOrDefault(false)
-            if (!has) { runCatching { lib.toggleFav(s) }; added++ }
+          withContext(Dispatchers.Main) {                                 // Library 变异归 Main（审计 P2：toggleFav/rebind 与渲染迭代并发 CME）
+            for (s in list) {
+              val has = runCatching { lib.isFav(s) }.getOrDefault(false)
+              if (!has) { runCatching { lib.toggleFav(s) }; added++ }
+            }
+            runCatching { lib.rebind() }                                  // AIbot P3：导入后立即回绑（改名台休眠条目不等下次 reload 自愈）
+            stamp.value++
           }
-          runCatching { lib.rebind() }                                    // AIbot P3：导入后立即回绑（改名台休眠条目不等下次 reload 自愈）
-          stamp.value++
           toast("已恢复收藏：${list.size} 个电台（其中新增收藏 $added）")
         }
         Imp.CFG -> {

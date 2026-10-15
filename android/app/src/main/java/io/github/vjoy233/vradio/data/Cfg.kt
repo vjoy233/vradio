@@ -76,11 +76,12 @@ object CfgCodec {
     return out
   }
 
-  /* hideS：键须 http(s)；值转真值（Web 的 urlKeys 只滤键、真值判定在使用点，此处收敛为 Boolean） */
+  /* hideS：键须以 http(s) 开头；值转真值（Web 的 urlKeys 只滤键、真值判定在使用点，此处收敛为 Boolean）。
+     键不 trim（审计 P3，app.js:81 同判）：带空白尾巴的键是死键（永不命中台 URL），trim 成活键会跨端漂移 */
   private fun urlBoolMap(o: JSONObject?): Map<String, Boolean> {
     if (o == null) return emptyMap()
     val out = LinkedHashMap<String, Boolean>()
-    for (k in o.keys()) if (URL_KEY.find(k) != null) out[k.trim()] = truthy(o.opt(k))
+    for (k in o.keys()) if (URL_KEY.find(k) != null) out[k] = truthy(o.opt(k))
     return out
   }
 

@@ -54,15 +54,23 @@ class MyRadioTest {
     assertTrue(mr.read().any { it.n.length <= 40 && it.n.startsWith("VeryLongName") })
   }
 
-  @Test fun safeTargetGuards() { // 公网校验（AIbot P2-5）：回环/私网/链路本地/十进制变形拒，公网放行
+  @Test fun safeTargetGuards() { // 公网校验（AIbot P2-5 + 审计 B1 严格对齐 Web 接受域）：回环/私网/链路本地/IPv4 全形态变形拒，公网放行
     assertFalse(SafeTarget.ok("http://127.0.0.1:8080/x"))
     assertFalse(SafeTarget.ok("http://localhost/live"))
     assertFalse(SafeTarget.ok("http://10.1.2.3/live"))
     assertFalse(SafeTarget.ok("http://192.168.1.1/live"))
     assertFalse(SafeTarget.ok("http://172.20.3.4/live"))
     assertFalse(SafeTarget.ok("http://169.254.9.9/live"))
+    assertFalse(SafeTarget.ok("http://0.0.0.1/live"))          // 0/8 本网络段
     assertFalse(SafeTarget.ok("http://2130706433/live"))     // 十进制 127.0.0.1 变形
     assertFalse(SafeTarget.ok("http://0x7f000001/live"))     // 十六进制变形
+    assertFalse(SafeTarget.ok("http://a@127.0.0.1/live"))     // userinfo 剥离后判 host（B1）
+    assertFalse(SafeTarget.ok("http://127.1/live"))            // 短式（WHATWG 归一 127.0.0.1）
+    assertFalse(SafeTarget.ok("http://0177.0.0.1/live"))       // 八进制变形
+    assertFalse(SafeTarget.ok("http://0x7f.1/live"))           // 十六进制+短式混合
+    assertFalse(SafeTarget.ok("http://127.0.0.1./live"))       // 尾随点归一后仍拒
+    assertFalse(SafeTarget.ok("http://999.1.1.1/live"))        // 非法 IPv4 形态（Web 侧 new URL 直接抛）
+    assertFalse(SafeTarget.ok("http://1.2.3.4.5/live"))        // >4 段（同上）
     assertFalse(SafeTarget.ok("http://[::1]:8080/live"))      // IPv6 回环（bracket 段全拒，复核轮 P3）
     assertFalse(SafeTarget.ok("http://[fe80::1]/live"))       // IPv6 链路本地
     assertFalse(SafeTarget.ok("http://router.local/live"))
@@ -70,6 +78,8 @@ class MyRadioTest {
     assertFalse(mr.append("台", "自建", "http://192.168.1.1/live"))   // 写入侧同护栏
     assertTrue(SafeTarget.ok("http://lhttp.qingting.fm/live/273/64k.mp3"))
     assertTrue(SafeTarget.ok("https://example.com:8443/a/b.m3u8"))
+    assertTrue(SafeTarget.ok("http://8.8.8.8/x"))             // 公网 IP 放行
+    assertTrue(SafeTarget.ok("http://nas.lan:8000/live"))     // B1：.lan 不再额外拒（Web safeTarget 收——家庭 NAS 自建台）
   }
 
   @Test fun lineCap() { // 500 行封顶：判满在写之前（第 501 行拒绝）。尾部空行已由 splitLines 归一不计数

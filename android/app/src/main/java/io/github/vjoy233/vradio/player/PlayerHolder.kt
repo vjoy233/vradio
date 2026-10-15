@@ -282,11 +282,11 @@ object PlayerHolder {
   private fun next() { // error 级联：换下一个 variant（player.js:151-170）
     val p = pctx ?: return
     if (p.my != token) return
-    if (p.i >= p.urls.size) { // 全部耗尽善后（player.js:154-159）
+    if (p.i >= p.urls.size) { // 全部耗尽善后（player.js:154-159）；清 song/kbps——PlayerBar 第二行 song 优先，残留旧曲讯会永久掩盖 ⚠ 提示
       station = null; connecting = null
       markProgress()
       exo.stop(); exo.clearMediaItems()
-      uiMut.update { it.copy(st = PState.IDLE, station = null, srcIdx = -1,
+      uiMut.update { it.copy(st = PState.IDLE, station = null, srcIdx = -1, song = "", kbps = 0,
         status = "⚠ 全部源失败，建议点「体检」或「同步源」") }
       return
     }
@@ -373,13 +373,20 @@ object PlayerHolder {
     override fun onIsPlayingChanged(isPlaying: Boolean) {
       if (isPlaying) onAir()
       else {
-        if (station != null && connecting == null) say("已暂停") // player.js:41
+        // READY 才说「已暂停」：播放中再缓冲（BUFFERING）不是暂停——Web 只在 pause 事件说（player.js:41，waiting 不说）
+        if (station != null && connecting == null && exo.playbackState == Player.STATE_READY) say("已暂停")
         syncState()
       }
     }
     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
       if (!playWhenReady && reason != Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST) {
         halt = true; markProgress() // 让位（焦点丢失/拔耳机）同有意暂停守卫——Web 让位走 pause()（player.js:58）
+      }
+      // 瞬时焦点丢失（来电/语音助手）结束 media3 自动恢复播放——必须复位 halt，否则粘滞为 true 会让
+      // 看门狗停摆（tickOnce 早退）+ 后续 error 级联被 heldNext 静默搁浅（Web 无此面：halt 只在显式 pause 置位）
+      if (playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS) {
+        halt = false
+        if (heldNext) { heldNext = false; retryOrNext() } // 暂停期搁浅接回（resume() 同款）
       }
       syncState()
     }
@@ -408,7 +415,7 @@ object PlayerHolder {
           }
           is IcyHeaders -> {
             val br = e.bitrate
-            if (br > 0) uiMut.update { it.copy(kbps = br) } // icy-br 码率（>0 UI 才显示）
+            if (br > 0) uiMut.update { it.copy(kbps = br / 1000) } // media3 bitrate 是 bps（icy-br×1000，源码实证），显示口径 = 原始 icy-br kbps（app.js:614 同款）
           }
         }
       }

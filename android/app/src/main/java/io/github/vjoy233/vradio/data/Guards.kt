@@ -2,34 +2,64 @@ package io.github.vjoy233.vradio.data
 
 import java.io.File
 
-/* 公网流地址校验（server.js safeTarget 的腰下部等价——AIbot P2-5）：Web 侧 SSRF 护栏服务的是
-   服务端代理面，端上无监听端口不存在该攻击面，但「流地址 = 公网 http(s)」的口径保持一致：
-   拒回环/私网/链路本地段与常见内网主机变体。添加自定义电台与库内 URL 复用。 */
+/* 公网流地址校验（server.js / update-sources.js safeTarget 的接受域对齐——审计 B1 拍板严格对齐 Web）：
+   Web 侧经 new URL 隐式完成的 userinfo 剥离与 WHATWG IPv4 归一在此显式实现（十/八/十六进制、短式、
+   尾随点全按 url.spec.whatwg.org 口径）；拒回环/私网/链路本地段。添加自定义电台与库内 URL 复用。
+   已知非对称（留档）：bracket 段全拒（Web 只拒私有 IPv6 段——公开 IPv6 字面量电台流实际不存在）；
+   端口合法性不校验（Web 的 new URL 会拒坏端口——端上探活自然失败，无功能差）。 */
 object SafeTarget {
-  private val RE_IP4 = Regex("""^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$""")
-  private val RE_DEC_HOST = Regex("""^\d{1,10}$""")        // 十进制 IP 变形（2130706433 = 127.0.0.1）
-  private val RE_HEX_HOST = Regex("""^0x[0-9a-fA-F]{1,8}$""")
-  private val RE_LOCAL_SUFFIX = Regex("""\.(local|internal|localhost|home|lan)$""", RegexOption.IGNORE_CASE)
 
   fun ok(url: String): Boolean {
     val u = url.trim()
-    if (!Regex("^https?://").containsMatchIn(u)) return false
+    if (!Regex("^https?://", RegexOption.IGNORE_CASE).containsMatchIn(u)) return false
     val hostPort = u.substringAfter("://").substringBefore('/')
-    val host = hostPort.substringBefore(':').lowercase()
+    val host = hostPort.substringAfterLast('@').substringBefore(':').lowercase()  // 剥 userinfo（http://a@127.0.0.1/）
     if (host.isEmpty()) return false
-    if (host.startsWith("[")) return false   // IPv6 字面量（如 [::1]/[fe80::]）无点分形态可判——回环/链路本地全拒（复核轮 P3：截断后成 "[" 会穿透，Web safeTarget 同拒 bracket 段）
-    if (RE_LOCAL_SUFFIX.containsMatchIn(host)) return false
-    if (host == "localhost" || host.endsWith(".localhost")) return false
-    if (RE_DEC_HOST.matches(host) || RE_HEX_HOST.matches(host)) return false
-    val m = RE_IP4.matchEntire(host) ?: return true          // 非点分 IPv4 的域名放行（DNS 解析后的私网面与 Web 同态度：不查）
-    val o = m.groupValues.drop(1).map { it.toInt() }
-    if (o.any { it > 255 }) return false                      // 非法 IPv4 形态按拒（变形意图）
-    val (a, b, _, _) = o
-    if (a == 0 || a == 10 || a == 127) return false           // 本网络/私网 A/回环
-    if (a == 172 && b in 16..31) return false                 // 私网 B
-    if (a == 192 && b == 168) return false                    // 私网 C
-    if (a == 169 && b == 254) return false                    // 链路本地 169.254.x.x
+    if (host.startsWith("[")) return false   // IPv6 字面量（如 [::1]/[fe80::]）全拒（复核轮 P2，见上留档）
+    if (host == "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return false  // WHATWG 把 *.localhost 归一成 localhost
+    if (!endsInNumber(host)) return true   // 纯域名放行（.lan/.home/.internal 等不再额外拒——Web 收，NAS 自建台可加）
+    val v = ipv4(host) ?: return false       // 数字形态但归一失败（999.1.1.1 / 1.2.3.4.5）：Web 侧 new URL 直接抛 → 同拒
+    val top24 = v ushr 24; val top16 = v ushr 16
+    if (top24 == 0L || top24 == 10L || top24 == 127L) return false   // 本网络/私网 A/回环
+    if (top16 == (169L shl 8) or 254L) return false                  // 链路本地 169.254/16
+    if (top16 == (192L shl 8) or 168L) return false                  // 私网 C 192.168/16
+    if ((v ushr 20) == (172L shl 4) or 1L) return false              // 私网 B 172.16/12
     return true
+  }
+
+  /* —— WHATWG URL IPv4 解析移植（#ends-in-a-number / #ipv4-number-parser / #ipv4-parser）—— */
+
+  private fun endsInNumber(host: String): Boolean {
+    var parts = host.split(".")
+    if (parts.size > 1 && parts.last().isEmpty()) parts = parts.dropLast(1)   // 尾随点
+    val last = parts.lastOrNull() ?: return false
+    if (last.isNotEmpty() && last.all { it in '0'..'9' }) return true
+    return num(last) != null                                                  // 末段 0x… 十六进制形态也算
+  }
+
+  /** 数字形态 host 的 IPv4 归一值（127.1 → 2130706433）；null = 归一失败（非法变形，按拒） */
+  private fun ipv4(host: String): Long? {
+    var parts = host.split(".")
+    if (parts.size > 1 && parts.last().isEmpty()) parts = parts.dropLast(1)
+    if (parts.isEmpty() || parts.size > 4) return null
+    val nums = ArrayList<Long>()
+    for (p in parts) nums.add(num(p) ?: return null)
+    for (i in 0 until nums.size - 1) if (nums[i] > 255) return null            // 非末段须 ≤255
+    val last = nums.last()
+    if (last >= 1L shl (8 * (5 - nums.size))) return null                       // 末段上界 256^(5-n)
+    var v = last
+    for (i in 0 until nums.size - 1) v += nums[i] shl (24 - 8 * i)              // 短式展开（127.1 = 127.0.0.1）
+    return v
+  }
+
+  private fun num(p: String): Long? {  // 前缀定 radix（0x→16 / 前导 0→8 / 其余 10）；前缀剥离后空串=0；非 radix 数字/符号失败
+    if (p.isEmpty()) return null
+    var r = 10; var s = p
+    if (s.length >= 2 && (s.startsWith("0x") || s.startsWith("0X"))) { r = 16; s = s.substring(2) }
+    else if (s.length > 1 && s[0] == '0') { r = 8; s = s.substring(1) }
+    if (s.isEmpty()) return 0L
+    val v = s.toLongOrNull(r) ?: return null
+    return if (v < 0) null else v
   }
 }
 

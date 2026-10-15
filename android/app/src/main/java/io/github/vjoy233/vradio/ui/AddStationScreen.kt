@@ -20,6 +20,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,7 +41,9 @@ fun AddStationScreen(vm: AppVm) {
   var name by rememberSaveable { mutableStateOf("") }
   var url by rememberSaveable { mutableStateOf("") }
   var custom by rememberSaveable { mutableStateOf("") }
-  var selCat by rememberSaveable { mutableStateOf(vm.catOptions().firstOrNull() ?: "") }
+  var selCat by rememberSaveable { mutableStateOf("") }
+  val cats by vm.addCats.collectAsState()                     // 分类候选响应式（审计 P3：直读 lib.cats 无订阅，boot 未完成进页则永远空）
+  LaunchedEffect(cats) { if (selCat.isEmpty() && cats.isNotEmpty()) selCat = cats.first() }
   val addBusy by vm.addBusy.collectAsState()
   val addMsg by vm.addMsg.collectAsState()
 
@@ -59,7 +62,6 @@ fun AddStationScreen(vm: AppVm) {
         modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
       )
       Text("分类（选既有或自填，自填优先）", fontSize = 12.sp, color = pal.dim, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
-      val cats = vm.catOptions()
       if (cats.isEmpty()) {
         Text("（列表尚未装载完成，可直接自填分类）", fontSize = 12.sp, color = pal.dim)
       } else {

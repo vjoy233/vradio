@@ -41,6 +41,7 @@ fun SettingsScreen(vm: AppVm) {
   val healthBusy by vm.healthBusy.collectAsState()
   val healthProg by vm.healthProg.collectAsState()
   val healthResult by vm.healthResult.collectAsState()
+  val manualRun by vm.manualRun.collectAsState()
   val updateBusy by vm.updateBusy.collectAsState()
   val updateMsg by vm.updateMsg.collectAsState()
   val syncBusy by vm.syncBusy.collectAsState()
@@ -87,9 +88,12 @@ fun SettingsScreen(vm: AppVm) {
       }
       item {
         Section("数据与体检")
-        ItemTitle("手动体检", "逐台探测当前列表（含默认隐藏的死台），约几分钟")
-        Button(onClick = { vm.manualHealth() }, enabled = !healthBusy, modifier = Modifier.fillMaxWidth()) {
-          Text(if (healthBusy) "体检中…" else "开始体检")
+        ItemTitle("手动体检", "逐台探测当前列表（含默认隐藏的死台），约几分钟；进行中可取消（已确认的标记保留）")
+        Button(
+          onClick = { if (manualRun) vm.cancelHealth() else vm.manualHealth() },
+          enabled = !healthBusy || manualRun, modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text(if (manualRun) "取消体检" else if (healthBusy) "体检中…" else "开始体检")   // B3：Web「取消体检」同款按钮翻转（sync.js health()）
         }
         if (healthProg.isNotEmpty()) Info(healthProg)
         if (healthResult.isNotEmpty()) Info(healthResult)

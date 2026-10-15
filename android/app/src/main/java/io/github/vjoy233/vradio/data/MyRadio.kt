@@ -5,7 +5,9 @@ import io.github.vjoy233.vradio.model.Station
 import java.io.File
 
 /* 个人电台列表 my-radio.txt 唯一所有者（对标 server.js /api/mystation 写盘格式，行格式是 Web/安卓两侧契约）：
-   节头「分类,#genre#」+ 行「台名,流URL」，CRLF，尾部带换行。数据更新永不覆盖本文件（装配时常驻重并）。 */
+   节头「分类,#genre#」+ 行「台名,流URL」，CRLF，尾部带换行。数据更新永不覆盖本文件（装配时常驻重并）。
+   已知非对称留档（审计 B2 拍板不改）：Web 落盘写 safeTarget 归一化后的 u.href（大小写/尾点归一），
+   本侧写原始 trim 串——同一地址两种拼写经备份互迁后按行尾精确匹配的查重互不识别，正常粘贴无感。 */
 class MyRadio(private val dir: File) {
   private val file get() = File(dir, "my-radio.txt")
 

@@ -137,7 +137,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     refreshUi3()                                                          // view/showdead/theme 三键恢复（app.js loadUi3 同款）
     stamp.value++
     primeAll()
-    delay(4000)                                                          // 首屏后 4s 静默复查（B-10）    if (unmetered()) silentCheck()                                       // 仅 WiFi（D10）；移动数据静默跳过
+    delay(4000)                                                          // 首屏后 4s 静默复查（B-10）
+    if (unmetered()) silentCheck()                                       // 仅 WiFi（D10）；移动数据静默跳过
   }
 
   private fun readAsset(name: String): String? = runCatching {
@@ -302,7 +303,9 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     theme.value = listOf("auto", "light", "dark").firstOrNull { it == Store.get(C.K_THEME) } ?: "auto"
   }
 
-  fun setVol(pct: Int) { PlayerHolder.setVolPct(pct) }  fun toggleMute() {
+  fun setVol(pct: Int) { PlayerHolder.setVolPct(pct) }
+
+  fun toggleMute() {
     if (cur.volPct > 0) { PlayerHolder.setVolPct(0); status.value = "已静音" }
     else {
       // restoreVolPct = 当前台记忆 → 全局 → 默认（player.js restoreVol 同语义）；会话内近似值会把台记忆覆盖坏

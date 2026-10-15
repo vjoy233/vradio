@@ -63,6 +63,8 @@ class MyRadioTest {
     assertFalse(SafeTarget.ok("http://169.254.9.9/live"))
     assertFalse(SafeTarget.ok("http://2130706433/live"))     // 十进制 127.0.0.1 变形
     assertFalse(SafeTarget.ok("http://0x7f000001/live"))     // 十六进制变形
+    assertFalse(SafeTarget.ok("http://[::1]:8080/live"))      // IPv6 回环（bracket 段全拒，复核轮 P3）
+    assertFalse(SafeTarget.ok("http://[fe80::1]/live"))       // IPv6 链路本地
     assertFalse(SafeTarget.ok("http://router.local/live"))
     assertFalse(SafeTarget.ok("ftp://a.example/x"))          // 非 http(s)
     assertFalse(mr.append("台", "自建", "http://192.168.1.1/live"))   // 写入侧同护栏
@@ -70,8 +72,8 @@ class MyRadioTest {
     assertTrue(SafeTarget.ok("https://example.com:8443/a/b.m3u8"))
   }
 
-  @Test fun lineCap() { // 500 行封顶：判满在写之前（第 501 行拒绝）。注：每次 append 尾部累积一空行
-    //（split 带尾空串再 join+"\r\n"，server.js 同款行为——两侧平价属契约，勿单侧"修好"）
+  @Test fun lineCap() { // 500 行封顶：判满在写之前（第 501 行拒绝）。尾部空行已由 splitLines 归一不计数
+    //（本侧 append/replace 语义按实行口径；server.js 的 split 带尾空串怪癖仍在 Web 侧，两侧此点允许非逐字节一致）
     val full = ArrayList<String>()
     full.add("自建,#genre#")
     for (i in 1..499) full.add("满台$i,http://a.example/f$i")

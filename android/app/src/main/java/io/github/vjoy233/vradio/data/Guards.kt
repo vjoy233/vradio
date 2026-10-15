@@ -17,6 +17,7 @@ object SafeTarget {
     val hostPort = u.substringAfter("://").substringBefore('/')
     val host = hostPort.substringBefore(':').lowercase()
     if (host.isEmpty()) return false
+    if (host.startsWith("[")) return false   // IPv6 字面量（如 [::1]/[fe80::]）无点分形态可判——回环/链路本地全拒（复核轮 P3：截断后成 "[" 会穿透，Web safeTarget 同拒 bracket 段）
     if (RE_LOCAL_SUFFIX.containsMatchIn(host)) return false
     if (host == "localhost" || host.endsWith(".localhost")) return false
     if (RE_DEC_HOST.matches(host) || RE_HEX_HOST.matches(host)) return false

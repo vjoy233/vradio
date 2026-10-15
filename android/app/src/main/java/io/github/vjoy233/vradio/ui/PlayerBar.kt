@@ -111,7 +111,7 @@ fun PlayerBar(vm: AppVm, ui: PlayerUiState) {
       // 选源入口（②a）：多源台且播/暂停中才亮（按次渲染动态判定）
       val st = ui.station
       if (st != null && st.u.size > 1) {
-        TextButton(onClick = { vm.showSrc.value = true }) { Text("源") }
+        TextButton(onClick = { vm.openSrc() }) { Text("源") }
       }
     }
     // 音量行：静音切换 + 滑杆（联动 volperst；拖动本地态防回环抖动）

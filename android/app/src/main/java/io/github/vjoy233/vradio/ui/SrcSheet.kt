@@ -17,6 +17,8 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,13 +37,15 @@ import io.github.vjoy233.vradio.ui.theme.LocalVrPalette
 fun SrcSheet(vm: AppVm, ui: PlayerUiState) {
   val pal = LocalVrPalette.current
   val s = ui.station
-  if (s == null) {                                                        // 切台后浮层过期即收起（防 stale 引用）
-    LaunchedEffect(Unit) { vm.showSrc.value = false }
+  val openKey by vm.srcKey.collectAsState()
+  // 切台（⏮⏭/线控/浮层外操作）或清台即收起（Web srcPopK 失配即关，app.js:563）——浮层内容须始终对应打开时的台
+  if (s == null || (openKey != null && s.key != openKey)) {
+    LaunchedEffect(Unit) { vm.showSrc.value = false; vm.srcKey.value = null }
     return
   }
   val dft = vm.srcDefault(s)
   val mem = PlayerHolder.srcmemOf(s)
-  ModalBottomSheet(onDismissRequest = { vm.showSrc.value = false }) {
+  ModalBottomSheet(onDismissRequest = { vm.showSrc.value = false; vm.srcKey.value = null }) {
     Column(Modifier.padding(horizontal = 16.dp).navigationBarsPadding()) {
       Text(
         "${s.n} · ${s.u.size} 个源，点行切换（失败自动顺延）",
@@ -52,7 +56,7 @@ fun SrcSheet(vm: AppVm, ui: PlayerUiState) {
         val cur = ui.station?.key == s.key && ui.srcIdx == i
         Row(
           Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
-            .clickable { vm.showSrc.value = false; vm.startPlay(s, i) }
+            .clickable { vm.showSrc.value = false; vm.srcKey.value = null; vm.startPlay(s, i) }
             .padding(vertical = 10.dp, horizontal = 4.dp),
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -70,7 +74,7 @@ fun SrcSheet(vm: AppVm, ui: PlayerUiState) {
       if (mem in s.u.indices && mem != dft) {                             // 记忆=默认时清了又记回同源，不渲染（AIbot P3-1）
         Row(
           Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
-            .clickable { vm.showSrc.value = false; vm.srcReset() }
+            .clickable { vm.showSrc.value = false; vm.srcKey.value = null; vm.srcReset() }
             .padding(vertical = 10.dp, horizontal = 4.dp),
           verticalAlignment = Alignment.CenterVertically,
         ) { Text("↺ 恢复默认源（忘掉源 ${mem + 1} 的记忆）", fontSize = 13.sp, color = pal.acc, fontWeight = FontWeight.Medium) }

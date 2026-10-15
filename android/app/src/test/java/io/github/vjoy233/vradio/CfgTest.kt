@@ -36,6 +36,11 @@ class CfgTest {
     assertEquals(mapOf("分类甲" to true), c.hideC)
   }
 
+  @Test fun hideSKeyNoTrim() { // 审计 P3：hideS 键不 trim（app.js urlKeys 同判）——带空白尾巴的键原样保留成死键（永不命中台 URL），不清洗成活键跨端漂移
+    val c = CfgCodec.parse("{\"hideS\":{\"http://a/1 \":1,\" http://a/2\":1,\"http://a/3\":1}}")
+    assertEquals(mapOf("http://a/1 " to true, "http://a/3" to true), c.hideS)   // 前导空格键不匹配 ^http → 整键丢弃（Web 同）
+  }
+
   @Test fun srcsCapAndClean() { // 键须 URL 且值为数组；元素 trim/512/http(s)、去重、取前 6；空数组整键丢弃
     val json = "{\"srcs\":{\"http://a/1\":[\" http://s/1 \",\"http://s/1\",\"ftp://坏\",\"http://s/2\",\"http://s/3\",\"http://s/4\",\"http://s/5\",\"http://s/6\",\"http://s/7\"]," +
       "\"http://b/1\":\"not-array\",\"坏键\":[\"http://x/1\"],\"http://c/1\":[]}}"

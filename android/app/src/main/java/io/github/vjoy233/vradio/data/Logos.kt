@@ -37,7 +37,7 @@ class Logos(private val filesDir: File, private val http: HttpText, private val 
 
   /* logos.txt 全文装载（AppVm 从 assets/D7 副本注入）：行「分类|台名,图片URL」，# 注释行跳过 */
   fun loadBuiltins(text: String) {
-    file.clear()
+    val m = LinkedHashMap<String, String>()
     for (raw in text.split(Regex("\\r?\\n"))) {
       val line = raw.trim()
       if (line.isEmpty() || line.startsWith("#")) continue
@@ -46,8 +46,9 @@ class Logos(private val filesDir: File, private val http: HttpText, private val 
       val u = line.substring(i + 1).trim()
       // 引号/空白/尖括号 URL 直接拒收（上游镜像仓库可控数据，防逃逸——logos.js 同款纵深）
       if ((u.startsWith("http://") || u.startsWith("https://")) && !BAD_CHARS.containsMatchIn(u))
-        file[line.substring(0, i).trim()] = u
+        m[line.substring(0, i).trim()] = u
     }
+    synchronized(mem) { file.clear(); file.putAll(m) } // 审计 P3：get 持 mem 锁读 file——装载（IO/数据更新）必须同锁整表换，防 D7 重装窗口撕裂读
   }
 
   /* 同步窥探（渲染用，绝不发请求）：STARTER.l → 内置表 → 运行时缓存，无则空串（UI 出首字母色块） */

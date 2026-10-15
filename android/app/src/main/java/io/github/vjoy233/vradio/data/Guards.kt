@@ -34,15 +34,18 @@ object SafeTarget {
 }
 
 /* 统一原子写（AIbot P2-6）：Store/MyRadio/Logos/sync 四处 tmp+rename 合并为一份实现。
-   降级链：Windows 目标已存在 rename 拒 → 先删再换；rename 仍失败 → 直写兜底（内容完整优先）。
-   纯 JVM（println 在 Android 落 logcat、单测落 stdout），失败可观测。 */
+   rename 优先（G P2-2）：Android/Linux 的 renameTo 对已存在目标是原子替换，先 delete 反而留出
+   「目标已删、tmp 未换」的进程被杀丢档窗口；delete+rename 只作 Windows 兜底（目标存在时 rename 拒），
+   直写兜底殿后（内容完整优先）。纯 JVM（println 在 Android 落 logcat、单测落 stdout），失败可观测。 */
 internal fun writeTextAtomic(f: File, text: String) {
   val tmp = File(f.parentFile, f.name + ".tmp")
   tmp.writeText(text)
-  if (f.isFile) f.delete()
   if (!tmp.renameTo(f)) {
-    tmp.delete()
-    f.writeText(text)
-    println("[vradio] atomic-rename fallback to direct write: ${f.name}")
+    if (f.isFile) f.delete()
+    if (!tmp.renameTo(f)) {
+      tmp.delete()
+      f.writeText(text)
+      println("[vradio] atomic-rename fallback to direct write: ${f.name}")
+    }
   }
 }

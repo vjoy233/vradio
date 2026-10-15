@@ -194,7 +194,8 @@ object PlayerHolder {
     cancelSleep()
     curSi = -1; curPlay = ""
     markProgress()
-    uiMut.update { it.copy(st = PState.IDLE, station = null, song = "", kbps = 0, srcIdx = -1) }
+    uiMut.update { it.copy(st = PState.IDLE, station = null, song = "", kbps = 0, srcIdx = -1,
+      status = "") } // 清引擎文案：无台时 PlayerBar 第二行会永久残留「已暂停」等旧状态（G P3）
   }
 
   /* ---------- 音量（每台记忆 volperst + 全局锚点 radio.vol） ---------- */

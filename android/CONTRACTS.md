@@ -96,7 +96,7 @@ class Library(
   // —— 健康标记（radio.health 的内存态 + 落盘；分档生命周期函数在 check 层 Health 对象，这里只承载）——
   var healthMarks: MutableMap<String, HealthEntry>
   fun saveHealth()                               // FIFO 分额度裁剪照抄 app.js saveHealth
-  fun applyHealthToStations()                    // key 命中的台置 health="dead"（boot/体检后）
+  fun applyHealthToStations()                    // 先清全部行内标再按 marks 挂 dead——体检复活即回归列表（app.js patchHealth 口径，G P1）
   // —— 歌史（radio.songs）——
   fun pushSong(u0: String, title: String)        // app.js pushSongHist 同款：list[0].t!==title 才入、每台 12/台数 50 FIFO
   fun songsOf(u0: String): List<SongRec>
@@ -237,6 +237,7 @@ class CheckStream(private val http: RawHttp) {   // RawHttp = okhttp 字节级�
 }
 ```
 - 字节验收纪律（AGENTS 已知坑）：**不能信状态码/Content-Type**（xmcdn 假流/漂移）；窗内（4500ms，mystation 12s）累计字节 ≥8000（非 HLS）认活；HLS：拉 m3u8 + 首段分片 ≥6000B；Content-Type text/html 直接拒。并发由调用方（AppVm）控制。
+- **已知差异留档（G P3）**：端上 OkHttp/DataSource 默认跟随重定向且不逐跳复查 safeTarget——Web 的「重定向逐跳复查」服务的是服务端代理 SSRF 面，端上无监听端口不存在（plan 5.5 论证）；若未来引入本地代理/转发面须复查此决定。
 
 ### Health.kt（分档生命周期纯函数，plan-health-and-storage grill R1-R4）
 ```kotlin

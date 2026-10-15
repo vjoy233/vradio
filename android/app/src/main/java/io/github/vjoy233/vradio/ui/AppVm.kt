@@ -336,7 +336,9 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   private suspend fun probe(s: Station): Probe {
     var allNet = true                       // 全部源都「网络失败」→ 本台无判定依据
-    for (u in s.u.take(4)) {
+    // G P3：s.u 与主线程 applyCfg/reapplyCfg 的 addAll 并发遍历可 CME——快照失败按无判据跳过（不落标，安全方向）
+    val us = runCatching { s.u.take(4) }.getOrNull() ?: return Probe.NET
+    for (u in us) {
       val v = runCatching { checker.check(u, C.CHECK_WINDOW_MS) }.getOrNull() ?: return Probe.NET
       if (v.ok) return Probe.OK
       if (v.why != "网络失败") allNet = false // 有任一源给出真应答（HTTP/超阈拒），死结论才有据
@@ -382,17 +384,18 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     withContext(Dispatchers.Main) { runCatching { lib.applyHealthToStations() }; stamp.value++ }
   }
 
-  fun manualHealth() {                                                    // 手动全量（并发 6；反馈走设置页文案 + 完成 toast）
+  fun manualHealth() {                                                    // 手动全量（并发 5=Web runCheck 口径；反馈走设置页文案 + 完成 toast）
     if (manualRun.get()) return
     viewModelScope.launch {
       manualRun.set(true)
       try {
+        if (healthBusy.value) healthProg.value = "等待后台体检收尾…"       // G P3：让位等待最坏 30-40s，零反馈观感像卡死
         while (healthBusy.value) delay(250)                               // 静默版让位收尾（手动优先，B-10 互斥）
         healthBusy.value = true
         healthResult.value = ""
         val list = runCatching { lib.visible(true, playKey(), connKey()) }.getOrDefault(emptyList())   // 连默认隐藏的死台一起复查
         healthProg.value = "体检中 0/${list.size}"
-        val res = probeAll(list, 6, { false }) { d, t -> healthProg.value = "体检中 $d/$t" }
+        val res = probeAll(list, 5, { false }) { d, t -> healthProg.value = "体检中 $d/$t" }
         if (res.size >= 5 && res.all { it.second == Probe.NET }) {         // 网络层整体故障兜底：不落任何标记
           healthResult.value = "体检未完成：全部探测失败（疑似网络不可用），未标记任何电台"
           toast(healthResult.value); return@launch
@@ -526,6 +529,11 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     if (n.isEmpty()) { addMsg.value = "请填写电台名"; return }
     if (!SafeTarget.ok(u)) { addMsg.value = "流地址需为公网 http(s) 地址（内网/回环/变形 IP 不收）"; return }   // AIbot P2-5：与 server.js safeTarget 同口径（MyRadio.append 兜底同判）
     if (c.isEmpty()) { addMsg.value = "请选择或填写分类"; return }
+    // 查重先行（G P3：重复比超限常见，也不该白等 12s 探活；文案对齐 server.js myStationWrite 三分口径）
+    val myLines = runCatching { lib.myText.split(Regex("\\r?\\n")).dropLastWhile { it.isEmpty() } }.getOrDefault(emptyList())
+    if (myLines.any { it.trim() == "$n,$u" }) { addMsg.value = "该电台已在个人列表中"; return }
+    val dup = myLines.firstOrNull { it.trim().endsWith(",$u") }            // 同 URL 换名也不双开（装配按键合并会出两行）
+    if (dup != null) { addMsg.value = "该流地址已存在（「${dup.trim().substringBefore(',')}」），同一地址请直接使用现有电台"; return }
     viewModelScope.launch {
       addBusy.value = true; addMsg.value = "探活中…（最长 12 秒，蜻蜓系建流慢属正常）"
       try {
@@ -535,7 +543,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
           return@launch
         }
         val ok = withContext(Dispatchers.IO) { runCatching { myRadio.append(n, c, u) }.getOrDefault(false) }
-        if (!ok) { addMsg.value = "写入失败：个人列表超限（500 行 / 64KB）"; return@launch }
+        if (!ok) { addMsg.value = "my-radio.txt 已达上限（500 行），请清理后再添加"; return@launch }
         withContext(Dispatchers.IO) { lib.myText = myRadio.readText() }
         lib.reload(); stamp.value++
         toast("已添加「$n」到「$c」（持久于 my-radio.txt，同步不覆盖）")
@@ -552,13 +560,17 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       try {
         val content = when (kind) {
           Exp.BACKUP -> Backup.exportAll(lib, myRadio.readText(), System.currentTimeMillis())
-          Exp.M3U -> {
-            if (lib.favs.isEmpty()) { toast("还没有收藏，先点 ☆ 收藏再导出"); return@launch }
-            Backup.m3uFavs(lib)
-          }
+          Exp.M3U -> Backup.m3uFavs(lib)                                  // 空串 = 无可解析收藏台（收藏全休眠同判）
           Exp.SONGS -> Backup.songsTxt(lib) { System.currentTimeMillis() }
           Exp.CFG -> Backup.cfgJson(lib.cfg)
         }
+        // G P3：空数据提示不落盘（Web 口径——exportSongs/exportFavs 状态栏提示不触发下载），文案逐字对齐
+        val emptyHint = when (kind) {
+          Exp.M3U -> "还没有收藏，先点 ☆ 收藏再导出"
+          Exp.SONGS -> "暂无歌曲历史（换歌后自动记录）"
+          else -> null
+        }
+        if (emptyHint != null && content.isEmpty()) { toast(emptyHint); return@launch }
         val w = ctx.contentResolver.openOutputStream(uri, "wt")
         if (w == null) { toast("导出失败：无法写入文件"); return@launch }
         w.use { it.write(content.toByteArray(Charsets.UTF_8)) }

@@ -61,6 +61,7 @@ private val logoClient = OkHttpClient.Builder()
 private val logoCache = object : LruCache<String, Bitmap>(96) {
   override fun sizeOf(key: String, value: Bitmap) = 1   // 按张数封顶（小图，96 张内存可控）
 }
+private val logoFail = HashSet<String>()   // 会话级坏图负缓存（G P3：LazyColumn 滚出再滚入不重拉坏 URL；logos.js 坏图 onerror 一次性语义）
 
 private fun fetchLogo(url: String): Bitmap? = runCatching {
   logoClient.newCall(Request.Builder().url(url).build()).execute().use { r ->
@@ -71,14 +72,15 @@ private fun fetchLogo(url: String): Bitmap? = runCatching {
   }
 }.getOrNull()
 
-/** 台标：URL 空/坏图一律回退首字母色块（有图无图节奏统一，logos.js visual 同款） */
+/** 台标：URL 空/坏图一律回退首字母色块（有图无图节奏统一，logos.js visual 同款）；
+ *  key=分类|台名（首字母色块色相的 hash 输入，phParams 见下） */
 @Composable
-fun StationLogo(url: String, name: String, size: Dp, modifier: Modifier = Modifier) {
+fun StationLogo(url: String, name: String, key: String, size: Dp, modifier: Modifier = Modifier) {
   var bmp by remember(url) { mutableStateOf(logoCache.get(url)) }
   LaunchedEffect(url) {
-    if (url.isNotEmpty() && bmp == null) {
+    if (url.isNotEmpty() && bmp == null && url !in logoFail) {
       val b = withContext(Dispatchers.IO) { fetchLogo(url) }
-      if (b != null) { logoCache.put(url, b); bmp = b }
+      if (b != null) { logoCache.put(url, b); bmp = b } else logoFail.add(url)
     }
   }
   val pal = LocalVrPalette.current
@@ -87,7 +89,7 @@ fun StationLogo(url: String, name: String, size: Dp, modifier: Modifier = Modifi
     val b = bmp
     if (b != null) Image(b.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
     else {
-      val (ch, hue) = phParams(name)
+      val (ch, hue) = phParams(key, name)
       Box(Modifier.fillMaxSize().background(hsl(hue, .42f, .44f)), contentAlignment = Alignment.Center) {
         Text(ch, color = Color.White, fontWeight = FontWeight.Bold, fontSize = (size.value * .42f).sp)
       }
@@ -95,11 +97,12 @@ fun StationLogo(url: String, name: String, size: Dp, modifier: Modifier = Modifi
   }
 }
 
-/* 首字母色块参数：剥 [国别] 后缀取首字符，色相 = 台名 hash 确定性生成（logos.js phd 同款） */
-fun phParams(name: String): Pair<String, Int> {
+/* 首字母色块参数：首字符取剥 [国别] 后缀的台名；色相 hash 输入 = key（分类|台名全名，含后缀）——
+   logos.js phd 对 s.c+'|'+s.n 同款（G P3：两端同台同色相），同一台永远同色 */
+fun phParams(key: String, name: String): Pair<String, Int> {
   val n = name.replace(Regex("""\s*\[[^\]]+\]\s*$"""), "")
   var h = 0
-  for (c in n) h = h * 31 + c.code
+  for (c in key) h = h * 31 + c.code
   return (n.trim().firstOrNull()?.toString() ?: "?").uppercase() to ((h % 360) + 360) % 360
 }
 fun hsl(h: Int, s: Float, l: Float): Color = Color(ColorUtils.HSLToColor(floatArrayOf(h.toFloat(), s, l)))

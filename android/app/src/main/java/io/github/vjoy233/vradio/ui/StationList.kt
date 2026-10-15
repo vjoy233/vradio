@@ -72,14 +72,15 @@ fun StationList(vm: AppVm) {
   // 回到正在播（N5）：滚动定位 + 高亮一闪（1s 后消退）
   val gridState = rememberLazyGridState()
   val listState = rememberLazyListState()
-  LaunchedEffect(locate) {
+  // G P3：(locate, list) 联合触发——locatePlaying 同刻设 cat/keyword，listUi 传播异步，单看 locate 可能
+  // 读到旧过滤结果 i=-1 静默跳过；列表更新会重试，目标不在列表则保留 locate 待后续（无循环无副作用）
+  LaunchedEffect(locate, lu.list) {
     val k = locate ?: return@LaunchedEffect
-    vm.locate.value = null
     val i = lu.list.indexOfFirst { it.key == k }
-    if (i >= 0) {
-      if (view == "grid") gridState.animateScrollToItem(i) else listState.animateScrollToItem(i)
-      flash = k
-    }
+    if (i < 0) return@LaunchedEffect
+    vm.locate.value = null
+    if (view == "grid") gridState.animateScrollToItem(i) else listState.animateScrollToItem(i)
+    flash = k
   }
   LaunchedEffect(flash) { if (flash != null) { delay(1000); flash = null } }
 
@@ -180,7 +181,7 @@ private fun StationCard(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?
       .clickable { vm.togglePlay(k) }.padding(10.dp),
   ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-      StationLogo(vm.logoOf(s), s.n, 40.dp)
+      StationLogo(vm.logoOf(s), s.n, s.key, 40.dp)
       Text(
         (if (playing) "▶ " else "") + dn,
         modifier = Modifier.weight(1f).padding(start = 8.dp),
@@ -217,7 +218,7 @@ private fun StationRow(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?,
     FavStar(fav) { vm.toggleFav(s) }
     Column(Modifier.weight(1f)) {
       Row(verticalAlignment = Alignment.CenterVertically) {
-        StationLogo(vm.logoOf(s), s.n, 22.dp)
+        StationLogo(vm.logoOf(s), s.n, s.key, 22.dp)
         Text(
           (if (playing) "▶ " else "") + dn,
           modifier = Modifier.weight(1f).padding(start = 8.dp),

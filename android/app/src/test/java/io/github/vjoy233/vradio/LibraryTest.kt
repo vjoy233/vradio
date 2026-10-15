@@ -84,6 +84,22 @@ class LibraryTest {
     assertTrue(l.search("台A").isEmpty()) // 搜索走默认隐藏口径
   }
 
+  @Test fun reviveClearsDeadMark() { // 体检复活即回归列表（G P1-1）：onAlive 删 marks 后重挂须清行内 dead——否则当次会话仍被隐藏
+    val l = lib("华语音乐,#genre#\n台A,http://a/1\n台B,http://b/1")
+    l.reload()
+    val ka = l.stations.first { it.n == "台A" }.key
+    val kb = l.stations.first { it.n == "台B" }.key
+    l.healthMarks[ka] = HealthEntry(listOf("http://a/1"), 1, 1, 1, 0)
+    l.healthMarks[kb] = HealthEntry(listOf("http://b/1"), 1, 1, 1, 0)
+    l.applyHealthToStations()
+    assertFalse(l.visible(false, null, null).any { it.key == ka })
+    l.healthMarks.remove(ka)                    // 复活撤销（Health.onAlive 同款 delete）
+    l.applyHealthToStations()                    // persistHealth 的重挂路径
+    assertTrue(l.visible(false, null, null).any { it.key == ka })   // 复活台回归
+    assertNull(l.stations.first { it.n == "台A" }.health)           // 行内标已清
+    assertFalse(l.visible(false, null, null).any { it.key == kb })  // 未复活的台照旧隐藏
+  }
+
   @Test fun cfgMoveAndRename() { // 移动/改名按任一源 URL 命中；分类重命名最后映射
     Store.set("radio.cfg", "{\"moves\":{\"http://a/1\":\"自建\"},\"names\":{\"http://a/1\":\"新名\"},\"renames\":{\"华语音乐\":\"华语\"},\"cats\":[\"自建\"]}")
     val l = lib("华语音乐,#genre#\n台A,http://a/1\n台B,http://b/1")

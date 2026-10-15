@@ -13,8 +13,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # fetch-depth 0：assets 打包基线 data-stamp.txt 取 radio.txt 的 git log 最后提交时刻，
-      # 浅检出在 HEAD 未动过 radio.txt 时取不到历史会退回构建时刻（AIbot P3）
+      # fetch-depth 0：assets 打包基线 data-stamp.txt 取 radio/logos 的 git log 最后提交较新者，
+      # 浅检出在 HEAD 未动过数据文件时取不到历史会退回构建时刻（AIbot P3）
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -23,8 +23,9 @@ jobs:
           distribution: temurin
           java-version: '17'
       # android runner 镜像自带 SDK 与已接受的 licenses；缺件由 AGP 自动补装
+      # 单测纯 JVM 秒级：debug 变体即覆盖全部用例（G P3：test 连跑 debug+release 两套时间翻倍）
       - name: 单元测试（parser/classifyCn 金样/store/cfg/backup/health/myradio）
-        run: android/gradlew --project-dir android test
+        run: android/gradlew --project-dir android testDebugUnitTest
       - name: 构建 debug APK
         run: android/gradlew --project-dir android assembleDebug
       - name: debug APK 体积哨兵（事故哨兵而非功能预算）

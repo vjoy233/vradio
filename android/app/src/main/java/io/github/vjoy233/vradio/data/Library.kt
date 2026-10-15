@@ -1,5 +1,6 @@
 package io.github.vjoy233.vradio.data
 
+import io.github.vjoy233.vradio.check.Health
 import io.github.vjoy233.vradio.consts.C
 import io.github.vjoy233.vradio.model.Cfg
 import io.github.vjoy233.vradio.model.FavEntry
@@ -10,7 +11,6 @@ import io.github.vjoy233.vradio.model.Station
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import kotlin.math.max
 
 /* 数据装配管线 + 持久态唯一所有者（对标 app.js 的 App 数据面）：
    主列表 replace → STARTER 精选层按精确名去重并入 → my-radio 个人层常驻并入 → 维护层套用（cfg）
@@ -35,7 +35,7 @@ class Library(
   /* —— 持久态（boot 从 store 容错读 + 旧格式迁移，app.js loadStore 同款）—— */
   var favs: MutableList<FavEntry> = loadFavs(store.get(C.K_FAVS))       // 带 URL 的条目永不回收（休眠待回绑）
   var recents: MutableList<RecentEntry> = loadRecents(store.get(C.K_RECENTS)) // 最近在前、≤20；队首即「上次收听」
-  var healthMarks: MutableMap<String, HealthEntry> = loadHealth(store.get(C.K_HEALTH), clock())
+  var healthMarks: MutableMap<String, HealthEntry> = Health.normalize(store.get(C.K_HEALTH), clock()) // 容错读收敛单实现（G P3：与 check 层共用，防双份漂移）
 
   /* —— 分类条序（app.js buildCats 同序）：华语/欧美置顶（重命名跟随新名），自建分类次之，其余按数据序 —— */
   fun cats(): List<String> {
@@ -87,7 +87,9 @@ class Library(
     for ((k, e) in healthMarks) o.put(k, JSONObject().put("u", JSONArray(e.u)).put("t", e.t).put("t0", e.t0).put("n", e.n).put("perm", e.perm))
     store.set(C.K_HEALTH, o.toString())
   }
-  fun applyHealthToStations() { // key（或任一源 URL）命中的台置 health="dead"（boot/体检后挂标；复活清标由 check 层直接置 station）
+  fun applyHealthToStations() { // 先清后挂（G P1-1）：体检复活只删 marks，行内 health 残留 "dead" 会把台继续隐藏到
+    // 下次 reload——app.js patchHealth 复活即回归列表；先清后挂对 boot（本就全 null）无害
+    for (s in stations) s.health = null
     for ((k, e) in healthMarks) { resolveEntry(k, e.u)?.health = "dead" }
   }
 
@@ -168,7 +170,7 @@ class Library(
   fun reloadStore() { // Store 被外部整体替换后（备份导入 applyAll）内存态全量重载：app.js applyServerStore 同款
     favs = loadFavs(store.get(C.K_FAVS))
     recents = loadRecents(store.get(C.K_RECENTS))
-    healthMarks = loadHealth(store.get(C.K_HEALTH), clock())
+    healthMarks = Health.normalize(store.get(C.K_HEALTH), clock())
     _cfg = CfgCodec.parse(store.get(C.K_CFG))
     for (s in stations) s.health = null // 清旧标记由 rebind 按 healthMarks 重挂
     rebind()
@@ -217,21 +219,6 @@ class Library(
       out.add(RecentEntry(k, n, strList(e.optJSONArray("u"))))
     }
     return ArrayList(out.take(C.RECENTS_CAP))
-  }
-  private fun loadHealth(raw: String?, now: Long): MutableMap<String, HealthEntry> {
-    val out = LinkedHashMap<String, HealthEntry>()
-    val o = raw?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return out
-    for (k in o.keys()) {
-      val e = o.optJSONObject(k) ?: continue
-      if (!e.has("u") || e.optJSONArray("u") == null) continue // u 非数组整条丢
-      val u = strList(e.optJSONArray("u"))
-      val t = e.optLong("t")
-      val perm = if (truthy(e.opt("perm"))) 1 else 0
-      if (perm == 0 && now - t >= C.HEALTH_TTL_SUSPECT) continue // 疑似档兜底 TTL 180 天；停运档永不过期
-      val t0v = e.optLong("t0")
-      out[k] = HealthEntry(u, t, if (t0v != 0L) t0v else t, max(1, e.optInt("n")), perm) // 旧数据：t0 缺省回落 t、n 至少 1
-    }
-    return out
   }
   private fun songsMap(): MutableMap<String, MutableList<SongRec>> { // 每次现读（导入恢复后自动跟随，app.js pushSongHist 同款）
     val out = LinkedHashMap<String, MutableList<SongRec>>()

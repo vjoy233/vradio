@@ -1,6 +1,7 @@
 // app 模块：依赖白名单封闭清单（plan-android.md §四/D6 okhttp 唯一破例）
 import java.util.Properties
 import java.time.Instant
+import java.time.OffsetDateTime
 
 plugins {
   id("com.android.application")
@@ -81,9 +82,19 @@ dependencies {
 }
 
 // —— 数据文件打包：仓库根 radio.txt/logos.txt（update-sources.js 产出的单一数据源）→ assets，随行写 data-stamp.txt
-//    （D7 轻更新判新旧的打包基线 = radio.txt 最近一次 git 提交时刻；无 git 环境退回当前时间）——
+//    （D7 轻更新判新旧的打包基线 = radio/logos 两文件最近一次 git 提交的较新者——与 LightUpdate.latestIso 同取 max，
+//    只看 radio.txt 时 logos 单独晚提交会让首装首查误报「有新版」；无 git 环境退回当前时间）——
 val repoRoot = rootDir.parentFile // android/ 的上级 = 仓库根
 val genAssetsDir = layout.buildDirectory.dir("generated/radioAssets")
+
+// %cI 可带 +08:00 偏移、Instant.parse 只认 Z 后缀（LightUpdate.iso 同款两道解析）
+fun parseIso(s: String): Instant = try { Instant.parse(s) } catch (_: Exception) {
+  try { OffsetDateTime.parse(s).toInstant() } catch (_: Exception) { Instant.EPOCH }
+}
+fun lastIso(path: String): String? = runCatching {
+  ProcessBuilder("git", "log", "-1", "--format=%cI", "--", path)
+    .directory(repoRoot).start().inputStream.bufferedReader().readText().trim().takeIf { it.isNotEmpty() }
+}.getOrNull()
 
 val copyRadioData by tasks.registering {
   outputs.upToDateWhen { false } // 数据小且常变，每次构建都重拷（秒级）
@@ -94,10 +105,8 @@ val copyRadioData by tasks.registering {
       if (!src.exists()) throw GradleException("缺少仓库根数据文件 $f——先在仓库根跑 npm run sync")
       src.copyTo(File(out, f), overwrite = true)
     }
-    val stamp = runCatching {
-      ProcessBuilder("git", "log", "-1", "--format=%cI", "--", "radio.txt")
-        .directory(repoRoot).start().inputStream.bufferedReader().readText().trim()
-    }.getOrDefault("").ifEmpty { Instant.now().toString() }
+    val stamp = listOf("radio.txt", "logos.txt").mapNotNull(::lastIso)
+      .maxByOrNull { parseIso(it) } ?: Instant.now().toString()
     File(out, "data-stamp.txt").writeText(stamp)
   }
 }

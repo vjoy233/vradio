@@ -5,7 +5,9 @@ import io.github.vjoy233.vradio.data.writeTextAtomic
 import io.github.vjoy233.vradio.consts.C
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 import java.io.File
+import java.time.Instant
 
 /* M4 端内同步引擎（update-sources.js syncSources 全量移植，无降级）：
    1) 国内源：gaotianliuyun/gao radio.txt 拉取（内容可疑时保留本地）→ classifyCn 重分类整编进 CAT_ORDER；
@@ -92,6 +94,9 @@ class SyncEngine(private val gh: Gh, private val check: CheckStream, private val
       return SyncResult(false, before, 0, 0, 0, emptyList(), emptyList(), emptyList(), emptyList(), null, null, cnUpdated, -1)
     }
     writeTextAtomic(File(filesDir, "radio.txt"), merged.joinToString("\r\n") + "\r\n")
+    // stamp 随写（G P2-3）：不写的话 D7 check 会拿仓库既有提交判「有新版」，apply 用仓库数据覆盖刚同步出的
+    // 列表来回跳；commitIso=当前时刻 = 本地内容不旧于仓库任何既有提交，repo 出更新提交前 D7 保持安静
+    writeTextAtomic(File(filesDir, "stamp.json"), JSONObject().put("commitIso", Instant.now().toString()).toString())
     // 4.5) diff 摘要（N4/r2 ⑥）：按台名集合对比——分类变化不算（重分类是常规操作），改名 = 消失+新增如实呈现
     val oldNames = entryNamesOf(oldSecs.flatMap { it.lines })
     val neuNames = entryNamesOf(merged)

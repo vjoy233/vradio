@@ -265,6 +265,13 @@ const Player = {
     Store.set('radio.srcmem2', JSON.stringify(this.srcMem));
     return true;
   },
+  refresh() { // 手动刷新回直播头（docs/plan-refresh-live.md §2）：当前赢家源整链重开——play 自带 token 作废在飞链/
+    // 清 halt/heldNext/prefer 提首/台记忆音量/MediaSession/连接中指示；暂停态直接起播（刷新=要听最新的，
+    // 直播流停在直播头不是稳定态）；空台无响应。不写成功源记忆（onAir 同源早退）
+    const s = this.station, si = this.curSi;
+    if (!s) return;
+    this.play(s, si >= 0 ? si : undefined);
+  },
   // 暂停恢复：直播流建流慢（蜻蜓 5-10s），先给连接中提示；失败由遗留 onerror 闭包接管换源。
   // 暂停期间级联被 next() 守卫挡住过（源已报错、error 不再发）→ retryOrNext 接回：先重连当前源一次再顺延
   resume() {

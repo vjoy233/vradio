@@ -269,6 +269,7 @@
 <footer>
   <div id="prog" hidden><i></i></div>
   <button class="btn" id="pp" aria-label="播放 / 暂停"><svg class="ic"><use href="#i-play"/></svg></button>
+  <button class="btn" id="refreshBtn" aria-label="刷新，回到直播最新处" title="刷新：断开当前连接，回到直播最新处"><svg class="ic"><use href="#i-sync"/></svg></button> <!-- 手动刷新回直播头（plan-refresh-live）：与 header「同步源」同 icon 不同语境，title 消歧 -->
   <span id="eq" aria-hidden="true"><i></i><i></i><i></i></span>
   <div id="now" aria-live="polite"><div id="nowline" role="button" tabindex="0">未在播放</div><div id="song" role="button" tabindex="0" hidden></div></div> <!-- 两行：台名 + 曲讯（B-6）；键盘可达（audit-r2 P3-2）：可点 div 补 role/tabindex，Enter/Space 在 app.js 接线 -->
   <span id="sleepWrap">
@@ -298,6 +299,7 @@
   <b>快捷键一览</b>
   <div class="krow"><span><kbd>/</kbd></span>聚焦搜索框</div>
   <div class="krow"><span><kbd>空格</kbd></span>播放 / 暂停</div>
+  <div class="krow"><span><kbd>R</kbd></span>刷新：回到直播最新处</div>
   <div class="krow"><span><kbd>←</kbd><kbd>→</kbd></span>收藏间切台</div>
   <div class="krow"><span><kbd>↑</kbd><kbd>↓</kbd></span>列表行导航（<kbd>Home</kbd>/<kbd>End</kbd> 跳首尾）</div>
   <div class="krow"><span><kbd>Enter</kbd>/<kbd>空格</kbd></span>播放聚焦行</div>

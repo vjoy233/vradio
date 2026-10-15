@@ -167,6 +167,7 @@ object PlayerHolder {
   val session: MediaSession
   fun play(s: Station, prefer: Int = -1)       // 决策链（见下）+ 每台音量 + MediaSession 元数据
   fun pause() / resume() / toggle() / stop()
+  fun refresh()                                // 手动刷新回直播头：当前源整链重开 play(s,curSi)（镜像 Web）；暂停中直接起播；空台无响应；不写 srcmem
   fun setVolPct(pct: Int)                      // rememberVol 语义分流：正在播→台记忆（首调随行更新全局锚点）；无台→全局；0 不入记忆
   fun forgetSrc(): Boolean                     // 恢复默认源=清当前台 srcmem（true=真清了，UI 随即按启发式重播）
   fun sleep(min: Int) / cancelSleep()          // 到点前 30s 线性渐弱，停止后音量按逻辑值恢复
@@ -188,6 +189,7 @@ object PlayerHolder {
 8. **每台音量**：play() 套 `radio.volperst[u0]`（无记忆用 gvol）；静音态切台保持静音。Store 直读写（radio.volperst/radio.vol/radio.srcmem2，FIFO 300 照抄）。
 9. **MediaSession**：MediaMetadata title=歌名/台名、artist="VRadio · "+分类、artworkUri=logoProvider 返回值；⏮⏭ 经 ForwardingPlayer 或 custom command 接 onStepFav（通知栏按钮可用）；睡眠定时渐弱。
 10. WAKE_MODE_NETWORK；通知由 MediaSessionService 自动管理（POST_NOTIFICATIONS 运行时申请在 UI 层首播时做，拒绝不阻断播放）。
+11. **刷新（refresh，两侧镜像 Web）**：当前赢家源整链重开回直播头（docs/plan-refresh-live.md §2 状态矩阵）——暂停/连接中均允许（token 作废重来、暂停中直接起播）、空台无响应、不写成功源记忆；入口 = 播放栏「刷新」+ 通知栏自定义 action（SessionCommand 经 onConnect 放行 + setCustomLayout，锁屏/后台直达）。
 
 ### PlaybackService.kt
 ```kotlin

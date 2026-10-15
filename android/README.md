@@ -12,6 +12,21 @@
 
 构建时自动把仓库根 `radio.txt`/`logos.txt` 拷进 assets 并写 `data-stamp.txt`（D7 轻更新判新旧的打包基线）。
 
+## 版本迭代手动打包（例行流程，Git Bash）
+
+每次发新版本四步（环境已按下方环境节装好时，全程两三分钟）：
+
+1. **改版本号**：`app/build.gradle.kts` 的 `defaultConfig` 里 `versionCode + 1`、`versionName` 改新版本（如 `0.2.0`）——versionCode 只增不减（安卓系统靠它判断升级/降级），versionName 是给用户看的。
+2. **构建**：
+   ```bash
+   cd /d/Vibing/vradio/android && source env.local.sh   # 设 JAVA_HOME/ANDROID_HOME（本机一次性配好）
+   ./gradlew test assembleRelease                        # 先单测再出包，挂了就不发
+   ```
+3. **拿包安装**：产物在 `app/build/outputs/apk/release/app-release.apk`（无 keystore 时自动 debug 签名，可直接装）。拷到手机点击安装（覆盖升级，个人数据在 filesDir 不受影响）；或 `adb install -r app-release.apk`。自用日常迭代也可用 `assembleDebug` 的 debug 包，但要先卸载 debug 包再装 release 包（两者签名不同不能互相覆盖，卸载会清数据——**固定用一种签名最省事**）。
+4. **对外发布（可选，M5 口径）**：GitHub Release 附 APK + **sha256 置顶**（`sha256sum app-release.apk`），Release 说明附国内加速下载指引；正式签名先配 `android/keystore.properties`（四键见下方发布节，**生成即双备份，丢失 = 无法续签升级**）。
+
+> 数据随版本：电台库在 assets 里随包走（构建时从仓库根拷入），用户收藏/配置等在应用私有目录不受升级影响；老用户想刷最新电台数据不必等发版——app 内「设置 → 检查数据更新」走 D7 通道直接拉仓库 main 的 radio.txt/logos.txt。
+
 ## 环境搭建（M-1 环境闸口，国内镜像，换机照抄）
 
 本工程**全程 gradle CLI 可跑、无 IDE 依赖**。Windows + Git Bash 口径（Linux/macOS 同理换路径）：

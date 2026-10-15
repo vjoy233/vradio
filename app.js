@@ -562,6 +562,12 @@ const App = {
     $('srcWrap').hidden = !(s && s.u.length > 1);
     if (!$('srcMenu').hidden && this.srcPopK !== (s ? keyOf(s) : '')) this.srcPopClose();
   },
+  doRefresh() { // 手动刷新回直播头（plan-refresh-live §3.2）：footer ↻ 与 R 键共用入口。songFor 先置空——
+    // play 的 emit→playerNow 会走「新台」分支整体清零曲讯；不置空则同台重播不清，旧歌名挂到下一轮 15s 轮询
+    if (!Player.station) return; // 空台/全部源失败：无响应（状态矩阵见方案 §2）
+    this.songFor = '';
+    Player.refresh();
+  },
 
   /* ---------- footer 选源浮层（②a/grill 拍板）：正在听时发现源不好，四步深的 ⚙ 面板救不了急——
      这里是主入口（⚙ 为管理+预选源的双入口副）。内容随打开时刻重算，级联中不自动跳变 ---------- */
@@ -1021,6 +1027,7 @@ const App = {
       if (e.key === '/') { e.preventDefault(); $('q').focus(); return; }
       if (e.key === '?') { e.preventDefault(); $('keys').hidden ? keysOpen() : keysClose(); return; } // cheatsheet（N8）
       if (e.key === ' ') { e.preventDefault(); $('pp').click(); return; }
+      if (e.key === 'r' || e.key === 'R') { e.preventDefault(); this.doRefresh(); return; } // 刷新回直播头（plan-refresh-live §3.2）
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); this.stepFav(e.key === 'ArrowRight' ? 1 : -1); }
     });
 
@@ -1237,6 +1244,7 @@ const App = {
       if (!Player.station) return resumeLast();
       Player.isPaused() ? Player.resume() : Player.pause();
     };
+    $('refreshBtn').onclick = () => this.doRefresh(); // 手动刷新回直播头（plan-refresh-live §3.2）：当前源整链重开
     // 音量：静音键 + 拖动百分比反馈（UI 审计 P3-6）；每台音量记忆（A3/r2 ②语义①）——
     // 拖动经 rememberVol 分流（正在播写台记忆、台首调全局锚点随行、无台写全局），0 与静音同为瞬态不入记忆
     const syncMute = () => {

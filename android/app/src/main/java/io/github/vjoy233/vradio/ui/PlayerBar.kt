@@ -113,6 +113,10 @@ fun PlayerBar(vm: AppVm, ui: PlayerUiState) {
       if (st != null && st.u.size > 1) {
         TextButton(onClick = { vm.openSrc() }) { Text("源") }
       }
+      // 手动刷新回直播头（plan-refresh-live §4.2）：有台即亮；当前源整链重开，连接中指示由 play 链自带
+      if (st != null) {
+        TextButton(onClick = { PlayerHolder.refresh() }) { Text("刷新") }
+      }
     }
     // 音量行：静音切换 + 滑杆（联动 volperst；拖动本地态防回环抖动）
     Row(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {

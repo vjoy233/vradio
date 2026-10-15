@@ -19,6 +19,7 @@ class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
+    preferHighRefreshRate()
     reqNotif = {
       val sp = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
       if (Build.VERSION.SDK_INT >= 33 && !sp.getBoolean(PREF_ASKED, false)) {
@@ -27,6 +28,16 @@ class MainActivity : ComponentActivity() {
       }
     }
     setContent { AppRoot() }
+  }
+
+  /* 高刷新率：不申请时国产 ROM 常对非白名单 app 限速 60Hz。取该屏 supportedModes
+     实际最大值设 preferredRefreshRate hint（官方口径：只要更高频率优先 hint 而非
+     preferredDisplayModeId，系统自适应降频照常）；≤60Hz 或取不到不设，等价无偏好。 */
+  private fun preferHighRefreshRate() {
+    val modes = if (Build.VERSION.SDK_INT >= 30) display?.supportedModes
+                else @Suppress("DEPRECATION") windowManager.defaultDisplay?.supportedModes
+    val hz = modes?.maxOfOrNull { it.refreshRate } ?: 0f
+    if (hz > 60f) window.attributes = window.attributes.apply { preferredRefreshRate = hz }
   }
 
   override fun onDestroy() {

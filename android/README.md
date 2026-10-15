@@ -83,3 +83,4 @@ app/src/main/java/io/github/vjoy233/vradio/
 - 蜻蜓建流 5-10s 慢：连接中指示必须明确，防用户误判卡死。
 - 流地址 = 不可信输入：探活按「持续吐字节 ≥ 阈值」验收，不能信状态码/Content-Type（xmcdn 假流）。
 - 同步/探活只直连 api.github.com，**不引入 raw.githubusercontent.com**（review Q7/R2）。
+- 高刷：MainActivity 只发 `preferredRefreshRate` hint（取该屏 supportedModes 最大值，≤60Hz 屏不设），个别 ROM 的 per-app 强制 60 仍可能压过它——实机不生效先查系统「应用刷新率」类设置，再归因代码。

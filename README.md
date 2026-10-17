@@ -178,7 +178,7 @@ vradio/
 - [x] 锁屏/媒体键完整支持（⏮⏭ 收藏间切台 + 台标大图，r2 批次）
 - [x] 每台音量记忆 / 回到正在播 / 歌曲历史导出 / 多标签页防双播 / 同步 diff 摘要（含收藏台消失点名）/ file:// 全量列表（r2 批次）
 - [x] 维护面板追加备选源（流地址漂移的用户层手动救援：探活先行、只追加不动身份、同步重建后回绑，r2 批次）
-- [ ] 安卓原生 app（移动场景访问不到 localhost 网络，移动端不走 Web 响应式/PWA 路线——owner 拍板）
+- [ ] 安卓原生 app（**已立项拍板 + 首批代码已落地**：原生 Kotlin+Compose+Media3、monorepo `android/` 子目录——方案与决策记录见 [docs/plan-android.md](docs/plan-android.md)，构建/环境/分层见 [android/README.md](android/README.md)；移动场景访问不到 localhost 网络，不走 Web 响应式/PWA 路线——owner 拍板）
 - [ ] 欧美台数据加量（人工精选流清单第三上游，待现有列表洗净后再议）
 - [ ] 电台详情面板（全部源 + 逐源体检状态 + 本台歌曲历史收拢 + 复制流地址）与收听统计「一行总结」（ui-polish 后再议，owner 拍板）
 - [ ] 回听（节目回放 catch-up：先做技术验证 spike，仅限个人本地使用）

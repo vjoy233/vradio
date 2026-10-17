@@ -14,6 +14,7 @@ radio.txt.bak
 docs/ui-audit-assets/
 
 # 前端持久层主源（方案二 /api/store 写入，个人数据：收藏/健康标记/歌史，换机时随目录迁移或走「备份全部」导出）
-data/
+# ⚠ 锚定根目录——裸 data/ 会连 android/app/src/main/java/…/vradio/data/ 包一起吞掉（安卓首批落地实测踩坑）
+/data/
 # 本地代码索引（工具产物）
 .codegraph/

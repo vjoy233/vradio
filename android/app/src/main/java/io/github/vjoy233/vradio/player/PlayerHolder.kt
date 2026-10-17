@@ -4,6 +4,7 @@ import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
 import android.net.Uri
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -24,10 +25,15 @@ import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import androidx.media3.extractor.metadata.icy.IcyHeaders
 import androidx.media3.extractor.metadata.icy.IcyInfo
+import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaController
 import androidx.media3.session.MediaSession
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionResult
 import androidx.media3.session.SessionToken
+import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import io.github.vjoy233.vradio.R
 import io.github.vjoy233.vradio.consts.C
 import io.github.vjoy233.vradio.data.Store
 import io.github.vjoy233.vradio.model.PState
@@ -51,6 +57,7 @@ import org.json.JSONObject
 @androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 object PlayerHolder {
 
+  private const val ACTION_REFRESH = "io.github.vjoy233.vradio.REFRESH" // 通知栏「刷新」自定义 action（plan-refresh-live §4.3）
   private const val TICK_MS = 2000L         // 看门狗巡检粒度（阈值 C.WATCHDOG_MS=12s）
   private const val VOL_DEBOUNCE_MS = 300L  // volperst 攒批落盘（player.js:100-103 写放大护栏同款）
   private const val SLEEP_TICK_MS = 1000L   // 睡眠定时秒级心跳（player.js:284）
@@ -122,7 +129,9 @@ object PlayerHolder {
     val pi = launch?.let { PendingIntent.getActivity(appCtx, 0, it, PendingIntent.FLAG_IMMUTABLE) }
     val sb = MediaSession.Builder(appCtx, fwd)
     if (pi != null) sb.setSessionActivity(pi)
+    sb.setCallback(sessionCb) // 通知栏「刷新」自定义 action（plan-refresh-live §4.3）：onConnect 放行 + onCustomCommand 派发
     sess = sb.build()
+    sess.setCustomLayout(listOf(refreshBtn())) // 标准媒体键后追加「刷新」（锁屏/通知栏直达）
     reloadMems() // player.js:35（Store 收敛层出口；调用前 Store.init 已由 VRadioApp 完成）
     vol = gvol; exo.volume = gvol
     uiMut.update { it.copy(volPct = (gvol * 100).roundToInt()) }
@@ -183,6 +192,13 @@ object PlayerHolder {
     if (!inited) return
     if (station == null) { onPlayLast?.invoke(); return }
     if (exo.playWhenReady) pause() else resume()
+  }
+
+  fun refresh() { // 手动刷新回直播头（docs/plan-refresh-live.md §2，Web player.js refresh 同语义）：当前赢家源
+    // 整链重开——play 自带 token 作废在飞链/清 halt·heldNext/prefer 提首/台记忆音量/锁屏元数据/连接中指示；
+    // 暂停态直接起播（刷新=要听最新的，直播流停在直播头不是稳定态）；空台无响应；不写 srcmem（onAir 未变早退）
+    val s = station ?: return
+    play(s, if (curSi in s.u.indices) curSi else -1)
   }
 
   fun stop() { // player.js:214-220
@@ -556,6 +572,31 @@ object PlayerHolder {
     override fun play() { if (h.station == null) h.onPlayLast?.invoke() else h.resume() } // player.js:66
     override fun pause() { h.pause() } // 经持有者走 halt 守卫（不直接透传底层）
     override fun stop() { h.stop() }   // player.js:68
+  }
+
+  /* 通知栏「刷新」自定义 action（plan-refresh-live §4.3）：Fwd 先例是占标准命令位（⏮⏭），但标准位语义不合
+     （seek 系已禁用、stop 是停播）——custom command 是 CONTRACTS 硬点 9 预留的另一条合规路 */
+  private fun refreshBtn() = CommandButton.Builder()
+    .setDisplayName("刷新")
+    .setIconResId(R.drawable.ic_refresh)
+    .setSessionCommand(SessionCommand(ACTION_REFRESH, Bundle.EMPTY))
+    .build()
+
+  private val sessionCb = object : MediaSession.Callback {
+    override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo) =
+      MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+        .setAvailableSessionCommands( // 自定义 sessionCommand 必须显式放行，否则通知栏按钮静默不渲染（方案审计 R1-9）
+          MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
+            .add(SessionCommand(ACTION_REFRESH, Bundle.EMPTY)).build())
+        .build()
+    override fun onCustomCommand(session: MediaSession, controller: MediaSession.ControllerInfo,
+      customCommand: SessionCommand, args: Bundle): ListenableFuture<SessionResult> {
+      if (customCommand.customAction == ACTION_REFRESH) {
+        refresh() // 回调在主线程（ExoPlayer 要求面）；暂停态直接起播，与播放栏按钮同语义
+        return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+      }
+      return super.onCustomCommand(session, controller, customCommand, args)
+    }
   }
 
   /* 快速失败：库内重试压到 hls.js 同款小档（player.js:185），让错误尽早回 onPlayerError 走应用层级联；

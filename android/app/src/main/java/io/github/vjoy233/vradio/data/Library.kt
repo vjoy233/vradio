@@ -124,6 +124,31 @@ class Library(
   fun resolve(key: String): Station? = stations.firstOrNull { it.key == key }
   fun resolveByUrl(u0: String): Station? = stations.firstOrNull { u0 in it.u }
 
+  /** N2 m3u 泛导入分流（纯决策不变异，AIbot P1-1 语义修复）：库内可解析台（键优先、任一源 URL 兜底，
+   *  resolveEntry 同口径；任一 URL 命中即整条算命中）→ favHits 交调用方批量恢复收藏；
+   *  库外台（URL 不在 stations/favs 快照/my 层行——休眠收藏与 my 层台勿重复入库）→ extra 待确认入
+   *  my-radio。known 快照必须先于收藏变异，否则刚恢复的收藏把库外 URL 全部遮蔽、extra 恒空。 */
+  fun partitionImport(list: List<Station>): Pair<List<Station>, List<Station>> {
+    val known = HashSet<String>()
+    for (s in stations) known.addAll(s.u)
+    for (f in favs) known.addAll(f.u)
+    val myRows = myText.split(Regex("\\r?\\n"))
+    val favHits = ArrayList<Station>()
+    val extra = ArrayList<Station>()
+    val seen = HashSet<String>()
+    for (s in list) {
+      val hit = resolve(s.key) ?: stations.firstOrNull { st -> s.u.any { it in st.u } }
+      if (hit != null) { favHits.add(hit); continue }
+      for (u in s.u) {
+        if (u in known || u in seen || myRows.any { it.trim().endsWith(",$u") }) continue
+        seen.add(u)
+        val c = s.c.takeIf { it.isNotEmpty() && it != "未分类" } ?: "自定义"   // m3u 无 group-title 的兜底分类
+        extra.add(Station(c, s.n, mutableListOf(u)))
+      }
+    }
+    return favHits to extra
+  }
+
   /* —— 生命周期 —— */
   fun reload() { // parse(mainText/myText) → applySources → applyCfg → rebind → 挂死台标
     val byKey = LinkedHashMap<String, Station>(); val byName = HashSet<String>()

@@ -125,8 +125,11 @@ object PlayerHolder {
       .setWakeMode(M3C.WAKE_MODE_NETWORK) // 锁屏继续拉流
     exo = pb.build()
     if (io.github.vjoy233.vradio.Prefs.get(appCtx, io.github.vjoy233.vradio.Prefs.OFFLOAD, false)) {
-      // E5 音频卸载（batch1，默认关的实验开关）：经 TrackSelectionParameters 配置（Builder 无此选项）——
-      // 开关在 ensure() 读一次，改开关须重启应用生效；ENABLED 模式下不支持的流自动回退软解（非 REQUIRED）
+      // E5 音频卸载（batch1，默认关的实验开关）：Media3 1.11.1 单开关即全链路——AudioOffloadPreferences
+      //   由 DefaultTrackSelector.maybeConfigureRendererForOffload 写进 RendererConfiguration.offloadModePreferred
+      //   → audioSink.setOffloadMode → AudioTrack setEnableOffload（1.11.1 源码实证；ExoPlayer 2.x 时代的
+      //   DefaultRenderersFactory.setEnableAudioOffload 双开关在本版 API 不存在，勿按旧博客加回）。
+      //   开关在 ensure() 读一次，改开关须重启应用生效；ENABLED 模式下不支持的流自动回退软解（非 REQUIRED）
       exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
         .setAudioOffloadPreferences(AudioOffloadPreferences.Builder()
           .setAudioOffloadMode(AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_ENABLED).build())

@@ -29,6 +29,7 @@ import io.github.vjoy233.vradio.data.Store
 import io.github.vjoy233.vradio.check.OkHttpRaw
 import io.github.vjoy233.vradio.data.OkHttpText
 import io.github.vjoy233.vradio.model.Cfg
+import io.github.vjoy233.vradio.model.FavEntry
 import io.github.vjoy233.vradio.model.PState
 import io.github.vjoy233.vradio.model.Station
 import io.github.vjoy233.vradio.model.SongRec
@@ -205,7 +206,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     }
     if (i.action == Intent.ACTION_VIEW) {   // E4：流链接 → 预填添加页（探活口径不变，不自动入库）
       val u = i.data?.toString()?.trim().orEmpty()
-      if (u.startsWith("http://") || u.startsWith("https://")) {
+      if (u.startsWith("http://", ignoreCase = true) || u.startsWith("https://", ignoreCase = true)) {   // AIbot P3：浏览器转发可能保留大写 scheme
         addPreset.value = u
         if (booted) { nav.value = Nav.ADD; toast("已填入流地址，探活通过后点「添加」") }
       }
@@ -222,7 +223,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         if (s != null) startPlay(s)
         else { resumeLastIfWanted(); status.value = "快捷方式指向的电台已不在列表中" }
       }
-      addPreset.value != null -> nav.value = Nav.ADD
+      addPreset.value != null -> { nav.value = Nav.ADD; toast("已填入流地址，探活通过后点「添加」") }   // AIbot P3：冷启动接流与热路径反馈一致
       else -> resumeLastIfWanted()
     }
   }
@@ -763,34 +764,24 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         Imp.M3U -> {                                                      // N2 泛导入：任意 m3u——库内/已知 URL 恢复收藏态；库外台收集→确认后入 my-radio
           val list = runCatching { RadioTxt.parse(text) }.getOrDefault(emptyList())
           if (list.isEmpty()) { toast("导入失败：未解析到任何电台"); return@launch }
-          var added = 0
-          withContext(Dispatchers.Main) {                                 // Library 变异归 Main（审计 P2：toggleFav/rebind 与渲染迭代并发 CME）
-            for (s in list) {
-              val has = runCatching { lib.isFav(s) }.getOrDefault(false)
-              if (!has) { runCatching { lib.toggleFav(s) }; added++ }
+          // 分流须先于收藏变异（AIbot P1-1：原顺序逐台全量收藏会把库外 URL 也写进 favs，known 随之
+          // 遮蔽一切，extra 恒空、入库确认分支永不可达）；收藏按库内解析命中批量入内存，
+          // 收尾 rebind 一次落盘（AIbot P2-5：免逐台「全量序列化+全量写盘」的主线程 O(N²)）
+          val (added, extra) = withContext(Dispatchers.Main) {
+            val (hits, ex) = runCatching { lib.partitionImport(list) }
+              .getOrDefault(emptyList<Station>() to emptyList())
+            var n = 0
+            for (hit in hits) if (!runCatching { lib.isFav(hit) }.getOrDefault(false)) {
+              runCatching { lib.favs.add(FavEntry(hit.key, hit.u.take(6))) }; n++
             }
-            runCatching { lib.rebind() }                                  // AIbot P3：导入后立即回绑（改名台休眠条目不等下次 reload 自愈）
+            runCatching { lib.rebind() }                                  // AIbot P3：导入后立即回绑（改名台休眠条目不等下次 reload 自愈）+ 收藏增量一次写齐
             stamp.value++
-          }
-          // 库外台收集：URL 不在主列表、不在 my 层、也不在收藏快照（第三种已恢复为休眠收藏，勿重复入库）
-          val known = HashSet<String>()
-          runCatching { for (st in lib.stations) known.addAll(st.u) }
-          runCatching { for (f in lib.favs) known.addAll(f.u) }
-          val myRows = runCatching { lib.myText.split(Regex("\\r?\\n")) }.getOrDefault(emptyList())
-          val extra = ArrayList<Station>()
-          val seen = HashSet<String>()
-          withContext(Dispatchers.Main) {
-            for (s in list) for (u in s.u) {
-              if (u in known || u in seen || myRows.any { it.trim().endsWith(",$u") }) continue
-              seen.add(u)
-              val c = s.c.takeIf { it.isNotEmpty() && it != "未分类" } ?: "自定义"   // m3u 无 group-title 的兜底分类
-              extra.add(Station(c, s.n, mutableListOf(u)))
-            }
+            n to ex
           }
           updateShortcuts()
-          if (extra.isEmpty()) { toast("已恢复收藏：${list.size} 个电台（其中新增收藏 $added）"); return@launch }
+          if (extra.isEmpty()) { toast("已恢复收藏：新增收藏 $added 个（其余已在收藏中）"); return@launch }
           pendingImp = Imp.M3U to extra
-          confirmReq.value = "已恢复收藏 ${list.size} 个（新增 $added）。另有 ${extra.size} 个库外电台，是否写入自定义电台（my-radio.txt）？"
+          confirmReq.value = "库内恢复收藏 $added 个。另有 ${extra.size} 个库外电台，是否写入自定义电台（my-radio.txt）？"
         }
         Imp.CFG -> {
           val j = runCatching { JSONObject(text) }.getOrNull()

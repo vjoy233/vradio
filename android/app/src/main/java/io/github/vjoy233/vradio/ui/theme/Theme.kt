@@ -23,6 +23,13 @@ val DarkPal = VrPalette(
   tx = Color(0xFFE8ECF1), dim = Color(0xFF8B97A5), acc = Color(0xFF4FC08D),
   warn = Color(0xFFE07A5F), star = Color(0xFFF5C542), isLight = false,
 )
+/* N18 纯黑 OLED 档（batch1 2026-10-18 拍板；radio.theme 值域软扩展——Web 侧未知值回退 auto 不炸）：
+   bg 纯黑 + 面板近黑，其余沿用深色档（对比度不降档，仅压底色省 OLED 像素功耗） */
+val OledPal = VrPalette(
+  bg = Color(0xFF000000), panel = Color(0xFF0A0D10), line = Color(0xFF1B222A),
+  tx = DarkPal.tx, dim = DarkPal.dim, acc = DarkPal.acc,
+  warn = DarkPal.warn, star = DarkPal.star, isLight = false,
+)
 val LightPal = VrPalette(
   bg = Color(0xFFF4F6F8), panel = Color(0xFFFFFFFF), line = Color(0xFFD9DEE4),
   tx = Color(0xFF1F2733), dim = Color(0xFF5D6A77), acc = Color(0xFF1F7A54),
@@ -34,8 +41,11 @@ val LocalVrPalette = staticCompositionLocalOf { DarkPal }
 
 @Composable
 fun VrTheme(theme: String, content: @Composable () -> Unit) {
-  val dark = theme == "dark" || (theme == "auto" && isSystemInDarkTheme())   // auto 跟随系统实时
-  val p = if (dark) DarkPal else LightPal
+  val dark = theme == "dark" || theme == "oled" || (theme == "auto" && isSystemInDarkTheme())   // auto 跟随系统实时；oled 走深色 scheme 纯黑档
+  val p = when (theme) {
+    "oled" -> OledPal
+    else -> if (dark) DarkPal else LightPal
+  }
   val scheme = if (dark) darkColorScheme(
     primary = p.acc, onPrimary = Color(0xFF04150C),
     background = p.bg, onBackground = p.tx,

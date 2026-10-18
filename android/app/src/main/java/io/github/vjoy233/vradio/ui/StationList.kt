@@ -1,8 +1,10 @@
 package io.github.vjoy233.vradio.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -38,6 +40,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -164,10 +168,13 @@ private fun metaBadges(vm: AppVm, s: Station, inCat: Boolean) {
   }
 }
 
-/* 网格卡片：精简两行（台名+星 / 徽标行），正在播边框高亮 + ▶ 前缀；fav 由外层响应式传入（勿在行内直读 lib） */
+/* 网格卡片：精简两行（台名+星 / 徽标行），正在播边框高亮 + ▶ 前缀；fav 由外层响应式传入（勿在行内直读 lib）。
+   N7：长按整卡 = 收藏切换（Web 移动端 500ms 长按同款手感，震动反馈） */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun StationCard(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?, fav: Boolean, inCat: Boolean) {
   val pal = LocalVrPalette.current
+  val haptic = LocalHapticFeedback.current
   val k = s.key
   val playing = ui.station?.key == k && ui.st != PState.IDLE && ui.st != PState.CONNECTING
   val connecting = ui.station?.key == k && ui.st == PState.CONNECTING
@@ -178,7 +185,10 @@ private fun StationCard(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?
     Modifier.fillMaxWidth().clip(shape)
       .background(if (playing) pal.panel else Color.Transparent)
       .border(1.dp, when { flash == k || playing -> pal.acc; else -> pal.line }, shape)
-      .clickable { vm.togglePlay(k) }.padding(10.dp),
+      .combinedClickable(
+        onClick = { vm.togglePlay(k) },
+        onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); vm.toggleFav(s) },
+      ).padding(10.dp),
   ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
       StationLogo(vm.logoOf(s), s.n, s.key, 40.dp)
@@ -200,10 +210,12 @@ private fun StationCard(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?
   }
 }
 
-/* 列表行：两行详情（台名/徽标），正在播底色高亮；fav 由外层响应式传入 */
+/* 列表行：两行详情（台名/徽标），正在播底色高亮；fav 由外层响应式传入；长按整行 = 收藏（N7，同卡片） */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun StationRow(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?, fav: Boolean, inCat: Boolean) {
   val pal = LocalVrPalette.current
+  val haptic = LocalHapticFeedback.current
   val k = s.key
   val playing = ui.station?.key == k && ui.st != PState.IDLE && ui.st != PState.CONNECTING
   val connecting = ui.station?.key == k && ui.st == PState.CONNECTING
@@ -212,7 +224,10 @@ private fun StationRow(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?,
   Row(
     Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
       .background(when { flash == k -> pal.acc.copy(alpha = .12f); playing -> pal.panel; else -> Color.Transparent })
-      .clickable { vm.togglePlay(k) }.padding(vertical = 2.dp),
+      .combinedClickable(
+        onClick = { vm.togglePlay(k) },
+        onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); vm.toggleFav(s) },
+      ).padding(vertical = 2.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
     FavStar(fav) { vm.toggleFav(s) }

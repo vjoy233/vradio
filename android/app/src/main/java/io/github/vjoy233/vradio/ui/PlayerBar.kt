@@ -117,6 +117,10 @@ fun PlayerBar(vm: AppVm, ui: PlayerUiState) {
       if (st != null) {
         TextButton(onClick = { PlayerHolder.refresh() }) { Text("刷新") }
       }
+      // N8 分享电台（batch1）：ACTION_SEND 台名+主源 URL，任何播放器可开
+      if (st != null) {
+        TextButton(onClick = { vm.shareStation(st) }) { Text("分享") }
+      }
     }
     // 音量行：静音切换 + 滑杆（联动 volperst；拖动本地态防回环抖动）
     Row(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {

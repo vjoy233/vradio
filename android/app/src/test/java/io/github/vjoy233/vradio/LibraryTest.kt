@@ -1,6 +1,7 @@
 package io.github.vjoy233.vradio
 
 import io.github.vjoy233.vradio.data.Library
+import io.github.vjoy233.vradio.data.RadioTxt
 import io.github.vjoy233.vradio.data.Store
 import io.github.vjoy233.vradio.model.Cfg
 import io.github.vjoy233.vradio.model.FavEntry
@@ -240,5 +241,39 @@ class LibraryTest {
     assertEquals("dead", l.stations[0].health)
     assertTrue(l.healthMarks.containsKey("华语音乐|新名")) // 键随回绑刷新
     assertEquals(listOf("http://a/1"), l.healthMarks["华语音乐|新名"]!!.u)
+  }
+
+  // —— N2 m3u 泛导入分流（partitionImport；AIbot P1-1 修复回归锚：分流先于收藏变异，库外台不被遮蔽） ——
+
+  @Test fun partitionImportKeyAndUrlHits() { // 键命中与 URL 兜底都归收藏恢复面；命中的是库内台对象（分类/键以库为准，
+    // 不吃 m3u 的「未分类」）；同键多源条目任一 URL 命中即整条归收藏面，未知变体 URL 不单独入库
+    val l = lib("华语音乐,#genre#\n台A,http://a/1\n台B,http://b/1")
+    l.reload()
+    val m3u = RadioTxt.parse("#EXTM3U\n#EXTINF:-1 group-title=\"华语音乐\",台A\nhttp://a/1\n" +
+      "#EXTINF:-1 group-title=\"华语音乐\",台A\nhttp://a/9\n#EXTINF:-1,台B\nhttp://b/1")   // 台B 无 group-title → 键不同走 URL 兜底
+    val (hits, extra) = l.partitionImport(m3u)
+    assertEquals(listOf("台A", "台B"), hits.map { it.n })
+    assertEquals(listOf("华语音乐", "华语音乐"), hits.map { it.c })
+    assertTrue(extra.isEmpty())
+  }
+
+  @Test fun partitionImportExtraAndFallbackCat() { // 库外台入 extra；无 group-title（未分类）兜底「自定义」、有则保留
+    val l = lib("华语音乐,#genre#\n台A,http://a/1")
+    l.reload()
+    val m3u = RadioTxt.parse("#EXTM3U\n#EXTINF:-1,台X\nhttp://x/1\n#EXTINF:-1 group-title=\"交通\",台Y\nhttp://y/1")
+    val (hits, extra) = l.partitionImport(m3u)
+    assertTrue(hits.isEmpty())
+    assertEquals(listOf("自定义|台X" to "http://x/1", "交通|台Y" to "http://y/1"), extra.map { it.key to it.u0 })
+  }
+
+  @Test fun partitionImportSkipsKnownUrls() { // 休眠收藏 URL / my 层 URL 不重复入库；同 URL 多条去重
+    Store.set("radio.favs", "[{\"k\":\"休眠|台\",\"u\":[\"http://d/1\"]}]")
+    val l = lib("华语音乐,#genre#\n台A,http://a/1", "华语音乐,#genre#\n台M,http://m/1")
+    l.reload()
+    val m3u = RadioTxt.parse("#EXTM3U\n#EXTINF:-1,台D\nhttp://d/1\n#EXTINF:-1,台M2\nhttp://m/1\n" +
+      "#EXTINF:-1,台Z\nhttp://z/1\n#EXTINF:-1,台Z2\nhttp://z/1")
+    val (hits, extra) = l.partitionImport(m3u)
+    assertEquals(listOf("台M"), hits.map { it.n })            // my 层并入 stations 后按 URL 命中
+    assertEquals(listOf("自定义|台Z"), extra.map { it.key })  // 休眠收藏 d/1 跳过；z/1 去重一次
   }
 }

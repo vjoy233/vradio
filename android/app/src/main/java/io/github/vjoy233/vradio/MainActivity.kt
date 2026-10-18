@@ -31,8 +31,11 @@ class MainActivity : ComponentActivity() {
         notifReq.launch(Manifest.permission.POST_NOTIFICATIONS)
       }
     }
-    // 同一 ViewModelStore：AppRoot 里 ViewModelProvider 拿到的是同一实例（batch1 E3/E4 路由入口）
-    ViewModelProvider(this)[AppVm::class.java].handleIntent(intent)
+    // 同一 ViewModelStore：AppRoot 里 ViewModelProvider 拿到的是同一实例（batch1 E3/E4 路由入口）。
+    // savedInstanceState 非空 = 旋转/深浅色切换等重建：onCreate 拿到的还是当初的启动 intent，
+    // 无条件路由会重放（快捷方式再点播一次整链重开/接流预填扔回添加页，AIbot P1-4）——
+    // 热路径在 onNewIntent，process death 恢复也自然跳过。
+    if (savedInstanceState == null) ViewModelProvider(this)[AppVm::class.java].handleIntent(intent)
     setContent { AppRoot() }
   }
 

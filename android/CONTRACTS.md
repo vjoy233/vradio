@@ -106,6 +106,10 @@ class Library(
   fun search(kw: String): List<Station>          // 多词空格 AND（audit-r2 拍板口径），只搜可见台
   fun resolve(key: String): Station?             // key 反解（收藏/最近回绑用）
   fun resolveByUrl(u0: String): Station?
+  fun partitionImport(list: List<Station>): Pair<List<Station>, List<Station>>   // N2 m3u 导入分流（纯决策不变异，
+                                                // AIbot P1-1）：库内可解析台（键优先/任一源 URL 兜底）→ favHits 交调用方批量恢复收藏
+                                                // （内存并入、收尾 rebind 一次落盘，免逐台全量写盘）；库外台（不在 stations/favs 快照/my 层行）
+                                                // → extra 待确认入 my-radio。分流必须先于收藏变异，否则 extra 恒空
   // —— 生命周期 ——
   fun reload()                                   // parse(mainText/myText) → applySources（STARTER 按精确名去重并入 + my 常驻并入
                                                 //  + dCat/dName/dU 留底）→ applyCfg → rebind（收藏/最近按 URL 回绑）→ applyHealthToStations
@@ -208,7 +212,7 @@ ui/SrcSheet.kt  ui/SongsSheet.kt  ui/SettingsScreen.kt  ui/AddStationScreen.kt  
 ```
 - **Theme**：双主题照抄 Web 色板（index.html CSS 变量）——深色 bg#101418/panel#1a2027/line#2a323c/tx#e8ecf1/dim#8b97a5/acc#4fc08d/warn#e07a5f，浅色 bg#f4f6f8/panel#fff/line#d9dee4/tx#1f2733/dim#5d6a77/acc#1f7a54/warn#b5431a；`radio.theme`（auto/light/dark + **oled 纯黑档**（batch1 N18 软扩展，Web 侧未知值回退 auto），默认 auto，auto 跟随系统实时）；不做 Material You 动态取色。收藏星色深 #f5c542/浅 #8a6508。
 - **AppVm**（集中 state 对象 + 单一渲染入口精神）：持有 Library/Logos/MyRadio/CheckStream/LightUpdate/Gh；StateFlows：列表态（cat/keyword/view grid|list/showdead/theme）、toast、体检进度、D7 结果、导入导出状态文案；把 PlayerHolder.ui 转播给 UI。boot 流程照抄 app.js boot + sync.js boot 静默体检（仅 WiFi，D10）。
-  **batch1（2026-10-18 拍板）新增 API**：`handleIntent(Intent)`（E3/E4 入口：快捷方式 extra `vradio.shortcut`→点播；ACTION_VIEW 流链接→`addPreset` 预填添加页）、`updateShortcuts()`（E3 动态快捷方式整组重建，收藏变更/导入后调用）、`shareStation(Station)`（N8 ACTION_SEND）、`setResume/setOffload`（N4/E5 本地开关，持久化在根包 `Prefs`（SharedPreferences "vradio"）——**非 radio.\* 契约键**，2026-10-18 契约表拍板只开 radio.notes 留 Web 先行）、`offloadCap`（E5 能力探测，置灰用）。
+  **batch1（2026-10-18 拍板）新增 API**：`handleIntent(Intent)`（E3/E4 入口：快捷方式 extra `vradio.shortcut`→点播；ACTION_VIEW 流链接→`addPreset` 预填添加页。onCreate 仅 `savedInstanceState==null` 时路由——重建（旋转/深浅色切换）不重放启动 intent，热路径在 onNewIntent，AIbot P1-4）、`updateShortcuts()`（E3 动态快捷方式整组重建，收藏变更/导入后调用）、`shareStation(Station)`（N8 ACTION_SEND）、`setResume/setOffload`（N4/E5 本地开关，持久化在根包 `Prefs`（SharedPreferences "vradio"）——**非 radio.\* 契约键**，2026-10-18 契约表拍板只开 radio.notes 留 Web 先行）、`offloadCap`（E5 能力探测，置灰用）。
 - **列表**：分类条 chip（「全部/★收藏/最近」+ 实体分类 + 数量角标）+ 搜索框（多词空格 AND）+ 网格(台标图+名)/单列双视图切换 + 行内 ☆ 收藏 + 死台删除线+「已停运/疑似不可达」徽标 + 正在播高亮 + 连接中指示（蜻蜓建流 5-10s 属正常要有连接中反馈）。飞行模式可浏览（数据全在本地）。
 - **PlayerBar**（底部常驻）：台名/分类、曲名行（"♪ 歌名 · Nkbps"，点开本台歌史 bottom sheet）、播放/暂停、选源入口（多源台）、睡眠定时菜单（15/30/60，进行中再点取消）、音量滑杆（联动 volperst）、回到正在播、刷新（plan-refresh-live）、分享（batch1 N8）。
 - **SrcSheet**：正在听的多源台切源浮层——整行点选立即切播、序号徽标（记忆/正在用）、底部「↺ 恢复默认源」（forgetSrc+重播）。

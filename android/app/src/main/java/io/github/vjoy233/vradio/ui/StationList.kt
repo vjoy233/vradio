@@ -3,7 +3,6 @@ package io.github.vjoy233.vradio.ui
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -140,15 +139,22 @@ fun StationList(vm: AppVm) {
   }
 }
 
-/* 收藏星（命中区 ≥48dp；星色双主题分档） */
+/* 收藏星（命中区 ≥48dp；星色双主题分档）。combinedClickable 自吞长按（AIbot P2-6）：星若是纯
+   clickable，长按星 = 外层长按切换一次 + 抬指时星 onClick 再切一次（净效果状态不变但有震动，
+   体感「长按没生效」）——星自身消费长按后外层手势即取消，长按星 = 恰好一次切换（星内自带震动）。 */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun FavStar(on: Boolean, onClick: () -> Unit) {
+private fun FavStar(on: Boolean, onToggle: () -> Unit) {
   val pal = LocalVrPalette.current
+  val haptic = LocalHapticFeedback.current
   Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
     Text(
       if (on) "★" else "☆", fontSize = 22.sp,
       color = if (on) pal.star else pal.dim,
-      modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(6.dp),
+      modifier = Modifier.clip(RoundedCornerShape(8.dp)).combinedClickable(
+        onClick = onToggle,
+        onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onToggle() },
+      ).padding(6.dp),
     )
   }
 }
@@ -169,7 +175,7 @@ private fun metaBadges(vm: AppVm, s: Station, inCat: Boolean) {
 }
 
 /* 网格卡片：精简两行（台名+星 / 徽标行），正在播边框高亮 + ▶ 前缀；fav 由外层响应式传入（勿在行内直读 lib）。
-   N7：长按整卡 = 收藏切换（Web 移动端 500ms 长按同款手感，震动反馈） */
+   N7：长按整卡 = 收藏切换（震动反馈；时长取系统默认长按超时，Web 侧是 500ms 定时，手感近似） */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun StationCard(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?, fav: Boolean, inCat: Boolean) {

@@ -10,6 +10,7 @@ import android.os.Looper
 import android.os.SystemClock
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C as M3C
+import androidx.media3.common.TrackSelectionParameters.AudioOffloadPreferences
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -116,13 +117,21 @@ object PlayerHolder {
     val ds = OkHttpDataSource.Factory(OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).build())
       .setDefaultRequestProperties(mapOf("Icy-MetaData" to "1")) // 主动要 ICY 元数据（Icecast 需请求头）
     val msf = DefaultMediaSourceFactory(ds).setLoadErrorHandlingPolicy(FastFailPolicy())
-    exo = ExoPlayer.Builder(appCtx)
+    val pb = ExoPlayer.Builder(appCtx)
       .setMediaSourceFactory(msf)
       .setAudioAttributes(AudioAttributes.Builder().setUsage(M3C.USAGE_MEDIA)
         .setContentType(M3C.AUDIO_CONTENT_TYPE_MUSIC).build(), true) // 焦点自动处理：transient 暂停/can_duck 降音量/永久停止，全默认不自研
       .setHandleAudioBecomingNoisy(true)  // 拔耳机自动暂停（Web 无此问题域）
       .setWakeMode(M3C.WAKE_MODE_NETWORK) // 锁屏继续拉流
-      .build()
+    exo = pb.build()
+    if (io.github.vjoy233.vradio.Prefs.get(appCtx, io.github.vjoy233.vradio.Prefs.OFFLOAD, false)) {
+      // E5 音频卸载（batch1，默认关的实验开关）：经 TrackSelectionParameters 配置（Builder 无此选项）——
+      // 开关在 ensure() 读一次，改开关须重启应用生效；ENABLED 模式下不支持的流自动回退软解（非 REQUIRED）
+      exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+        .setAudioOffloadPreferences(AudioOffloadPreferences.Builder()
+          .setAudioOffloadMode(AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_ENABLED).build())
+        .build()
+    }
     exo.addListener(listener)
     fwd = Fwd(exo, this)
     val launch = appCtx.packageManager.getLaunchIntentForPackage(appCtx.packageName)

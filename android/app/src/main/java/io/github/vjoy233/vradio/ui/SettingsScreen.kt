@@ -2,6 +2,8 @@ package io.github.vjoy233.vradio.ui
 
 import io.github.vjoy233.vradio.BuildConfig
 
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -26,6 +28,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -47,6 +50,8 @@ fun SettingsScreen(vm: AppVm) {
   val syncBusy by vm.syncBusy.collectAsState()
   val syncMsg by vm.syncMsg.collectAsState()
   val confirm by vm.confirmReq.collectAsState()
+  val resume by vm.resumeOnStart.collectAsState()      // N4 启动续播（本地 pref，batch1）
+  val offload by vm.audioOffload.collectAsState()      // E5 音频卸载（本地 pref，batch1）
 
   // SAF 导出（CreateDocument 预填文件名）与导入（OpenDocument 放宽到 */*——SAF 的 mime 上报不稳定）
   val expBackup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { u -> if (u != null) vm.exportTo(u, AppVm.Exp.BACKUP) }
@@ -73,10 +78,24 @@ fun SettingsScreen(vm: AppVm) {
       item {
         Section("外观")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          listOf("auto" to "跟随系统", "light" to "浅色", "dark" to "深色").forEach { (v, label) ->
+          listOf("auto" to "跟随系统", "light" to "浅色", "dark" to "深色", "oled" to "纯黑 OLED").forEach { (v, label) ->
             FilterChip(selected = theme == v, onClick = { vm.setTheme(v) }, label = { Text(label) })
           }
         }
+      }
+      item {
+        Section("播放")
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+          Text("启动时自动续播上次电台", Modifier.weight(1f), fontSize = 14.sp, color = pal.tx)
+          Switch(checked = resume, onCheckedChange = { vm.setResume(it) })
+        }
+        Info("默认关；打开 app 即接续上次收听（本机设置，不随备份迁移）")
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+          Text("音频卸载省电（实验）", Modifier.weight(1f), fontSize = 14.sp, color = pal.tx)
+          Switch(checked = offload, enabled = vm.offloadCap, onCheckedChange = { vm.setOffload(it) })
+        }
+        Info(if (vm.offloadCap) "DSP 硬解码降播放耗电；不支持的流自动回退软解；更改后重启应用生效"
+             else "本机不支持音频卸载（需 Android 13+ 且音频 DSP 支持），已自动置灰")
       }
       item {
         Section("列表")
@@ -130,13 +149,24 @@ fun SettingsScreen(vm: AppVm) {
           "m3u 给外部播放器、导回恢复收藏；songs txt 拿去音乐 App 搜歌")
       }
       item {
+        Section("疑难与反馈")
+        ItemTitle("后台播放被杀？", "国产 ROM 默认限制后台。到 系统设置 → 应用 → VRadio → 电池/耗电管理，允许后台运行（MIUI：省电策略选「无限制」；ColorOS：允许完全后台行为）。仍被杀请用下方入口反馈机型与 ROM 版本")
+        val c = LocalContext.current
+        OutlinedButton(onClick = {
+          runCatching { c.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ISSUES_URL))) }
+        }, modifier = Modifier.fillMaxWidth()) { Text("问题反馈（GitHub Issues）") }
+      }
+      item {
         Section("关于")
         Info("VRadio ${BuildConfig.VERSION_NAME} · 零依赖本地网络电台（国内电台为主）· 数据来自公开仓库同步\n" +
+          "无任何 Google 服务（GMS）依赖——国产 ROM / 无 GMS 设备全功能可用\n" +
           "流地址天然漂移：播不了先体检或同步源，再怀疑网络")
       }
     }
   }
 }
+
+private const val ISSUES_URL = "https://github.com/vjoy233/vradio/issues"   // N15 反馈入口（D12 无小米系实机的补偿通道）
 
 @Composable
 private fun Section(t: String) {

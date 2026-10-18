@@ -26,6 +26,41 @@
         <action android:name="android.intent.action.MAIN" />
         <category android:name="android.intent.category.LAUNCHER" />
       </intent-filter>
+      <!-- E4 浏览器流链接接流（Transistor 思路，不抄代码）：点 m3u/mp3/aac 直链 → 系统菜单出现 VRadio
+           → 预填添加电台页（探活先行口径不变）。mime 组覆盖已知类型；pathPattern 组兜底浏览器不报 mime 的
+           场景（双写 pattern 是 PatternMatcher 点号怪癖的标准解法）。 -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="http" android:mimeType="audio/*" />
+        <data android:scheme="https" android:mimeType="audio/*" />
+        <data android:scheme="http" android:mimeType="application/vnd.apple.mpegurl" />
+        <data android:scheme="https" android:mimeType="application/vnd.apple.mpegurl" />
+        <data android:scheme="http" android:mimeType="application/x-mpegurl" />
+        <data android:scheme="https" android:mimeType="application/x-mpegurl" />
+      </intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="http" android:pathPattern=".*\.m3u8" />
+        <data android:scheme="https" android:pathPattern=".*\.m3u8" />
+        <data android:scheme="http" android:pathPattern=".*\..*\.m3u8" />
+        <data android:scheme="https" android:pathPattern=".*\..*\.m3u8" />
+        <data android:scheme="http" android:pathPattern=".*\.m3u" />
+        <data android:scheme="https" android:pathPattern=".*\.m3u" />
+        <data android:scheme="http" android:pathPattern=".*\..*\.m3u" />
+        <data android:scheme="https" android:pathPattern=".*\..*\.m3u" />
+        <data android:scheme="http" android:pathPattern=".*\.mp3" />
+        <data android:scheme="https" android:pathPattern=".*\.mp3" />
+        <data android:scheme="http" android:pathPattern=".*\..*\.mp3" />
+        <data android:scheme="https" android:pathPattern=".*\..*\.mp3" />
+        <data android:scheme="http" android:pathPattern=".*\.aac" />
+        <data android:scheme="https" android:pathPattern=".*\.aac" />
+        <data android:scheme="http" android:pathPattern=".*\..*\.aac" />
+        <data android:scheme="https" android:pathPattern=".*\..*\.aac" />
+      </intent-filter>
     </activity>
 
     <!-- Media3 会话服务：通知栏/锁屏/耳机线控（通知权限 13+ 首播时运行时申请，拒绝不阻断播放） -->

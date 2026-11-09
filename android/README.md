@@ -84,3 +84,4 @@ app/src/main/java/io/github/vjoy233/vradio/
 - 流地址 = 不可信输入：探活按「持续吐字节 ≥ 阈值」验收，不能信状态码/Content-Type（xmcdn 假流）。
 - 同步/探活只直连 api.github.com，**不引入 raw.githubusercontent.com**（review Q7/R2）。
 - 高刷：MainActivity 只发 `preferredRefreshRate` hint（取该屏 supportedModes 最大值，≤60Hz 屏不设），个别 ROM 的 per-app 强制 60 仍可能压过它——实机不生效先查系统「应用刷新率」类设置，再归因代码。
+- 音频卸载（batch1 E5，实验性默认关）：builder 期选项改开关须**重启应用生效**；ENABLED 模式不支持的流自动回退软解；与均衡器互斥（均衡器批次二未做，先留档）。

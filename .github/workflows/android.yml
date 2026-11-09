@@ -48,3 +48,9 @@ jobs:
           name: vradio-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
+      # batch1 N14：合并即可拿可装 release 包（keystore 缺席时 debug 签名，可直装）
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vradio-release-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 14

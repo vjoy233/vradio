@@ -2,11 +2,18 @@ package io.github.vjoy233.vradio.ui
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.ShortcutInfo
+import android.content.pm.ShortcutManager
 import android.net.ConnectivityManager
 import android.net.Uri
+import android.os.BatteryManager
+import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.vjoy233.vradio.MainActivity
+import io.github.vjoy233.vradio.Prefs
 import io.github.vjoy233.vradio.check.CheckStream
 import io.github.vjoy233.vradio.check.Health
 import io.github.vjoy233.vradio.consts.C
@@ -22,6 +29,7 @@ import io.github.vjoy233.vradio.data.Store
 import io.github.vjoy233.vradio.check.OkHttpRaw
 import io.github.vjoy233.vradio.data.OkHttpText
 import io.github.vjoy233.vradio.model.Cfg
+import io.github.vjoy233.vradio.model.FavEntry
 import io.github.vjoy233.vradio.model.PState
 import io.github.vjoy233.vradio.model.Station
 import io.github.vjoy233.vradio.model.SongRec
@@ -96,6 +104,22 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   private var pendingImp: Pair<Imp, Any?>? = null
   private var assetsStamp = ""
 
+  /* —— batch1（2026-10-18 拍板）新增态：N4/E5 本地开关（Prefs，非 radio.* 契约）+ E3/E4 入口 —— */
+  val resumeOnStart = MutableStateFlow(false)          // N4 启动自动续播（默认关）
+  val audioOffload = MutableStateFlow(false)           // E5 音频卸载（默认关，实验性，重启生效）
+  val addPreset = MutableStateFlow<String?>(null)      // E4 接流预填 URL（AddStationScreen 消费后自清）
+  private var pendingSc: String? = null                // E3 待点播的快捷方式目标（"last" 或台 key）
+  private var booted = false
+
+  /** E5 能力探测：API 33+ 且 mp3 offload 支持（静态查询；不支持设置页置灰；探测失败按不支持，宁灰勿误开） */
+  val offloadCap: Boolean = runCatching {
+    Build.VERSION.SDK_INT >= 33 && android.media.AudioManager.isOffloadedPlaybackSupported(
+      android.media.AudioFormat.Builder().setEncoding(android.media.AudioFormat.ENCODING_MP3)
+        .setSampleRate(44100).setChannelMask(android.media.AudioFormat.CHANNEL_OUT_MONO).build(),
+      android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC).build())
+  }.getOrDefault(false)
+
   enum class Imp { BACKUP, M3U, CFG }
   enum class Exp { BACKUP, M3U, SONGS, CFG }
 
@@ -130,6 +154,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   init {
     wirePlayer()
+    resumeOnStart.value = Prefs.get(ctx, Prefs.RESUME, false)   // N4
+    audioOffload.value = Prefs.get(ctx, Prefs.OFFLOAD, false)   // E5
     viewModelScope.launch(Dispatchers.IO) { boot() }
   }
 
@@ -153,6 +179,11 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     refreshUi3()                                                          // view/showdead/theme 三键恢复（app.js loadUi3 同款）
     stamp.value++
     primeAll()
+    withContext(Dispatchers.Main) {
+      booted = true
+      consumePending()   // batch1 启动末梢：E3 快捷方式点播 > E4 接流预填 > N4 自动续播（默认关）
+      updateShortcuts()  // E3 动态快捷方式初装（收藏变更/导入时增量刷新）
+    }
     delay(4000)                                                          // 首屏后 4s 静默复查（B-10）
     if (unmetered()) silentCheck()                                       // 仅 WiFi（D10）；移动数据静默跳过
   }
@@ -160,6 +191,81 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   private fun readAsset(name: String): String? = runCatching {
     ctx.assets.open(name).bufferedReader().use { it.readText() }
   }.getOrNull()
+
+  /* ---------- batch1：E3/E4 入口路由 · N4 启动续播 · N8 分享 · E3 桌面快捷方式 ---------- */
+
+  /** E3/E4 入口（MainActivity onCreate/onNewIntent 都到这）。boot 未完成时挂起由启动末梢消费
+   *  （列表未装载无法解析台 key）；已 boot 则即时消费（Main 线程——play 链要求）。 */
+  fun handleIntent(i: Intent?) {
+    i ?: return
+    val sc = i.getStringExtra(EXTRA_SC)
+    if (sc != null) {
+      pendingSc = sc
+      if (booted) viewModelScope.launch(Dispatchers.Main) { consumePending() }
+      return
+    }
+    if (i.action == Intent.ACTION_VIEW) {   // E4：流链接 → 预填添加页（探活口径不变，不自动入库）
+      val u = i.data?.toString()?.trim().orEmpty()
+      if (u.startsWith("http://", ignoreCase = true) || u.startsWith("https://", ignoreCase = true)) {   // AIbot P3：浏览器转发可能保留大写 scheme
+        addPreset.value = u
+        if (booted) { nav.value = Nav.ADD; toast("已填入流地址，探活通过后点「添加」") }
+      }
+    }
+  }
+
+  /** 启动末梢的消费序（有意固定）：快捷方式点播 > 链接接流预填 > 自动续播——显式意图不抢。 */
+  private fun consumePending() {
+    val sc = pendingSc; pendingSc = null
+    when {
+      sc == "last" -> resumeLast()
+      sc != null -> {
+        val s = runCatching { lib.stations.firstOrNull { it.key == sc } }.getOrNull()
+        if (s != null) startPlay(s)
+        else { resumeLastIfWanted(); status.value = "快捷方式指向的电台已不在列表中" }
+      }
+      addPreset.value != null -> { nav.value = Nav.ADD; toast("已填入流地址，探活通过后点「添加」") }   // AIbot P3：冷启动接流与热路径反馈一致
+      else -> resumeLastIfWanted()
+    }
+  }
+
+  /** N4 启动自动续播（默认关，2026-10-18 拍板）：冷启动且无台在播时接续上次收听 */
+  private fun resumeLastIfWanted() {
+    if (!resumeOnStart.value || PlayerHolder.ui.value.station != null || lib.recents.isEmpty()) return
+    resumeLast()
+  }
+
+  /** E3 动态桌面快捷方式：「继续收听」+ 收藏前 N 台（maxShortcutCountPerActivity 封顶）。
+   *  minSdk 26 ≥ ShortcutManager 基线；收藏变更/导入后调用刷新（setDynamicShortcuts 整组替换）。 */
+  fun updateShortcuts() {
+    if (Build.VERSION.SDK_INT < 26) return
+    runCatching {
+      val sm = ctx.getSystemService(ShortcutManager::class.java) ?: return
+      val cap = sm.maxShortcutCountPerActivity.coerceAtLeast(1)
+      val out = ArrayList<ShortcutInfo>(cap)
+      fun mk(id: String, label: String, extra: String) = ShortcutInfo.Builder(ctx, id)
+        .setShortLabel(label.take(10)).setLongLabel(label.take(25))
+        .setIntent(Intent(ctx, MainActivity::class.java).setAction(Intent.ACTION_MAIN).putExtra(EXTRA_SC, extra)).build()
+      out.add(mk("last", "继续上次收听", "last"))
+      for (f in lib.favs) {
+        if (out.size >= cap) break
+        val s = runCatching { lib.resolve(f.k) }.getOrNull() ?: continue
+        out.add(mk("fav:" + s.key, s.n, s.key))
+      }
+      sm.setDynamicShortcuts(out)
+    }
+  }
+
+  /** N8 分享电台：台名 + 主源 URL 纯文本（http 直链任何播放器可开） */
+  fun shareStation(s: Station) {
+    runCatching {
+      val i = Intent(Intent.ACTION_SEND).setType("text/plain")
+        .putExtra(Intent.EXTRA_TEXT, "${s.n} · VRadio\n${s.u0}")
+      ctx.startActivity(Intent.createChooser(i, "分享电台").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }.onFailure { toast("分享失败：${it.message ?: it.toString()}") }
+  }
+
+  fun setResume(b: Boolean) { resumeOnStart.value = b; Prefs.set(ctx, Prefs.RESUME, b) }   // N4
+  fun setOffload(b: Boolean) { audioOffload.value = b; Prefs.set(ctx, Prefs.OFFLOAD, b) } // E5（重启生效）
 
   /* PlayerHolder 回调接线（player 不反向伸手进 UI，方向照抄 Web） */
   private fun wirePlayer() {
@@ -192,6 +298,17 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
     return !cm.isActiveNetworkMetered
   }
+
+  /* E13 同步前置电量检查（xueshi86 思路）：sticky 广播读电量；读不到按 100 放行（不误拦） */
+  private fun battSticky() = runCatching {
+    ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+  }.getOrNull()
+  private fun battPct(): Int {
+    val b = battSticky() ?: return 100
+    val lv = b.getIntExtra(BatteryManager.EXTRA_LEVEL, -1); val sc = b.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+    return if (lv < 0 || sc <= 0) 100 else lv * 100 / sc
+  }
+  private fun charging(): Boolean = (battSticky()?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0) != 0
 
   /* ---------- 列表计算（app.js visible/catCounts/emptyHtml 平移；分类/关键词口径叠加在 Library.visible 之上） ---------- */
 
@@ -277,6 +394,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       runCatching { lib.toggleFav(s) }
       val fav = runCatching { lib.isFav(s) }.getOrDefault(false)
       stamp.value++
+      updateShortcuts()                                                  // E3：快捷方式随收藏增减刷新
       if (fav) viewModelScope.launch(Dispatchers.IO) { runCatching { logos.prime(s, true) } }   // 新收藏优先补台标
     }
   }
@@ -323,7 +441,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   private fun refreshUi3() {                                              // view/showdead/theme 三键恢复（boot 与备份导入共用，app.js loadUi3 同款）
     view.value = if (Store.get(C.K_VIEW) == "list") "list" else "grid"    // 网格默认
     showDead.value = Store.get(C.K_SHOWDEAD) == "1"                       // 死台默认隐藏
-    theme.value = listOf("auto", "light", "dark").firstOrNull { it == Store.get(C.K_THEME) } ?: "auto"
+    theme.value = listOf("auto", "light", "dark", "oled").firstOrNull { it == Store.get(C.K_THEME) } ?: "auto"   // N18 +oled（软扩展：Web 侧未知值回退 auto 不炸，app.js:236 已核）
   }
 
   fun setVol(pct: Int) { PlayerHolder.setVolPct(pct) }
@@ -530,6 +648,14 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         syncMsg.value = "移动数据下不同步（欧美台逐个实测流量大）——连 WiFi 后再试"
         toast(syncMsg.value); return@launch
       }
+      if (!charging()) {                                                 // E13 电量前置（充电中跳过；<5% 拒 / <20% 警告放行）
+        val bp = battPct()
+        if (bp < 5) {
+          syncMsg.value = "电量 ${bp}%，请先充电再同步（欧美台逐个实测约 1 分钟）"
+          toast(syncMsg.value); return@launch
+        }
+        if (bp < 20) toast("电量 ${bp}% 偏低，同步约 1 分钟，建议插电进行")
+      }
       syncBusy.value = true
       syncMsg.value = "同步中：国内上游 + 欧美台逐个实测，约 1 分钟…"
       try {
@@ -635,20 +761,27 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
           pendingImp = Imp.BACKUP to p
           confirmReq.value = "导入将覆盖本地全部数据（备份含 $n 个数据项：收藏/维护配置/健康标记/歌曲历史全部替换）。继续？"
         }
-        Imp.M3U -> {                                                      // 收藏恢复（E4）：主列表不动，只恢复收藏态
-          if (!text.contains("#VRADIO:FAV")) { toast("导入失败：不是本项目导出的收藏 m3u（缺 #VRADIO:FAV 标记）"); return@launch }
+        Imp.M3U -> {                                                      // N2 泛导入：任意 m3u——库内/已知 URL 恢复收藏态；库外台收集→确认后入 my-radio
           val list = runCatching { RadioTxt.parse(text) }.getOrDefault(emptyList())
           if (list.isEmpty()) { toast("导入失败：未解析到任何电台"); return@launch }
-          var added = 0
-          withContext(Dispatchers.Main) {                                 // Library 变异归 Main（审计 P2：toggleFav/rebind 与渲染迭代并发 CME）
-            for (s in list) {
-              val has = runCatching { lib.isFav(s) }.getOrDefault(false)
-              if (!has) { runCatching { lib.toggleFav(s) }; added++ }
+          // 分流须先于收藏变异（AIbot P1-1：原顺序逐台全量收藏会把库外 URL 也写进 favs，known 随之
+          // 遮蔽一切，extra 恒空、入库确认分支永不可达）；收藏按库内解析命中批量入内存，
+          // 收尾 rebind 一次落盘（AIbot P2-5：免逐台「全量序列化+全量写盘」的主线程 O(N²)）
+          val (added, extra) = withContext(Dispatchers.Main) {
+            val (hits, ex) = runCatching { lib.partitionImport(list) }
+              .getOrDefault(emptyList<Station>() to emptyList())
+            var n = 0
+            for (hit in hits) if (!runCatching { lib.isFav(hit) }.getOrDefault(false)) {
+              runCatching { lib.favs.add(FavEntry(hit.key, hit.u.take(6))) }; n++
             }
-            runCatching { lib.rebind() }                                  // AIbot P3：导入后立即回绑（改名台休眠条目不等下次 reload 自愈）
+            runCatching { lib.rebind() }                                  // AIbot P3：导入后立即回绑（改名台休眠条目不等下次 reload 自愈）+ 收藏增量一次写齐
             stamp.value++
+            n to ex
           }
-          toast("已恢复收藏：${list.size} 个电台（其中新增收藏 $added）")
+          updateShortcuts()
+          if (extra.isEmpty()) { toast("已恢复收藏：新增收藏 $added 个（其余已在收藏中）"); return@launch }
+          pendingImp = Imp.M3U to extra
+          confirmReq.value = "库内恢复收藏 $added 个。另有 ${extra.size} 个库外电台，是否写入自定义电台（my-radio.txt）？"
         }
         Imp.CFG -> {
           val j = runCatching { JSONObject(text) }.getOrNull()
@@ -698,9 +831,21 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
             PlayerHolder.reloadMems()                                     // volperst/srcmem2/vol 重载（public 化入口）
             refreshUi3()
             stamp.value++; primeAll()
+            updateShortcuts()                                             // E3：收藏已整体替换，快捷方式重建
             toast(if (myOk) "已恢复完整备份" else "已恢复完整备份（my-radio 超限未恢复：500 行/64KB）")   // AIbot P3：超限失败明示不静默
           }
-          Imp.M3U -> {}
+          Imp.M3U -> {                                                    // N2：库外台批量入 my-radio（append 自带查重/清洗/封顶/SafeTarget）
+            @Suppress("UNCHECKED_CAST") val extra = p.second as List<Station>
+            var ok = 0; var skip = 0
+            withContext(Dispatchers.IO) {
+              for (s in extra) {
+                if (runCatching { myRadio.append(s.n, s.c, s.u0) }.getOrDefault(false)) ok++ else skip++
+              }
+              if (ok > 0) lib.myText = myRadio.readText()
+            }
+            if (ok > 0) { lib.reload(); stamp.value++; primeAll() }
+            toast("已写入自定义电台 $ok 个" + (if (skip > 0) "，跳过 $skip 个（重复/封顶/地址不合规）" else ""))
+          }
           Imp.CFG -> {
             val c = p.second as Cfg
             withContext(Dispatchers.IO) { Store.set(C.K_CFG, CfgCodec.toJson(c)) }
@@ -712,6 +857,10 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         }
       } catch (e: Exception) { toast("导入失败：${e.message ?: e.toString()}") }
     }
+  }
+
+  companion object {
+    const val EXTRA_SC = "vradio.shortcut"   // E3 快捷方式 extra 键（MainActivity 路由进 handleIntent）
   }
 }
 

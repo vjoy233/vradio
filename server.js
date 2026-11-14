@@ -12,9 +12,9 @@
 // /api/quality     质量聚合 sidecar（B0/B2）：GET ?rev= 条件获取 / POST {baseRev,ops,keep} 操作事件合并（op.id 幂等去重，
 //                  rev 唯一发号，409 仅限 schema/批量超限/超 2MB，三类均带机器可读 code=schema|batch-limit|too-large
 //                  供客户端 flush 分类处置；keep=trim 保护集 ≤64；契约 contracts/quality-summary.json）
+//                  POST {replace:true,data}（B4）= v3 备份 sidecar 覆盖导入（仅收完整 data，同款安全边界）
 // /api/listenstats 本地收听统计 sidecar（B3）：GET ?rev= 条件获取（AIbot 复核 P2，对齐 /api/quality——BC 重拉
-//                  命中只回 notModified 不重复传输全量）/ POST {baseRev,ops} 增量合并（AIbot P1-3，对齐 /api/quality
-//                  模式）——op = {id,day,u0,cat,ms,sess} 日桶增量，op.id 幂等去重 + rev 唯一发号 + 90 天服务端裁剪；
+//                  命中只回 notModified 不重复传输全量）/ POST {baseRev,ops} 增量合并（AIbot P1-3，对齐 /api/quality//                  模式）——op = {id,day,u0,cat,ms,sess} 日桶增量，op.id 幂等去重 + rev 唯一发号 + 90 天服务端裁剪；
 //                  多标签同 base 各自 POST 不同增量不互相覆盖；坏日期键（非历法 YYYY-MM-DD）schema 拒绝整批；
 //                  409 响应带机器可读 code（schema|batch-limit，AIbot 复核 P1）——客户端分类处置不静默丢统计
 // /api/myradio     my-radio.txt 全量替换（B0）：v2+ 备份恢复通道，行形态清洗 + 500 行/64KB 封顶 + tmp+rename
@@ -167,6 +167,59 @@ function qValidOp(o) { // schema 校验（契约 opEvent）：不合即 409，�
     && /^https?:\/\//.test(o.sourceUrl || '') && (o.sourceUrl || '').length <= 512
     && Q_KINDS.has(o.kind) && Q_TRIGGERS.has(o.trigger) && typeof o.ok === 'boolean'
     && Number.isFinite(+o.latencyMs) && Number.isFinite(+o.bytes) && Number.isFinite(+o.at) && Q_MODES.has(o.mode);
+}
+// ---------- v3 备份 sidecar 覆盖导入（B4，§13.2-6「导入语义=明确覆盖」）：POST {replace:true,data} ----------
+// 与前端 backup.js qualityTrim 同款白名单。B2 起服务端存储为嵌套形态（每台 {cf, sources:{源URL:{聚合…}}}，
+// 与 Android filesDir/quality.json 同构）——导入只收该形态的迁移字段：台级 cf + 每源计数/时间戳/延迟/
+// modes/最近诊断与播放失败；未列字段（summary 派生值/响应正文/DNS/token）一律剔除。键须公网 http(s)≤512、
+// 台 2000/每台源 6 封顶、总量受 2MB 硬上限
+const Q_SRC_NUM = ['okCount', 'failCount', 'lastOkAt', 'lastFailAt', 'lastPlaybackAt', 'latSum', 'latN', 'disconnects'];
+const qImpNum = x => { const n = Math.floor(+x); return Number.isFinite(n) && n >= 0 ? Math.min(n, 1e9) : null; };
+const qImpEvt = x => x && typeof x === 'object' && !Array.isArray(x)
+  ? { t: String(x.t || '').slice(0, 16), ok: !!x.ok, at: qImpNum(x.at) || 0, lat: qImpNum(x.lat) || 0 } : null;
+function qTrimImport(data) {
+  const out = {};
+  for (const k of Object.keys(data)) {
+    if (Object.keys(out).length >= 2000) return null; // 条目封顶（构造面防护，超限整体拒绝）
+    if (!/^https?:\/\//.test(k) || k.length > 512) continue;
+    const v = data[k];
+    if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
+    const e = { cf: Math.min(qImpNum(v.cf) || 0, 1e9), sources: {} };
+    const srcs = v.sources && typeof v.sources === 'object' && !Array.isArray(v.sources) ? v.sources : {};
+    for (const su of Object.keys(srcs).slice(0, 6)) { // 每台源封顶（caps.sourcesPerStation）
+      if (!/^https?:\/\//.test(su) || su.length > 512) continue;
+      const s = srcs[su];
+      if (!s || typeof s !== 'object' || Array.isArray(s)) continue;
+      const es = {};
+      for (const f of Q_SRC_NUM) { const n = qImpNum(s[f]); if (n != null) es[f] = n; }
+      if (Array.isArray(s.modes)) {
+        const m = [...new Set(s.modes.map(x => String(x).slice(0, 16)).filter(x => /^(direct|hls|proxy)$/.test(x)))].slice(0, 8);
+        if (m.length) es.modes = m;
+      }
+      const ld = qImpEvt(s.lastDiag); if (ld && (ld.at || ld.t)) es.lastDiag = ld;
+      const lp = qImpEvt(s.lastPlayFail); if (lp && (lp.at || lp.t)) es.lastPlayFail = lp;
+      if (Object.keys(es).length) e.sources[su] = es;
+    }
+    if (Object.keys(e.sources).length) out[k] = e; else if (e.cf > 0) out[k] = { cf: e.cf, sources: {} };
+  }
+  if (JSON.stringify(out).length > Q_MAX) return null;
+  return out;
+}
+function qReplace(clean) { // 覆盖写 data（去重日志保留：旧 op 重放不复活旧数据）；写盘/发号纪律与 qCommit 同款
+  return qQ = qQ.then(() => new Promise(done => {
+    const st = JSON.parse(JSON.stringify(qRead()));
+    st.data = clean;
+    const rev = st.rev + 1, out = JSON.stringify(st), tmp = QUALITY_FILE + '.tmp';
+    if (Buffer.byteLength(out) > Q_MAX) return done({ ok: false, error: 'quality sidecar 超过 2MB 硬上限' });
+    fs.mkdir(DATA_DIR, { recursive: true }, e => {
+      if (e) return done({ ok: false, error: '写入失败' });
+      fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
+        : fs.rename(tmp, QUALITY_FILE, e3 => {
+          if (e3) return done({ ok: false, error: '写入失败' });
+          qCache = st; qCache.rev = rev; done({ ok: true, rev });
+        }));
+    });
+  })).catch(() => ({ ok: false, error: '写入失败' }));
 }
 function qCommit(ops, keep) { // 串行：克隆当前态 → 应用（qApplyOp）→ trim（契约淘汰序，keep 保护集）→ 写盘
   return qQ = qQ.then(() => new Promise(done => {   // 成功才换内存与 rev（写失败不留半应用状态）
@@ -478,6 +531,13 @@ http.createServer((req, res) => {
       req.on('end', () => {
         if (big) return;
         let j; try { j = JSON.parse(body); } catch (_) { return json(400, { ok: false, error: 'bad request' }); }
+        if (j && j.replace === true) { // v3 备份 sidecar 覆盖导入（B4）：同款跨源/方法/封顶边界，仅收完整 data
+          const data = j.data;
+          if (!data || typeof data !== 'object' || Array.isArray(data)) return json(409, { ok: false, error: 'sidecar 数据不合法' });
+          const clean = qTrimImport(data);
+          if (!clean) return json(409, { ok: false, error: 'sidecar 数据不合法或超限（条目 2000 / 2MB）' });
+          return qReplace(clean).then(r => json(200, r));
+        }
         const ops = j && j.ops;
         // 三类 409 各带机器可读 code（AIbot PR#26 复核 P2）：schema=op 事件校验失败（不可恢复，客户端丢批）；
         // batch-limit=单批 32 条超限（可恢复，客户端减半分批）；契约口径不变——仅 schema/批量超限/无法合并 → 409

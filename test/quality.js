@@ -180,6 +180,34 @@ const op = (id, ok, at, extra = {}) => Object.assign({
       assert.ok(!txt.includes('坏行') && !txt.includes('ftp://'));
     });
 
+    // —— v3 备份 sidecar 覆盖导入（B4，POST /api/quality {replace:true,data}）——
+    await ok('sidecar 覆盖导入：replace=true 全量覆盖、rev 递增、未知字段剔除', async () => {
+      const data = { // B2 嵌套形态（每台 {cf, sources:{源URL:{…}}}）：计数精确覆盖（非合并累加——与 ops 通道语义差异）
+        'https://main.example/live': { cf: 2, sources: { 'https://main.example/live': { okCount: 37, failCount: 2, lastOkAt: 9000, modes: ['direct'], rawResponse: 'SECRET' } } },
+        'https://other.example/live': { cf: 0, sources: { 'https://other.example/live': { lastPlaybackAt: 8000 } } },
+        'ftp://bad.example/x': { cf: 0, sources: {} }, // 非 http(s) 键清洗丢弃
+      };
+      const r = await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ replace: true, data }));
+      const j = JSON.parse(r.body);
+      assert.strictEqual(r.status, 200); assert.strictEqual(j.ok, true); assert.ok(j.rev > 1);
+      const g = JSON.parse((await req('GET', '/api/quality')).body);
+      const m = g.data['https://main.example/live'].sources['https://main.example/live'];
+      assert.strictEqual(m.okCount, 37);
+      assert.deepStrictEqual(m.modes, ['direct']);
+      assert.ok(!('rawResponse' in m)); // 白名单外字段剔除
+      assert.ok(!('ftp://bad.example/x' in g.data));
+    });
+    await ok('覆盖导入后旧 op 重放不复活旧数据（去重日志保留）', async () => {
+      const r = await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ baseRev: 0, ops: [op('t2', false, 2000, { kind: 'playback', trigger: 'play' })] }));
+      const g = JSON.parse((await req('GET', '/api/quality')).body);
+      assert.strictEqual(g.data['https://main.example/live'].sources['https://main.example/live'].failCount, 2); // t2 在去重日志里被跳过，覆盖态不被旧事件翻改
+    });
+    await ok('replace 坏形状 → 409（data 非对象 / 条目超 2000）', async () => {
+      assert.strictEqual((await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ replace: true, data: 'nope' }))).status, 409);
+      const big = {}; for (let i = 0; i < 2100; i++) big['https://a.example/' + i] = { cf: 1, sources: {} };
+      assert.strictEqual((await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ replace: true, data: big }))).status, 409);
+    });
+
     // 损坏恢复：写坏 quality.json 后重启服务——按空库恢复且不碰磁盘外数据
     srv.kill(); srv = null;
     fs.mkdirSync(path.dirname(QF), { recursive: true });

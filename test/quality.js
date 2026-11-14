@@ -1,6 +1,8 @@
-// 质量 sidecar API 测试（B0，契约 contracts/quality-summary.json）：真服务端到端——
+// 质量 sidecar API 测试（B0 骨架 + B2 聚合形态，契约 contracts/quality-summary.json）：真服务端到端——
 // 方法校验、跨源拒绝、rev 发号/条件获取（notModified）、op.id 幂等（重试不重复计数）、
-// 多标签同 baseRev 并发合流、schema/批量上限 409、损坏文件按空库恢复；/api/myradio 行清洗与封顶。
+// 多标签同 baseRev 并发合流、keep 保护集附带（B2 trim 落地）、schema/批量上限 409、损坏文件按空库恢复；
+// /api/myradio 行清洗与封顶。B2 起服务端聚合走 quality-store.js 纯函数（每台 {cf, sources:{源URL:{…}}}，
+// 与 Android filesDir/quality.json 同构）；纯函数单测见 test/quality-store.js。
 // 用户数据保护（同 smoke 口径）：my-radio.txt 与 data/quality.json 先备份 .smokebak，跑完还原现场。
 const assert = require('assert'), http = require('http'), net = require('net'), fs = require('fs'), path = require('path');
 const { spawn } = require('child_process');
@@ -71,17 +73,17 @@ const op = (id, ok, at, extra = {}) => Object.assign({
       const j = JSON.parse((await req('GET', '/api/quality?rev=1')).body);
       assert.strictEqual(j.rev, 1); assert.strictEqual(j.notModified, true); assert.ok(!('data' in j));
     });
-    await ok('GET 全量含聚合条目', async () => {
+    await ok('GET 全量含聚合条目（B2 每台/每源结构：{cf, sources:{源URL:{…}}}）', async () => {
       const j = JSON.parse((await req('GET', '/api/quality')).body);
       assert.strictEqual(j.rev, 1); assert.ok(j.data['https://main.example/live']);
-      assert.strictEqual(j.data['https://main.example/live'].okCount, 1);
+      assert.strictEqual(j.data['https://main.example/live'].sources['https://main.example/live'].okCount, 1);
     });
     await ok('同一 op.id 重试不重复计数（applied=0、rev 不动）', async () => {
       const r = await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ baseRev: 1, ops: [op('t1', true, 1000)] }));
       const j = JSON.parse(r.body);
       assert.strictEqual(j.applied, 0); assert.strictEqual(j.rev, 1);
       const g = JSON.parse((await req('GET', '/api/quality')).body);
-      assert.strictEqual(g.data['https://main.example/live'].okCount, 1);
+      assert.strictEqual(g.data['https://main.example/live'].sources['https://main.example/live'].okCount, 1);
     });
     await ok('多标签同 baseRev 各提不同 op → 两条样本都在（版本落后不拒合并）', async () => {
       const p1 = req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ baseRev: 1, ops: [op('t2', false, 2000, { kind: 'playback', trigger: 'play' })] }));
@@ -89,9 +91,15 @@ const op = (id, ok, at, extra = {}) => Object.assign({
       const [a, b] = await Promise.all([p1, p2]);
       assert.strictEqual(JSON.parse(a.body).ok, true); assert.strictEqual(JSON.parse(b.body).ok, true);
       const g = JSON.parse((await req('GET', '/api/quality')).body);
-      const main = g.data['https://main.example/live'];
+      const main = g.data['https://main.example/live'].sources['https://main.example/live'];
       assert.strictEqual(main.failCount, 1); assert.strictEqual(main.lastPlaybackAt, 2000); // playback 事件落 lastPlaybackAt
+      assert.strictEqual(g.data['https://main.example/live'].sources['https://main.example/live'].lastPlayFail.t, 'play'); // 播放失败留最近一条
       assert.ok(g.data['https://other.example/live']); // 第二台也合流成功
+    });
+    await ok('keep 保护集随批附带（B2）：非法条目清洗、不影响合并', async () => {
+      const r = await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ baseRev: 2, ops: [op('tk', true, 4500)], keep: ['https://main.example/live', 'not-a-url', 42] }));
+      const j = JSON.parse(r.body);
+      assert.strictEqual(j.ok, true); assert.ok(j.rev >= 2);
     });
     await ok('schema 违规 op → 409（kind 不合法）', async () => {
       const r = await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ baseRev: 0, ops: [op('t9', true, 1, { kind: 'vacuum' })] }));

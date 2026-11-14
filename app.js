@@ -234,6 +234,7 @@ const App = {
     }
     this.healthMarks = hm; this.saveHealth();
     this.saveFavs(); this.saveRecents();
+    this.qualityKeep(); // B2：收藏/最近回绑后刷新 trim 保护集
   },
   favKeys() { return new Set(this.favs.map(f => f.k)); },
   /* Store 对账后的内存全量重载（方案二：boot 异步对账/多标签重拉/恢复备份共用）——station 对象本身不动
@@ -595,6 +596,36 @@ const App = {
     if (!Player.station) return; // 空台/全部源失败：无响应（状态矩阵见方案 §2）
     this.songFor = '';
     Player.refresh();
+  },
+
+  /* ---------- 源质量样本接线（B2，plan-expansion-r4 §6.1）：Player 原始转换 → QualityStore op ----------
+     映射口径与 Android 冻结一致：playing 到达 = play/switch（ok 样本，延迟 = 建流锚起算）；disconnect =
+     watchdog（同源重连）/error（级联换源），均计 disconnects；级联耗尽 = error。自动体检绝不产 playback——
+     本方法只接 Player 回调，体检通道走 Sync.runCheck 的 diagnostic。 */
+  qosMap(ev) {
+    const s = ev && ev.station;
+    if (!s || !s.u || !s.u.length) return;
+    const su = s.u[ev.si] || s.u[0]; // 身份键与源 URL 分离记录（聚合按源、淘汰按台）
+    if (ev.phase === 'playing')
+      QualityStore.recordPlayback(s.u[0], { sourceUrl: su, ok: true, latencyMs: ev.lat || 0, mode: ev.mode || '', trigger: ev.trig || 'play' });
+    else if (ev.phase === 'disconnect')
+      QualityStore.recordPlayback(s.u[0], { sourceUrl: su, ok: false, latencyMs: 0, mode: ev.mode || '', trigger: ev.reason || 'error' });
+    else if (ev.phase === 'exhaust')
+      QualityStore.recordPlayback(s.u[0], { sourceUrl: su, ok: false, latencyMs: 0, mode: ev.mode || '', trigger: 'error' });
+  },
+  qualityKeep() { // trim 保护集（B2）：收藏+最近解析出的台身份 URL（≤64；boot/rebind 随行刷新，服务端 trim 与本地降级共用）
+    const set = [];
+    const push = e => { const s = this.resolve(e); if (s && s.u[0] && !set.includes(s.u[0])) set.push(s.u[0]); };
+    for (const f of this.favs) push(f);
+    for (const r of this.recents) push(r);
+    QualityStore.keepHint = set.slice(0, 64);
+  },
+  fmtAgo(ts) { // 相对时间（详情质量摘要「最近播放」用）
+    const m = Math.max(0, Date.now() - ts);
+    if (m < 60000) return '刚刚';
+    if (m < 3600000) return Math.floor(m / 60000) + ' 分钟前';
+    if (m < 86400000) return Math.floor(m / 3600000) + ' 小时前';
+    return Math.floor(m / 86400000) + ' 天前';
   },
 
   /* ---------- footer 选源浮层（②a/grill 拍板）：正在听时发现源不好，四步深的 ⚙ 面板救不了急——
@@ -1005,7 +1036,11 @@ const App = {
     } catch (e) {
       if (this.detail.stationKey === k) this.detail.error = '诊断请求失败：' + (e && e.message || e);
     }
-    if (this.detail.stationKey === k) { this.detail.loading = false; this.renderDetail(); }
+    if (this.detail.stationKey === k) {
+      this.detail.loading = false;
+      for (const r of this.detail.results) if (r) QualityStore.recordDiagnostic(s.u[0], r, 'manual'); // B2：手动逐源诊断样本
+      this.renderDetail();
+    }
   },
   async recheckSource(s, i) { // 单源复诊（详情源行「诊断」）：禁用源不发请求（B1 拍板——显示禁用原因 + 取消禁用入口）
     if ((s.dis || []).includes(i)) return;
@@ -1016,7 +1051,7 @@ const App = {
       const j = await fetch('/api/check?detail=1&url=' + encodeURIComponent(s.u[i])).then(x => x.json());
       if (this.detail.stationKey !== k) return;
       const r = j && Array.isArray(j.results) && j.results[0];
-      if (r) { this.detail.results = this.detail.results.slice(); this.detail.results[i] = r; }
+      if (r) { this.detail.results = this.detail.results.slice(); this.detail.results[i] = r; QualityStore.recordDiagnostic(s.u[0], r, 'manual'); } // B2 诊断样本
       else this.detail.error = '诊断无结果';
     } catch (e) { if (this.detail.stationKey === k) this.detail.error = '诊断请求失败：' + (e && e.message || e); }
     if (this.detail.stationKey === k) { this.detail.loading = false; this.renderDetail(); }
@@ -1034,6 +1069,22 @@ const App = {
     t.remove();
   },
   playSource(s, i) { this.startPlay(s, i); this.renderDetail(); }, // 详情不关：底部栏可见连接进展，可连续试源
+  /* 质量摘要片段（B2）：QualityStore.summary（与 Android 冻结口径一致的四档稳定性）——稳定性徽标 +
+     成功率/平均延迟/断流/最近播放；质量只做展示，永不替代死台隐藏判定（契约硬点） */
+  qualityHtml(s) {
+    const qa = QualityStore.summary(s.u[0], s.u);
+    if (!qa) return '<div class="srcs" style="padding:2px 0 6px">暂无质量样本（播放与体检后自动累计）</div>';
+    const Q_TXT = { good: '稳定', fair: '一般', poor: '不稳定', unknown: '样本不足' };
+    const cls = qa.stability === 'good' ? 'okb' : qa.stability === 'poor' ? 'badb' : '';
+    const total = qa.okCount + qa.failCount;
+    const rate = total ? Math.round(100 * qa.okCount / total) : 0;
+    const icy = { icy: '有曲讯（直流）', none: '无曲讯', mixed: '混合源' }[qa.metadata] || qa.metadata;
+    return `<div class="srcs" style="padding:2px 0 6px">
+      <span class="badge ${cls}" title="stability: ${this.esc(qa.stability)}（近 30 天成功率/延迟/连续失败综合）">● ${Q_TXT[qa.stability] || qa.stability}</span>
+      成功率 ${rate}%（${qa.okCount}/${total}）· 平均延迟 ${qa.avgLatencyMs}ms · 断流 ${qa.disconnects} 次 · ${icy}
+      · 最近播放 ${qa.lastPlaybackAt ? this.fmtAgo(qa.lastPlaybackAt) : '—'}
+    </div>`;
+  },
   /* 详情渲染（唯一入口）：code 徽标走固定文案表（UI 不反推 why），质量摘要 B2 接线前先占位 */
   renderDetail() {
     if ($('detail').hidden) return;
@@ -1083,7 +1134,7 @@ const App = {
         <button type="button" class="btn mbtn" data-act="dClearOrder" title="删除人工源排序，恢复同步原始顺序">撤销人工源排序</button>
       </div>
       <div class="dsec"><b>质量摘要</b></div>
-      <div class="srcs" style="padding:2px 0 6px">质量数据将随 B2 提供</div>
+      ${this.qualityHtml(s)}
       <div class="dsec"><b>歌曲历史（本台最近）</b></div>
       ${songs.length ? songs.map(x => `<div class="shrow">${this.esc(x.t)}</div>`).join('') : '<div class="srcs" style="padding:2px 0 6px">暂无历史（换歌后自动记录）</div>'}`;
   },
@@ -1194,7 +1245,9 @@ const App = {
 
   boot() {
     Store.init(); // 存储收敛层（方案二）：BC 监听 + 关页 flush 兜底，须在 Player.init 读记忆之前
+    QualityStore.init(); // 质量侧车（B2）：BC('quality') 他页重拉 + 关页 flush；load() 异步随行
     this.loadStore();
+    this.qualityKeep(); // trim 保护集（收藏+最近身份 URL ≤64；rebind 随行刷新）
     localStorage.removeItem('radio.epg'); // 节目单（EPG）功能已移除：顺手清掉旧版留下的缓存（不存在则 no-op）
     // 音量持久化（读取夹取 0-100，坏值回退 90）
     const savedVol = Store.get('radio.vol'), vol0 = +savedVol;
@@ -1208,6 +1261,12 @@ const App = {
     Player.onfail = () => this.showLast();
     Player.onlogo = s => Logos.get(s); // 锁屏 artwork 台标（r2 ⑩）：同步窥探绝不发请求，无台标回空数组静默缺省
     Player.onstepfav = d => this.stepFav(d); // 锁屏/媒体键 ⏮⏭ = 收藏间切台（r2 ①）：无收藏时 stepFav 自身走状态栏提示
+    Player.onqos = ev => this.qosMap(ev); // 播放质量样本（B2）：Player 只发状态机原始转换，trigger 映射在此完成
+    // 质量侧车装载（异步，不阻塞首屏）：详情中心质量摘要/发现侧数据源；装载后补渲染一次打开中的详情
+    QualityStore.load().then(() => { this.qualityKeep(); if (!$('detail').hidden) this.renderDetail(); }).catch(() => {});
+    if (location.protocol.startsWith('http')) fetch('/api/boot').then(r => r.json()).then(b => { // 启动资产状态（§13.3）：不完整不静默混态
+      if (b && b.ok === false) this.toast('数据资产不完整（' + (b.missing || []).join('、') + '），请运行 npm run sync', { ms: 8000 });
+    }).catch(() => {});
     // 睡眠定时（E2 + UI 审计 P3-7）：菜单一次点选 15/30/60（循环模式要点三下才到 60）；进行中点击按钮直接取消
     $('sleepBtn').onclick = () => {
       if (Player.sleepId) { Player.sleep(0); return; }

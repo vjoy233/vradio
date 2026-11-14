@@ -24,6 +24,7 @@ import io.github.vjoy233.vradio.data.HttpText
 import io.github.vjoy233.vradio.data.Library
 import io.github.vjoy233.vradio.data.Logos
 import io.github.vjoy233.vradio.data.MyRadio
+import io.github.vjoy233.vradio.data.QualityStore
 import io.github.vjoy233.vradio.data.RadioTxt
 import io.github.vjoy233.vradio.data.SafeTarget
 import io.github.vjoy233.vradio.data.Store
@@ -33,11 +34,13 @@ import io.github.vjoy233.vradio.model.Cfg
 import io.github.vjoy233.vradio.model.DiagnosticResult
 import io.github.vjoy233.vradio.model.FavEntry
 import io.github.vjoy233.vradio.model.PState
+import io.github.vjoy233.vradio.model.PlayerUiState
 import io.github.vjoy233.vradio.model.Station
 import io.github.vjoy233.vradio.model.SongRec
 import io.github.vjoy233.vradio.player.PlayerHolder
 import io.github.vjoy233.vradio.sync.Gh
 import io.github.vjoy233.vradio.sync.LightUpdate
+import io.github.vjoy233.vradio.sync.RadioMeta
 import io.github.vjoy233.vradio.sync.SyncEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -80,6 +83,9 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   private val light = LightUpdate(gh, ctx.filesDir)
   // SyncEngine.run(curText)：写 filesDir 副本 + 返回 SyncResult（ok=false=合并低于下限已中止未动文件）
   private val engine by lazy { SyncEngine(gh, checker, ctx.filesDir) }
+  // B2 源质量 sidecar（filesDir/quality.json，不进 radio.* 主 Store）+ radio-meta 消费态（生成在 Web 同步侧）
+  private val quality = QualityStore(ctx.filesDir)
+  val radioMeta = MutableStateFlow(RadioMeta.EMPTY)          // 来源追踪元数据（发现页 B3 消费；缺件空对象）
 
   /* ---------- 列表态（radio.view/showdead/theme 三键持久化，app.js loadUi3 同款） ---------- */
   val cat = MutableStateFlow("全部")
@@ -159,6 +165,11 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     resumeOnStart.value = Prefs.get(ctx, Prefs.RESUME, false)   // N4
     audioOffload.value = Prefs.get(ctx, Prefs.OFFLOAD, false)   // E5
     viewModelScope.launch(Dispatchers.IO) { boot() }
+    // B2 播放样本：PlayerHolder 状态流 → QualityStore.playback 事件映射（PlayerHolder 不感知 QualityStore，
+    // 模块边界照抄 onstate 回调注入方向）；映射在 Main、写盘派发 IO，写失败只丢样本不影响播放
+    viewModelScope.launch {
+      PlayerHolder.ui.collect { u -> runCatching { mapQualityEvent(u) }; qPrev = u }
+    }
   }
 
   /* ---------- boot 编排（app.js boot + sync.js bootQuiet 平移；安卓不跑首启基线，plan M3 拍板）：
@@ -172,11 +183,14 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     val mainTxt = light.radioText() ?: aRadio                 // 文件读取留 IO
     val myTxt = myRadio.readText()
     val logosTxt = light.logosText() ?: aLogos
+    runCatching { quality.load() }                            // B2 质量侧车（坏文件按空库恢复）
+    radioMeta.value = RadioMeta.parse(light.metaText() ?: readAsset("radio-meta.json")) ?: RadioMeta.EMPTY   // 缺件/坏件空对象兜底
     withContext(Dispatchers.Main) {                           // Library 装配收敛主线程（审计 P2：非线程安全集合与渲染读侧单线程化）
       lib.mainText = mainTxt
       lib.myText = myTxt
       runCatching { lib.reload() }
       runCatching { logos.loadBuiltins(logosTxt) }
+      quality.keepHint = qualityKeepSnapshot()                // trim 保护集（收藏+最近的 URL 快照，Main 侧读）
     }
     refreshUi3()                                                          // view/showdead/theme 三键恢复（app.js loadUi3 同款）
     stamp.value++
@@ -278,6 +292,66 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     }
     PlayerHolder.logoProvider = { s -> logos.get(s) }                     // 锁屏 artwork 同步窥探口径
   }
+
+  /* ---------- B2 质量样本映射（PlayerUiState 流 → QualityStore；自动体检路径只写 diagnostic，绝不产 playback） ----------
+     事件面（plan §6.1 样本来源四类）：CONNECTING→PLAYING = 成功（trigger=play；同台换源到达 = switch，
+     延迟 = 该源 CONNECTING 锚起算）；PLAYING→CONNECTING 同台 = 断流（同源重连 = watchdog、级联换源 =
+     error，均计 disconnects）；CONNECTING→IDLE 清台且「⚠ 全部源失败」= 播放失败（error）。暂停/停止不产事件。 */
+  private var qPrev = PlayerUiState()
+  private var qConnMark = ""       // "key|srcIdx" 的 CONNECTING 计时锚（成功事件延迟采样）
+  private var qConnAt = 0L
+  private var qPlayedKey: String? = null   // 最近一次成功起播的台 key / 源序号（switch 判定）
+  private var qPlayedSrc = -1
+
+  private fun mapQualityEvent(cur: PlayerUiState) {
+    val prev = qPrev
+    val ps = prev.station; val cs = cur.station
+    if (cur.st == PState.CONNECTING && cs != null) {
+      val mark = "${cs.key}|${cur.srcIdx}"
+      // 断流重开（PLAYING→CONNECTING）也重置锚：恢复成功的延迟 = 重连耗时，不混入已播时长
+      if (mark != qConnMark || prev.st == PState.PLAYING) { qConnMark = mark; qConnAt = System.currentTimeMillis() }
+    }
+    if (prev.st == PState.PLAYING && cur.st == PState.CONNECTING && ps != null && cs != null && cs.key == ps.key) {
+      val u = cur.srcIdx.takeIf { it in cs.u.indices }?.let { cs.u[it] }
+      if (u != null) qPlayback(cs.u0, u, false, 0, cur.mode, if (cur.srcIdx == prev.srcIdx) "watchdog" else "error")
+      return   // 断流后紧接的成功/失败由后续状态迁移单独产事件
+    }
+    if (cur.st == PState.PLAYING && cs != null &&
+      (prev.st == PState.CONNECTING || prev.station?.key != cs.key || prev.srcIdx != cur.srcIdx)) {
+      val u = cur.srcIdx.takeIf { it in cs.u.indices }?.let { cs.u[it] }
+      if (u != null) {
+        val lat = if (qConnMark == "${cs.key}|${cur.srcIdx}" && qConnAt > 0) System.currentTimeMillis() - qConnAt else 0L
+        val trig = if (qPlayedKey == cs.key && qPlayedSrc >= 0 && qPlayedSrc != cur.srcIdx) "switch" else "play"
+        qPlayback(cs.u0, u, true, lat, cur.mode, trig)
+        qPlayedKey = cs.key; qPlayedSrc = cur.srcIdx
+      }
+    }
+    if (prev.st == PState.CONNECTING && cur.st == PState.IDLE && cur.station == null && ps != null &&
+      cur.status.startsWith("⚠")) {   // 级联耗尽善后文案（PlayerHolder 常量串；stop() 清空 status 不误触）
+      val u = prev.srcIdx.takeIf { it in ps.u.indices }?.let { ps.u[it] }
+      if (u != null) qPlayback(ps.u0, u, false, 0, prev.mode, "error")
+    }
+    if (cur.station == null) { qPlayedKey = null; qPlayedSrc = -1 }
+  }
+
+  private fun qPlayback(id0: String, src: String, ok: Boolean, latMs: Long, mode: String, trig: String) {
+    quality.keepHint = runCatching { qualityKeepSnapshot() }.getOrDefault(quality.keepHint)
+    viewModelScope.launch(Dispatchers.IO) { runCatching { quality.recordPlayback(id0, src, ok, latMs, mode, trig) } }
+  }
+
+  /** trim 保护集：收藏 + 最近的源 URL 快照（身份 URL 含于其中；Main 侧快照防与 Library 变异并发）。 */
+  private fun qualityKeepSnapshot(): Set<String> {
+    val out = HashSet<String>()
+    runCatching {
+      for (f in lib.favs) out.addAll(f.u)
+      for (r in lib.recents) out.addAll(r.u)
+    }
+    return out
+  }
+
+  /** 源详情质量摘要（B2）：无样本返回 null（浮层不渲染稳定性行）。 */
+  fun qualitySummaryOf(s: Station): QualityStore.QualityAggregate? =
+    runCatching { quality.summary(s.u0, s.u) }.getOrNull()
 
   /* 台标预取（收藏 + 正在播优先，请求量可控）；完成后重渲一次取新解析到的 URL */
   private fun primeAll() = viewModelScope.launch(Dispatchers.IO) {
@@ -395,6 +469,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     viewModelScope.launch {                                               // Library 变异归 Main（审计 P2：与 favKeys/computeListUi 迭代并发 CME）
       runCatching { lib.toggleFav(s) }
       val fav = runCatching { lib.isFav(s) }.getOrDefault(false)
+      quality.keepHint = runCatching { qualityKeepSnapshot() }.getOrDefault(quality.keepHint)   // B2：trim 保护集随收藏增减
       stamp.value++
       updateShortcuts()                                                  // E3：快捷方式随收藏增减刷新
       if (fav) viewModelScope.launch(Dispatchers.IO) { runCatching { logos.prime(s, true) } }   // 新收藏优先补台标
@@ -465,9 +540,16 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
           runCatching { s.effOrder().map { s.u[it] } }.getOrDefault(emptyList())
         }
         if (urls.isEmpty()) return@launch
+        quality.keepHint = runCatching { qualityKeepSnapshot() }.getOrDefault(quality.keepHint)
         val out = java.util.concurrent.ConcurrentHashMap<String, DiagnosticResult>()
-        for (b in diagBatches(urls.size))                       // 批间串行、批内并发（放大面恒 ≤4）
-          coroutineScope { for (i in b) launch { runCatching { checker.check(urls[i]) }.getOrNull()?.let { out[urls[i]] = it.toDiagnostic(urls[i]) } } }
+        for (b in diagBatches(urls.size))                       // 批间串行、批内并发（放大面恒 ≤4，B1 三轮 P1-7）
+          coroutineScope { for (i in b) launch {
+            runCatching { checker.check(urls[i]) }.getOrNull()?.let {
+              val d = it.toDiagnostic(urls[i])
+              out[urls[i]] = d
+              runCatching { quality.recordDiagnostic(s.u0, d, "manual") }   // B2：手动逐源诊断产 diagnostic 样本
+            }
+          } }
         withContext(Dispatchers.Main) { detailDiag.value = urls.mapNotNull { out[it] } }
       } catch (_: Exception) { } finally { detailBusy.value = false }
     }
@@ -530,20 +612,23 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   private enum class Probe { OK, DEAD, NET }   // AIbot P1-4：NET=探测请求自身失败（sync.js:23 口径——请求失败不落标，
                                                // 与「台真的死」分开；防中途断网把整片台 n+1 误升停运档）
 
-  private suspend fun probe(s: Station): Probe {
+  private suspend fun probe(s: Station, qTrigger: String): Probe {
     var allNet = true                       // 全部源都「网络失败」→ 本台无判定依据
     // G P3：s.u 与主线程 applyCfg/reapplyCfg 的 addAll 并发遍历可 CME——快照失败按无判据跳过（不落标，安全方向）
     // B1：禁用源不测（体检口径=播放口径）；按人工有效序取前 4（用户优先序先测）。全禁台 us 空 → 无判据 NET
     val us = runCatching { s.effOrder().map { s.u[it] }.take(4) }.getOrNull() ?: return Probe.NET
     for (u in us) {
       val v = runCatching { checker.check(u, C.CHECK_WINDOW_MS) }.getOrNull() ?: return Probe.NET
+      // B2：体检通道产 diagnostic 样本（trigger=manual|boot|sync；自动体检绝不产 playback）；写失败只丢样本
+      runCatching { quality.recordDiagnostic(s.u0, v.toDiagnostic(u), qTrigger) }
       if (v.ok) return Probe.OK
       if (v.code != CheckStream.Verdict.Code.NETWORK) allNet = false // code 是程序分支唯一依据（B1：不按 why 文案反推）
     }
     return if (allNet) Probe.NET else Probe.DEAD
   }
 
-  private suspend fun probeAll(list: List<Station>, conc: Int, stop: () -> Boolean, onProg: (Int, Int) -> Unit): List<Pair<Station, Probe>> {
+  private suspend fun probeAll(list: List<Station>, conc: Int, qTrigger: String, stop: () -> Boolean,
+                               onProg: (Int, Int) -> Unit): List<Pair<Station, Probe>> {
     val q = ConcurrentLinkedQueue(list)
     val out = ConcurrentLinkedQueue<Pair<Station, Probe>>()
     val done = AtomicInteger(); val total = list.size
@@ -552,7 +637,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         launch(Dispatchers.IO) {
           while (!stop()) {
             val s = q.poll() ?: return@launch
-            out.add(s to probe(s))
+            out.add(s to probe(s, qTrigger))
             onProg(done.incrementAndGet(), total)
           }
         }
@@ -594,7 +679,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         healthResult.value = ""
         val list = runCatching { lib.visible(true, playKey(), connKey()) }.getOrDefault(emptyList())   // 连默认隐藏的死台一起复查
         healthProg.value = "体检中 0/${list.size}"
-        val res = probeAll(list, 5, { healthAbort.get() }) { d, t -> if (!healthAbort.get()) healthProg.value = "体检中 $d/$t" }
+        quality.keepHint = runCatching { qualityKeepSnapshot() }.getOrDefault(quality.keepHint)   // trim 保护集随体检通道刷新
+        val res = probeAll(list, 5, "manual", { healthAbort.get() }) { d, t -> if (!healthAbort.get()) healthProg.value = "体检中 $d/$t" }
         if (healthAbort.get()) {                                          // B3 取消：已探完的结果照常落标（sync.js 取消也走收尾 saveHealth——「已确认的标记已保留」）
           applyMarks(res); persistHealth()
           healthResult.value = "体检已取消：完成 ${res.size}/${list.size}（已确认的标记已保留）"
@@ -632,7 +718,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       if (scope.isEmpty()) return@launch
       healthBusy.value = true
       try {
-        val res = probeAll(scope, 2, { manualRun.value }) { _, _ -> }
+        val res = probeAll(scope, 2, "boot", { manualRun.value }) { _, _ -> }
         if (manualRun.value) return@launch                                // 让位手动：已测结果由手动收尾统一落
         if (res.size >= 5 && res.all { it.second == Probe.NET }) return@launch
         withContext(Dispatchers.Main) { applyMarks(res) }
@@ -650,7 +736,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       healthBusy.value = true
       toast("后台体检新增电台 ${list.size} 台…")
       try {
-        val res = probeAll(list, 2, { manualRun.value }) { _, _ -> }
+        val res = probeAll(list, 2, "sync", { manualRun.value }) { _, _ -> }
         if (manualRun.value) return@launch
         if (res.size >= 5 && res.all { it.second == Probe.NET }) return@launch
         val c = withContext(Dispatchers.Main) { applyMarks(res) }
@@ -684,10 +770,12 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         val texts = withContext(Dispatchers.IO) { light.radioText() to light.logosText() }
         texts.first?.let { lib.mainText = it }
         texts.second?.let { runCatching { logos.loadBuiltins(it) } }
+        radioMeta.value = withContext(Dispatchers.IO) { RadioMeta.parse(light.metaText()) ?: RadioMeta.EMPTY }   // B2 meta 随更新收口（缺件空对象）
         lib.reload(); stamp.value++
         primeAll()
         updateMsg.value = "已更新到 ${res.commitIso.take(10)} · 台数 +${res.added}/-${res.removed}"
         toast(updateMsg.value)
+        if (res.metaInvalid) toast("质量元数据（radio-meta.json）校验失败，已保留旧数据（不影响播放）")   // B2：仅「下载到但非法」明示；仓库未提供时静默
         pointGone(before)                                                 // 收藏台消失点名（removed ∩ 收藏）
         if (res.addedCheck.isNotEmpty()) { delay(800); incCheck(res.addedCheck.take(C.ADDED_CHECK_CAP)) }   // D4 增量体检（审计 P2）：D7 是主更新通道且安卓无首启基线——缺此调用 D7 新增国内台永远零体检（Web 唯一同步路径必跑 incHealth）
       } catch (e: Exception) { updateMsg.value = "检查更新失败：${e.message ?: "网络错误"}" }
@@ -885,6 +973,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
             // 且播放层旧 volperst/srcmem 内存会在下次调音量/换源时整体回写冲掉刚导入的值（数据损坏向）
             lib.reloadStore()                                             // 收藏/最近/健康标记/cfg 内存重载
             lib.reload()                                                  // 主列表/my 层重装配 + 回绑
+            quality.keepHint = runCatching { qualityKeepSnapshot() }.getOrDefault(quality.keepHint)   // B2：收藏整体替换后保护集重算
             PlayerHolder.reloadMems()                                     // volperst/srcmem2/vol 重载（public 化入口）
             refreshUi3()
             stamp.value++; primeAll()

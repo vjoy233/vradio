@@ -79,12 +79,19 @@ class SyncEngine(private val gh: Gh, private val check: CheckStream, private val
     val oldSecs = ClassifyCn.splitSections(curText)
     val res = ClassifyCn.classifySections(ClassifyCn.splitSections(cnText ?: curText))
     val oldOf: (String) -> List<String> = { cat -> oldSecs.firstOrNull { it.cat == cat }?.lines ?: emptyList() }
+    // B2 国内候选管线（Candidates 三层去重）：跨节全局精确/归一化 URL 去重 + 非法行过滤（fromLine），
+    // 同分类同名多源行全部保留（下游同名行自然并源）、不同分类同名不强并——既有分类/装配口径不变
+    val cnCands = ArrayList<SyncCandidate>()
+    for (cat in ClassifyCn.CAT_ORDER) if (cat != EU_CAT && cat != INTL_CAT)
+      for (l in res.out.getValue(cat)) Candidates.fromLine(cat, l, "gao")?.let { cnCands.add(it) }
+    val cnLines = LinkedHashMap<String, MutableList<String>>()
+    for (c in Candidates.dedupe(cnCands)) cnLines.getOrPut(c.category) { ArrayList() }.add(Candidates.toLine(c))
     // 欧美系拼装按 URL 去重（P1-3）：本体在前、捞回在后——同 URL 保留本体（带国名后缀的规范行）
     val euBody = dedupUrl((eu?.lines ?: oldOf(EU_CAT)) + res.euExtra.getValue(EU_CAT))
     val intlBody = dedupUrl((eu?.newsLines ?: oldOf(INTL_CAT)) + res.euExtra.getValue(INTL_CAT))
     val merged = ArrayList<String>()
     for (cat in ClassifyCn.CAT_ORDER) {
-      val body = when (cat) { EU_CAT -> euBody; INTL_CAT -> intlBody; else -> res.out.getValue(cat) }
+      val body = when (cat) { EU_CAT -> euBody; INTL_CAT -> intlBody; else -> cnLines[cat] ?: emptyList() }
       if (body.isNotEmpty()) { merged.add("$cat,#genre#"); merged.addAll(body) }
     }
     val after = countEntries(merged)

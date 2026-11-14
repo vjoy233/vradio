@@ -106,6 +106,26 @@ const op = (id, ok, at, extra = {}) => Object.assign({
       assert.strictEqual((await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, 'not json')).status, 400);
     });
 
+    // FIFO 淘汰幂等边界（AIbot P1）：>512 条后，被淘汰旧 op 的重试必须显式拒绝（rejected 计数）而非静默重算
+    await ok('超过 512 条后：淘汰旧 op 重试被显式拒绝、不重复计数', async () => {
+      let applied = 0;
+      for (let i = 0; i < 17; i++) { // 520 条分 17 批（单批 ≤32），at 单调递增
+        const ops = Array.from({ length: Math.min(32, 520 - i * 32) }, (_, j) => op(`e${i * 32 + j + 1}`, true, 10000 + i * 32 + j));
+        const r = await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ baseRev: 0, ops }));
+        applied += JSON.parse(r.body).applied;
+      }
+      assert.strictEqual(applied, 520); // 520 条全量落账（窗口 512 → t1/t2/t3 与最早 8 条 e* 被淘汰，floorAt 推进）
+      const before = JSON.parse((await req('GET', '/api/quality')).body).data['https://main.example/live'].okCount;
+      const r1 = await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ baseRev: 0, ops: [op('t1', true, 1000)] }));
+      const j1 = JSON.parse(r1.body);
+      assert.strictEqual(j1.applied, 0); assert.ok(j1.rejected >= 1); // 淘汰后重试：显式拒绝，不是静默重算
+      const r2 = await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ baseRev: 0, ops: [op('e520', true, 10519)] }));
+      const j2 = JSON.parse(r2.body);
+      assert.strictEqual(j2.applied, 0); assert.strictEqual(j2.rejected || 0, 0); // 窗口内重试：幂等跳过（非拒绝）
+      const after = JSON.parse((await req('GET', '/api/quality')).body).data['https://main.example/live'].okCount;
+      assert.strictEqual(after, before); // 两次重试均未重复计数
+    });
+
     await ok('/api/myradio 行清洗：非法行丢弃、合法行落盘、GET 校验', async () => {
       const r = await req('POST', '/api/myradio', { 'Content-Type': 'application/json' }, JSON.stringify({
         lines: ['自建,#genre#', '我的电台,https://example.test/live', '坏行没有逗号', '另台,https://other.test/x', '', '名,ftp://bad/协议']

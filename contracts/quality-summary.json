@@ -37,7 +37,7 @@
   },
   "api": {
     "GET /api/quality?rev=<optional>": "{ rev, data } 或命中当前版本 { rev, notModified: true }（不重复传输全量）",
-    "POST /api/quality": "body { baseRev, ops:[opEvent…] } → { ok, rev, applied }；baseRev 只是客户端观测版本不作覆盖条件；同一 op.id 已处理则跳过（重试/多标签不重复计数）；仅 schema 错误、单批操作数/字节数超限或无法合并返回 409"
+    "POST /api/quality": "body { baseRev, ops:[opEvent…] } → { ok, rev, applied, rejected }；baseRev 只是客户端观测版本不作覆盖条件；同一 op.id 已处理则跳过（重试/多标签不重复计数）；去重日志 FIFO 淘汰时推进 at 水位线 floorAt——旧于水位线的 op 重试显式拒绝（计入 rejected、不计入聚合），永不重复计数；仅 schema 错误、单批操作数/字节数超限或无法合并返回 409"
   },
   "caps": {
     "fileHardLimit": "2MB——去重记录与聚合数据一起受此约束",

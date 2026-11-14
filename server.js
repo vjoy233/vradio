@@ -127,7 +127,8 @@ function storeWrite(data) {
 
 // ---------- data/quality.json（B0 sidecar API 骨架 / B2 QualityStore 服务端底座）：质量聚合 sidecar。
 // 仲裁模型 = 操作事件合并（非 last-write-wins，契约 contracts/quality-summary.json）：POST {baseRev, ops} 逐条
-// 应用，同一 op.id 已处理则跳过——网络重试/页面刷新/多标签重复提交不重复计数；baseRev 只是客户端观测版本，
+// 应用，同一 op.id 已处理则跳过——网络重试/页面刷新/多标签重复提交不重复计数；去重日志 FIFO（512 条）淘汰时
+// 推进 at 水位线 floorAt，旧于水位线的重试显式拒绝（响应 rejected 计数）而非静默重算，幂等边界可证明；baseRev 只是客户端观测版本，
 // 不作整段覆盖条件、版本落后不拒绝合并；仅 schema 错误/单批超限/无法合并（含 2MB 硬上限）返回 409。
 // rev 服务端唯一发号（成功应用 ≥1 条才 +1，纯去重命中不动号）。安全边界复用 store 口径：跨源拒绝、
 // 请求体/单批操作数封顶、tmp+rename + 串行队列、坏文件按空库恢复。聚合格式 B2 细化（directCount/metadata 等），
@@ -140,6 +141,8 @@ function qRead() { // 懒加载 + 坏文件按空库恢复（只清自身，绝�
   if (!qCache) {
     try { qCache = JSON.parse(fs.readFileSync(QUALITY_FILE, 'utf8')); } catch (_) { qCache = null; }
     if (!qCache || typeof qCache !== 'object' || !Array.isArray(qCache.ops) || typeof qCache.data !== 'object' || !Number.isFinite(qCache.rev)) qCache = { rev: 0, ops: [], data: {} };
+    if (!Array.isArray(qCache.ats) || qCache.ats.length !== qCache.ops.length) { qCache.ats = qCache.ops.map(() => 0); qCache.floorAt = 0; } // 幂等水位线兼容：旧文件/形态不齐按 0 对齐（不拒绝任何重试）
+    if (!Number.isFinite(qCache.floorAt)) qCache.floorAt = 0;
   }
   return qCache;
 }
@@ -160,14 +163,23 @@ function qApplyEntry(st, op) { // 单条应用（纯函数式：作用在传入�
   else { a.failCount++; a.lastFailAt = Math.max(a.lastFailAt, op.at); }
   a.modes[op.mode] = 1; // 播放方式粗记录（发现页 directCount 判定在 B2 summary 细化）
   st.ops.push(op.id);
-  if (st.ops.length > Q_OPLOG) st.ops.splice(0, st.ops.length - Q_OPLOG); // 去重日志 FIFO（与数据同受 2MB 约束）
+  st.ats.push(+op.at || 0);
+  if (st.ops.length > Q_OPLOG) { // 去重日志 FIFO（与数据同受 2MB 约束）；淘汰推进幂等水位线 floorAt——
+    const cut = st.ops.length - Q_OPLOG, ev = st.ats.splice(0, cut); // 已淘汰 op 的重试不再静默重算，改按 at<=floorAt 显式拒绝（AIbot P1：重试要么窗口内跳过、要么旧于水位线被拒，永不重复计数）
+    st.ops.splice(0, cut);
+    st.floorAt = Math.max(st.floorAt || 0, ...ev);
+  }
 }
 function qCommit(ops) { // 串行：克隆当前态 → 应用 → 写盘成功才换内存与 rev（写失败不留半应用状态）
   return qQ = qQ.then(() => new Promise(done => {
     const st = JSON.parse(JSON.stringify(qRead()));
-    let applied = 0;
-    for (const op of ops) { if (st.ops.includes(op.id)) continue; qApplyEntry(st, op); applied++; }
-    if (!applied) return done({ ok: true, rev: st.rev, applied: 0 });
+    let applied = 0, rejected = 0;
+    for (const op of ops) {
+      if (st.ops.includes(op.id)) continue; // 窗口内命中：幂等跳过
+      if (+op.at <= st.floorAt) { rejected++; continue; } // 旧于淘汰水位线：显式拒绝（响应带 rejected 计数），绝不重复计数——容量裁剪可丢聚合样本，不得破坏幂等语义
+      qApplyEntry(st, op); applied++;
+    }
+    if (!applied) return done({ ok: true, rev: st.rev, applied: 0, rejected });
     const rev = st.rev + 1, out = JSON.stringify(st), tmp = QUALITY_FILE + '.tmp';
     if (Buffer.byteLength(out) > Q_MAX) return done({ ok: false, error: 'quality sidecar 超过 2MB 硬上限' });
     fs.mkdir(DATA_DIR, { recursive: true }, e => {
@@ -175,7 +187,7 @@ function qCommit(ops) { // 串行：克隆当前态 → 应用 → 写盘成功�
       fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
         : fs.rename(tmp, QUALITY_FILE, e3 => {
           if (e3) return done({ ok: false, error: '写入失败' });
-          qCache = st; qCache.rev = rev; done({ ok: true, rev, applied });
+          qCache = st; qCache.rev = rev; done({ ok: true, rev, applied, rejected });
         }));
     });
   })).catch(() => ({ ok: false, error: '写入失败' }));

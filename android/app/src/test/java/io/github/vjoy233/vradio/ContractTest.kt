@@ -25,6 +25,16 @@ class ContractTest {
     for (k in excluded) assertFalse("排除键 $k 误入 C.KEYS", C.KEYS.contains(k))
   }
 
+  @Test fun keyConstantsBidirectional() { // 声明 ↔ 引用双向一致（AIbot P2：对齐 Web test/contracts.js readAndroidKeys——
+    // 反射扫 K_* 常量声明：全部须被 C.KEYS 引用（无死声明）、C.KEYS 每项须有声明背书（无裸字符串），防单侧漂移）
+    val declared = C::class.java.declaredFields.filter { it.name.startsWith("K_") }
+      .map { it.name to (it.get(null) as String) }
+    assertTrue("未发现 K_* 常量声明", declared.isNotEmpty())
+    for ((name, v) in declared) assertTrue("常量 $name 未被 C.KEYS 引用", C.KEYS.contains(v))
+    for (k in C.KEYS) assertTrue("C.KEYS 条目 $k 无对应 K_* 常量声明", declared.any { it.second == k })
+    assertEquals(declared.size, declared.map { it.second }.distinct().size) // 无重复值（重名键必被上两条拦截，这里兜底）
+  }
+
   @Test fun backupV2FixtureReadable() { // Android 现行 v2 导出格式 ↔ fixture 互读
     val p = Backup.parseImport(res("fixtures/backup-v2.json"))
     assertNotNull(p)

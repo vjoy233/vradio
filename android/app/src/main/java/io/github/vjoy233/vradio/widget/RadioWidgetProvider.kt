@@ -11,18 +11,16 @@ import android.os.Bundle
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionToken
+import io.github.vjoy233.vradio.BootLib
 import io.github.vjoy233.vradio.MainActivity
 import io.github.vjoy233.vradio.Prefs
 import io.github.vjoy233.vradio.R
 import io.github.vjoy233.vradio.data.Library
-import io.github.vjoy233.vradio.data.MyRadio
-import io.github.vjoy233.vradio.data.Store
 import io.github.vjoy233.vradio.model.PlayerUiState
 import io.github.vjoy233.vradio.model.PState
 import io.github.vjoy233.vradio.model.Station
 import io.github.vjoy233.vradio.player.PlaybackService
 import io.github.vjoy233.vradio.player.PlayerHolder
-import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -89,23 +87,16 @@ object WidgetCommands {
   }
 
   /* —— 进程冷启兜底（VRadioApp.onCreate 装配；AppVm 存活时其 init 覆盖、onCleared 时回装）——
-     ⏮⏭/空台续播需要电台库解析（收藏/最近回绑），UI 不在时用文件侧自建的 Library 兜底：
-     只读解析 + 播放，不写最近/收藏（避免与 AppVm 的 Library 实例双写互踩，recents 少记 widget 起播属可接受）。 */
-  @Volatile private var bootLib: Library? = null
+     ⏮⏭/空台续播需要电台库解析（收藏/最近回绑），UI 不在时用文件侧自建的 Library 兜底
+     （BootLib，B6 起与车机浏览共享同一实例）：只读解析 + 播放，不写最近/收藏
+     （避免与 AppVm 的 Library 实例双写互踩，recents 少记 widget 起播属可接受）。 */
 
   fun wireFallback(ctx: Context) {   // VRadioApp.onCreate 调一次；回调闭包只捕获 context，重活全部延迟到点击
     PlayerHolder.onStepFav = { d -> stepFavFallback(ctx.applicationContext, d) }
     PlayerHolder.onPlayLast = { resumeLastFallback(ctx.applicationContext) }
   }
 
-  private fun lib(app: Context): Library? = synchronized(this) {
-    bootLib?.let { return it }
-    runCatching {   // 装配口径 ≈ AppVm.boot：D7 filesDir 副本优先、assets 兜底；失败下次点击再试（不缓存失败）
-      val radio = File(app.filesDir, "radio.txt").takeIf { it.exists() }?.readText()
-        ?: app.assets.open("radio.txt").bufferedReader().use { it.readText() }
-      Library(Store, app.filesDir).apply { mainText = radio; myText = MyRadio(app.filesDir).readText(); reload() }
-    }.getOrNull()?.also { bootLib = it }
-  }
+  private fun lib(app: Context): Library? = BootLib.get(app)
 
   private fun stepFavFallback(app: Context, dir: Int) = scope.launch(Dispatchers.IO) {
     val l = lib(app) ?: return@launch

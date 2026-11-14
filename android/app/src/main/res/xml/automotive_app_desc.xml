@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android Auto 媒体能力声明（B6）：官方模板 developer.android.com/training/cars/media/auto -->
+<automotiveApp>
+    <uses name="media" />
+</automotiveApp>

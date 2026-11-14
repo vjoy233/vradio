@@ -27,16 +27,22 @@ import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import androidx.media3.extractor.metadata.icy.IcyHeaders
 import androidx.media3.extractor.metadata.icy.IcyInfo
 import androidx.media3.session.CommandButton
+import androidx.media3.session.LibraryResult
 import androidx.media3.session.MediaController
+import androidx.media3.session.MediaLibraryService
+import androidx.media3.session.MediaLibraryService.MediaLibrarySession
 import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
 import androidx.media3.session.SessionToken
+import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import io.github.vjoy233.vradio.R
 import io.github.vjoy233.vradio.consts.C
 import io.github.vjoy233.vradio.data.Store
+import io.github.vjoy233.vradio.media.CarBrowse
+import io.github.vjoy233.vradio.media.MediaTree
 import io.github.vjoy233.vradio.model.PState
 import io.github.vjoy233.vradio.model.PlayerUiState
 import io.github.vjoy233.vradio.model.SrcMem
@@ -76,16 +82,17 @@ object PlayerHolder {
   private lateinit var appCtx: Context
   private lateinit var exo: ExoPlayer
   private lateinit var fwd: Fwd // ⏮⏭/play/pause/stop 媒体键转发壳（见文件尾 Fwd）
-  private lateinit var sess: MediaSession
+  private var sess: MediaSession? = null // B6：MediaLibrarySession，服务 onCreate 期建（Builder 需服务实例）
   private var selfCtl: MediaController? = null // 自连控制器（见 ensure 尾注）
 
   private val uiMut = MutableStateFlow(PlayerUiState())
   val ui: StateFlow<PlayerUiState> get() = uiMut   // UI 唯一读口
   val player: ExoPlayer get() = exo
-  val session: MediaSession get() = sess
+  val session: MediaSession? get() = sess          // 可空：服务未启时无会话（PlaybackService.onGetSession 判空回 null）
 
   var onStepFav: ((Int) -> Unit)? = null                     // ⏮⏭ 收藏间切台（player.js:71-72）
   var onPlayLast: (() -> Unit)? = null                       // 媒体键 play 无台 → 续播上次（player.js:66）
+  var onCarStation: ((u0: String) -> Station?)? = null       // 车机点播解析：u0 → 库内可见台（B6；AppVm 活实例注入/VRadioApp 兜底）
   var onSong: ((u0: String, title: String) -> Unit)? = null  // ICY 换歌：被替换下的旧曲名入史（app.js:611 口径）
   var logoProvider: ((Station) -> String)? = null            // 锁屏 artwork 同步窥探（player.js:30 onlogo）
 
@@ -140,18 +147,12 @@ object PlayerHolder {
     }
     exo.addListener(listener)
     fwd = Fwd(exo, this)
-    val launch = appCtx.packageManager.getLaunchIntentForPackage(appCtx.packageName)
-    val pi = launch?.let { PendingIntent.getActivity(appCtx, 0, it, PendingIntent.FLAG_IMMUTABLE) }
-    val sb = MediaSession.Builder(appCtx, fwd)
-    if (pi != null) sb.setSessionActivity(pi)
-    sb.setCallback(sessionCb) // 通知栏「刷新」自定义 action（plan-refresh-live §4.3）：onConnect 放行 + onCustomCommand 派发
-    sess = sb.build()
-    sess.setCustomLayout(listOf(refreshBtn())) // 标准媒体键后追加「刷新」（锁屏/通知栏直达）
     reloadMems() // player.js:35（Store 收敛层出口；调用前 Store.init 已由 VRadioApp 完成）
     vol = gvol; exo.volume = gvol
     uiMut.update { it.copy(volPct = (gvol * 100).roundToInt()) }
     // 自连控制器（保守实现）：MediaSessionService 在「有控制器连上」后才接手通知/前台生命周期，
     // 本应用 UI 直读 StateFlow 不建控制器——这里自连一次把会话挂进服务（media3 常规形态）。
+    // B6：绑定本身冷启 PlaybackService，其 onCreate 会先经 ensureSession 建好 MediaLibrarySession。
     // 失败不阻断播放（大不了缺通知，主线实机收口验证）
     runCatching {
       val fut: ListenableFuture<MediaController> = MediaController.Builder(appCtx,
@@ -159,6 +160,22 @@ object PlayerHolder {
       fut.addListener({ selfCtl = runCatching { fut.get() }.getOrNull() }, Executor { it.run() })
     }
     main.postDelayed(ticker, TICK_MS)
+  }
+
+  /** B6：MediaLibrarySession 落地（PlaybackService.onCreate 调，主线程）。Builder 需 MediaLibraryService
+   *  实例（方案 §10 骨架形态），故会话创建从 ensure() 延至此——通知/锁屏/Widget/refresh 自定义命令
+   *  的回调与 customLayout 全部保留（MediaLibrarySession.Callback extends MediaSession.Callback，纯增量）。
+   *  幂等：已建则直接返回。 */
+  fun ensureSession(svc: MediaLibraryService): MediaSession {
+    sess?.let { return it }
+    val launch = appCtx.packageManager.getLaunchIntentForPackage(appCtx.packageName)
+    val pi = launch?.let { PendingIntent.getActivity(appCtx, 0, it, PendingIntent.FLAG_IMMUTABLE) }
+    val sb = MediaLibrarySession.Builder(svc, fwd, sessionCb)
+    if (pi != null) sb.setSessionActivity(pi) // onConnect 放行 + onCustomCommand 派发在 sessionCb（不变）
+    val s = sb.build()
+    s.setCustomLayout(listOf(refreshBtn())) // 标准媒体键后追加「刷新」（锁屏/通知栏直达）
+    sess = s
+    return s
   }
 
   /* ---------- 播放决策链 ---------- */
@@ -214,6 +231,17 @@ object PlayerHolder {
     // 暂停态直接起播（刷新=要听最新的，直播流停在直播头不是稳定态）；空台无响应；不写 srcmem（onAir 未变早退）
     val s = station ?: return
     play(s, if (curSi in s.u.indices) curSi else -1)
+  }
+
+  /** 车机点播（B6 §10 播放联动）：u: mediaId → 库内可见台 → 复用 play() 决策链（硬约束：不复制播放决策）。
+   *  Fwd.setMediaItem(s) 拦截路径调（主线程）；返回 false = 非车机 id/解析失败，调用方透传底层（叶子带
+   *  的 u0 URI 兜底裸播，不炸会话）。自身装载的 variant item 无 mediaId（默认空串），永不误触发。 */
+  fun carPlay(item: MediaItem?): Boolean {
+    val id = item?.mediaId ?: return false
+    val u0 = MediaTree.decId(id) ?: return false
+    val s = onCarStation?.invoke(u0) ?: return false // 车机不接受任意 URL：解析后须命中本地库
+    play(s)
+    return true
   }
 
   fun stop() { // player.js:214-220
@@ -587,6 +615,17 @@ object PlayerHolder {
     override fun play() { if (h.station == null) h.onPlayLast?.invoke() else h.resume() } // player.js:66
     override fun pause() { h.pause() } // 经持有者走 halt 守卫（不直接透传底层）
     override fun stop() { h.stop() }   // player.js:68
+
+    /* B6 车机点播（§10 播放联动）：会话侧 setMediaItem(s)（车机/兼容客户端点选叶子，经 onAddMediaItems
+       补 URI 后到达）在此拦截重定向 play() 决策链——直接透传会把裸 URI set 进 player，绕开决策链/台记忆/
+       锁屏元数据并二次建流。carPlay=false（非 u: id/解析失败）才透传（兜底裸播不炸会话）。 */
+    override fun setMediaItem(mediaItem: MediaItem) { if (!h.carPlay(mediaItem)) super.setMediaItem(mediaItem) }
+    override fun setMediaItems(mediaItems: MutableList<MediaItem>) {
+      if (!h.carPlay(mediaItems.firstOrNull())) super.setMediaItems(mediaItems)
+    }
+    override fun setMediaItems(mediaItems: MutableList<MediaItem>, startIndex: Int, startPositionMs: Long) {
+      if (!h.carPlay(mediaItems.firstOrNull())) super.setMediaItems(mediaItems, startIndex, startPositionMs)
+    }
   }
 
   /* 通知栏「刷新」自定义 action（plan-refresh-live §4.3）：Fwd 先例是占标准命令位（⏮⏭），但标准位语义不合
@@ -597,7 +636,9 @@ object PlayerHolder {
     .setSessionCommand(SessionCommand(ACTION_REFRESH, Bundle.EMPTY))
     .build()
 
-  private val sessionCb = object : MediaSession.Callback {
+  /* 会话回调：通知栏「刷新」/Widget 自定义命令（B5 前既有）+ 车机媒体树/点播（B6 增量）。
+     MediaLibrarySession.Callback extends MediaSession.Callback——onConnect/onCustomCommand 一行未动。 */
+  private val sessionCb = object : MediaLibrarySession.Callback {
     override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo) =
       MediaSession.ConnectionResult.AcceptedResultBuilder(session)
         .setAvailableSessionCommands( // 自定义 sessionCommand 必须显式放行，否则通知栏按钮静默不渲染（方案审计 R1-9）
@@ -615,6 +656,28 @@ object PlayerHolder {
         else -> return super.onCustomCommand(session, controller, customCommand, args)
       }
       return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+    }
+    /* —— B6 车机媒体树（§10）：提供者侧查本地 Library（AppVm 活实例 / BootLib 文件侧兜底，见 CarBrowse）—— */
+    override fun onGetLibraryRoot(session: MediaLibraryService.MediaLibrarySession,
+      controller: MediaSession.ControllerInfo, params: MediaLibraryService.LibraryParams?): ListenableFuture<LibraryResult<MediaItem>> =
+      CarBrowse.root(appCtx, params)
+    override fun onGetChildren(session: MediaLibraryService.MediaLibrarySession, controller: MediaSession.ControllerInfo,
+      parentId: String, page: Int, pageSize: Int,
+      params: MediaLibraryService.LibraryParams?): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> =
+      CarBrowse.children(appCtx, parentId, page, pageSize, params)
+    override fun onGetItem(session: MediaLibraryService.MediaLibrarySession, controller: MediaSession.ControllerInfo,
+      mediaId: String): ListenableFuture<LibraryResult<MediaItem>> =
+      CarBrowse.item(appCtx, mediaId, null)
+    /* 车机点选的 URI-less item 在此补 URI（兼容 MediaBrowserCompat 类客户端只回传 mediaId 的形态）；
+       补完的 setMediaItem(s) 由 Fwd.carPlay 按 mediaId 拦截重定向 play() 决策链——不在此直接 play()，
+       防会话侧随后 setMediaItems 覆盖级联/二次建流。解析失败保持原样（会话侧报错，不炸）。 */
+    override fun onAddMediaItems(session: MediaSession, controller: MediaSession.ControllerInfo,
+      mediaItems: MutableList<MediaItem>): ListenableFuture<MutableList<MediaItem>> {
+      val out = mediaItems.map { mi ->
+        val s = MediaTree.decId(mi.mediaId)?.let { onCarStation?.invoke(it) }
+        if (s != null && mi.localConfiguration == null) mi.buildUpon().setUri(s.u0).build() else mi
+      }
+      return Futures.immediateFuture(out.toMutableList())
     }
   }
 

@@ -63,6 +63,41 @@
     存 Android 私有 SharedPreferences（`Prefs`，文件 "vradio"），**`widget.*`/`net.*` 不进 radio.*
     三侧契约、不进 vradio-backup.json/v3 extensions**。JVM 测试：`WidgetStateTest`/
     `NetworkPolicyTest`/`TrafficEstimatorTest`。
+- **B6 面（2026-11-15 实施：Android Auto / 车载模式，plan-expansion-r4 §10；Spike 已过 → 产品化）**：
+  - `player/PlaybackService` 基类升 **MediaLibraryService**（Media3 1.11.1 里它是 MediaSessionService
+    的子类）：通知栏/Widget/refresh 自定义命令的 onConnect/onCustomCommand 放行链路一行未动，
+    `onGetSession` 返回 `MediaLibrarySession?`。会话创建从 `PlayerHolder.ensure()` 延至
+    `PlayerHolder.ensureSession(svc)`（**Builder 需 MediaLibraryService 实例**，服务 onCreate 调、幂等；
+    自连控制器仍会冷启服务，通知链路不受影响）。manifest：exported=true + 双 action
+    （`androidx.media3.session.MediaLibraryService` 取代旧 MediaSessionService action + legacy
+    `android.media.browse.MediaBrowserService`，不并申 MediaSessionService action——androidx/media#3158
+    启停循环）+ application meta-data `com.google.android.gms.car.application` →
+    `res/xml/automotive_app_desc.xml`（`<uses name="media"/>`）。无新依赖（MediaLibraryService 属
+    media3-session）、无 automotive 权限。
+  - `media/MediaTree.kt`（**纯 JVM**）：固定四层树 root → favorites/recents/categories/custom →
+    分类节点 → 台叶子。**mediaId 稳定口径**：台叶子 `u:<Base64URL(u0 UTF-8，无 padding)>`
+    （+→-、/→_、去=；URL=持久身份，不受分类/台名漂移影响）；分类节点 `c:<分类名>`（categories 子树）/
+    `m:<分类名>`（custom 子树，前缀分开防同名撞 id）；固定节点 `root`/`favorites`/`recents`/
+    `categories`/`custom`。**解析后必须命中本地库**（stationOf 查不到即 null——车机不接受任意 URL）。
+    可见性口径 = Library.visible 同源（手藏台/藏分类/死台不入树、正在播/连接中死台例外、空分类节点
+    不出现）；custom 子树 = 该分类下可见台**全部**来自 my-radio 的分类（混合分类归 categories——
+    宁重复归类不藏标准分类）；收藏/最近按 radio.favs/recents 持久序，休眠条目跳过。分页：
+    pageSize<=0 或 page<0 回退全量，否则 drop(page*pageSize).take(pageSize)。
+  - `media/CarBrowse.kt`（android 面）：MediaLibrarySession.Callback 的 onGetLibraryRoot/onGetChildren/
+    onGetItem 提供者侧实现，数据源 = AppVm 活 Library（`CarBrowse.attach(lib, logoOf)` 注入）→
+    UI 不在时 BootLib 文件侧兜底（B5 冷启模式；PlaybackService.onCreate IO 预热）。活库读快照收敛
+    主线程（AppVm 审计 P2 口径），异步经 SettableFuture 回 ListenableFuture。MediaItem 映射：
+    title=台名、artist=分类、artworkUri=台标（有则填）、叶子带 u0 URI 兜底。
+  - **播放联动（不复制播放决策链）**：车机点选 → onAddMediaItems 给 URI-less item 补 u0 URI →
+    会话侧 setMediaItem(s) 由 **Fwd.carPlay 按 u: mediaId 拦截**重定向 `PlayerHolder.play()` 决策链
+    （自身装载的 variant item 无 mediaId 永不误触发；解析失败透传裸 URI 兜底不炸会话）。⏮⏭ 沿用
+    Fwd 的 seekToNext/Previous → onStepFav 收藏间切台（与通知栏线控一致）；台名/曲讯沿用既有
+    pushMeta（title=曲讯||台名、artist=VRadio·分类、artwork=台标）。`PlayerHolder.onCarStation`
+    回调（AppVm 活实例注入：仅收库内可见台+记最近+台标补全；VRadioApp/onCleared 兜底：BootLib 只读
+    不写最近）。`BootLib`（根包）= B5 WidgetCommands.lib 抽出的共享文件侧兜底库。
+  - **边界**：不在车机提供维护、导入、体检、源地址和复杂搜索。JVM 测试：`MediaTreeTest`
+    （层级/隐藏 dead 过滤/空分类/编解码 round-trip/未知 id 拒收/分页边界）。车机发现/播放/断网恢复/
+    源级联/重复建流须 DHU 或实机验收（本环境无 DHU）。
 
 ---
 
@@ -240,6 +275,8 @@ object PlayerHolder {
 ```kotlin
 class PlaybackService : MediaSessionService() { override fun onGetSession(info) = PlayerHolder.session }
 ```
+（B6 后形态：基类 MediaLibraryService、onGetSession 返回 MediaLibrarySession?，会话经
+`PlayerHolder.ensureSession(this)` 在 onCreate 落地——详见上方 r4 扩展契约 B6 面。）
 
 ---
 

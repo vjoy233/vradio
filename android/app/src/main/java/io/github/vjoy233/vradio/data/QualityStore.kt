@@ -21,7 +21,10 @@ import java.io.File
    ③ metadata(icy|none|mixed) 由观测 modes 派生（op 事件无 icy 字段）：纯 direct → icy、
      纯 hls → none、混合 → mixed。 */
 class QualityStore(private val dir: File, private val clock: () -> Long = System::currentTimeMillis,
-                   private val capBytes: Int = C.QUALITY_MAX_BYTES) {
+                   private val capBytes: Int = C.QUALITY_MAX_BYTES,
+                   private val saver: (String) -> Boolean = { t ->
+                     runCatching { writeTextAtomic(File(dir, FILE), t); true }.getOrDefault(false)
+                   }) {
 
   companion object {
     const val FILE = "quality.json"
@@ -54,33 +57,72 @@ class QualityStore(private val dir: File, private val clock: () -> Long = System
     stations.clear()
     val f = File(dir, FILE)
     val o = runCatching { JSONObject(f.readText()) }.getOrNull() ?: return
+    parseDiskForm(o)
+  }
+
+  /** 磁盘形态 {v:1, stations:{…}} 解析进内存（load 与 B4 备份回滚 restore 共用）。 */
+  private fun parseDiskForm(o: JSONObject) {
     val ss = o.optJSONObject("stations") ?: return
     for (id in ss.keys()) {
       val st = ss.optJSONObject(id) ?: continue
-      val q = QStation(id, st.optInt("cf", 0))
-      val srcs = st.optJSONObject("sources") ?: continue
-      for (su in srcs.keys()) {
-        val s = srcs.optJSONObject(su) ?: continue
-        val qss = QSource()
-        qss.okCount = s.optInt("okCount", 0); qss.failCount = s.optInt("failCount", 0)
-        qss.lastOkAt = s.optLong("lastOkAt", 0L); qss.lastFailAt = s.optLong("lastFailAt", 0L)
-        qss.lastPlaybackAt = s.optLong("lastPlaybackAt", 0L)
-        qss.latSum = s.optLong("latSum", 0L); qss.latN = s.optLong("latN", 0L)
-        qss.disconnects = s.optInt("disconnects", 0)
-        val ms = s.optJSONArray("modes")
-        if (ms != null) for (i in 0 until ms.length()) (ms.opt(i) as? String)?.let { qss.modes.add(it) }
-        qss.lastDiag = qEvent(s.optJSONObject("lastDiag"))
-        qss.lastPlayFail = qEvent(s.optJSONObject("lastPlayFail"))
-        q.sources[su] = qss
-      }
-      if (q.sources.isNotEmpty()) stations[id] = q
+      parseStation(id, st)?.let { stations[id] = it }
     }
+  }
+
+  /** 单台解析（磁盘形态与 B4 sidecar 导入形态同款字段）；无有效源返回 null（台丢弃）。 */
+  private fun parseStation(id: String, st: JSONObject): QStation? {
+    val q = QStation(id, st.optInt("cf", 0))
+    val srcs = st.optJSONObject("sources") ?: return null
+    for (su in srcs.keys()) {
+      val s = srcs.optJSONObject(su) ?: continue
+      val qss = QSource()
+      qss.okCount = s.optInt("okCount", 0); qss.failCount = s.optInt("failCount", 0)
+      qss.lastOkAt = s.optLong("lastOkAt", 0L); qss.lastFailAt = s.optLong("lastFailAt", 0L)
+      qss.lastPlaybackAt = s.optLong("lastPlaybackAt", 0L)
+      qss.latSum = s.optLong("latSum", 0L); qss.latN = s.optLong("latN", 0L)
+      qss.disconnects = s.optInt("disconnects", 0)
+      val ms = s.optJSONArray("modes")
+      if (ms != null) for (i in 0 until ms.length()) (ms.opt(i) as? String)?.let { qss.modes.add(it) }
+      qss.lastDiag = qEvent(s.optJSONObject("lastDiag"))
+      qss.lastPlayFail = qEvent(s.optJSONObject("lastPlayFail"))
+      q.sources[su] = qss
+    }
+    return if (q.sources.isNotEmpty()) q else null
   }
 
   @Synchronized
   fun save() { // tmp+rename 原子写；失败只打日志（丢样本不丢播放）
-    runCatching { writeTextAtomic(File(dir, FILE), toJsonString()) }
-      .onFailure { println("[vradio] quality.json 落盘失败（丢本样本，不影响播放）: $it") }
+    if (!saver(toJsonString())) println("[vradio] quality.json 落盘失败（丢本样本，不影响播放）")
+  }
+
+  /* ---------- B4 备份 sidecar 事务式覆盖导入（plan-expansion-r4 §13.2-5/6 + AIbot review P1-1）：
+     导入语义 = 明确覆盖（非合并）。capture/replaceImport/restore 三件套供 AppVm.applyConfirmed 组装
+     「快照 → 写入 → 任一步失败恢复旧快照」的事务；replaceImport 原地换内存 stations（= 质量缓存即时重载，
+     本类自身即缓存，无独立副本），trim/落盘纪律与样本写入同款。 ---------- */
+
+  /** 导入前全量快照（磁盘同构文本）——回滚凭据。 */
+  @Synchronized fun capture(): String = toJsonString()
+
+  /** 整体覆盖为已裁剪导入数据（Backup.qualityTrim 产物，嵌套形态 {id:{cf,sources:{…}}}）+ trim + 落盘；
+   *  落盘失败自动恢复导入前内存态并返回 false（不留半导入状态）。 */
+  @Synchronized fun replaceImport(data: JSONObject): Boolean {
+    val snap = toJsonString()
+    stations.clear()
+    for (id in data.keys().asSequence().toList()) {
+      val st = data.optJSONObject(id) ?: continue
+      parseStation(id, st)?.let { stations[id] = it }
+    }
+    trim(keepHint)
+    if (saver(toJsonString())) return true
+    stations.clear(); parseDiskForm(JSONObject(snap)); saver(toJsonString())   // 恢复导入前态（盘尽力回写）
+    return false
+  }
+
+  /** 从 capture() 快照恢复（内存 + 盘）——applyConfirmed 整体回滚用；返回是否落盘成功（内存已恢复，盘失败由调用方文案如实点名）。 */
+  @Synchronized fun restore(snap: String): Boolean {
+    stations.clear()
+    runCatching { JSONObject(snap) }.getOrNull()?.let { parseDiskForm(it) }
+    return saver(toJsonString())
   }
 
   private fun qEvent(o: JSONObject?): QEvent? =

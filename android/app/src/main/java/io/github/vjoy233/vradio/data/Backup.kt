@@ -12,12 +12,13 @@ import java.time.format.DateTimeFormatter
 /* 导入导出五件套（对标 app.js exportFavs/exportSongs/exportCfg/exportAll/importAll）。
    备份 v3（r4/B4，契约 contracts/backup-v3.schema.json）：{format:"vradio-backup",version:3,createdAt,app,
    data:13键快照, myRadio:my-radio.txt 原始行, extensions:{}}；导出统一 v3；导入兼容 v1（无 my 不动 my-radio.txt）/
-   v2（读 my 数组）/v3（读 myRadio + extensions.sidecars.quality 解析校验留存——B2 前无消费方，暂不落盘）。
+   v2（读 my 数组）/v3（读 myRadio + extensions.sidecars.quality 经 qualityTrim 裁剪后由 QualityStore
+   事务式覆盖落盘——AIbot review P1-1：确认即真提交，任一步失败恢复旧快照）。
    版本映射与 Web backup.js（BackupV3.read）同构；黄金样本 contracts/fixtures/backup-v2.json、backup-v3.json 双端一致消费。 */
 object Backup {
 
   /* 导入恢复载荷：data = 白名单过滤后的 13 键快照；my = null 表示该版本不带个人电台字段（v1，或 v2/v3 字段
-     缺失）→ 不动 my-radio.txt；quality = v3 extensions.sidecars.quality（已裁剪，B2 前仅校验留存） */
+     缺失）→ 不动 my-radio.txt；quality = v3 extensions.sidecars.quality（已裁剪，提交段经 QualityStore 覆盖落盘） */
   data class ImportPayload(
     val ver: Int,                        // 1|2|3（预览文案用）
     val data: Map<String, String>,
@@ -57,7 +58,7 @@ object Backup {
     }
     val src = when (ver) { 3 -> j.optJSONArray("myRadio"); 2 -> j.optJSONArray("my"); else -> null }
     val my = if (src == null) null else (0 until src.length()).mapNotNull { i -> src.opt(i) as? String }
-    // v3 extensions.sidecars.quality：解析校验留存（B2 前无消费方不落盘）；listenStats/未知扩展忽略不失败
+    // v3 extensions.sidecars.quality：qualityTrim 裁剪后交提交段落盘（AIbot P1-1）；listenStats/未知扩展忽略不失败
     var quality: JSONObject? = null
     if (ver == 3) {
       val qd = j.optJSONObject("extensions")?.optJSONObject("sidecars")?.optJSONObject("quality")?.optJSONObject("data")
@@ -115,6 +116,33 @@ object Backup {
       if (es.length() > 0 || e.optLong("cf") > 0) { e.put("sources", es); out.put(k, e); n++ }
     }
     return out
+  }
+
+  /* ---------- B4 导入提交段（applyConfirmed 抽离可 JVM 测试，AIbot review P1-1/P2-2）----------
+     三步覆盖（Store → my-radio → 质量 sidecar，与 Web BackupV3.commitImport 同序）+ 任一步失败整体回滚
+     （§13.2-5：不允许 Store 已恢复而 sidecar 半恢复）。协作方函数注入：AppVm 传 Store/MyRadio/QualityStore
+     真实现；JVM 测试传 fake（断言 sidecar 实际写入 / 失败触发三件回滚 / 回滚顺序）。返回 null = 成功，
+     否则失败原因（调用方 toast 拼前缀「导入失败：…已回滚到导入前状态」）。快照三件由调用方在提交前自持。 */
+  class ImportIO(
+    val applyStore: () -> Unit,          // Store.applyAll(导入 data)
+    val rollbackStore: () -> Unit,       // Store.applyAll(快照)
+    val applyMy: () -> Boolean,          // my 全量替换（my==null 时调用方给 { true } 不动文件）
+    val rollbackMy: () -> Unit,          // my-radio 旧文本回写
+    val applyQuality: () -> Boolean,     // QualityStore.replaceImport（quality==null 时给 { true }）
+    val rollbackQuality: () -> Boolean,  // QualityStore.restore(旧快照)（同上给 { true }）
+  )
+
+  fun commitImport(data: Map<String, String>, my: List<String>?, qualityData: JSONObject?, io: ImportIO): String? {
+    io.applyStore()
+    if (!io.applyMy()) {
+      io.rollbackStore(); io.rollbackMy()
+      return "个人电台恢复超限（500 行/64KB）"
+    }
+    if (!io.applyQuality()) {
+      io.rollbackStore(); io.rollbackMy(); io.rollbackQuality()
+      return "质量 sidecar 恢复失败"
+    }
+    return null
   }
 
   /* 收藏导出 = 带 #VRADIO:FAV 标记的 m3u（通用播放器可读；导回同文件恢复收藏态）。无收藏返回空串（调用方提示） */

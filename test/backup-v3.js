@@ -1,14 +1,18 @@
 // 备份 v3 纯逻辑测试（B4，plan-expansion-r4 §8.3/§8.4）：导出形状对照 contracts/backup-v3.schema.json、
 // v1/v2/v3 三版本读取（键白名单取 contracts/radio-keys.json——契约单一来源）、未知扩展忽略、坏 JSON 回退、
-// 质量聚合迁移字段裁剪。Web↔Android 一致性：Android BackupV3Test.kt 消费同一批 fixtures 断言同款期望。
+// 质量聚合迁移字段裁剪、commitImport 提交段（AIbot review P1-2：三步覆盖 + 失败回滚——「replace 写成功
+// 响应丢」经 io 注入 fake 复现，断言旧质量快照回写与文案如实）。Web↔Android 一致性：Android BackupV3Test.kt
+// 消费同一批 fixtures 断言同款期望。
 const assert = require('assert'), fs = require('fs'), path = require('path');
 const B = require('../backup.js');
 
 const ROOT = path.join(__dirname, '..');
 const FIX = p => fs.readFileSync(path.join(ROOT, 'contracts', 'fixtures', p), 'utf8');
 const KEYS = Object.keys(JSON.parse(fs.readFileSync(path.join(ROOT, 'contracts', 'radio-keys.json'), 'utf8')).keys);
-let pass = 0, fail = 0;
-const ok = (name, fn) => { try { fn(); pass++; console.log('  ✓', name); } catch (e) { fail++; console.error('  ✗', name, '\n     ', String(e && e.message || e).split('\n')[0]); } };
+let pass = 0, fail = 0, pend = [];
+const ok = (name, fn) => pend.push(Promise.resolve().then(fn).then(
+  () => { pass++; console.log('  ✓', name); },
+  e => { fail++; console.error('  ✗', name, '\n     ', String(e && e.message || e).split('\n')[0]); }));
 
 ok('build：v3 导出形状对照 schema shape 五字段', () => {
   const schema = JSON.parse(fs.readFileSync(path.join(ROOT, 'contracts', 'backup-v3.schema.json'), 'utf8'));
@@ -90,5 +94,84 @@ ok('v2 my 缺字段按不动处理（空数组才是恢复为空）', () => {
   assert.deepStrictEqual(B.read('{"v":2,"data":{"radio.vol":"90"},"my":[]}', KEYS).my, []);
 });
 
-console.log(`\n${pass} 通过，${fail} 失败`);
-process.exit(fail ? 1 : 0);
+// —— commitImport 提交段（AIbot review P1-2 抽离可测）：三步覆盖 + 失败回滚（含质量旧快照回写）。
+//    io 注入 fake 复现「replace 写成功响应丢」等失败路径——DOM/网络真实现留在 app.js，此处零依赖 ——
+const oldQ = { 'https://old.example/live': { cf: 0, sources: { 'https://old.example/live': { okCount: 3, failCount: 1, lastOkAt: 77 } } } };
+const impInfo = () => ({ ver: 3, app: 'web', data: { 'radio.vol': '30' }, my: ['我的,#genre#', '台X,http://x/1'],
+  quality: { v: 1, data: { 'https://new.example/live': { cf: 0, sources: { 'https://new.example/live': { okCount: 9 } } } } }, n: 1 });
+const ioFake = over => Object.assign({
+  http: true,
+  storeSnap: () => ({ 'radio.vol': '90' }),
+  storeApply: () => {}, storeFlush: () => {},
+  getMy: async () => '我的,#genre#\r\n台C,http://c/1',
+  postMy: async () => true,
+  getQuality: async () => oldQ,
+  postQuality: async () => true,
+  refreshQuality: () => {},
+}, over);
+ok('commitImport 成功路径：Store→my→quality 顺序提交 + 缓存刷新 + 成功文案', async () => {
+  const seq = [];
+  const r = await B.commitImport(impInfo(), true, ioFake({
+    storeApply: d => seq.push('store:' + d['radio.vol']),
+    postMy: async lines => { seq.push('my:' + lines.length); return true; },
+    postQuality: async d => { seq.push('q:' + Object.keys(d).length); return true; },
+    refreshQuality: () => seq.push('refresh'),
+  }));
+  assert.strictEqual(r.ok, true);
+  assert.ok(r.msg.includes('已恢复完整备份') && r.msg.includes('含质量 sidecar'));
+  assert.deepStrictEqual(seq, ['store:30', 'my:2', 'q:1', 'refresh']);
+});
+ok('commitImport「replace 写成功响应丢」：回滚 Store/my 并回写旧质量快照，文案如实不夸大', async () => {
+  const applied = [], qPosts = [];
+  const r = await B.commitImport(impInfo(), true, ioFake({
+    storeApply: d => applied.push(d['radio.vol']),
+    postQuality: async d => { qPosts.push(d); return qPosts.length > 1; }, // 第一次（导入数据）写成功但响应丢；第二次（旧快照回写）成功
+  }));
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.msg.includes('已回滚到导入前状态') && !r.msg.includes('可能停留')); // 回写成功 → 不点名风险
+  assert.deepStrictEqual(applied, ['30', '90']);       // 先应用导入 data，失败后恢复快照
+  assert.strictEqual(qPosts.length, 2);
+  assert.deepStrictEqual(qPosts[0], impInfo().quality.data); // 第一次提交的是导入数据
+  assert.deepStrictEqual(qPosts[1], oldQ);            // 回滚回写的是旧快照（服务端已写导入态时的唯一兜底）
+});
+ok('commitImport 回写也失败：文案点名「质量数据可能停留在导入状态」', async () => {
+  const r = await B.commitImport(impInfo(), true, ioFake({ postQuality: async () => false }));
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.msg.includes('已回滚到导入前状态'));
+  assert.ok(r.msg.includes('质量数据可能停留在导入状态，可重试导入'));
+});
+ok('commitImport 无快照不提交：GET 旧质量失败 → 零写入', async () => {
+  const applied = [];
+  const r = await B.commitImport(impInfo(), true, ioFake({ storeApply: d => applied.push(d), getQuality: async () => null }));
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.msg.includes('无法读取当前质量数据'));
+  assert.deepStrictEqual(applied, []);                 // Store 一件都没动（无快照不提交纪律）
+});
+ok('commitImport my 失败：回滚 Store/my，sidecar 未提交（无 quality 回写）', async () => {
+  const qPosts = [];
+  const r = await B.commitImport(impInfo(), true, ioFake({
+    postMy: async () => false,
+    postQuality: async d => { qPosts.push(d); return true; },
+  }));
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.msg.includes('个人电台恢复失败') && r.msg.includes('已回滚到导入前状态'));
+  assert.deepStrictEqual(qPosts, []);                  // 失败发生在质量提交前：sidecar 未动，无需回写
+});
+ok('commitImport file://（http=false）：零网络调用，文案注明个人列表不恢复', async () => {
+  const calls = [];
+  const r = await B.commitImport(impInfo(), false, ioFake({
+    http: false,
+    getMy: async () => { calls.push('getMy'); return 'x'; },
+    postMy: async () => { calls.push('postMy'); return true; },
+    getQuality: async () => { calls.push('getQ'); return oldQ; },
+    postQuality: async () => { calls.push('postQ'); return true; },
+  }));
+  assert.strictEqual(r.ok, true);
+  assert.ok(r.msg.includes('file:// 形态无法恢复个人电台列表'));
+  assert.deepStrictEqual(calls, []);                   // file:// 无后端通道：my/质量零触碰
+});
+
+Promise.all(pend).then(() => {
+  console.log(`\n${pass} 通过，${fail} 失败`);
+  process.exit(fail ? 1 : 0);
+});

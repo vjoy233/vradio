@@ -207,6 +207,19 @@ const op = (id, ok, at, extra = {}) => Object.assign({
       const big = {}; for (let i = 0; i < 2100; i++) big['https://a.example/' + i] = { cf: 1, sources: {} };
       assert.strictEqual((await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ replace: true, data: big }))).status, 409);
     });
+    await ok('sidecar 回滚通道（AIbot P1-2 端到端）：旧快照再 replace 无损回写', async () => {
+      const before = JSON.parse((await req('GET', '/api/quality')).body).data; // 当前服务端存储态（= GET 面快照来源）
+      assert.ok(before['https://main.example/live']);                        // 前置：非空
+      const imp = { 'https://fresh.example/live': { cf: 1, sources: { 'https://fresh.example/live': { okCount: 50, modes: ['hls'] } } } };
+      const r1 = await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ replace: true, data: imp }));
+      assert.strictEqual(JSON.parse(r1.body).ok, true);
+      const mid = JSON.parse((await req('GET', '/api/quality')).body).data;
+      assert.deepStrictEqual(mid, imp);                                       // 覆盖后 = 导入数据（存储形态 = 白名单内无损）
+      const r2 = await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ replace: true, data: before }));
+      assert.strictEqual(JSON.parse(r2.body).ok, true);
+      const after = JSON.parse((await req('GET', '/api/quality')).body).data;
+      assert.deepStrictEqual(after, before);                                  // 旧快照经同一 replace 通道回写 = 无损（Web 回滚路径的服务端保证）
+    });
 
     // 损坏恢复：写坏 quality.json 后重启服务——按空库恢复且不碰磁盘外数据
     srv.kill(); srv = null;

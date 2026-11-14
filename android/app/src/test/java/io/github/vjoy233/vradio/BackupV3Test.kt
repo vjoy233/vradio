@@ -4,10 +4,12 @@ import io.github.vjoy233.vradio.consts.C
 import io.github.vjoy233.vradio.data.Backup
 import io.github.vjoy233.vradio.data.Library
 import io.github.vjoy233.vradio.data.MyRadio
+import io.github.vjoy233.vradio.data.QualityStore
 import io.github.vjoy233.vradio.data.Store
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -18,7 +20,9 @@ import kotlin.io.path.createTempDirectory
 
 /* 备份 v3（B4，plan-expansion-r4 §8.3/§8.4）：v3 黄金样本互读（contracts/fixtures/backup-v3.json）、
  * v1/v2/v3 三版本读取、导出形状（对照 contracts/backup-v3.schema.json）、未知扩展忽略、坏 JSON 回退、
- * 质量聚合迁移字段裁剪、导入失败回滚原语（Store 快照恢复 + MyRadio 拒收不动原文件）。
+ * 质量聚合迁移字段裁剪、导入失败回滚原语（Store 快照恢复 + MyRadio 拒收不动原文件）；AIbot review
+ * P1-1/P2-2：质量 sidecar 经 QualityStore.replaceImport 实际落盘 + 落盘失败恢复旧快照（saver 缝注入失败）+
+ * commitImport 提交段回滚序（fake 协作方断言三件回滚）。
  * 与 Web test/backup-v3.js 消费同一批 fixtures 断言同款期望（Web↔Android 双端一致）。 */
 class BackupV3Test {
 
@@ -132,5 +136,65 @@ class BackupV3Test {
     val huge = (1..501).joinToString("\r\n") { "台$it,http://a.example/$it" }
     assertEquals(false, mr.replace(huge))             // v3 my 超限：导入路径的失败位
     assertEquals(before, mr.readText())               // 拒后原文件不动（回滚=重写回旧文本，此处天然无需重写）
+  }
+
+  // —— AIbot review P1-1/P2-2：v3 质量 sidecar 真正落盘 + 失败恢复旧快照（applyConfirmed 提交段） ——
+
+  private fun qData(id: String, ok: Int, extra: String = ""): JSONObject { // 嵌套形态 {id:{cf,sources:{…}}}
+    val src = JSONObject().put("okCount", ok)
+    if (extra.isNotEmpty()) src.put("modes", org.json.JSONArray(listOf(extra)))
+    return JSONObject().put(id, JSONObject().put("cf", 0)
+      .put("sources", JSONObject().put(id, src)))
+  }
+
+  @Test fun qualitySidecarReplaceImportCommitsToDisk() { // 确认后经事务接口实际写入：内存 + filesDir/quality.json
+    val qs = QualityStore(dir)
+    assertTrue(qs.replaceImport(qData("https://main.example/live", 37, "direct")))
+    val agg = qs.summary("https://main.example/live")!!  // 内存态即导入数据（原地换 = 缓存即时重载）
+    assertEquals(37, agg.okCount)
+    assertEquals(37, agg.samples)
+    assertEquals("icy", agg.metadata)                     // direct 观测 → icy 派生
+    val disk = JSONObject(java.io.File(dir, QualityStore.FILE).readText())
+      .getJSONObject("stations").getJSONObject("https://main.example/live")
+      .getJSONObject("sources").getJSONObject("https://main.example/live")
+    assertEquals(37, disk.getInt("okCount"))              // 盘上也是导入数据（真正落盘，非仅校验留存）
+  }
+
+  @Test fun qualitySidecarReplaceImportFailureRestoresSnapshot() { // 落盘失败 → 恢复导入前内存态（不留半导入）
+    var failWrites = false
+    val qs = QualityStore(dir, saver = { !failWrites })   // 写入缝注入失败（fake 落盘通道）
+    assertTrue(qs.replaceImport(qData("https://old.example/live", 3)))
+    val snap = qs.capture()                               // applyConfirmed 提交前快照（同款凭据）
+    failWrites = true
+    assertFalse(qs.replaceImport(qData("https://new.example/live", 9)))
+    assertEquals(snap, qs.capture())                      // 内存已恢复导入前态
+    failWrites = false
+    assertTrue(qs.restore(snap))                          // 显式回滚通道（applyConfirmed 三件回滚用）
+    assertEquals(snap, qs.capture())
+    assertNull(qs.summary("https://new.example/live"))    // 导入数据不残留
+  }
+
+  @Test fun commitImportTxOrderAndRollback() { // applyConfirmed 提交段（协作方 fake）：成功序 / my 失败双回滚 / quality 失败三件回滚
+    fun io(calls: MutableList<String>, myOk: Boolean, qOk: Boolean) = Backup.ImportIO(
+      { calls.add("store") }, { calls.add("store-rb") },
+      { calls.add("my"); myOk }, { calls.add("my-rb") },
+      { calls.add("q"); qOk }, { calls.add("q-rb"); true })
+    val q = JSONObject().put("v", 1).put("data", qData("https://main.example/live", 1))
+    val data = mapOf(C.K_VOL to "30")
+    run {                                                   // 成功：三步顺序、零回滚
+      val c = mutableListOf<String>()
+      assertNull(Backup.commitImport(data, listOf("我的,#genre#"), q, io(c, true, true)))
+      assertEquals(listOf("store", "my", "q"), c)
+    }
+    run {                                                   // my 失败：Store+my 回滚，质量未提交未动（失败在提交前）
+      val c = mutableListOf<String>()
+      assertEquals("个人电台恢复超限（500 行/64KB）", Backup.commitImport(data, listOf("台,http://x/1"), q, io(c, false, true)))
+      assertEquals(listOf("store", "my", "store-rb", "my-rb"), c)
+    }
+    run {                                                   // quality 失败：三件整体回滚（§13.2-5 不允许半恢复）
+      val c = mutableListOf<String>()
+      assertEquals("质量 sidecar 恢复失败", Backup.commitImport(data, null, q, io(c, true, false)))
+      assertEquals(listOf("store", "my", "q", "store-rb", "my-rb", "q-rb"), c)
+    }
   }
 }

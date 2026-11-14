@@ -1,5 +1,6 @@
 /* VRadio 备份 v3 纯逻辑内核（r4/B4，契约 contracts/backup-v3.schema.json）——版本识别 / 键白名单过滤 /
-   sidecar 判定与迁移字段裁剪；app.js exportAll/importAll 的可测部分（DOM/网络都在 app.js，本文件零依赖）。
+   sidecar 判定与迁移字段裁剪 / 导入提交段（三步覆盖 + 失败回滚含质量快照回写）；app.js exportAll/importAll
+   的可测部分（DOM/confirm 留在 app.js，网络经 io 注入，本文件零依赖）。
    版本映射固定（B0 契约）：v1={v:1,at,data}（无 my，不动 my-radio.txt）；v2={v:2,…,my:[]}（读 my）；
    v3={format:"vradio-backup",version:3,…,myRadio,extensions}（读 myRadio；app 字段忽略差异）；导出统一写 v3。
    Android data/Backup.kt 同构；黄金样本 contracts/fixtures/backup-v2.json、backup-v3.json 双端一致消费。
@@ -89,7 +90,51 @@
     return out;
   }
 
-  const B = { read: readBackup, build: buildV3, qualityTrim, Q_SRC_NUM };
+  /* v3 导入提交段（AIbot review P1-2 抽离可测）：三步覆盖（Store → my-radio → 质量 sidecar）+ 任一步失败
+     整体回滚。质量快照纪律：确认恢复 sidecar（sc）即先 GET 旧值留存——无快照不提交（与 my-radio 同纪律）；
+     回滚时把旧快照经同一 replace 通道尽力回写（服务端可能「写成功响应丢」，不回写则 quality.json 停在导入态），
+     二次失败在文案里如实点名。DOM/confirm 留在 app.js；存储与网络经 io 注入（生产 = localStorage/fetch，
+     测试 = fake 复现「replace 写成功响应丢」）。io 形状：
+     { http, storeSnap(), storeApply(d)（应用与回滚同一入口：有值写/缺键删）, storeFlush(),
+       getMy():Promise<文本|null>, postMy(lines):Promise<bool>,
+       getQuality():Promise<旧data|null>, postQuality(data):Promise<bool>（replace:true 通道）, refreshQuality() }
+     返回 { ok, msg }——msg 即 #status 文案（失败文案含回滚结果）。 */
+  async function commitImport(info, sc, io) {
+    const snap = io.storeSnap();
+    let myOld = null; // null = 无需快照（v1/file://）；该读失败（下方中止，绝不无快照提交）
+    if (io.http && info.my != null) myOld = await io.getMy();
+    if (info.my != null && io.http && myOld == null)
+      return { ok: false, msg: '导入失败：无法读取当前个人电台列表（无回滚快照不提交），请重试' };
+    let qOld = null; // 旧质量快照：确认恢复 sidecar 才留（file:// 无服务端 sidecar，sc 恒 false 不适用）
+    if (sc) {
+      qOld = await io.getQuality();
+      if (qOld == null) return { ok: false, msg: '导入失败：无法读取当前质量数据（无回滚快照不提交），请重试' };
+    }
+    let qTried = false; // 质量已提交过（回滚才回写旧快照；失败发生在提交前 = sidecar 未动无需回写）
+    const rollback = async why => {
+      io.storeApply(snap); io.storeFlush();
+      if (myOld != null) await io.postMy(myOld.split(/\r?\n/).filter(l => l.trim()));
+      let note = '';
+      if (qTried) { // 响应丢/超时也走到这：旧快照回写是唯一兜底（服务端侧数据可能已是导入态）
+        const ok = await io.postQuality(qOld);
+        note = ok ? '' : '；质量数据可能停留在导入状态，可重试导入';
+        io.refreshQuality(); // 回写后客户端质量缓存对齐服务端真态
+      }
+      return { ok: false, msg: '导入失败：' + why + '，已回滚到导入前状态' + note };
+    };
+    io.storeApply(info.data); io.storeFlush();
+    if (info.my != null && io.http) { // v2/v3：个人电台行全量替换（v1 到不了这；file:// 无通道不替换）
+      if (!await io.postMy(info.my)) return rollback('个人电台恢复失败');
+    }
+    if (sc) { // sidecar 最后提交（§13.2-5：不允许 Store 已恢复而 sidecar 半恢复）
+      qTried = true;
+      if (!await io.postQuality(info.quality.data)) return rollback('质量 sidecar 恢复失败');
+      io.refreshQuality(); // 成功：覆盖后重载质量缓存（丢弃未确认旧样本——导入语义=明确覆盖）
+    }
+    return { ok: true, msg: '已恢复完整备份' + (info.my != null && !io.http ? '（file:// 形态无法恢复个人电台列表）' : '') + (sc ? '（含质量 sidecar，已覆盖本机质量数据）' : '') };
+  }
+
+  const B = { read: readBackup, build: buildV3, commitImport, qualityTrim, Q_SRC_NUM };
   root.BackupV3 = B;
   if (typeof module !== 'undefined' && module.exports) module.exports = B;
 })(typeof window !== 'undefined' ? window : globalThis);

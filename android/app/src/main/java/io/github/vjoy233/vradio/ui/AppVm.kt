@@ -1077,7 +1077,10 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
           val n = C.KEYS.count { p.data[it] != null }
           if (n == 0) { toast("导入失败：备份中无有效数据"); return@launch }
           pendingImp = Imp.BACKUP to p
-          confirmReq.value = "导入将覆盖本地全部数据（备份含 $n 个数据项：收藏/维护配置/健康标记/歌曲历史全部替换）。继续？"
+          // sidecar 确认语义与 Web 同口径（AIbot P2-1）：「含 N 台质量数据、将覆盖本机质量数据」
+          val qn = p.quality?.optJSONObject("data")?.length() ?: 0
+          confirmReq.value = "导入将覆盖本地全部数据（备份含 $n 个数据项：收藏/维护配置/健康标记/歌曲历史全部替换" +
+            (if (qn > 0) "；含 $qn 台质量数据，将覆盖本机质量数据" else "") + "）。继续？"
         }
         Imp.M3U -> {                                                      // B4 歌单导入：m3u/pls/xspf/asx/纯 URL 统一解析（PlaylistParser，
                                                                           // 纯本地不联网探活）→ 四桶预览（新增/已知/重复/非法）→ 确认后已知台恢复收藏（N2 语义）+ 新台入 my-radio
@@ -1134,21 +1137,25 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         when (p.first) {
           Imp.BACKUP -> {
             val pay = p.second as Backup.ImportPayload
-            // 三阶段纪律（B4，§13.2）：提交前快照 Store 当前值 + my-radio 原文本，任一步失败回滚现场
+            // 三阶段纪律（B4，§13.2）：提交前快照三件（Store + my-radio + 旧质量 sidecar），任一步失败整体回滚
+            // ——AIbot P1-1：v3 sidecar 经 QualityStore 事务式覆盖真正落盘（replaceImport 原地换内存即缓存重载）
             val snap = Store.snapshot()
             val myOld = myRadio.readText()
-            var myOk = true
-            withContext(Dispatchers.IO) {
-              Store.applyAll(pay.data)                                    // 白名单键写入/缺键 remove
-              pay.my?.let { myOk = runCatching { myRadio.replace(it.joinToString("\n")) }.getOrDefault(false) }   // v1 无 my 不动；v2 读 my；v3 读 myRadio
-              if (!myOk) {                                                // 回滚：Store 与 my-radio 双恢复（不允许 Store 已恢复而文件半恢复）
-                Store.applyAll(snap)
-                runCatching { myRadio.replace(myOld) }
-              }
+            val qSnap = if (pay.quality != null) quality.capture() else null
+            val qData = pay.quality?.optJSONObject("data")
+            val err = withContext(Dispatchers.IO) {
+              val e = Backup.commitImport(pay.data, pay.my, qData, Backup.ImportIO(
+                { Store.applyAll(pay.data) },                             // 白名单键写入/缺键 remove
+                { Store.applyAll(snap) },
+                { pay.my == null || runCatching { myRadio.replace(pay.my!!.joinToString("\n")) }.getOrDefault(false) },   // v1 无 my 不动；v2 读 my；v3 读 myRadio
+                { runCatching { myRadio.replace(myOld) } },
+                { qData == null || quality.replaceImport(qData) },        // sidecar 最后提交（覆盖语义，§13.2-6）
+                { qSnap == null || quality.restore(qSnap) },             // 失败恢复旧 quality 快照（replaceImport 内部已自恢复，此处兜底盘面）
+              ))
               lib.myText = myRadio.readText()
+              e
             }
-            if (!myOk) { toast("导入失败：个人电台恢复超限（500 行/64KB），已回滚到导入前状态"); return@launch }
-            // pay.quality（v3 sidecar）：B2 前无消费方——parseImport 已校验留存，此处不落盘（B4 收尾报告注明）
+            if (err != null) { toast("导入失败：$err，已回滚到导入前状态"); return@launch }
             // AIbot P1-2：Store 已被整体替换，三层内存态必须显式刷新——缺一层 = 重启才生效，
             // 且播放层旧 volperst/srcmem 内存会在下次调音量/换源时整体回写冲掉刚导入的值（数据损坏向）
             lib.reloadStore()                                             // 收藏/最近/健康标记/cfg 内存重载
@@ -1158,7 +1165,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
             refreshUi3()
             stamp.value++; primeAll()
             updateShortcuts()                                             // E3：收藏已整体替换，快捷方式重建
-            toast("已恢复完整备份（v${pay.ver}）" + (if (pay.quality != null) "，含质量 sidecar（本版已校验留存、暂不落盘）" else ""))
+            toast("已恢复完整备份（v${pay.ver}）" + (if (pay.quality != null) "，含质量 sidecar（已覆盖本机质量数据）" else ""))
           }
           Imp.M3U -> {                                                    // B4 四桶确认后执行：已知台恢复收藏（N2 语义）+ 新台批量入 my-radio
             val p2 = p.second as PlaylistImp                              // （append 自带查重/清洗/SafeTarget/封顶）

@@ -53,14 +53,19 @@
   - `data/Backup.kt` v3：`exportAll(lib, myText, at)` → `{format:"vradio-backup",version:3,createdAt,app:"android",
     data,myRadio,extensions:{}}`（extensions 恒空——质量 sidecar 生产方在 B2/listenStats 在 B3）；`parseImport`
     兼容 v1/v2/v3，`ImportPayload` 增 `ver` 与 `quality: JSONObject?`（v3 extensions.sidecars.quality 经
-    `qualityTrim` 白名单裁剪后校验留存，B2 前无消费方不落盘）；`qualityTrim` 与 Web backup.js 同款白名单
-    （contracts/quality-summary.json aggregate 面，条目 2000 封顶）。
+    `qualityTrim` 白名单裁剪后交提交段落盘——AIbot review P1-1：确认即真提交）；`qualityTrim` 与 Web
+    backup.js 同款白名单（contracts/quality-summary.json aggregate 面，条目 2000 封顶）。新增
+    `commitImport(data, my, qualityData, ImportIO)`：applyConfirmed 提交段抽离（三步覆盖 Store→my→quality，
+    任一步失败整体回滚），协作方函数注入可 JVM 测试（fake 断言写入/回滚序）。
   - 导入 UI（SettingsScreen「导入歌单」/AppVm `Imp.M3U`）：PlaylistParser 解析 → `Library.partitionImport`
     分流（纯决策不变异，取消=零副作用）→ 四桶计数 confirm（新增/已知/重复/非法）→ 确认后已知台恢复收藏
     （N2 语义）+ 新台批量 `MyRadio.append`（自带查重/清洗/SafeTarget/封顶）。注意 SafeTarget 非对称：Web
     合并写只验 http(s)，内网地址在 Android 侧会被 append 拒（文案计入「跳过」）。
-  - 备份导入三阶段回滚（AppVm `Imp.BACKUP`）：提交前快照 `Store.snapshot()` + `myRadio.readText()`，
-    my 超限拒收即 `Store.applyAll(snap)` + `myRadio.replace(myOld)` 双恢复现场。
+  - 备份导入三阶段回滚（AppVm `Imp.BACKUP`，AIbot review P1-1/P2-1）：提交前快照三件 `Store.snapshot()` +
+    `myRadio.readText()` + `QualityStore.capture()`（含 sidecar 才留），经 `Backup.commitImport` 三步覆盖
+    （Store → my → 质量 sidecar），任一步失败整体回滚；sidecar 经 `QualityStore.replaceImport` 事务式覆盖
+    真正落盘（失败 `restore` 旧快照，内存原地换 = 缓存即时重载）。确认弹层与 Web 同口径：
+    「含 N 台质量数据，将覆盖本机质量数据」。
 
 ---
 

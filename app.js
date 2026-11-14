@@ -1388,8 +1388,9 @@ const App = {
 
   /* —— 完整备份导出/导入（R4 拍板 → r4/B4 升 v3，BackupV3 纯逻辑内核）：全部 radio.* + 个人电台行
      （+ 可选质量 sidecar）打包单 JSON——换浏览器/换机的兜底通道；与既有单项导出并存（m3u/songs/config）。
-     导入三阶段（§13.2）：parse → validate/preview（版本/键白名单/sidecar 明示）→ commit（先快照，
-     任一步失败回滚 Store + my-radio.txt，sidecar 放最后且失败不动） —— */
+     导入三阶段（§13.2）：parse → validate/preview（版本/键白名单/sidecar 明示「含 N 台质量数据、将覆盖
+     本机质量数据」）→ commit（BackupV3.commitImport：先快照 Store/my-radio/旧质量三件，任一步失败整体
+     回滚——质量旧快照经 replace 尽力回写，二次失败文案如实点名「可能停留在导入状态」） —— */
   async exportAll() {
     const http = location.protocol.startsWith('http');
     let myRadio = [], myNote = '';
@@ -1420,33 +1421,26 @@ const App = {
     if (!info.n) { alert('导入失败：备份中无有效数据'); return; }
     const http = location.protocol.startsWith('http');
     let sc = false;
-    if (info.quality && http) sc = confirm(`备份含质量 sidecar（${Object.keys(info.quality.data).length} 台聚合数据）。是否一并恢复？\n（将覆盖本机质量数据；取消恢复则本机质量数据保持不变）`);
+    if (info.quality && http) sc = confirm(`备份含质量 sidecar（${Object.keys(info.quality.data).length} 台质量数据）。是否一并恢复？\n（将覆盖本机质量数据；取消恢复则本机质量数据保持不变）`);
     const myNote = info.my ? `、个人电台 ${info.my.filter(l => !l.endsWith('#genre#')).length} 台` : '';
-    if (!confirm(`导入将覆盖本地全部数据（备份 v${info.ver}${info.app ? '，来源 ' + info.app : ''}，含 ${info.n} 个数据项${myNote}${sc ? '、质量 sidecar' : ''}：收藏/维护配置/健康标记/歌曲历史全部替换${info.ver === 1 ? '；v1 备份不动个人电台列表' : ''}）。继续？`)) return;
-    // 阶段三 commit：先快照（Store 当前值 + my-radio.txt 原文本），任一步失败回滚；取消在上一步=零副作用
-    const snap = {};
-    for (const k of Store.KEYS) snap[k] = localStorage.getItem(k);
-    let myOld = null; // null = 无需快照（v1/file://）或拉取失败（下方中止，绝不无快照提交）
-    if (http && info.my != null) myOld = await fetch('my-radio.txt?t=' + Date.now()).then(r => r.ok ? r.text() : '').catch(() => null);
-    if (info.my != null && http && myOld == null) { $('status').textContent = '导入失败：无法读取当前个人电台列表（无回滚快照不提交），请重试'; return; }
-    const rollback = async why => {
-      for (const k of Store.KEYS) { if (snap[k] != null) localStorage.setItem(k, snap[k]); else localStorage.removeItem(k); }
-      Store.flush();
-      if (myOld != null) await this.postMyRadio(myOld.split(/\r?\n/).filter(l => l.trim()));
-      $('status').textContent = '导入失败：' + why + '，已回滚到导入前状态';
-    };
-    for (const k of Store.KEYS) { const v = info.data[k]; if (v != null) localStorage.setItem(k, v); else localStorage.removeItem(k); }
-    Store.flush(); // 推后端（http 形态）；file:// 下 no-op
-    if (info.my != null && http) { // v2/v3：个人电台行全量替换（v1 到不了这）
-      if (!await this.postMyRadio(info.my)) return rollback('个人电台恢复失败');
-    }
-    if (sc) { // sidecar 最后提交且失败不动（§13.2-5：不允许 Store 已恢复而 sidecar 半恢复——失败连同前两步一起回滚）
-      const r = await fetch('/api/quality', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ replace: true, data: info.quality.data }) })
-        .then(x => x.json()).catch(() => null);
-      if (!r || !r.ok) return rollback('质量 sidecar 恢复失败（sidecar 未变动）');
-    }
-    this.applyServerStore();
-    $('status').textContent = '已恢复完整备份' + (info.my != null && !http ? '（file:// 形态无法恢复个人电台列表）' : '') + (sc ? '（含质量 sidecar）' : '');
+    if (!confirm(`导入将覆盖本地全部数据（备份 v${info.ver}${info.app ? '，来源 ' + info.app : ''}，含 ${info.n} 个数据项${myNote}${sc ? '、质量 sidecar（将覆盖本机质量数据）' : ''}：收藏/维护配置/健康标记/歌曲历史全部替换${info.ver === 1 ? '；v1 备份不动个人电台列表' : ''}）。继续？`)) return;
+    // 阶段三 commit（BackupV3.commitImport，AIbot P1-2 抽离可测）：先快照三件（Store + my-radio + 旧质量
+    // sidecar——确认恢复即先 GET 留存，无快照不提交），任一步失败整体回滚（质量旧快照经 replace 尽力回写，
+    // 二次失败文案如实点名）；取消在上一步 = 零副作用。io 注入真实现（fetch/localStorage/QualityStore）。
+    const r = await BackupV3.commitImport(info, sc, {
+      http,
+      storeSnap: () => { const s = {}; for (const k of Store.KEYS) s[k] = localStorage.getItem(k); return s; },
+      storeApply: d => { for (const k of Store.KEYS) { if (d[k] != null) localStorage.setItem(k, d[k]); else localStorage.removeItem(k); } },
+      storeFlush: () => Store.flush(),
+      getMy: () => fetch('my-radio.txt?t=' + Date.now()).then(r => r.ok ? r.text() : '').catch(() => null),
+      postMy: lines => this.postMyRadio(lines),
+      getQuality: () => fetch('/api/quality').then(r => r.json()).then(j => j && j.data && typeof j.data === 'object' && !Array.isArray(j.data) ? j.data : null).catch(() => null),
+      postQuality: data => fetch('/api/quality', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ replace: true, data }) })
+        .then(x => x.json()).then(j => !!(j && j.ok)).catch(() => false),
+      refreshQuality: () => { QualityStore.pend.length = 0; QualityStore.pull(); }, // 覆盖后缓存对齐服务端：丢弃未确认旧样本（导入=明确覆盖）再重拉
+    });
+    if (r.ok) this.applyServerStore();
+    $('status').textContent = r.msg;
   },
   postMyRadio(lines) { // my-radio.txt 全量替换（备份恢复/歌单合并写共用）：返回是否成功；file:// 无后端恒 false
     if (!location.protocol.startsWith('http')) return Promise.resolve(false);

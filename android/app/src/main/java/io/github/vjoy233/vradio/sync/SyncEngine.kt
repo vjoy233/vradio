@@ -106,7 +106,12 @@ class SyncEngine(private val gh: Gh, private val check: CheckStream, private val
     // 已知边界留档（审计 P3）：设备时钟前跳（手动调未来时间）后 stamp 会掩蔽 D7 直到真实时间追上
     // （判新只错在「无更新」方向，无数据损坏）；radio 与 stamp 两步原子写之间被杀 → stamp 留旧值 →
     // 下次 D7 判仓库更新、apply 用仓库数据覆盖（仍是合法数据，自愈方向安全）
-    writeTextAtomic(File(filesDir, "stamp.json"), JSONObject().put("commitIso", Instant.now().toString()).toString())
+    // AIbot P1-4 混态拦截：端内同步产出的 radio.txt 不带 radio-meta（Android 不生成 meta）——旧 meta 若
+    // 留存即「新库配旧 meta」，发现页「最近新增」会指错台；删旧件 + stamp.meta=false（RadioMeta.bound
+    // 据此把该分组置空，不猜）
+    runCatching { File(filesDir, "radio-meta.json").delete() }
+    writeTextAtomic(File(filesDir, "stamp.json"),
+      JSONObject().put("commitIso", Instant.now().toString()).put("meta", false).toString())
     // 4.5) diff 摘要（N4/r2 ⑥）：按台名集合对比——分类变化不算（重分类是常规操作），改名 = 消失+新增如实呈现
     val oldNames = entryNamesOf(oldSecs.flatMap { it.lines })
     val neuNames = entryNamesOf(merged)

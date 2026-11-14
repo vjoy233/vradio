@@ -759,15 +759,22 @@ const App = {
      MetadataEvent 再进管线（固定顺序：世代校验→清洗→丢过旧→当前曲讯→与上一曲比较→必要时写 radio.songs→
      MediaSession/UI）；管线只出决策，消费由当前生效的 sink 执行——Legacy/V2 二选一（metaV2 定格于 boot），
      绝不双写历史。m3u8 结构性无 ICY：不轮询、保持空曲讯不猜歌。 ---------- */
-  metaSink: { // Legacy = 现状行为（曲讯显示/icy-br/MediaSession/radio.songs 格式不变）；V2 = 同一显示 + 归一化字段留 metaLast
-    current(ev) { // 新曲上屏（title = 清洗后完整显示文本；icy-br 随帧显示——仅 ICY 直流有）
+  /* 双 sink 显式分支（AIbot P1-2；boot 按 FEATURES.metadataV2 定格二选一，绝不双写）：
+     LegacyMetadataSink = B2 前行为逐项保留（footer 曲名+icy-br 同格式 / MediaSession setSong / radio.songs
+     {t,at} 格式与键不变）；MetadataV2Sink = 同一显示 + 归一化字段留 metaLast（统计/发现消费）。 */
+  metaSinkLegacy: {
+    current(ev) { // 新曲上屏（title = 清洗后完整显示文本；icy-br 随帧显示——仅 ICY 直流有；B2 同款文案格式）
       $('song').textContent = '♪ ' + ev.title + (ev.bitrateKbps > 0 ? ' · ' + ev.bitrateKbps + 'kbps' : '');
       $('song').hidden = false;
       Player.setSong(ev.title);
-      if (App.metaV2) App.metaLast = ev;
     },
     hist(h) { App.pushSongHist(h.u, h.t); }, // 换歌旧曲入史（B-7，键=台主 URL——身份公理；radio.songs 现有格式不变）
   },
+  metaSinkV2: {
+    current(ev) { App.metaSinkLegacy.current(ev); App.metaLast = ev; }, // 同一显示 + 归一化事件留底（v2 新消费面）
+    hist(h) { App.metaSinkLegacy.hist(h); },
+  },
+  get metaSink() { return this.metaV2 ? this.metaSinkV2 : this.metaSinkLegacy; },
   metaClearUI() { // 切台/刷新/全部失败：先清空旧曲讯再接受新世代事件（MediaSession 回台名，play 会随新台重写）
     $('song').hidden = true; $('song').textContent = '';
     if (Player.station) Player.setSong('');
@@ -1414,9 +1421,10 @@ const App = {
   boot() {
     Store.init(); // 存储收敛层（方案二）：BC 监听 + 关页 flush 兜底，须在 Player.init 读记忆之前
     QualityStore.init(); // 质量侧车（B2）：BC('quality') 他页重拉 + 关页 flush；load() 异步随行
-    // B3 曲讯管线（元数据事件唯一通路，sink 二选一）：metaV2 装载时定格——发布配置非用户数据，切页不重读
-    this.metaPipe = Metadata.mpCreate();
+    // B3 曲讯管线（元数据事件唯一通路，sink 二选一）：metaV2 装载时定格——发布配置非用户数据，切页不重读。
+    // dedup30s 随 flag（AIbot P1-2）：关 = B2 前入史语义（换歌一律入史，无 30s 窗）；开 = 契约 30s 窗去重
     this.metaV2 = !!(window.FEATURES && FEATURES.metadataV2);
+    this.metaPipe = Metadata.mpCreate({ dedup30s: this.metaV2 });
     this.metaLast = null;
     // B3-B 收听统计：开关开才 init（装载快照 + 定时/隐藏/关页 flush + 多标签重拉）；关 = 不消费不 flush、不清已有数据
     if (FEATURES.listenStats) ListenStats.init().catch(() => {});

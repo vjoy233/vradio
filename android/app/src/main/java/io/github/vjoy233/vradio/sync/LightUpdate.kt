@@ -55,22 +55,25 @@ class LightUpdate(private val gh: Gh, private val filesDir: File) {
       if (nm.isNotEmpty() && nm in addedNames && !addedCheck.contains(nm)) addedCheck.add(nm)
     }
     if (addedCheck.size > C.ADDED_CHECK_CAP) addedCheck.subList(C.ADDED_CHECK_CAP, addedCheck.size).clear()
-    // 落盘：radio 必写；logos 拿到才写；stamp 记已应用 commit
+    // 落盘：radio 必写；logos 拿到才写；stamp 记已应用 commit + meta 同批见证（AIbot P1-4：
+    // stamp.meta=true 证明本批 radio 与 meta 同次落盘，RadioMeta.bound 据此放行发现页「最近新增」）
     writeTextAtomic(File(filesDir, "radio.txt"), radio)
     if (logos != null) writeTextAtomic(File(filesDir, "logos.txt"), logos)
-    writeTextAtomic(File(filesDir, "stamp.json"), JSONObject().put("commitIso", commitIso).toString())
     // B2 radio-meta.json 分开落盘（plan §6.3/§13.3）：主库与 meta 任一份失败不影响另一份。
     // 校验 = 版本门（v==1）+ 可解析性——GitHub contents 通道不带内容 hash（sync-manifest 侧 Web 生成后
-    // 再挂，见 CONTRACTS.md B2 留档）；下载失败（null，含仓库暂未提供该文件）静默保留旧 meta，
-    // 下载到但校验失败（metaInvalid）由 UI 明示——防仓库尚未生成 meta 时每次更新都误报。
+    // 再挂，见 CONTRACTS.md B2 留档）。AIbot P1-4 混态拦截：meta 拿不到/非法时删除旧件——旧 meta 配
+    // 新 radio 会让发现页「最近新增」指错台（宁缺勿混，删除只影响该分组不影响播放）；下载到但校验失败
+    // （metaInvalid）仍由 UI 明示——防仓库尚未生成 meta 时每次更新都误报。
     var metaChanged = false; var metaInvalid = false
     val meta = gh.file(GhRepos.SELF, "radio-meta.json")
     if (meta != null) {
       if (RadioMeta.parse(meta) != null) {
         writeTextAtomic(File(filesDir, "radio-meta.json"), meta)
         metaChanged = true
-      } else metaInvalid = true
-    }
+      } else { metaInvalid = true; runCatching { File(filesDir, "radio-meta.json").delete() } }
+    } else runCatching { File(filesDir, "radio-meta.json").delete() }   // 混态拦截：新 radio 不留旧 meta
+    writeTextAtomic(File(filesDir, "stamp.json"),
+      JSONObject().put("commitIso", commitIso).put("meta", metaChanged).toString())
     return Result(commitIso, radio != oldRadioText, logos != null, addedKeys.size, removedKeys.size,
       addedCheck, metaChanged, metaInvalid)
   }
@@ -82,6 +85,12 @@ class LightUpdate(private val gh: Gh, private val filesDir: File) {
   fun stamp(): String? = read(File(filesDir, "stamp.json"))?.let {
     try { JSONObject(it).optString("commitIso") } catch (_: Exception) { "" }
   }?.takeIf { it.isNotEmpty() }
+
+  /** stamp 的 meta 同批见证（AIbot P1-4，RadioMeta.bound 入参）：true/false = 本批 apply 是否随行落了 meta；
+   *  null = 旧版（B2 时代）stamp 无该字段——无法证明 filesDir radio/meta 同批，按混态处理。 */
+  fun stampMetaOk(): Boolean? = read(File(filesDir, "stamp.json"))?.let {
+    try { val o = JSONObject(it); if (o.has("meta")) o.optBoolean("meta") else null } catch (_: Exception) { null }
+  }
 
   private fun read(f: File): String? = if (f.isFile) try { f.readText() } catch (_: Exception) { null } else null
 

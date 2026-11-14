@@ -19,7 +19,7 @@ data class MetadataEvent(
   val track: String,                // 可选拆分；拆分失败 = title
   val program: String,              // 节目名（无则空串）
   val bitrateKbps: Int,             // icy-br；无 = 0
-  val source: String,               // icy|none|… 曲讯来源
+  val source: String,               // 严格枚举 icy|none（契约全集；非法输入双端归一为 none——AIbot P2-5）
   val at: Long,                     // epoch ms
   val confidence: String,           // parsed|stream
 )

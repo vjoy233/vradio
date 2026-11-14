@@ -97,6 +97,16 @@ class MetadataNormalizerTest {
     assertEquals(Confidence.PARSED, ev.confidence)
   }
 
+  @Test fun source严格枚举非法归一none() {   // AIbot P2-5：契约允许值全集仅 icy|none（与 Web 同一样本）
+    assertEquals("icy", MetadataNormalizer.normalize(
+      MetadataNormalizer.IcyRaw(title = "T", source = "icy"), MetadataNormalizer.IcyCtx("u")).source)
+    assertEquals("none", MetadataNormalizer.normalize(
+      MetadataNormalizer.IcyRaw(title = "T", source = "none"), MetadataNormalizer.IcyCtx("u")).source)
+    for (s in listOf("shoutcast", "ICY", "Icecast", "radio-rocks", "icy|x", ""))
+      assertEquals("source=$s 应归一 none", "none", MetadataNormalizer.normalize(
+        MetadataNormalizer.IcyRaw(title = "T", source = s), MetadataNormalizer.IcyCtx("u")).source)
+  }
+
   @Test fun confidence按artist拆出判定() {
     assertEquals(Confidence.PARSED, MetadataNormalizer.normalize(
       MetadataNormalizer.IcyRaw("X - Y"), MetadataNormalizer.IcyCtx("http://a/1")).confidence)

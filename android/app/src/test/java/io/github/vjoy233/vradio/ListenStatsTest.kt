@@ -16,6 +16,7 @@ import java.util.Locale
 import kotlin.io.path.createTempDirectory
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -223,6 +224,24 @@ class ListenStatsTest {
     assertEquals(StatsState(), ListenStatsCodec.parse("not json{"))
     assertEquals(StatsState(), ListenStatsCodec.parse(null))
     assertEquals(StatsState(), ListenStatsCodec.parse("""{"v":2,"days":{}}"""))   // 版本门
+  }
+
+  @Test fun 坏日期键历法校验丢弃() {   // AIbot P1-1：双端同一样本（Web test/listen-stats.js ② 同键集）
+    // 坏键全拒：02-31/13-01/月日为零/形态不符（一位日）/非闰年 02-29/分隔与尾随空格/非日期/空串
+    for (k in listOf("2026-02-31", "2026-13-01", "2026-00-10", "2026-11-00", "2026-11-1",
+                     "2026-02-29", "2026/11/14", "2026-11-14 ", "not-a-day", ""))
+      assertFalse("应拒绝：$k", ListenStats.validDay(k))
+    // 好键放行：闰日（2024/2000 闰年）与非闰年 2100-02-28
+    for (k in listOf("2026-11-14", "2024-02-29", "2000-02-29", "2100-02-28"))
+      assertTrue("应放行：$k", ListenStats.validDay(k))
+    // Codec.parse：坏键丢弃、好键保留（损坏 sidecar 只影响自身）
+    val json = ("{\"v\":1,\"days\":{"
+      + "\"2026-02-31\":{\"ms\":999,\"sessions\":9},\"2026-13-01\":{\"ms\":999,\"sessions\":9},"
+      + "\"2026-02-29\":{\"ms\":999,\"sessions\":9},\"not-a-day\":{\"ms\":999,\"sessions\":9},"
+      + "\"2026-11-14\":{\"ms\":1000,\"stations\":{\"http://a/1\":1000},\"categories\":{},\"sessions\":1}}}")
+    val st = ListenStatsCodec.parse(json)
+    assertEquals(setOf("2026-11-14"), st.days.keys)
+    assertEquals(1000L, st.days["2026-11-14"]!!.ms)
   }
 
   @Test fun 契约样例形态() {   // plan §7.2 JSON 样例逐字段

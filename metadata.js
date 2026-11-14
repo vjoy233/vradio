@@ -3,8 +3,9 @@
    黄金样本已冻结：normalizeMetadata(in.raw, in.ctx) 必须逐字段等于样本 out——半/全角连接号（- － — –）前后带
    空格视为 artist/track 分隔；重复台名前缀只剥一层；空白清理；confidence=parsed ⟺ artist 非空；空曲讯产出空形态。
    管线固定顺序（契约 eventOrder）：校验 identityUrl/世代 token → 清洗 → 丢弃过旧事件 → 更新当前曲讯 →
-   与上一曲比较 → 必要时写 radio.songs → 更新 MediaSession/UI。播放引擎不直接写歌曲历史或统计——历史写入
-   由管线决策（{u,t,at}）、App 侧当前生效的 sink（Legacy/MetadataV2，二选一，绝不双写）执行。
+   与上一曲比较 → 必要时写 radio.songs → 更新 MediaSession/UI。source 严格枚举 icy|none（AIbot P2-5）。
+   播放引擎不直接写歌曲历史或统计——历史写入由管线决策（{u,t,at}）、App 侧当前生效的 sink
+   （Legacy/MetadataV2，二选一，绝不双写）执行。
    经典 script + CommonJS 双兼容：纯函数与状态机供 test/metadata.js require；浏览器全局 window.Metadata。 */
 
 /* ---------- 纯函数：清洗与拆分（黄金样本口径） ---------- */
@@ -34,7 +35,10 @@ function parseIcyTitle(rawTitle, stationName) {
   return { artist: '', track: t, title: t };
 }
 
-/* 归一化事件（契约 event 形态）：raw = {title, program?, bitrateKbps?, source?, at?}，ctx = {identityUrl, stationName?} */
+/* 归一化事件（契约 event 形态）：raw = {title, program?, bitrateKbps?, source?, at?}，ctx = {identityUrl, stationName?}
+   source 严格枚举 icy|none（AIbot P2-5，契约允许值全集）：非法/未知来源字符串一律归一为 none——不把任意
+   字符串带进 MetadataEvent（历史/统计/发现侧的来源判定只认这两个值），双端同规则（Android 同步归一）。 */
+const META_SOURCES = { icy: 1, none: 1 };
 function normalizeMetadata(raw, ctx) {
   raw = raw || {}; ctx = ctx || {};
   const p = parseIcyTitle(raw.title, ctx.stationName);
@@ -45,7 +49,7 @@ function normalizeMetadata(raw, ctx) {
     track: p.track,
     program: typeof raw.program === 'string' && raw.program ? metaClean(raw.program) : '',
     bitrateKbps: Number(raw.bitrateKbps) || 0,
-    source: raw.source || 'none',
+    source: META_SOURCES[raw.source] ? raw.source : 'none',
     confidence: p.artist ? 'parsed' : 'stream',
     at: raw.at || Date.now(),
   };
@@ -54,16 +58,22 @@ function normalizeMetadata(raw, ctx) {
 /* ---------- 管线状态机（App 持有单例；now 可注入供测试） ----------
    世代语义：Player.srcToken()（play 会话世代，切台/刷新/停止递增）+ 台身份 URL 双校验——旧世代/异台事件一律
    丢弃，防旧连接曲讯串台。mpReset 由 App 在切台（playerNow 检出 songFor 变化）/刷新（doRefresh→playerNow）/
-   全部源失败（onfail/playerNow 空台分支）调用：先清空旧曲讯，再接受新世代事件。 */
+   全部源失败（onfail/playerNow 空台分支）调用：先清空旧曲讯，再接受新世代事件。
+   入史去重窗口（AIbot P1-2）：dedup30s=false（metadataV2 关，Legacy 路径）= B2 前语义——换歌一律旧曲入史，
+   无 30s 窗（B2 app.js 只有 pushSongHist 的连续同名护栏）；dedup30s=true（v2）= 契约 normalizeRules 的
+   「短时间重复曲名不重复入史」30s 窗。App.boot 按 FEATURES.metadataV2 定格，双 sink 共用本状态机（§7.1
+   「两者共享同一事件入口」），其余决策（空曲讯/同曲 noop/世代丢弃）两路径逐项一致。 */
 function mpCreate(opt = {}) {
-  return { gen: 0, key: '', last: null, hist: {}, now: opt.now || (() => Date.now()) }; // hist = {title: 入史时刻}（同曲 30s 窗去重）
+  return { gen: 0, key: '', last: null, hist: {}, dd30: opt.dedup30s !== false, now: opt.now || (() => Date.now()) }; // hist = {title: 入史时刻}（同曲 30s 窗去重，仅 v2）
 }
 function mpReset(p, gen, key) { p.gen = gen; p.key = key || ''; p.last = null; p.hist = {}; return { cleared: true }; }
 function mpCurrent(p) { return p.last; } // 当前曲讯（null/空形态事件/有效事件；UI 展示用 title 字段）
 
-/* 入史决策：同名曲 30s 窗口内已入史过则不再入（ICY 换歌帧抖动 A-B-A-B 不重复刷史）；窗口Map 顺手清过期 */
+/* 入史决策（v2）：同名曲 30s 窗口内已入史过则不再入（ICY 换歌帧抖动 A-B-A-B 不重复刷史）；窗口Map 顺手清过期；
+   legacy（dd30=false）跳过窗口——换歌旧曲一律入史（B2 前 radio.songs 行为，防抖护栏在 pushSongHist 连续同名判重） */
 function mpHistDecide(p, last, now) {
   if (!last || !last.title) return null;
+  if (!p.dd30) return { u: p.key, t: last.title, at: last.at || now };
   const at = p.hist[last.title];
   if (at && now - at < META_DEDUP_MS) return null;
   for (const k of Object.keys(p.hist)) if (now - p.hist[k] >= META_DEDUP_MS) delete p.hist[k]; // 窗口外条目回收
@@ -90,12 +100,12 @@ function mpAccept(p, ev) {
     return had ? { st: 'gap' } : { st: 'noop' };
   }
   if (p.last && p.last.title === ev.title) return { st: 'noop' }; // 同曲：不重渲、不重复入史
-  const hist = p.last && p.last.title ? mpHistDecide(p, p.last, now) : null; // 换歌：旧曲入史（窗口去重）
+  const hist = p.last && p.last.title ? mpHistDecide(p, p.last, now) : null; // 换歌：旧曲入史（v2 窗口去重/legacy 一律入）
   const first = !(p.last && p.last.title);
   p.last = ev;
   return { st: 'new', first, hist };
 }
 
-const Metadata = { META_SEP, META_DEDUP_MS, parseIcyTitle, normalizeMetadata, mpCreate, mpReset, mpAccept, mpCurrent };
+const Metadata = { META_SEP, META_DEDUP_MS, META_SOURCES, parseIcyTitle, normalizeMetadata, mpCreate, mpReset, mpAccept, mpCurrent };
 if (typeof window !== 'undefined') window.Metadata = Metadata;
 if (typeof module !== 'undefined') module.exports = Metadata;

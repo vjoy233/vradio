@@ -115,5 +115,88 @@ ok('reset 清空：当前曲讯归零，新世代从首曲开始', () => {
   assert.strictEqual(Metadata.mpAccept(p, mkEv('A', 7, 'https://a/live', 2000)).st, 'stale'); // 旧 token 死
 });
 
+/* ---------- ④ source 严格枚举（AIbot P2-5，契约 event.source = icy|none 全集） ---------- */
+ok('source 枚举：icy/none 之外一律归一 none（任意字符串不进事件）', () => {
+  assert.strictEqual(Metadata.normalizeMetadata({ title: 'T', source: 'icy' }, { identityUrl: 'u' }).source, 'icy');
+  assert.strictEqual(Metadata.normalizeMetadata({ title: 'T', source: 'none' }, { identityUrl: 'u' }).source, 'none');
+  for (const s of ['shoutcast', 'ICY', 'Icecast', 'radio-rocks', 'icy|x', 123, null, undefined, '', { icy: 1 }])
+    assert.strictEqual(Metadata.normalizeMetadata({ title: 'T', source: s }, { identityUrl: 'u' }).source, 'none',
+      'source=' + JSON.stringify(s) + ' 应归一 none');
+});
+
+/* ---------- ⑤ Legacy 旗关回归（AIbot P1-2）：dedup30s=false 管线 vs feat/r4-b2 tickSong 逐项一致 ----------
+   B2 基准（feat/r4-b2 app.js tickSong 决策语义，原文平移）：
+     同曲（t === lastSong）无动作；换歌且新曲非空 → 旧曲入史（键=台主 URL）；lastSong 跟进（空曲讯清空）；
+     新曲非空才上屏+setSong；轮询期间切台（songFor 变化）丢弃过期结果 = 本处 reset + 世代/异台丢弃等价物。 */
+function b2Ref() { // B2 对照基准（show = footer 上屏 + Player.setSong；hist = pushSongHist 入史）
+  let lastSong = '';
+  const out = { show: [], hist: [] };
+  return {
+    show: out.show, hist: out.hist,
+    reset() { lastSong = ''; }, // B2 切台分支：lastSong 清零
+    accept(t, u0) {
+      if (t === lastSong) return;              // 同曲去重（B2 原文 `if (t === this.lastSong) return;`）
+      if (lastSong && t) out.hist.push({ u: u0, t: lastSong }); // 换歌旧曲入史（新曲为空不入）
+      lastSong = t;
+      if (t) out.show.push(t);                 // 上屏 + MediaSession
+    },
+  };
+}
+function drivePipe(dedup30s, seq) { // 管线侧同场景驱动：seq = [{t, gen, key, at} | {reset, gen, key}]
+  const p = Metadata.mpCreate({ dedup30s, now: () => 1 });
+  const out = { show: [], hist: [] };
+  let gen = 0, key = '';
+  for (const s of seq) {
+    if (s.reset) { gen = s.gen; key = s.key; Metadata.mpReset(p, gen, key); continue; }
+    if (!gen) { gen = s.gen; key = s.key; Metadata.mpReset(p, gen, key); } // 首事件前隐式建世代（App.boot 后首次 play 等价物）
+    const d = Metadata.mpAccept(p, mkEv(s.t, s.gen, s.key, s.at));
+    if (d.st === 'new') { out.show.push(s.t); if (d.hist) out.hist.push({ u: d.hist.u, t: d.hist.t }); }
+  }
+  return out;
+}
+const K = 'https://a/live';
+ok('Legacy 回归：空曲讯/重复曲讯/迟到事件/历史写入 与 B2 前逐项一致（flag 关，dedup30s=false）', () => {
+  const sc = [
+    { t: 'A', gen: 7, key: K, at: 1000 },
+    { t: 'A', gen: 7, key: K, at: 2000 },   // 重复曲讯
+    { t: '', gen: 7, key: K, at: 3000 },    // 空曲讯（不覆盖不入史）
+    { t: 'A', gen: 7, key: K, at: 4000 },   // 空后回同曲（B2：重新上屏、不入史）
+    { t: 'B', gen: 7, key: K, at: 5000 },   // 换歌（旧曲 A 入史——B2 无 30s 窗一律入）
+    { t: 'A', gen: 7, key: K, at: 8000 },   // A-B-A 抖动（legacy：B 入史，与 B2 pushSongHist 连续同名护栏口径一致）
+    { reset: true, gen: 8, key: 'https://b/live' },   // 切台：清零
+    { t: 'A late', gen: 7, key: K, at: 9000 },        // 迟到事件（旧世代）→ 丢弃
+    { t: 'X', gen: 8, key: 'https://b/live', at: 9500 }, // 新世代首曲
+  ];
+  const pipe = drivePipe(false, sc);
+  // B2 基准逐条同场景喂入（reset = 切台清 lastSong；旧世代事件在 B2 由「轮询期间切台丢弃」等价拦截，不进 accept）
+  const ref = b2Ref();
+  ref.accept('A', K); ref.accept('A', K); ref.accept('', K); ref.accept('A', K); ref.accept('B', K); ref.accept('A', K);
+  ref.reset(); /* 切台：迟到事件 B2 侧由 songFor 校验丢弃 */ ref.accept('X', 'https://b/live');
+  assert.deepStrictEqual(pipe.show, ref.show, '上屏/setSong 序列一致');
+  assert.deepStrictEqual(pipe.hist, ref.hist, 'radio.songs 入史序列一致（键=台主 URL、格式 {u,t,at}）');
+});
+ok('Legacy 回归：空曲讯先行（首曲为空）与 B2 一致——不显示不入史', () => {
+  const pipe = drivePipe(false, [
+    { t: '', gen: 1, key: K, at: 1000 },
+    { t: 'A', gen: 1, key: K, at: 2000 },
+  ]);
+  const ref = b2Ref();
+  ref.accept('', K); ref.accept('A', K);
+  assert.deepStrictEqual(pipe.show, ref.show);
+  assert.deepStrictEqual(pipe.hist, ref.hist);
+});
+ok('v2 与 Legacy 入史窗差异实证：dedup30s=true 时 A-B-A 抖动 30s 内不重复入史（flag 真切换行为）', () => {
+  const sc = [
+    { t: 'A', gen: 1, key: K, at: 1000 },
+    { t: 'B', gen: 1, key: K, at: 5000 },
+    { t: 'A', gen: 1, key: K, at: 8000 },
+    { t: 'B', gen: 1, key: K, at: 12000 },
+  ];
+  const v2 = drivePipe(true, sc), legacy = drivePipe(false, sc);
+  assert.deepStrictEqual(legacy.hist.map(h => h.t), ['A', 'B', 'A'], 'legacy：换歌一律入史（B2 语义）');
+  assert.deepStrictEqual(v2.hist.map(h => h.t), ['A', 'B'], 'v2：30s 窗内 A/B 已入史不再重复入');
+  assert.deepStrictEqual(v2.show, legacy.show, '上屏行为两路径一致');
+});
+
 console.log(`\n${pass} 通过，${fail} 失败`);
 process.exit(fail ? 1 : 0);

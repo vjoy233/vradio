@@ -37,6 +37,7 @@ import io.github.vjoy233.vradio.discovery.DiscoveryInput
 import io.github.vjoy233.vradio.discovery.Groups
 import io.github.vjoy233.vradio.discovery.QInfo
 import io.github.vjoy233.vradio.discovery.RecoveryLog
+import io.github.vjoy233.vradio.metadata.LegacyMetadataSink
 import io.github.vjoy233.vradio.metadata.MetadataPipeline
 import io.github.vjoy233.vradio.model.MetadataEvent
 import io.github.vjoy233.vradio.model.Cfg
@@ -155,10 +156,18 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   /** v2 新消费面（规范化事件，供统计/发现派生；legacy 恒 null）。切台/清空随管线 reset 归 null。 */
   val curMetadata = MutableStateFlow<MetadataEvent?>(null)
   private var metaState = MetadataPipeline.State()
+  /** Legacy 曲讯分支（AIbot P1-2）：metadataV2 关闭时专用——B2 前语义独立消费（不经 MetadataPipeline，
+   *  v2 的 30s 窗/迟到 at 丢弃不渗入）；show=setSong（ui.song+MediaSession）、archive=pushSong 入史。 */
+  private val legacySink = LegacyMetadataSink(
+    show = { PlayerHolder.setSong(it) },
+    archive = { u0, t -> viewModelScope.launch(Dispatchers.IO) { runCatching { lib.pushSong(u0, t) }; stamp.value++ } })
   private val listenSidecar = ListenSidecar(ctx.filesDir)
   private var listenTracker: ListenTracker? = null
   val showDiscovery = MutableStateFlow(false)
   private val recovered = LinkedHashMap<String, Long>()   // 台 key → 复活时刻（Prefs 缓存 7 天过期）
+  /** radio-meta 与当前 radio 资产同批绑定（AIbot P1-4）：false/混态时发现页「最近新增」置空（不猜）。
+   *  判据见 RadioMeta.bound（filesDir/assets 来源配对 + stamp.meta 见证）。 */
+  var metaBound = false; private set
 
   /** 渲染快照（唯一渲染入口精神：列表 + 分类角标 + 死台开关可见性 + 空态文案）；
    *  ver = stamp 哨兵进值域（审计 P2）：StateFlow 按相等合并，内容未变的 stamp++ 会被判等丢弃——
@@ -217,11 +226,16 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     assetsStamp = readAsset("data-stamp.txt")?.trim() ?: ""
     val aRadio = readAsset("radio.txt") ?: ""
     val aLogos = readAsset("logos.txt") ?: ""
-    val mainTxt = light.radioText() ?: aRadio                 // 文件读取留 IO
+    val fRadio = light.radioText()                            // filesDir 副本（AIbot P1-4 绑定判据）
+    val mainTxt = fRadio ?: aRadio                            // 文件读取留 IO
     val myTxt = myRadio.readText()
     val logosTxt = light.logosText() ?: aLogos
+    val fMeta = light.metaText()
     runCatching { quality.load() }                            // B2 质量侧车（坏文件按空库恢复）
-    radioMeta.value = RadioMeta.parse(light.metaText() ?: readAsset("radio-meta.json")) ?: RadioMeta.EMPTY   // 缺件/坏件空对象兜底
+    radioMeta.value = RadioMeta.parse(fMeta ?: readAsset("radio-meta.json")) ?: RadioMeta.EMPTY   // 缺件/坏件空对象兜底
+    // AIbot P1-4 混态拦截：meta 与当前 radio 资产须同批（filesDir/assets 来源配对 + stamp.meta 见证）——
+    // 不绑定（如 filesDir radio 配 assets meta、B2 旧 stamp 无见证）→ 发现页「最近新增」置空（不猜）
+    metaBound = RadioMeta.bound(fRadio != null, fMeta != null, light.stampMetaOk())
     withContext(Dispatchers.Main) {                           // Library 装配收敛主线程（审计 P2：非线程安全集合与渲染读侧单线程化）
       lib.mainText = mainTxt
       lib.myText = myTxt
@@ -328,30 +342,40 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     PlayerHolder.logoProvider = { s -> logos.get(s) }                     // 锁屏 artwork 同步窥探口径
   }
 
-  /* ---------- B3-A 元数据 sink（Legacy/V2 同事件入口；flag 决定消费面，两者不得同时写历史） ---------- */
+  /* ---------- B3-A 元数据 sink（Legacy/V2 显式分支，AIbot P1-2；两者不得同时写历史） ---------- */
 
-  /** 事件消费：管线纯函数出决策——show 走 PlayerHolder.setSong（当前曲讯+MediaSession，现状路径）、
-   *  archive 被替换旧曲入史（radio.songs 格式不变，IO 派发）。 */
+  /** 事件消费：flag 开 = MetadataV2Sink（管线决策：30s 窗/迟到丢弃 + 归一化事件留底 curMetadata）；
+   *  flag 关 = LegacyMetadataSink（B2 前语义独立分支：连续同名去重/换歌入史，无 30s 窗——绝不双写）。 */
   private fun onMetaEvent(ev: MetadataEvent) {
-    val (st, d) = MetadataPipeline.accept(metaState, ev, dedup30s = FeatureFlags.METADATA_V2)
-    metaState = st
-    if (d.show != null) PlayerHolder.setSong(d.show)
-    if (d.archiveU0 != null && d.archiveTitle != null) {
-      val u0 = d.archiveU0; val t = d.archiveTitle
-      viewModelScope.launch(Dispatchers.IO) { runCatching { lib.pushSong(u0, t) }; stamp.value++ }
+    if (FeatureFlags.METADATA_V2) {
+      val (st, d) = MetadataPipeline.accept(metaState, ev)
+      metaState = st
+      if (d.show != null) PlayerHolder.setSong(d.show)
+      if (d.archiveU0 != null && d.archiveTitle != null) {
+        val u0 = d.archiveU0; val t = d.archiveTitle
+        viewModelScope.launch(Dispatchers.IO) { runCatching { lib.pushSong(u0, t) }; stamp.value++ }
+      }
+      curMetadata.value = metaState.last
+    } else {
+      legacySink.accept(ev.stationIdentityUrl, ev)
+      curMetadata.value = null
     }
-    curMetadata.value = if (FeatureFlags.METADATA_V2) metaState.last else null
   }
 
   /** 切台/刷新/全部失败先清空旧曲讯再接受新世代事件（防旧连接串台）：play()/refresh() 必经
-   *  CONNECTING+空 song（ui 承担显示清零）、善后必清台——管线簿记据此 reset；台变化兜底第三分支。 */
+   *  CONNECTING+空 song（ui 承担显示清零）、善后必清台——管线簿记与 legacySink.last（B2 lastSong 等价物）
+   *  一并 reset；台变化兜底第三分支。 */
   private fun mapMetaReset(u: PlayerUiState) {
     val id = u.station?.u0
     when {
-      id == null -> if (metaState.station != null) metaState = MetadataPipeline.reset(metaState, null)
+      id == null -> if (metaState.station != null || legacySink.last.isNotEmpty()) {
+        metaState = MetadataPipeline.reset(metaState, null); legacySink.reset()
+      }
       u.song.isEmpty() && (u.st == PState.CONNECTING || u.st == PState.IDLE) ->
-        if (metaState.station != id || metaState.display.isNotEmpty()) metaState = MetadataPipeline.reset(metaState, id)
-      metaState.station != id -> metaState = MetadataPipeline.reset(metaState, id)
+        if (metaState.station != id || metaState.display.isNotEmpty() || legacySink.last.isNotEmpty()) {
+          metaState = MetadataPipeline.reset(metaState, id); legacySink.reset()
+        }
+      metaState.station != id -> { metaState = MetadataPipeline.reset(metaState, id); legacySink.reset() }
     }
     if (!FeatureFlags.METADATA_V2) curMetadata.value = null
   }
@@ -396,8 +420,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     }
     val meta = radioMeta.value
     val firstSeen = HashMap<String, Long>()
-    for ((id, m) in meta.stations) {   // firstSeenAt 挂 sources[] 为主、台级直挂容错——取最早（B3-C 双端口径）
-      val fs = (listOf(m.firstSeenAt) + m.sources.map { it.firstSeenAt }).filter { it > 0L }.minOrNull() ?: 0L
+    if (metaBound) for ((id, m) in meta.stations) {   // firstSeenAt 挂 sources[] 为主、台级直挂容错——取最早（B3-C 双端口径）；
+      val fs = (listOf(m.firstSeenAt) + m.sources.map { it.firstSeenAt }).filter { it > 0L }.minOrNull() ?: 0L   // AIbot P1-4：混态（不绑定）整组置空
       if (fs > 0L) firstSeen[id] = fs
     }
     return Discovery.build(DiscoveryInput(
@@ -910,7 +934,9 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         val texts = withContext(Dispatchers.IO) { light.radioText() to light.logosText() }
         texts.first?.let { lib.mainText = it }
         texts.second?.let { runCatching { logos.loadBuiltins(it) } }
-        radioMeta.value = withContext(Dispatchers.IO) { RadioMeta.parse(light.metaText()) ?: RadioMeta.EMPTY }   // B2 meta 随更新收口（缺件空对象）
+        val nfMeta = light.metaText()
+        radioMeta.value = withContext(Dispatchers.IO) { RadioMeta.parse(nfMeta) ?: RadioMeta.EMPTY }   // B2 meta 随更新收口（缺件空对象；混态已被 apply 删件拦截）
+        metaBound = RadioMeta.bound(true, nfMeta != null, light.stampMetaOk())   // AIbot P1-4：更新后重算绑定（apply 已写 stamp 见证）
         lib.reload(); stamp.value++
         primeAll()
         updateMsg.value = "已更新到 ${res.commitIso.take(10)} · 台数 +${res.added}/-${res.removed}"

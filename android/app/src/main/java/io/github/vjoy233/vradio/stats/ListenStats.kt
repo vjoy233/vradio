@@ -13,7 +13,9 @@ import java.util.Locale
 /* 本地收听统计（B3-B，plan-expansion-r4 §7.2，纯 JVM）：只记真实播放（诊断成功不算收听）、
    只 PLAYING 累加；mono 时钟（SystemClock.elapsedRealtime 语义）算增量 + wall 时钟做日桶
    （clock 双注入供测试）；回拨不产负值；跨午夜拆两日；90 天裁剪；512KB 先删最早日；
-   sessions 按进入 PLAYING 次数；flush 幂等（快照覆盖语义）。
+   sessions 口径（§7.2 双端冻结措辞）：session = 从非 PLAYING 进入 PLAYING 且不属于「同一台同一源」的
+   暂停恢复（play/切台/切源/断流重连首达 PLAYING 均计一次；resume 重锚不开新 session、暂停时长不计）；
+   日期键历法严格校验（AIbot P1-1：validDay，坏键编解码入口丢弃）；flush 幂等（快照覆盖语义）。
    sidecar = filesDir/listen-stats.json（不进 radio.* 主 Store、不占配额、不进备份；坏文件按空库恢复，
    写失败只保留内存增量下次 flush/启动重试——绝不暂停或中断播放）。
    状态机映射（AppVm 接线）：IDLE/CONNECTING/PLAYING/PAUSED 直接对应 PState；FAILED = 全部源失败善后
@@ -48,13 +50,27 @@ object ListenStats {
 
   internal fun dayKey(wallMs: Long): String = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(wallMs))
 
+  /** 日期键历法校验（AIbot P1-1，与 Web lsDayKeyOk 同规则双端黄金）：YYYY-MM-DD 且月/日真实存在——
+   *  02-31、13-01、00 月/日、非闰年 02-29 一律拒绝（2024-02-29 闰年放行）。损坏 sidecar 注入的
+   *  任意 key 在编解码入口丢弃，只影响统计自身（90 天裁剪/summary 排序不失真）。 */
+  fun validDay(k: String?): Boolean {
+    if (k == null || !DAY_RE.matches(k)) return false
+    val p = k.split("-")
+    val y = p[0].toInt(); val m = p[1].toInt(); val d = p[2].toInt()
+    if (m !in 1..12 || d < 1) return false
+    val leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+    val dim = intArrayOf(31, if (leap) 29 else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+    return d <= dim[m - 1]
+  }
+
   /** 下一本地午夜（wall 段拆日边界；DST 由 Calendar 处理）。 */
   private fun endOfDay(wallMs: Long): Long = Calendar.getInstance().apply {
     timeInMillis = wallMs
     set(Calendar.HOUR_OF_DAY, 24); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
   }.timeInMillis
 
-  /** 进入 PLAYING 计数：sessions 按进入次数（暂停后续播/切源重连都算新会话）。 */
+  /** 进入 PLAYING 计数（§7.2 冻结口径）：新建流到达 PLAYING 才 +1——暂停后同台同源 resume 重锚不开新
+   *  （ListenTracker 侧把关），切台/切源/断流重连首达均算新 session。 */
   fun enter(state: StatsState, u0: String, cat: String, wallNow: Long) {
     state.days.getOrPut(dayKey(wallNow)) { StatsDay() }.sessions++
   }
@@ -81,7 +97,7 @@ object ListenStats {
   }
 
   private fun bucket(state: StatsState, day: String, s: ListeningSession, ms: Long) {
-    if (ms <= 0 || !DAY_RE.matches(day)) return
+    if (ms <= 0 || !validDay(day)) return
     val d = state.days.getOrPut(day) { StatsDay() }
     d.ms += ms
     d.stations[s.u0] = (d.stations[s.u0] ?: 0L) + ms
@@ -121,6 +137,7 @@ object ListenStatsCodec {
     if (o.optInt("v", 0) != 1) return out
     val ds = o.optJSONObject("days") ?: return out
     for (k in ds.keys()) {
+      if (!ListenStats.validDay(k)) continue   // 非法日期键丢弃（AIbot P1-1：坏键不入 days，裁剪/summary 排序不失真）
       val d = ds.optJSONObject(k) ?: continue
       val day = StatsDay(d.optLong("ms", 0L), mapOf(d.optJSONObject("stations")), mapOf(d.optJSONObject("categories")), d.optInt("sessions", 0))
       if (day.ms > 0 || day.sessions > 0) out.days[k] = day

@@ -3,11 +3,12 @@ package io.github.vjoy233.vradio.sync
 import org.json.JSONObject
 
 /* radio-meta.json 消费端模型（B2，plan-expansion-r4 §6.3/§13.3——生成在 Web 同步侧，安卓只消费）：
-   仓库根 → gradle 资产打包（缺文件跳过）→ GitHub D7 更新（下载时校验 v==1 与可解析性，失败保留旧 meta
-   不阻断主库）。元数据缺失不影响播放；坏文件按空对象兜底（parse 返回 null，调用方 ?: EMPTY）。
+   仓库根 → gradle 资产打包（缺文件跳过）→ GitHub D7 更新（下载时校验 v==1 与可解析性；AIbot P1-4 起
+   拿不到/非法即删旧件——旧 meta 配新 radio 是混态，宁缺勿混）。元数据缺失不影响播放；坏文件按空对象兜底
+   （parse 返回 null，调用方 ?: EMPTY）。
    形态：{v:1, generatedAt, stations:{ 身份URL: {name, category, sources:[{url, upstream, upstreamId,
-   kind, firstSeenAt}]}}}。Android 本轮不生成、不回写（SyncEngine 端内同步产出 radio.txt 后旧 meta
-   照旧保留——契约允许，宁旧勿混）。 */
+   kind, firstSeenAt}]}}}。Android 本轮不生成、不回写；发现页「最近新增」消费前须过 bound() 同批绑定校验
+   （见下），混态该分组置空不猜。 */
 
 data class MetaSource(val url: String, val upstream: String, val upstreamId: String,
                       val kind: String, val firstSeenAt: Long)
@@ -46,5 +47,15 @@ class RadioMeta private constructor(val v: Int, val generatedAt: Long,
       }
       return RadioMeta(1, o.optLong("generatedAt", 0L), out)
     }
+
+    /** meta 与当前 radio 资产的同批绑定校验（AIbot P1-4）：meta 与 radio.txt 不同批时 firstSeenAt 指错台，
+     *  「最近新增」不得展示（置空，不猜）。绑定判据（保守）：
+     *  ① 两者来源必须同为 filesDir 或同为 assets（gradle 打包对天然同批；filesDir radio + assets meta
+     *     即混态）；② 同为 filesDir 时还须 stamp.json 带 meta=true 见证（LightUpdate.apply 同批写入；
+     *     B2 时代旧 stamp 无该字段 → 无法证明同批 → 不绑定，直到下一次成功更新带回见证）。
+     *  radioFromFiles/metaFromFiles = 对应 filesDir 副本是否存在；stampMetaOk = stamp 的 meta 见证
+     *  （null = 旧版 stamp 无字段）。 */
+    fun bound(radioFromFiles: Boolean, metaFromFiles: Boolean, stampMetaOk: Boolean?): Boolean =
+      radioFromFiles == metaFromFiles && (!radioFromFiles || stampMetaOk == true)
   }
 }

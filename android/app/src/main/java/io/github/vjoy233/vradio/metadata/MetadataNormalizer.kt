@@ -54,7 +54,7 @@ object MetadataNormalizer {
     val title: String = "",
     val program: String = "",
     val bitrateKbps: Int = 0,
-    val source: String = "none",   // icy|none|…
+    val source: String = "none",   // 严格枚举 icy|none（AIbot P2-5：非法值 normalize 归一为 none）
     val at: Long = 0,              // 0 = 缺省用 now（Web raw.at || Date.now() 同语义）
   )
 
@@ -65,6 +65,7 @@ object MetadataNormalizer {
 
   fun normalize(raw: IcyRaw, ctx: IcyCtx, now: Long = System.currentTimeMillis()): MetadataEvent {
     val p = parseIcyTitle(raw.title, ctx.stationName)
+    val src = raw.source      // source 枚举校验（契约允许值全集 icy|none；与 Web META_SOURCES 同规则）
     return MetadataEvent(
       stationIdentityUrl = ctx.identityUrl,
       title = p.title,
@@ -72,17 +73,19 @@ object MetadataNormalizer {
       track = p.track,
       program = raw.program.trim().replace(WS, " "),   // 与 Web metaClean(program) 同口径（空串保持空）
       bitrateKbps = raw.bitrateKbps.coerceAtLeast(0),
-      source = raw.source.ifEmpty { "none" },
+      source = if (src == "icy" || src == "none") src else "none",
       at = if (raw.at > 0) raw.at else now,
       confidence = if (p.artist.isNotEmpty()) Confidence.PARSED else Confidence.STREAM,
     )
   }
 }
 
-/* 曲讯管线（B3-A，eventOrder 固定序——contracts/metadata-event.json）：
-   校验 identityUrl/世代 → 空曲讯不覆盖 → 丢弃过旧（迟到）事件 → 同曲去重 → 更新当前曲讯 →
+/* 曲讯管线（B3-A，eventOrder 固定序——contracts/metadata-event.json；AIbot P1-2 起 v2 专用）：
+   校验 identityUrl/世代 → 空曲讯不覆盖 → 丢弃迟到（过旧）事件 → 同曲去重 → 更新当前曲讯 →
    与上一曲比较（被替换的旧曲入史）。切台/刷新/全部失败先 reset 再接受新世代事件（防旧连接串台）；
-   消费侧（AppVm 两 sink）据 Decision 调 PlayerHolder.setSong / Library.pushSong。 */
+   消费侧（AppVm）据 Decision 调 PlayerHolder.setSong / Library.pushSong。
+   flag 关闭（metadataV2Enabled=false）不再共用本管线——LegacyMetadataSink 独立分支按 B2 前语义逐项
+   消费（见下），杜绝 v2 判定（30s 窗/迟到 at 丢弃）渗入 Legacy 路径。 */
 object MetadataPipeline {
 
   data class State(
@@ -102,19 +105,17 @@ object MetadataPipeline {
   /** 切台/刷新/全部失败：清空旧曲讯（显示清理由 PlayerHolder 的 ui 承担，这里清管线簿记）。 */
   fun reset(s: State, station: String?): State = State(station, null, "")
 
-  /** dedup30s：v2 sink 用契约 30s 窗（含 display 等价的连续同名 + 入史窗口簿记）；legacy sink 按现状口径。 */
-  fun accept(s: State, ev: MetadataEvent, dedup30s: Boolean): Pair<State, Decision> {
+  fun accept(s: State, ev: MetadataEvent): Pair<State, Decision> {
     if (ev.title.isEmpty()) return s to DROP                                  // 空曲讯不覆盖有效曲名（HLS 不猜歌名）
     if (s.station != null && ev.stationIdentityUrl != s.station) return s to DROP   // 串台/旧世代事件丢弃
     if (s.last != null && ev.at < s.last.at) return s to DROP                 // 迟到（过旧）事件丢弃
-    val dup = if (dedup30s) MetadataNormalizer.isDuplicate(s.last, ev) || s.display == ev.title
-              else s.display == ev.title
-    if (dup) return s.copy(station = ev.stationIdentityUrl, last = ev) to DROP   // 同曲：不刷屏不入史
+    val dup = MetadataNormalizer.isDuplicate(s.last, ev) || s.display == ev.title   // 同曲：连续同名或 30s 窗内同名
+    if (dup) return s.copy(station = ev.stationIdentityUrl, last = ev) to DROP   // 不刷屏不入史
     // 入史判定（v2，Web mpHistDecide 同语义）：被替换旧曲 30s 窗内已入史过则不再入（抖动 A-B-A-B 不重复刷史）；
     // 窗口外条目顺手回收，兜底封顶 16（正常进不来：窗口内条目天然有限）
     var hist = s.hist
     var arch: String? = s.display.ifEmpty { null }
-    if (arch != null && dedup30s) {
+    if (arch != null) {
       val prevAt = s.hist[arch]
       if (prevAt != null && ev.at - prevAt < MetadataNormalizer.DEDUP_MS) arch = null
       else {
@@ -127,5 +128,30 @@ object MetadataPipeline {
     }
     val st = State(ev.stationIdentityUrl, ev, ev.title, hist)
     return st to Decision(ev.title, if (arch != null) ev.stationIdentityUrl else null, arch)
+  }
+}
+
+/** Legacy 曲讯消费分支（AIbot P1-2；metadataV2Enabled 关闭时 AppVm 专用——不再借道 MetadataPipeline）：
+ *  feat/r4-b2 PlayerHolder ICY 段语义原样平移（仅事件源改为契约 MetadataEvent）：
+ *  空曲讯不产事件（PlayerHolder 侧拦）/ 连续同名去重（lastSong）/ 换歌先上屏（setSong = ui.song +
+ *  MediaSession）再旧曲入史（archive(u0, old)，old 空则不归档）；切台/刷新/全部失败 reset() 清 last
+ *  （B2 PlayerHolder.play/refresh/stop 清 lastSong 的等价物——旧世代事件由此不串台）。
+ *  footer/icy-br 不经本类（IcyHeaders 路径 B2 起未动）；radio.songs 写入格式由 Library.pushSong 不变。 */
+class LegacyMetadataSink(
+  private val show: (String) -> Unit,
+  private val archive: (u0: String, title: String) -> Unit,
+) {
+  var last: String = ""; private set   // B2 lastSong 等价物（连续同名去重基准）
+
+  fun reset() { last = "" }
+
+  fun accept(u0: String, ev: MetadataEvent) {
+    val t = ev.title
+    if (t.isEmpty()) return          // 空曲讯不覆盖有效曲名（不产动作）
+    if (t == last) return            // 连续同名：不重渲不入史（B2 lastSong 判定）
+    val old = last
+    last = t
+    show(t)                          // 上屏 + MediaSession（PlayerHolder.setSong，B2 pushMeta+uiMut 同点位）
+    if (old.isNotEmpty()) archive(u0, old)   // 换歌旧曲入史（键=台主 URL；首曲/清空后不归档）
   }
 }

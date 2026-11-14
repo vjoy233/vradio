@@ -149,25 +149,53 @@ class LightUpdateTest {
     val r = lu.apply(radioV1)!!
     assertTrue(r.metaChanged); assertFalse(r.metaInvalid)
     assertEquals(metaV1, lu.metaText())
+    assertEquals(true, lu.stampMetaOk())                    // AIbot P1-4：stamp.meta 同批见证（bound 放行）
   }
 
-  @Test fun meta校验失败保留旧件不阻断主库() = runBlocking {
+  @Test fun meta校验失败删旧件不阻断主库() = runBlocking {
     val dir = tmp.newFolder()
     val lu1 = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
     lu1.apply(radioV1)
-    // 第二轮：仓库 meta 换成 v2（版本不认识）→ 保留旧 meta，radio 照常更新
+    // 第二轮：仓库 meta 换成 v2（版本不认识）→ 删旧 meta（AIbot P1-4：新 radio 配旧 meta 是混态，宁缺勿混），
+    // radio 照常更新；stamp.meta=false → RadioMeta.bound 拦下「最近新增」
     val lu2 = LightUpdate(Gh(FakeHttp(fullMap(radio = radioV2, logos = null, radioAt = "2026-10-11T00:00:00Z",
       logosAt = "2026-10-09T00:00:00Z", meta = metaV2Bad)), 0), dir)
     val r = lu2.apply(radioV1)!!
     assertTrue(r.metaInvalid); assertFalse(r.metaChanged)
-    assertEquals(metaV1, lu2.metaText())                    // 旧 meta 原样
+    assertNull(lu2.metaText())                              // 旧 meta 已删（混态拦截）
     assertEquals(radioV2, lu2.radioText())                  // 主库不受影响
+    assertEquals(false, lu2.stampMetaOk())                  // 见证为 false：bound(files=true, files=true, false) = 不绑定
   }
 
-  @Test fun 仓库未提供meta静默不误报() = runBlocking {
-    val lu = LightUpdate(Gh(FakeHttp(fullMap()), 0), tmp.newFolder())   // meta=null（404/网络失败同面）
-    val r = lu.apply(radioV1)!!
+  @Test fun 仓库未提供meta静默不误报且删旧件() = runBlocking {
+    val dir = tmp.newFolder()
+    val lu1 = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)   // 先落一份旧 meta
+    lu1.apply(radioV1)
+    val lu2 = LightUpdate(Gh(FakeHttp(fullMap(radioAt = "2026-10-12T00:00:00Z",
+      logosAt = "2026-10-09T00:00:00Z")), 0), dir)   // 第二轮 meta=null（404/网络失败同面）
+    val r = lu2.apply(radioV1)!!
     assertFalse(r.metaChanged); assertFalse(r.metaInvalid)  // 无「校验失败」误报（Web 侧生成落地前不吵）
-    assertEquals(radioV2, lu.radioText()); assertNull(lu.metaText())
+    assertEquals(radioV2, lu2.radioText())
+    assertNull(lu2.metaText())                              // AIbot P1-4：旧 meta 删除（新库不留旧 meta）
+    assertEquals(false, lu2.stampMetaOk())
+  }
+
+  /* ---------- AIbot P1-4：RadioMeta 与当前 radio 资产同批绑定校验（发现页「最近新增」消费门） ---------- */
+
+  @Test fun meta绑定矩阵() {
+    // assets 对（同为打包基线）→ 绑定
+    assertTrue(RadioMeta.bound(radioFromFiles = false, metaFromFiles = false, stampMetaOk = null))
+    assertTrue(RadioMeta.bound(false, false, true))
+    // filesDir 对 + stamp 见证 → 绑定
+    assertTrue(RadioMeta.bound(true, true, true))
+    // 混态：filesDir radio + assets meta（meta 下载从未成功）→ 不绑定（最近新增置空）
+    assertFalse(RadioMeta.bound(true, false, null))
+    assertFalse(RadioMeta.bound(true, false, true))
+    // 反向混态：assets radio + filesDir meta（理论上不会出现，防御）
+    assertFalse(RadioMeta.bound(false, true, true))
+    // B2 时代旧 stamp（无 meta 字段）配 filesDir 对 → 无法证明同批 → 不绑定（保守，下次成功更新恢复）
+    assertFalse(RadioMeta.bound(true, true, null))
+    // 见证 false（本批未随行 meta）→ 不绑定
+    assertFalse(RadioMeta.bound(true, true, false))
   }
 }

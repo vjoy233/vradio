@@ -41,6 +41,7 @@ import io.github.vjoy233.vradio.model.PState
 import io.github.vjoy233.vradio.model.PlayerUiState
 import kotlinx.coroutines.delay
 import io.github.vjoy233.vradio.player.PlayerHolder
+import io.github.vjoy233.vradio.timeshift.TimeshiftRewindButton
 import io.github.vjoy233.vradio.ui.theme.LocalVrPalette
 
 /* 底部常驻播放条（index.html footer 平移）：台名（点击回到正在播；长按开源详情，B1）/曲名行
@@ -125,6 +126,8 @@ fun PlayerBar(vm: AppVm, ui: PlayerUiState) {
       if (st != null) {
         TextButton(onClick = { PlayerHolder.refresh() }) { Text("刷新") }
       }
+      // B7 Spike：时移回听（实验开关开启且正在捕获直流时才显示，组件内部自判）
+      TimeshiftRewindButton()
       // N8 分享电台（batch1）：ACTION_SEND 台名+主源 URL，任何播放器可开
       if (st != null) {
         TextButton(onClick = { vm.shareStation(st) }) { Text("分享") }

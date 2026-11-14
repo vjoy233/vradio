@@ -13,6 +13,7 @@ object Prefs {
   const val FILE = "vradio"
   const val RESUME = "resumeOnStart"   // N4 启动自动续播上次台（默认关）
   const val OFFLOAD = "audioOffload"   // E5 音频卸载省电（默认关，实验性；重启应用生效）
+  const val TIMESHIFT = "timeshiftSpike" // B7 时移回听 Spike（实验，默认关；本地行为非 radio.*）
 
   // B5：Widget 快照（JSON 序列化见 widget/WidgetState.kt）
   const val WIDGET_SNAP = "widget.snap"

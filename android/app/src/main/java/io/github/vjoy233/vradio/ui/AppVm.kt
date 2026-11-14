@@ -10,8 +10,10 @@ import android.net.ConnectivityManager
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import io.github.vjoy233.vradio.FeatureFlags
 import io.github.vjoy233.vradio.MainActivity
 import io.github.vjoy233.vradio.Prefs
 import io.github.vjoy233.vradio.check.CheckStream
@@ -30,6 +32,13 @@ import io.github.vjoy233.vradio.data.SafeTarget
 import io.github.vjoy233.vradio.data.Store
 import io.github.vjoy233.vradio.check.OkHttpRaw
 import io.github.vjoy233.vradio.data.OkHttpText
+import io.github.vjoy233.vradio.discovery.Discovery
+import io.github.vjoy233.vradio.discovery.DiscoveryInput
+import io.github.vjoy233.vradio.discovery.Groups
+import io.github.vjoy233.vradio.discovery.QInfo
+import io.github.vjoy233.vradio.discovery.RecoveryLog
+import io.github.vjoy233.vradio.metadata.MetadataPipeline
+import io.github.vjoy233.vradio.model.MetadataEvent
 import io.github.vjoy233.vradio.model.Cfg
 import io.github.vjoy233.vradio.model.DiagnosticResult
 import io.github.vjoy233.vradio.model.FavEntry
@@ -38,6 +47,10 @@ import io.github.vjoy233.vradio.model.PlayerUiState
 import io.github.vjoy233.vradio.model.Station
 import io.github.vjoy233.vradio.model.SongRec
 import io.github.vjoy233.vradio.player.PlayerHolder
+import io.github.vjoy233.vradio.stats.ListenSidecar
+import io.github.vjoy233.vradio.stats.ListenStats
+import io.github.vjoy233.vradio.stats.ListenTracker
+import io.github.vjoy233.vradio.stats.StatsState
 import io.github.vjoy233.vradio.sync.Gh
 import io.github.vjoy233.vradio.sync.LightUpdate
 import io.github.vjoy233.vradio.sync.RadioMeta
@@ -138,6 +151,15 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   private val cur get() = PlayerHolder.ui.value
   private val playKeys = PlayerHolder.ui.map { it.st to it.station?.key }.distinctUntilChanged()
 
+  /* —— B3 状态声明（须在 init 前声明：init 内装载/接线，声明式初始化按文本序执行会回写覆盖）—— */
+  /** v2 新消费面（规范化事件，供统计/发现派生；legacy 恒 null）。切台/清空随管线 reset 归 null。 */
+  val curMetadata = MutableStateFlow<MetadataEvent?>(null)
+  private var metaState = MetadataPipeline.State()
+  private val listenSidecar = ListenSidecar(ctx.filesDir)
+  private var listenTracker: ListenTracker? = null
+  val showDiscovery = MutableStateFlow(false)
+  private val recovered = LinkedHashMap<String, Long>()   // 台 key → 复活时刻（Prefs 缓存 7 天过期）
+
   /** 渲染快照（唯一渲染入口精神：列表 + 分类角标 + 死台开关可见性 + 空态文案）；
    *  ver = stamp 哨兵进值域（审计 P2）：StateFlow 按相等合并，内容未变的 stamp++ 会被判等丢弃——
    *  台标后解析补渲/体检升档徽标翻面就靠它（收藏星 b1dfed6 事故的同族另一半） */
@@ -164,11 +186,26 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     wirePlayer()
     resumeOnStart.value = Prefs.get(ctx, Prefs.RESUME, false)   // N4
     audioOffload.value = Prefs.get(ctx, Prefs.OFFLOAD, false)   // E5
+    // B3-C：health 复活记录运行时缓存（7 天过期剪裁；坏 JSON 按空表恢复）
+    recovered.putAll(runCatching { parseRecovered(Prefs.getStr(ctx, Prefs.RECOVERED, "")) }.getOrDefault(emptyMap()))
+    if (FeatureFlags.LISTEN_STATS) {
+      // B3-B：sidecar 装载在 Main 构造（filesDir 小文件）；消费/flush 由开关门控——关 = 不消费不 flush不清数据
+      listenTracker = ListenTracker(SystemClock::elapsedRealtime, System::currentTimeMillis,
+        runCatching { listenSidecar.load() }.getOrDefault(StatsState()))
+      viewModelScope.launch {   // 30s 周期 flush（页面隐藏 flush 在 onAppHidden；快照覆盖幂等）
+        while (true) { delay(30_000); runCatching { flushStats() } }
+      }
+    }
     viewModelScope.launch(Dispatchers.IO) { boot() }
-    // B2 播放样本：PlayerHolder 状态流 → QualityStore.playback 事件映射（PlayerHolder 不感知 QualityStore，
-    // 模块边界照抄 onstate 回调注入方向）；映射在 Main、写盘派发 IO，写失败只丢样本不影响播放
+    // B2 播放样本 + B3 元数据管线 reset / 收听状态机：PlayerHolder 状态流统一消费（映射在 Main；
+    // QualityStore 写盘派发 IO）。PlayerHolder 不感知这些消费方（模块边界照抄 onstate 回调注入方向）
     viewModelScope.launch {
-      PlayerHolder.ui.collect { u -> runCatching { mapQualityEvent(u) }; qPrev = u }
+      PlayerHolder.ui.collect { u ->
+        runCatching { mapQualityEvent(u) }
+        runCatching { mapMetaReset(u) }
+        if (listenTracker != null) runCatching { mapListenState(u) }
+        qPrev = u
+      }
     }
   }
 
@@ -287,10 +324,109 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   private fun wirePlayer() {
     PlayerHolder.onStepFav = { d -> stepFav(d) }                          // ⏮⏭ / ←→ 收藏间切台
     PlayerHolder.onPlayLast = { resumeLast() }                            // 媒体键 play 空台 → 续播上次
-    PlayerHolder.onSong = { u0, t ->                                     // ICY 换歌（PlayerHolder 已做换歌判定）：入史
+    PlayerHolder.onMetadata = { ev -> runCatching { onMetaEvent(ev) } }   // B3-A：ICY 事件（清洗已做）→ 管线/sink
+    PlayerHolder.logoProvider = { s -> logos.get(s) }                     // 锁屏 artwork 同步窥探口径
+  }
+
+  /* ---------- B3-A 元数据 sink（Legacy/V2 同事件入口；flag 决定消费面，两者不得同时写历史） ---------- */
+
+  /** 事件消费：管线纯函数出决策——show 走 PlayerHolder.setSong（当前曲讯+MediaSession，现状路径）、
+   *  archive 被替换旧曲入史（radio.songs 格式不变，IO 派发）。 */
+  private fun onMetaEvent(ev: MetadataEvent) {
+    val (st, d) = MetadataPipeline.accept(metaState, ev, dedup30s = FeatureFlags.METADATA_V2)
+    metaState = st
+    if (d.show != null) PlayerHolder.setSong(d.show)
+    if (d.archiveU0 != null && d.archiveTitle != null) {
+      val u0 = d.archiveU0; val t = d.archiveTitle
       viewModelScope.launch(Dispatchers.IO) { runCatching { lib.pushSong(u0, t) }; stamp.value++ }
     }
-    PlayerHolder.logoProvider = { s -> logos.get(s) }                     // 锁屏 artwork 同步窥探口径
+    curMetadata.value = if (FeatureFlags.METADATA_V2) metaState.last else null
+  }
+
+  /** 切台/刷新/全部失败先清空旧曲讯再接受新世代事件（防旧连接串台）：play()/refresh() 必经
+   *  CONNECTING+空 song（ui 承担显示清零）、善后必清台——管线簿记据此 reset；台变化兜底第三分支。 */
+  private fun mapMetaReset(u: PlayerUiState) {
+    val id = u.station?.u0
+    when {
+      id == null -> if (metaState.station != null) metaState = MetadataPipeline.reset(metaState, null)
+      u.song.isEmpty() && (u.st == PState.CONNECTING || u.st == PState.IDLE) ->
+        if (metaState.station != id || metaState.display.isNotEmpty()) metaState = MetadataPipeline.reset(metaState, id)
+      metaState.station != id -> metaState = MetadataPipeline.reset(metaState, id)
+    }
+    if (!FeatureFlags.METADATA_V2) curMetadata.value = null
+  }
+
+  /* ---------- B3-B 收听统计（filesDir/listen-stats.json sidecar；只 PLAYING 累加，诊断不算收听） ---------- */
+
+  /** PState 流映射（fake-clock 可测状态机在 ListenTracker；这里只喂事件）。 */
+  private fun mapListenState(u: PlayerUiState) {
+    val src = u.station?.let { s -> u.srcIdx.takeIf { i -> i in s.u.indices }?.let { s.u[it] } }
+    listenTracker?.onState(u.st, u.station, src)
+  }
+
+  /** flush（30s tick / 页面隐藏 / 手动）：收账 + trim(90 天·512KB) + 快照覆盖写（幂等）；写失败保内存重试。 */
+  fun flushStats() {
+    val t = listenTracker ?: return
+    t.settle()
+    viewModelScope.launch(Dispatchers.IO) { runCatching { listenSidecar.save(ListenStats.trim(t.state)) } }
+  }
+
+  /** 页面隐藏（MainActivity.onStop）：收听统计 flush（Web visibilitychange 同款时机）。 */
+  fun onAppHidden() { if (FeatureFlags.LISTEN_STATS) runCatching { flushStats() } }
+
+  /** 近 N 天汇总（设置页/发现页展示口径；开关关时数据仍在，读不消费）。 */
+  fun statsSummary(days: Int = 7) = listenTracker?.let { ListenStats.summary(it.state, days) }
+    ?: runCatching { ListenStats.summary(listenSidecar.load(), days) }.getOrNull()
+
+  /* ---------- B3-C 本地发现页（纯本地派生：不联网、不改主列表排序、点击走既有 play 通道） ---------- */
+
+  data class DiscoveryUi(val groups: Groups, val ver: Int = 0)
+
+  /** 派生视图（stamp 哨兵驱动：体检/同步/收藏/数据更新后自动重算；开关关 UI 不入口，计算也跳过）。 */
+  val discovery: StateFlow<DiscoveryUi> = combine(stamp, showDead, playKeys) { _, _, _ ->
+    DiscoveryUi(if (FeatureFlags.DISCOVERY) runCatching { buildDiscovery() }.getOrDefault(Groups.EMPTY)
+               else Groups.EMPTY, stamp.value)
+  }.stateIn(viewModelScope, SharingStarted.Eagerly, DiscoveryUi(Groups.EMPTY))
+
+  private fun buildDiscovery(): Groups {
+    val sts = runCatching { lib.stations.toList() }.getOrDefault(emptyList())
+    val q = HashMap<String, QInfo>()
+    for (s in sts) runCatching { quality.summary(s.u0, s.u) }.getOrNull()?.let {
+      q[s.u0] = QInfo(it.stability, it.directCount, it.metadata, it.lastObservedAt)
+    }
+    val meta = radioMeta.value
+    val firstSeen = HashMap<String, Long>()
+    for ((id, m) in meta.stations) {   // firstSeenAt 挂 sources[] 为主、台级直挂容错——取最早（B3-C 双端口径）
+      val fs = (listOf(m.firstSeenAt) + m.sources.map { it.firstSeenAt }).filter { it > 0L }.minOrNull() ?: 0L
+      if (fs > 0L) firstSeen[id] = fs
+    }
+    return Discovery.build(DiscoveryInput(
+      stations = sts,
+      playingKey = playKey(), connectingKey = connKey(),
+      hiddenCats = runCatching { lib.cfg.hideC.keys }.getOrDefault(emptySet()),
+      quality = q, firstSeenAt = firstSeen,
+      recoveredAt = RecoveryLog.prune(recovered, System.currentTimeMillis()),
+      recentKeys = runCatching { lib.recents.map { it.k }.toSet() }.getOrDefault(emptySet()),
+    ))
+  }
+
+  /** health dead→alive 转移记录（体检三通道共用；调用方先验 marks 含 key 才调——转移才记，不猜）。 */
+  private fun noteRecoveredIfRevived(key: String) {
+    if (recovered.containsKey(key)) return
+    val now = System.currentTimeMillis()
+    recovered[key] = now
+    val pruned = RecoveryLog.prune(recovered, now)   // 顺带清过期（保留刚记的）
+    recovered.clear(); recovered.putAll(pruned)
+    Prefs.setStr(ctx, Prefs.RECOVERED, JSONObject().apply { for ((k, v) in pruned) put(k, v) }.toString())
+    stamp.value++   // 发现页「最近恢复」即时可见
+  }
+
+  private fun parseRecovered(raw: String): Map<String, Long> {
+    if (raw.isEmpty()) return emptyMap()
+    val o = runCatching { JSONObject(raw) }.getOrNull() ?: return emptyMap()
+    val out = LinkedHashMap<String, Long>()
+    for (k in o.keys()) { val v = o.optLong(k, 0L); if (v > 0) out[k] = v }
+    return RecoveryLog.prune(out, System.currentTimeMillis())
   }
 
   /* ---------- B2 质量样本映射（PlayerUiState 流 → QualityStore；自动体检路径只写 diagnostic，绝不产 playback） ----------
@@ -651,7 +787,11 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     val c = IntArray(4)
     val marks = lib.healthMarks
     for ((s, p) in res) when (p) {
-      Probe.OK -> { runCatching { Health.onAlive(marks, s.key) }; c[0]++ }
+      Probe.OK -> {
+        // B3-C：dead→alive 转移才记「最近恢复」（marks 原含 key = 复活；无标记台探活成功不算恢复，不猜）
+        if (runCatching { marks.containsKey(s.key) }.getOrDefault(false)) runCatching { noteRecoveredIfRevived(s.key) }
+        runCatching { Health.onAlive(marks, s.key) }; c[0]++
+      }
       Probe.DEAD -> {
         runCatching { Health.onDead(marks, s.key, s.u.take(6), System.currentTimeMillis()) }
         if (marks[s.key]?.perm == 1) c[2]++ else c[1]++

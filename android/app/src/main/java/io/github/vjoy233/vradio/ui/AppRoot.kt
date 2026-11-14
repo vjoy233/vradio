@@ -58,6 +58,11 @@ fun AppRoot() {
     }
     if (showSrc) SrcSheet(vm, ui)
     if (showSongs) SongsSheet(vm, ui)
+    // B3-C 发现浮层：开关控制入口（StationList 的「✦ 发现」按钮）与浮层挂载
+    if (io.github.vjoy233.vradio.FeatureFlags.DISCOVERY) {
+      val showDisc by vm.showDiscovery.collectAsState()
+      if (showDisc) DiscoverySheet(vm)
+    }
     // B1 源详情浮层：台消失（同步/导入重建）即自动收起；fav/logo 经 vm 注入（浮层本身不持 vm）
     if (showDetail) {
       val ds = vm.detailStation()

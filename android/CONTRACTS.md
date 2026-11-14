@@ -449,3 +449,76 @@ class LightUpdate(private val gh: Gh, private val filesDir: File) {
 - **测试面**：`QualityAggregateTest`（四档/聚合计数/lastObservedAt/分流/trim/坏件/往返/源封顶）、
   `SyncCandidateTest`（归一化/三层去重/同名合并/来源保留/行序）、`LightUpdateTest` 增 meta 四例；
   `capBytes` 构造注入令 trim 测试不必造 2MB 数据。
+
+---
+
+## B3 API 面（r4 扩展契约·Android 侧，2026-11-15，plan-expansion-r4 §7）
+
+> B3 独立发布单元（可单独回滚）：元数据管线 / 收听统计 / 本地发现三个 feature flag 全默认关，
+> 门槛（§7.4 双端黄金样本全绿）过后才翻 true。开关不新增 `radio.*` 键；关闭任一开关不清数据、
+> 不影响主列表/播放/健康/QualityStore/备份 v3 主流程。语义源 = `contracts/metadata-event.json`
+> + `contracts/fixtures/metadata-golden.json`（双端逐字段硬验收），冲突以 plan-expansion-r4 §7 为准。
+
+- **`FeatureFlags`（根包 `FeatureFlags.kt`）**：`const val METADATA_V2/LISTEN_STATS/DISCOVERY = false`
+  ——由版本发布配置提供默认值；开发构建可临时改 true 自测，发布默认关。
+- **`model/MetadataEvent.kt`**：`data class MetadataEvent(stationIdentityUrl, title, artist, track,
+  program, bitrateKbps, source, at, confidence)`——契约 event 节九字段；`Confidence.PARSED/STREAM`。
+- **`metadata/MetadataNormalizer.kt`（纯 JVM）**：
+  ```kotlin
+  object MetadataNormalizer {
+    fun parseIcyTitle(rawTitle: String?, stationName: String = ""): IcyParts   // 空白清理(JS \s 同集含全角空格) +
+    fun normalize(raw: IcyRaw, ctx: IcyCtx, now: Long): MetadataEvent          // 半/全角连接号分隔 + 重复台名前缀只剥一层
+    fun isDuplicate(prev: MetadataEvent?, next: MetadataEvent, windowMs = 30_000L): Boolean   // 同名 30s 窗
+    data class IcyRaw(title, program, bitrateKbps, source = "none", at = 0)   // at<=0 回退 now；source 空回退 none
+    data class IcyCtx(identityUrl, stationName)
+  }
+  ```
+  黄金样本 `fixtures/metadata-golden.json` 全 case 逐字段断言在 `MetadataNormalizerTest`。
+- **`MetadataPipeline`（同文件，纯 JVM）**：eventOrder 固定序的状态机——
+  `State(station, last, display)` / `accept(s, ev, dedup30s): Pair<State, Decision>` /
+  `reset(s, station)`；Decision = `Drop | Show(title) | +Archive(u0, 被替换旧曲)`。
+  空曲讯 Drop 不覆盖；`stationIdentityUrl` 不匹配（串台/旧世代）Drop；`at < last.at`（迟到）Drop；
+  同曲去重（v2 = 30s 窗 + display 等价；legacy = 连续同名现状口径）；换曲 Archive 旧曲——v2 另有
+  入史窗口簿记 `State.hist`（同名 30s 内已入史不再入，A-B-A-B 抖动防重复刷史，Web mpHistDecide 同语义）。
+  切台/刷新/全部失败先 reset（PlayerHolder ui 的 CONNECTING+空 song / 清台形态驱动，AppVm.mapMetaReset）。
+- **PlayerHolder B3 改造**：`onSong` 回调移除，改 `var onMetadata: ((MetadataEvent) -> Unit)?`
+  ——ICY 只产事件（`MetadataNormalizer.normalize` 后回调，`IcyHeaders` 只更新 `ui.kbps` 与事件随行
+  `lastKbps`），世代令牌在发射侧验；播放层不碰 radio.songs/统计（模块边界）。消费在 AppVm 两 sink：
+  **LegacyMetadataSink**（flag 关）= 现状（setSong 路径的当前曲讯/MediaSession + lib.pushSong 入史，
+  格式不变）；**MetadataV2Sink**（flag 开）= 同路径 + 30s 去重 + `AppVm.curMetadata`
+  （规范化事件 StateFlow，供统计/发现派生）。两者不得同时写历史（flag 单选接线）。
+- **`stats/ListenStats.kt`（纯 JVM）**：
+  ```kotlin
+  object ListenStats {
+    fun enter(state, u0, cat, wallNow)                       // sessions 只在「新建流 PLAYING」+1（与质量采样同锚）
+    fun add(state, session, nowMono, nowWall): StatsState     // 增量入账：mono 回拨重锚钳 0；跨午夜按 wall 占比拆两日
+    fun trim(state, keepDays = 90, maxBytes = 512KB, measure 注入): StatsState   // 90 天 + 512KB 先删最早日
+    fun summary(state, days = 7): StatsSummary
+  }
+  class ListenTracker(mono, wall, initial)                   // 状态机（fake clock 双注入）：onState(PState/台/源URL)、
+                                                             // settle() 收账（≥1s 才入账，Web tickMin 同款）
+  class ListenSidecar(dir, writeFn 注入) { load()/save() }    // 坏文件空库恢复；写失败静默保内存重试
+  ```
+  会话语义（双端冻结）：**只在「新建流到达 PLAYING」建立 session**（play/切台/切源/重连首达，sessions+1）；
+  **暂停关账但保留 resume 资格**——续播同台同源重锚不开新 session（暂停时长绝不计入：暂停期无会话，
+  tick 不产账）；连接中/失败（善后 IDLE+清台映射）/停机彻底关。Android 无「他页复测对账」路径（单进程），
+  复活记录只走体检通道。sidecar `filesDir/listen-stats.json`：`{v:1, days:{yyyy-MM-dd:{ms, stations{u0:ms},
+  categories{cat:ms}, sessions}}}`（与 Web data/listen-stats.json 同构）——不进 radio.* 主 Store/2MB 配额/
+  备份 v3 默认导出；flush = 30s tick + MainActivity.onStop（快照覆盖幂等）；开关关不消费不 flush 不清数据。
+- **`discovery/Discovery.kt`（纯 JVM）**：`build(DiscoveryInput): Groups` 六分组（精选/稳定直连/最近新增/
+  最近恢复/有曲讯/未听过）+ `noQualityData` 名单（不进质量分组的无记录台，UI 在「稳定直连」组头显示
+  「另有 N 台暂无质量数据」提示行，不单列分组）；规则：过滤 hidden/隐藏分类（无例外）/dead（正在播·
+  连接中例外 = visible 同口径）；无质量记录不进质量分组、不误判 poor；稳定直连 = good 且 directCount>0；
+  有曲讯 = metadata==icy；最近新增 = radio-meta.firstSeenAt（**挂 sources[] 为主、台级直挂容错、取最早**，
+  `MetaStation.firstSeenAt` 旁挂字段；无 meta 组空）；最近恢复 = `RecoveryLog`（dead→alive 转移 Map +
+  `Prefs.RECOVERED` 运行时缓存 7 天过期，键非 radio.*；同步重建不产生记录——只有体检通道 wasDead→ok 才记）；
+  未听过 = 不在 radio.recents；精选 = `Station.starter`（originMask 位，双端口径 = **STARTER URL 命中或
+  精确同名**：Library.reload 装配时打，URL 命中只打标记不动装配，运行时不持久化、不按 u[0] 现场比对）；
+  排序 = 组内时间降序（新增用 firstSeenAt 其余 lastObservedAt）+ identityUrl 字典序；每组 ≤20；同台可跨组。
+  UI：StationList「✦ 发现」入口（开关关隐藏）+ `DiscoverySheet` 简单列表浮层（AppVm.discovery StateFlow
+  派生，stamp 哨兵驱动）；点击走 `AppVm.startPlay` 既有通道。
+- **测试面**：`MetadataNormalizerTest`（黄金样本逐字段 + 连接号/空白/前缀/去重边界）、
+  `MetadataEventTest`（事件形态 + 管线固定序：空曲讯/迟到/串台/去重/入史/reset/v2 入史窗去重）、
+  `ListenStatsTest`（fake clock 全矩阵：播放/暂停/续播重锚/连接中/失败/切源/切台/跨午夜/双回拨/
+  1s 阈值/90 天/512KB/幂等/写失败/坏件/summary）、`DiscoveryTest`（六分组矩阵 + originMask
+  装配打点（同名/URL 命中）+ starter 位不参与 equals）。全量 229 用例离线秒级。

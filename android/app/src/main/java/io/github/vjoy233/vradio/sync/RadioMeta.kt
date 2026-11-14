@@ -12,7 +12,9 @@ import org.json.JSONObject
 data class MetaSource(val url: String, val upstream: String, val upstreamId: String,
                       val kind: String, val firstSeenAt: Long)
 
-data class MetaStation(val name: String, val category: String, val sources: List<MetaSource>)
+/** B3-C 发现页消费：firstSeenAt 台级直挂字段容错（Web 侧生成挂 sources[]，个别形态台级直挂——两处都读、取最早）。 */
+data class MetaStation(val name: String, val category: String, val sources: List<MetaSource>,
+                       val firstSeenAt: Long = 0L)
 
 class RadioMeta private constructor(val v: Int, val generatedAt: Long,
                                     val stations: Map<String, MetaStation>) {
@@ -40,7 +42,7 @@ class RadioMeta private constructor(val v: Int, val generatedAt: Long,
           srcs.add(MetaSource(url, s.optString("upstream"), s.optString("upstreamId"),
             s.optString("kind"), s.optLong("firstSeenAt", 0L)))
         }
-        out[id] = MetaStation(st.optString("name"), st.optString("category"), srcs)
+        out[id] = MetaStation(st.optString("name"), st.optString("category"), srcs, st.optLong("firstSeenAt", 0L))
       }
       return RadioMeta(1, o.optLong("generatedAt", 0L), out)
     }

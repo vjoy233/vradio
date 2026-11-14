@@ -300,6 +300,7 @@ const Player = {
     Store.set('radio.srcmem2', JSON.stringify(this.srcMem));
     return true;
   },
+  srcToken() { return this.token; }, // 世代令牌只读口（B3 曲讯管线校验旧世代事件用；play/stop 递增，本方法不新增写路径）
   getSourceState() { // 只读快照（B1 详情中心）：app 不直接读 audio/HLS/token；mode 按 variant URL 形态判（/proxy 包裹的 m3u8 亦判 hls）
     const s = this.station, m = s ? this.srcMem[s.u[0]] : null;
     return {

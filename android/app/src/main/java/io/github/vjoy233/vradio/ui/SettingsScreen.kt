@@ -70,10 +70,14 @@ fun SettingsScreen(vm: AppVm) {
   confirm?.let { msg ->
     ConfirmDialog("确认导入", msg, onOk = { vm.applyConfirmed() }, onDismiss = { vm.cancelConfirm() })
   }
-  // B5：移动数据大流量操作确认门（全量体检/主库同步，拒绝则不发）
-  gate?.let { (op, msg) ->
+  // B5：移动数据大流量操作确认门（全量体检/主库同步/轻更新，拒绝则不发；AIbot P1 后轻更新同入 SYNC 门）
+  gate?.let { (act, msg) ->
     ConfirmDialog(
-      if (op == io.github.vjoy233.vradio.network.NetworkPolicy.Op.SYNC) "移动数据同步确认" else "移动数据体检确认",
+      when (act) {
+        io.github.vjoy233.vradio.network.NetGate.Act.SYNC -> "移动数据同步确认"
+        io.github.vjoy233.vradio.network.NetGate.Act.LIGHT_UPDATE -> "移动数据更新确认"
+        else -> "移动数据体检确认"
+      },
       msg, onOk = { vm.proceedGate() }, onDismiss = { vm.cancelGate() })
   }
 

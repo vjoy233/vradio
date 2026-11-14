@@ -34,6 +34,7 @@ import io.github.vjoy233.vradio.model.FavEntry
 import io.github.vjoy233.vradio.model.PState
 import io.github.vjoy233.vradio.model.Station
 import io.github.vjoy233.vradio.model.SongRec
+import io.github.vjoy233.vradio.network.NetGate
 import io.github.vjoy233.vradio.network.NetProbe
 import io.github.vjoy233.vradio.network.NetworkPolicy
 import io.github.vjoy233.vradio.network.TrafficEstimator
@@ -149,7 +150,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   val netSync = MutableStateFlow("confirm")        // 移动数据主库同步（同款三态）
   val netLogoWifi = MutableStateFlow(true)         // 台标补全 Wi-Fi 优先
   val trafficTxt = MutableStateFlow("")            // 本次收听流量估算（设置页展示；估算口径非精确计费）
-  val netGate = MutableStateFlow<Pair<NetworkPolicy.Op, String>?>(null)   // 移动数据大流量操作确认门
+  private val gate = NetGate(policy)                     // 入口门（AIbot P1）：三入口同构门控，纯 JVM 可测
+  val netGate = MutableStateFlow<Pair<NetGate.Act, String>?>(null)   // 移动数据大流量操作确认门（载荷=待恢复动作）
 
   private var listenMs = 0L                        // 本次会话累计收听时长（不持久化：会话级口径）
   private var lastKbps = 0                         // 最近一次已知码率（0=无 ICY，估算按 128kbps 并明示）
@@ -174,9 +176,9 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     val g = netGate.value ?: return
     netGate.value = null
     when (g.first) {
-      NetworkPolicy.Op.FULL_CHECK -> runManualHealth()
-      NetworkPolicy.Op.SYNC -> runFullSync()
-      else -> Unit
+      NetGate.Act.FULL_CHECK -> runManualHealth()
+      NetGate.Act.SYNC -> runFullSync()
+      NetGate.Act.LIGHT_UPDATE -> runCheckUpdate()        // AIbot P1：确认后续跑轻更新整链（检查+下载+应用）
     }
   }
   fun cancelGate() { netGate.value = null }
@@ -610,11 +612,10 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   fun manualHealth() {                                                    // 手动全量入口（B5：移动数据先过策略门——允许直跑/需确认弹门/禁止明示）
     if (manualRun.value) return
-    val d = policy.allow(NetworkPolicy.Op.FULL_CHECK, netRules())
-    when {
-      d.kind == NetworkPolicy.Kind.DENY -> { healthResult.value = "未开始：${d.why}"; toast(healthResult.value) }
-      d.confirm -> netGate.value = NetworkPolicy.Op.FULL_CHECK to d.why
-      else -> runManualHealth()
+    when (val n = gate.enter(NetworkPolicy.Op.FULL_CHECK, NetGate.Act.FULL_CHECK, netRules())) {
+      is NetGate.Next.Deny -> { healthResult.value = "未开始：${n.why}"; toast(healthResult.value) }
+      is NetGate.Next.Confirm -> netGate.value = n.act to n.why
+      NetGate.Next.Run -> runManualHealth()
     }
   }
 
@@ -698,7 +699,17 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   /* ---------- D7 轻更新（设置页手动触发；判新旧 = GitHub commits vs 打包基线/assets 副本 stamp） ---------- */
 
-  fun checkUpdate() {
+  fun checkUpdate() {      // 入口（AIbot PR#21 P1）：检查+下载+应用整链同过 Op.SYNC 门（§9.2「主库同步」同类别，
+                           // 与 fullSyncNow 同构）——蜂窝 deny 拒绝明示、confirm 弹确认后经 proceedGate 续跑整链，
+                           // Wi-Fi/allow 直跑；无「仅查版本免门」暗道（版本检查本身也走 GitHub 网络）
+    when (val n = gate.enter(NetworkPolicy.Op.SYNC, NetGate.Act.LIGHT_UPDATE, netRules())) {
+      is NetGate.Next.Deny -> { updateMsg.value = "未开始：${n.why}"; toast(updateMsg.value) }
+      is NetGate.Next.Confirm -> netGate.value = n.act to n.why
+      NetGate.Next.Run -> runCheckUpdate()
+    }
+  }
+
+  private fun runCheckUpdate() {                                          // 门后执行体（直跑或确认后续跑，唯一调 light.check/apply 的路径）
     viewModelScope.launch {
       if (updateBusy.value) return@launch
       if (syncBusy.value) { updateMsg.value = "同步进行中，等同步完成后再检查更新（两通道写同一份 filesDir 数据，并发会互相覆盖）"; return@launch }   // 审计 P2：互锁
@@ -733,12 +744,11 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   /* ---------- M4 端内同步（B5：移动数据按策略门默认需确认；完成后 diff 摘要 + 收藏点名 + 增量体检） ---------- */
 
-  fun fullSyncNow() {                                                    // 入口：先过网络策略门，再过电量门
-    val d = policy.allow(NetworkPolicy.Op.SYNC, netRules())
-    when {
-      d.kind == NetworkPolicy.Kind.DENY -> { syncMsg.value = "未开始：${d.why}"; toast(syncMsg.value) }
-      d.confirm -> netGate.value = NetworkPolicy.Op.SYNC to d.why
-      else -> runFullSync()
+  fun fullSyncNow() {                                                    // 入口：先过网络策略门，再过电量门（与 checkUpdate 同构）
+    when (val n = gate.enter(NetworkPolicy.Op.SYNC, NetGate.Act.SYNC, netRules())) {
+      is NetGate.Next.Deny -> { syncMsg.value = "未开始：${n.why}"; toast(syncMsg.value) }
+      is NetGate.Next.Confirm -> netGate.value = n.act to n.why
+      NetGate.Next.Run -> runFullSync()
     }
   }
 

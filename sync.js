@@ -9,6 +9,7 @@ const Sync = {
   silentAbort: false, // 静默版让位/退出标志（与 abort 分开，避免「取消静默」误伤随后启动的手动体检）
 
   /* 探活执行器（四通道共用）：逐台 /api/check（前 4 源，任一活即 OK）；网络层失败不是探活结论不落标记（P3-12）。
+     手动禁用源不体检（B1 拍板：播放与自动探活都跳过）；全禁用台直接跳过——不请求也不落健康标记。
      返回 { ok, sus, perm, done }——sus/perm 为分档计数（D12 统计用）；onTick(s, 档位) 供基线续跑记进度 */
   async runCheck(list, opt = {}) {
     const stamp = App.state.stamp, q = list.slice(), conc = opt.conc || 5, cnt = { ok: 0, sus: 0, perm: 0, done: 0 };
@@ -16,14 +17,17 @@ const Sync = {
     const stop = () => opt.silent ? this.silentAbort : this.abort;
     const worker = async () => {
       while (q.length && !stop()) {
-        const s = q.shift(); let ok = false, marked = true;
+        const s = q.shift();
+        const urls = (s.dis && s.dis.length ? s.u.filter((_, i) => !s.dis.includes(i)) : s.u).slice(0, 4);
+        cnt.done++;
+        if (opt.onProgress) opt.onProgress(cnt, q.length, t0);
+        if (!urls.length) continue; // 全禁用台：跳过不落标记
+        let ok = false, marked = true;
         try {
-          const qs = s.u.slice(0, 4).map(u => 'url=' + encodeURIComponent(u)).join('&');
+          const qs = urls.map(u => 'url=' + encodeURIComponent(u)).join('&');
           ok = (await fetch('/api/check?' + qs).then(x => x.json())).ok;
         } catch (_) { marked = false; }
         if (marked) { const r = App.patchHealth(s, ok, stamp); cnt[r]++; if (opt.onTick) opt.onTick(s, r); }
-        cnt.done++;
-        if (opt.onProgress) opt.onProgress(cnt, q.length, t0);
       }
     };
     await Promise.all(Array.from({ length: conc }, worker));

@@ -17,7 +17,7 @@
 //       先归一大小写与尾部点空格（Windows 大小写不敏感 + Win32 剥尾点曾实测绕过字面量比较，audit A1；
 //       store.json 是全量个人数据，HOST=0.0.0.0 局域网模式下不可被直接 GET）。
 const http = require('http'), https = require('https'), fs = require('fs'), path = require('path');
-const { syncSources, checkStream, safeTarget, guardLookup, tryUrl } = require('./update-sources');
+const { syncSources, checkStream, checkDetail, safeTarget, guardLookup, tryUrl } = require('./update-sources');
 const ROOT = __dirname, PORT = process.env.PORT || 8137, HOST = process.env.HOST || '127.0.0.1';
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.txt': 'text/plain; charset=utf-8' };
 // Host 头白名单（audit A3，防 DNS rebinding）：回环监听（默认）下只认本机名——rebinding 攻击里页面
@@ -290,6 +290,11 @@ http.createServer((req, res) => {
     const tms = Math.min(Math.max(parseInt(sp.searchParams.get('t'), 10) || 0, 0), 30000);
     const opt = tms >= 1000 ? { timeout: tms } : {};
     (async () => {
+      if (sp.searchParams.get('detail') === '1') { // 结构化详情（B1，契约 contracts/source-diagnostic.json）：逐源完整结果、
+        // 绝不返回响应体；安全边界与旧口径一致（≤4 URL/双护栏/逐跳复查/跨源拒/时间窗口不放宽——单 URL 窗口同 t 钳制）
+        const results = await Promise.all(targets.map(t => checkDetail(t, 0, opt)));
+        return json(200, { ok: results.some(r => r.ok), results });
+      }
       for (const t of targets) { const r = await checkStream(t, 0, opt); if (r.ok) return json(200, { ok: true, detail: r.detail }); }
       json(200, { ok: false, detail: `${targets.length} 个源均不可用` });
     })();

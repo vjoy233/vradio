@@ -17,13 +17,20 @@ import io.github.vjoy233.vradio.ui.theme.LocalVrPalette
 
 /* B7 Spike 最简 UI（隔离在 timeshift/ 包内）：
    - PlayerBar「↩15s」按钮：仅实验开关开启且 CAPTURING（≥3s 缓冲）时显示
+   - 范围外明示拒绝原因（AIbot P2-1）：开关开着但当前台被 classify 拒收时显示提示，而非静默无按钮
    - 设置页开关行：文案标明实验性质与范围（本地 pref，非 radio.*） */
 
 @Composable
 fun TimeshiftRewindButton() {
   val t by Timeshift.ui.collectAsState()
-  if (t.on && t.state == TsState.CAPTURING && t.bufferedMs >= 3000) {
-    TextButton(onClick = { Timeshift.rewind15() }) { Text("↩15s", fontSize = 12.sp) }
+  val pal = LocalVrPalette.current
+  when {
+    t.on && t.state == TsState.CAPTURING && t.bufferedMs >= 3000 ->
+      TextButton(onClick = { Timeshift.rewind15() }) { Text("↩15s", fontSize = 12.sp) }
+    // P2-1：拒绝原因明示（HLS/AAC/无扩展名流都归此文案）——产品化前置项：按 Content-Type/字节探测
+    // 识别无扩展名 mp3（报告 §8.2），Spike 仅按 URL 后缀判定
+    t.on && t.state == TsState.OFF && t.reject ->
+      Text("⏱ 本台不支持回听（实验仅支持 .mp3 扩展名直流）", fontSize = 10.sp, color = pal.dim)
   }
 }
 
@@ -35,7 +42,7 @@ fun TimeshiftSettingRow(checked: Boolean, onChange: (Boolean) -> Unit) {
     Switch(checked = checked, onCheckedChange = onChange)
   }
   Text(
-    "仅单源 MP3 直流台可「↩15s」重听刚错过的内容（最多回看约 60 秒）；技术验证代码，随时可能移除（本机设置，不随备份迁移）",
+    "仅「.mp3 扩展名」单源直流台可「↩15s」重听刚错过的内容（最多约 60 秒；无扩展名/AAC/HLS 台会显示不支持）；技术验证代码，随时可能移除（本机设置，不随备份迁移）",
     fontSize = 12.sp, color = pal.dim, modifier = Modifier.padding(top = 4.dp, start = 2.dp),
   )
 }

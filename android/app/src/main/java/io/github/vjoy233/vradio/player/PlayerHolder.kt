@@ -390,7 +390,9 @@ object PlayerHolder {
     Timeshift.onLiveAir() // B7 Spike 挂点⑤：回放播完重连直播起播 → CATCHING_UP → CAPTURING
     val s = station
     if (s != null && pctx?.my == token) {
-      say("直播中")
+      // B7 Spike（AIbot P2-2）：回放期状态明示「回听中」——快照起播也走 onAir（复用既有事件），
+      // 若照旧说「直播中」用户会误以为仍在实时收听；回放结束重连起播时 isReplaying 已翻 false，自然恢复「直播中」
+      say(if (Timeshift.isReplaying()) "回听中…" else "直播中")
       if (s.u.size >= 2 && curSi in s.u.indices) { // 成功源记忆写回（仅多源台）
         val prev = srcMem[s.u0]
         if (prev == null || prev.i != curSi) { // 未变不写（resume 也触发，player.js:249）

@@ -16,7 +16,9 @@ object TimeshiftStateMachine {
   private val m3u8Re = Regex("\\.m3u8(\\?|#|$)", RegexOption.IGNORE_CASE)
   private val mp3Re = Regex("\\.mp3(\\?|#|$)", RegexOption.IGNORE_CASE)
 
-  /** 单 MP3 直流判定（B7 范围）：非 m3u8 且路径以 .mp3 直达（含蜻蜓换算的 lhttp …/64k.mp3）。 */
+  /** 单 MP3 直流判定（B7 范围）：非 m3u8 且路径以 .mp3 直达（含蜻蜓换算的 lhttp …/64k.mp3）。
+      仅按 URL 后缀——无扩展名 mp3 直流会被拒（UI 明示拒绝原因，AIbot P2-1）；
+      产品化前置项：按 Content-Type/字节探测识别无扩展名流（报告 §8.2），Spike 不做。 */
   fun classify(url: String): String? = when {
     m3u8Re.containsMatchIn(url) -> REJECTED_NOT_SUPPORTED    // HLS 结构性不支持
     !mp3Re.containsMatchIn(url) -> REJECTED_NOT_SUPPORTED    // AAC/无扩展名旁路流：范围外

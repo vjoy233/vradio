@@ -16,6 +16,7 @@ import io.github.vjoy233.vradio.MainActivity
 import io.github.vjoy233.vradio.Prefs
 import io.github.vjoy233.vradio.check.CheckStream
 import io.github.vjoy233.vradio.check.Health
+import io.github.vjoy233.vradio.check.toDiagnostic
 import io.github.vjoy233.vradio.consts.C
 import io.github.vjoy233.vradio.data.Backup
 import io.github.vjoy233.vradio.data.CfgCodec
@@ -29,6 +30,7 @@ import io.github.vjoy233.vradio.data.Store
 import io.github.vjoy233.vradio.check.OkHttpRaw
 import io.github.vjoy233.vradio.data.OkHttpText
 import io.github.vjoy233.vradio.model.Cfg
+import io.github.vjoy233.vradio.model.DiagnosticResult
 import io.github.vjoy233.vradio.model.FavEntry
 import io.github.vjoy233.vradio.model.PState
 import io.github.vjoy233.vradio.model.Station
@@ -436,6 +438,58 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     status.value = if (had) "已恢复默认源，从默认源重播" else "本无源记忆，按默认序重播"
   }
 
+  /* ---------- B1 源详情（SourceDetailSheet 编排）：逐源诊断（禁用源不发请求）+ 源动作 ---------- */
+
+  val showDetail = MutableStateFlow(false)
+  val detailKey = MutableStateFlow<String?>(null)              // 详情浮层打开时的台 key（台消失即收起）
+  val detailDiag = MutableStateFlow<List<DiagnosticResult>>(emptyList()) // 最近一轮逐源诊断（按 URL 归位）
+  val detailBusy = MutableStateFlow(false)                      // 诊断进行中（浮层按钮态）
+
+  fun openDetail(s: Station) { detailKey.value = s.key; detailDiag.value = emptyList(); showDetail.value = true }
+  fun openDetailOf(k: String?) {                               // PlayerBar 台名长按等入口：按 key 反解
+    val s = k?.let { runCatching { lib.resolve(it) }.getOrNull() } ?: return
+    openDetail(s)
+  }
+  fun closeDetail() { showDetail.value = false; detailKey.value = null; detailDiag.value = emptyList() }
+  fun detailStation(): Station? = detailKey.value?.let { runCatching { lib.resolve(it) }.getOrNull() }
+
+  /** 逐源诊断（B1）：只测启用源——手动禁用的源不发请求（浮层已明示「不能诊断」+「取消禁用」入口）；
+   *  Android 无 /api?detail=1，CheckStream 直连；结果按测的 URL 归位，诊断顺序 = 人工有效序。 */
+  fun checkDetailSources(s: Station) {
+    if (detailBusy.value) return
+    viewModelScope.launch(Dispatchers.IO) {
+      detailBusy.value = true
+      try {
+        val urls = withContext(Dispatchers.Main) {              // 快照归 Main（审计 P2：与 reapplyCfg 变异并发防 CME）
+          runCatching { s.effOrder().map { s.u[it] } }.getOrDefault(emptyList())
+        }
+        if (urls.isEmpty()) return@launch
+        val out = java.util.concurrent.ConcurrentHashMap<String, DiagnosticResult>()
+        coroutineScope { for (u in urls) launch { runCatching { checker.check(u) }.getOrNull()?.let { out[u] = it.toDiagnostic(u) } } }
+        withContext(Dispatchers.Main) { detailDiag.value = urls.mapNotNull { out[it] } }
+      } catch (_: Exception) { } finally { detailBusy.value = false }
+    }
+  }
+
+  /** 源动作编排（B1）：排序/禁用走 Library 整表写（reapplyCfg 即时生效）；恢复默认两动作彼此独立——
+   *  「恢复默认播放源」只清 srcmem2（人工序/禁用保留），「撤销人工源排序」只删 srcManualOrder。 */
+  fun srcEdit(s: Station, act: SourceAction) = viewModelScope.launch(Dispatchers.Main) {
+    when (act) {
+      is SourceAction.Move -> runCatching { lib.srcMove(s, act.index, act.up) }
+      is SourceAction.ToggleDisable -> runCatching { lib.srcDisabledToggle(s, act.index) }
+      SourceAction.RestoreDefault -> {                          // 恢复默认播放源（清 srcmem2；正在听则按链重播）
+        val had = PlayerHolder.forgetSrcOf(s)
+        if (cur.station?.key == s.key) startPlay(s)
+        status.value = if (had) "已恢复默认播放源（人工顺序与禁用保留）" else "本无源记忆，按默认序处理"
+      }
+      SourceAction.ResetOrder -> {                              // 撤销人工源排序（恢复同步原始顺序；禁用/追加源保留）
+        runCatching { lib.srcOrderReset(s) }
+        status.value = "已撤销人工源排序（禁用与追加源保留）"
+      }
+    }
+    stamp.value++
+  }
+
   /* ---------- 音量（每台音量记忆在 PlayerHolder；取消静音的恢复值走 restoreVolPct——AIbot P1-5） ---------- */
 
   private fun refreshUi3() {                                              // view/showdead/theme 三键恢复（boot 与备份导入共用，app.js loadUi3 同款）
@@ -477,11 +531,12 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   private suspend fun probe(s: Station): Probe {
     var allNet = true                       // 全部源都「网络失败」→ 本台无判定依据
     // G P3：s.u 与主线程 applyCfg/reapplyCfg 的 addAll 并发遍历可 CME——快照失败按无判据跳过（不落标，安全方向）
-    val us = runCatching { s.u.take(4) }.getOrNull() ?: return Probe.NET
+    // B1：禁用源不测（体检口径=播放口径）；按人工有效序取前 4（用户优先序先测）。全禁台 us 空 → 无判据 NET
+    val us = runCatching { s.effOrder().map { s.u[it] }.take(4) }.getOrNull() ?: return Probe.NET
     for (u in us) {
       val v = runCatching { checker.check(u, C.CHECK_WINDOW_MS) }.getOrNull() ?: return Probe.NET
       if (v.ok) return Probe.OK
-      if (v.why != "网络失败") allNet = false // 有任一源给出真应答（HTTP/超阈拒），死结论才有据
+      if (v.code != CheckStream.Verdict.Code.NETWORK) allNet = false // code 是程序分支唯一依据（B1：不按 why 文案反推）
     }
     return if (allNet) Probe.NET else Probe.DEAD
   }

@@ -55,6 +55,38 @@ class Library(
     rebind()
   }
 
+  /* —— B1 源生命周期编辑（cfg 三字段整表写，写后 reapplyCfg 即时生效；索引一律 u 空间，
+     u[]/u[0] 物理序与身份键永不动——「任一源 URL 命中」回绑面也随之免疫） —— */
+  fun srcMove(s: Station, i: Int, up: Boolean) { // 上移/下移：材料化当前完整顺序（含禁用位）相邻交换后写回
+    val cur = s.mo ?: s.u.indices.toList()
+    val p = cur.indexOf(i); val q = if (up) p - 1 else p + 1
+    if (p < 0 || q < 0 || q >= cur.size) return
+    val m = cur.toMutableList(); val t = m[p]; m[p] = m[q]; m[q] = t
+    writeSrcManualOrder(s, m)
+  }
+
+  fun srcOrderReset(s: Station) { // 撤销人工源排序：只删该台 srcManualOrder（禁用表/追加源保留——三维度独立）
+    if (!cfg.srcManualOrder.containsKey(s.u0)) return
+    val m = cfg.srcManualOrder.toMutableMap(); m.remove(s.u0)
+    cfg = cfg.copy(srcManualOrder = m); reapplyCfg()
+  }
+
+  fun srcDisabledToggle(s: Station, i: Int) { // 启用/禁用切换（主源也可禁——只标记不换身份键）
+    if (i !in s.u.indices) return
+    val u = s.u[i]
+    val cur = cfg.srcDisabled[s.u0].orEmpty().toMutableList()
+    if (!cur.remove(u)) cur.add(u)
+    val d = cfg.srcDisabled.toMutableMap()
+    if (cur.isEmpty()) d.remove(s.u0) else d[s.u0] = cur
+    cfg = cfg.copy(srcDisabled = d); reapplyCfg()
+  }
+
+  private fun writeSrcManualOrder(s: Station, idx: List<Int>) {
+    val m = cfg.srcManualOrder.toMutableMap()
+    m[s.u0] = idx.map { s.u[it] }   // >6 源台超出部分由 CfgCodec.parse 封顶截断（urlArrMap take(6)，两侧同款护栏）
+    cfg = cfg.copy(srcManualOrder = m); reapplyCfg()
+  }
+
   /* —— 收藏/最近 —— */
   fun favKeys(): Set<String> = favs.map { it.k }.toSet()
   fun isFav(s: Station) = favs.any { it.k == s.key }
@@ -202,11 +234,14 @@ class Library(
   }
 
   /* 维护层套用（app.js applyCfg 同款）：移动/重命名/手藏/追加源按「任一源 URL 命中」（变体换序免疫）；
-     追加源只挂台尾不动身份键（s.u[0] 是 srcmem/收藏/健康标记的键）；分类重命名最后映射 */
+     追加源只挂台尾不动身份键（s.u[0] 是 srcmem/收藏/健康标记的键）；分类重命名最后映射；
+     B1：u 定稿后计算源生命周期运行时字段（键=身份 URL，与 srcs 的任一源命中口径不同——排序/禁用
+     是「这台」的属性，不是单条源的属性） */
   private fun applyCfg() {
     val c = cfg
     for (s in stations) {
       s.hidden = false
+      s.mo = null; s.dis = emptySet(); s.lbl = emptyMap() // 重套前清零（cfg 撤改后不留残序）
       for (u in s.u) {
         if (c.hideS[u] == true) s.hidden = true
         c.moves[u]?.let { s.c = it }
@@ -216,6 +251,16 @@ class Library(
       for (u in s.u) for (x in c.srcs[u] ?: emptyList()) if (x !in s.u && x !in add) add.add(x)
       if (add.isNotEmpty()) s.u.addAll(add)
       c.renames[s.c]?.let { s.c = it }
+      val manual = c.srcManualOrder[s.u0]
+      if (!manual.isNullOrEmpty()) { // 人工序：manual 序在前（存在于 u 的才收），未列的按 u 原序追加——不物理重排 u
+        val seen = HashSet<Int>(); val mo = ArrayList<Int>(s.u.size)
+        for (x in manual) { val i = s.u.indexOf(x); if (i >= 0 && seen.add(i)) mo.add(i) }
+        for (i in s.u.indices) if (seen.add(i)) mo.add(i)
+        s.mo = mo
+      }
+      val dis = c.srcDisabled[s.u0]
+      if (!dis.isNullOrEmpty()) s.dis = dis.mapNotNull { x -> s.u.indexOf(x).takeIf { i -> i >= 0 } }.toSet()
+      if (c.srcLabels.isNotEmpty()) s.lbl = c.srcLabels.filterKeys { u -> s.u.contains(u) }
     }
   }
 

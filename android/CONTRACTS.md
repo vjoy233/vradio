@@ -87,16 +87,20 @@
     onGetItem 提供者侧实现，数据源 = AppVm 活 Library（`CarBrowse.attach(lib, logoOf)` 注入）→
     UI 不在时 BootLib 文件侧兜底（B5 冷启模式；PlaybackService.onCreate IO 预热）。活库读快照收敛
     主线程（AppVm 审计 P2 口径），异步经 SettableFuture 回 ListenableFuture。MediaItem 映射：
-    title=台名、artist=分类、artworkUri=台标（有则填）、叶子带 u0 URI 兜底。
-  - **播放联动（不复制播放决策链）**：车机点选 → onAddMediaItems 给 URI-less item 补 u0 URI →
-    会话侧 setMediaItem(s) 由 **Fwd.carPlay 按 u: mediaId 拦截**重定向 `PlayerHolder.play()` 决策链
-    （自身装载的 variant item 无 mediaId 永不误触发；解析失败透传裸 URI 兜底不炸会话）。⏮⏭ 沿用
+    title=台名、artist=分类、artworkUri=台标（有则填）、叶子带 u0 URI 供客户端展示。
+  - **播放联动（不复制播放决策链）**：车机点选 → onAddMediaItems 把通过项 URI 一律改写库内 u0 →
+    会话侧 setMediaItem(s) 由 **Fwd.carPlay 按 u: mediaId 拦截**重定向 `PlayerHolder.play()` 决策链。
+    **安全门 `media/CarGate.kt`（AIbot P1）**：会话 exported=true 是跨进程入口，外部提交的 mediaId/URI
+    不可信——onAddMediaItems 任一项解析不出库内台（任意 URI/坏 base64/库外 u:/混合列表）即 failed
+    future（media3 保证 player 侧不执行、不建流），Fwd.carPlay 拒绝项丢弃**绝不透传**；外部 add/replace
+    一律忽略（无队列语义）。内部 variant 装载直走 exo 不经会话壳（不可伪造，无需标记）。⏮⏭ 沿用
     Fwd 的 seekToNext/Previous → onStepFav 收藏间切台（与通知栏线控一致）；台名/曲讯沿用既有
     pushMeta（title=曲讯||台名、artist=VRadio·分类、artwork=台标）。`PlayerHolder.onCarStation`
     回调（AppVm 活实例注入：仅收库内可见台+记最近+台标补全；VRadioApp/onCleared 兜底：BootLib 只读
     不写最近）。`BootLib`（根包）= B5 WidgetCommands.lib 抽出的共享文件侧兜底库。
   - **边界**：不在车机提供维护、导入、体检、源地址和复杂搜索。JVM 测试：`MediaTreeTest`
-    （层级/隐藏 dead 过滤/空分类/编解码 round-trip/未知 id 拒收/分页边界）。车机发现/播放/断网恢复/
+    （层级/隐藏 dead 过滤/空分类/编解码 round-trip/未知 id 拒收/分页边界）、`CarGateTest`
+    （安全门四类拒绝形态 + 库内命中放行回归）。车机发现/播放/断网恢复/
     源级联/重复建流须 DHU 或实机验收（本环境无 DHU）。
 
 ---

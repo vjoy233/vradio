@@ -111,8 +111,9 @@ object CarBrowse {
 
   private fun dirNode() = MNode(MediaTree.ID_ROOT, "VRadio")
 
-  /** MNode → MediaItem：title=台名、artist=分类、artworkUri=台标（有则填）；叶子带 URI 兜底
-   *  （正常路径被 Fwd.carPlay 按 mediaId 拦截重定向 play() 决策链，不走裸 URI） */
+  /** MNode → MediaItem：title=台名、artist=分类、artworkUri=台标（有则填）；叶子带 URI 供客户端展示，
+   *  点播路径由 Fwd.carPlay 按 mediaId 拦截重定向 play() 决策链（onAddMediaItems 把 URI 一律改写库内
+   *  u0、未知/非法 id 明确拒绝——AIbot P1，见 CarGate） */
   private fun toItem(n: MNode): MediaItem {
     val mb = MediaMetadata.Builder().setTitle(n.title)
       .setIsBrowsable(!n.playable).setIsPlayable(n.playable)

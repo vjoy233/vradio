@@ -18,7 +18,7 @@ data class MNode(
   val sub: String = "",    // artist 行：叶子=分类；目录节点默认空
   val art: String = "",    // 台标 URL（有则填，无则空——由调用方注入 logoOf）
   val playable: Boolean = false,   // true=台叶子（isPlayable）；false=目录（isBrowsable）
-  val uri: String = "",    // 叶子=流地址（u0；兜底直播放路径用，正常路径经 Fwd.carPlay 重定向决策链）
+  val uri: String = "",    // 叶子=流地址（u0；仅元数据展示用，点播一律 mediaId→CarGate→play() 决策链，不裸播）
 )
 
 class MediaTree private constructor(

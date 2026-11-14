@@ -42,7 +42,7 @@ import io.github.vjoy233.vradio.R
 import io.github.vjoy233.vradio.consts.C
 import io.github.vjoy233.vradio.data.Store
 import io.github.vjoy233.vradio.media.CarBrowse
-import io.github.vjoy233.vradio.media.MediaTree
+import io.github.vjoy233.vradio.media.CarGate
 import io.github.vjoy233.vradio.model.PState
 import io.github.vjoy233.vradio.model.PlayerUiState
 import io.github.vjoy233.vradio.model.SrcMem
@@ -233,13 +233,12 @@ object PlayerHolder {
     play(s, if (curSi in s.u.indices) curSi else -1)
   }
 
-  /** 车机点播（B6 §10 播放联动）：u: mediaId → 库内可见台 → 复用 play() 决策链（硬约束：不复制播放决策）。
-   *  Fwd.setMediaItem(s) 拦截路径调（主线程）；返回 false = 非车机 id/解析失败，调用方透传底层（叶子带
-   *  的 u0 URI 兜底裸播，不炸会话）。自身装载的 variant item 无 mediaId（默认空串），永不误触发。 */
+  /** 车机点播（B6 §10 播放联动）：外部提交的 mediaItem 经 CarGate 校验（u:<Base64URL> 解码且命中本地
+   *  库，§10 硬约束：车机不接受任意 URL）→ 复用 play() 决策链（硬约束：不复制播放决策）。
+   *  返回 false = 拒绝（未知/非法 mediaId、任意 URI、解析器未接线），调用方（Fwd）丢弃——绝不透传底层
+   *  裸播（AIbot P1）。自身装载的 variant 直走 exo.setMediaItem，不经会话壳，无从误触发也无可伪造。 */
   fun carPlay(item: MediaItem?): Boolean {
-    val id = item?.mediaId ?: return false
-    val u0 = MediaTree.decId(id) ?: return false
-    val s = onCarStation?.invoke(u0) ?: return false // 车机不接受任意 URL：解析后须命中本地库
+    val s = CarGate.resolve(item?.mediaId) { u0 -> onCarStation?.invoke(u0) } ?: return false
     play(s)
     return true
   }
@@ -617,15 +616,24 @@ object PlayerHolder {
     override fun stop() { h.stop() }   // player.js:68
 
     /* B6 车机点播（§10 播放联动）：会话侧 setMediaItem(s)（车机/兼容客户端点选叶子，经 onAddMediaItems
-       补 URI 后到达）在此拦截重定向 play() 决策链——直接透传会把裸 URI set 进 player，绕开决策链/台记忆/
-       锁屏元数据并二次建流。carPlay=false（非 u: id/解析失败）才透传（兜底裸播不炸会话）。 */
-    override fun setMediaItem(mediaItem: MediaItem) { if (!h.carPlay(mediaItem)) super.setMediaItem(mediaItem) }
-    override fun setMediaItems(mediaItems: MutableList<MediaItem>) {
-      if (!h.carPlay(mediaItems.firstOrNull())) super.setMediaItems(mediaItems)
-    }
+       解析后到达）在此拦截重定向 play() 决策链——直接透传会把裸 URI set 进 player，绕开决策链/台记忆/
+       锁屏元数据并二次建流。carPlay=false（未知/非法 mediaId、任意 URI）一律丢弃、绝不 super 透传
+       （AIbot P1：会话 exported=true 是跨进程入口，任何「解析失败兜底裸播」=外部可建流任意 URL）；
+       明确的失败已在 onAddMediaItems 层回给控制器，本层 Player 接口无返回值只能吞掉（纵深防御，
+       正常路径根本到不了这里）。应用内部装载（loadVariant/pushMeta）直走 exo，不经本壳=天然不可伪造。 */
+    override fun setMediaItem(mediaItem: MediaItem) { h.carPlay(mediaItem) }
+    override fun setMediaItems(mediaItems: MutableList<MediaItem>) { h.carPlay(mediaItems.firstOrNull()) }
     override fun setMediaItems(mediaItems: MutableList<MediaItem>, startIndex: Int, startPositionMs: Long) {
-      if (!h.carPlay(mediaItems.firstOrNull())) super.setMediaItems(mediaItems, startIndex, startPositionMs)
+      h.carPlay(if (mediaItems.isEmpty()) null else mediaItems[startIndex.coerceIn(0, mediaItems.size - 1)])
     }
+    /* 队列语义不对外提供（播放=按台整播替换，单 item 会话）：外部 add/replace 一律忽略——经
+       onAddMediaItems 门后虽只可能是库内台，但塞进 exo 队列会绕开 play() 决策链/串内部状态 */
+    override fun addMediaItem(mediaItem: MediaItem) {}
+    override fun addMediaItem(index: Int, mediaItem: MediaItem) {}
+    override fun addMediaItems(mediaItems: MutableList<MediaItem>) {}
+    override fun addMediaItems(index: Int, mediaItems: MutableList<MediaItem>) {}
+    override fun replaceMediaItem(index: Int, mediaItem: MediaItem) {}
+    override fun replaceMediaItems(fromIndex: Int, toIndex: Int, mediaItems: MutableList<MediaItem>) {}
   }
 
   /* 通知栏「刷新」自定义 action（plan-refresh-live §4.3）：Fwd 先例是占标准命令位（⏮⏭），但标准位语义不合
@@ -668,16 +676,20 @@ object PlayerHolder {
     override fun onGetItem(session: MediaLibraryService.MediaLibrarySession, controller: MediaSession.ControllerInfo,
       mediaId: String): ListenableFuture<LibraryResult<MediaItem>> =
       CarBrowse.item(appCtx, mediaId, null)
-    /* 车机点选的 URI-less item 在此补 URI（兼容 MediaBrowserCompat 类客户端只回传 mediaId 的形态）；
-       补完的 setMediaItem(s) 由 Fwd.carPlay 按 mediaId 拦截重定向 play() 决策链——不在此直接 play()，
-       防会话侧随后 setMediaItems 覆盖级联/二次建流。解析失败保持原样（会话侧报错，不炸）。 */
+    /* 车机点选的 URI-less item 在此补 URI（兼容 MediaBrowserCompat 类客户端只回传 mediaId 的形态；
+       playFromMediaId/playFromUri/addQueueItem 等 legacy 调用也经此——media3 1.11.1 MediaSessionStub
+       源码实证 set/add/replace 七个桩入口全数先行回调本方法）。同时是外部提交的**明确拒绝口**
+       （AIbot P1）：任一项解析不出库内台（任意 URI/坏 base64/库外 u:/混合列表）→ failed future——
+       media3 保证 failed 时 player 侧任务不执行（播放器收不到任何 mediaItem、不建流），控制器收到
+       error SessionResult；不再原样透传（原样返回=会话侧随后把裸 URI set 进 player 建流）。
+       通过项 URI 一律改写为库内 u0（不信任提交方自带 URI，防「合法 id + 夹带 URI」偷渡）。 */
     override fun onAddMediaItems(session: MediaSession, controller: MediaSession.ControllerInfo,
-      mediaItems: MutableList<MediaItem>): ListenableFuture<MutableList<MediaItem>> {
-      val out = mediaItems.map { mi ->
-        val s = MediaTree.decId(mi.mediaId)?.let { onCarStation?.invoke(it) }
-        if (s != null && mi.localConfiguration == null) mi.buildUpon().setUri(s.u0).build() else mi
-      }
-      return Futures.immediateFuture(out.toMutableList())
+        mediaItems: MutableList<MediaItem>): ListenableFuture<MutableList<MediaItem>> {
+      val sts = CarGate.resolveAll(mediaItems.map { it.mediaId }) { u0 -> onCarStation?.invoke(u0) }
+        ?: return Futures.immediateFailedFuture(IllegalArgumentException("unknown/illegal mediaId"))
+      val out = ArrayList<MediaItem>(mediaItems.size)
+      for (i in mediaItems.indices) out.add(mediaItems[i].buildUpon().setUri(sts[i].u0).build())
+      return Futures.immediateFuture(out)
     }
   }
 

@@ -377,6 +377,15 @@ class LightUpdate(private val gh: Gh, private val filesDir: File) {
   `/api/quality` → `data/quality.json`）。**不进 `radio.*` 主 Store、不占 /api/store 2MB 配额、不进
   备份**（B4 sidecar 勾选导出另议）；与 `radio.health`（死台/停运）永不合并、聚合结果不得直接改写
   死台隐藏条件。坏文件按空库恢复。文件硬上限 2MB（`C.QUALITY_MAX_BYTES`），每台源聚合封顶 6。
+  **包装层分层（AIbot P1-2，契约 quality-summary.json `files` 节冻结）**：两侧文件包装不同——本文件
+  `{v:1,stations:…}`（纯本机）vs Web 服务端 `data/quality.json` `{v:1,rev,ops,data:…}`（rev/ops 是
+  Web 服务端并发机器）；跨端一致的是 stationRecord 内层聚合形态（双端黄金样本
+  `contracts/fixtures/quality-aggregate.json` round-trip 锁定：Web test/quality-store.js 与
+  ContractTest 同源消费）。
+- **mode 归一（AIbot P1-1）**：`recordDiagnostic`/`recordPlayback` 入口对 mode 归一永不为空
+  （`normMode`：合法枚举原样；缺失/非法按实际尝试过的 variant URL 形态兜底——m3u8→hls、其余→direct；
+  归不出即丢弃该事件，契约无 unknown 值）。Web 侧 `quality-store.js qNormMode` 同款镜像——服务端
+  `/api/quality` 枚举校验保持严格，空 mode 不再引发 409 整批丢样本。
 - **`data/QualityStore.kt`**（纯 JVM）：
   ```kotlin
   class QualityStore(dir: File, clock: () -> Long = System::currentTimeMillis, capBytes: Int = C.QUALITY_MAX_BYTES) {

@@ -169,7 +169,7 @@ const euOf = (lines, metas) => ({
     assert.strictEqual(bytesOf(root, 'radio.txt'), before);
     assert.strictEqual(r.summary.aborted, true); // 既有消费方 aborted 语义保留
   });
-  await ok('无名/无分类 > 5%：gated=true（nameless-ratio 可绕过；行本身有效不触 invalid-ratio）', async () => {
+  await ok('无分类合法行 > 5%：gated=true（nocat-ratio 独立口径可绕过；不触 nameless-ratio/invalid-ratio，AIbot P2-4）', async () => {
     const root = tmpRoot(), old = genOldLib(3, 1);
     seedRoot(root, old);
     // 节头之前的行 = 分类缺失（noCat）：行本身可解析 → valid 比例 100%，但无分类占比 83% > 5%
@@ -177,8 +177,36 @@ const euOf = (lines, metas) => ({
       '无节台四,http://a/4.mp3', '无节台五,http://a/5.mp3', '华语音乐,#genre#', '好台,http://a/6.mp3'].join('\r\n');
     const r = await U.runPipeline(() => {}, { root, floor: 0, inputs: { cn, eu: null } });
     assert.strictEqual(r.gated, true);
-    assert.ok(r.report.reasons.some(x => x.key === 'nameless-ratio' && x.bypassable));
+    assert.ok(r.report.reasons.some(x => x.key === 'nocat-ratio' && x.bypassable), '独立 nocat-ratio 键');
+    assert.ok(!r.report.reasons.some(x => x.key === 'nameless-ratio'), '无分类不再混入无名口径');
     assert.ok(!r.report.reasons.some(x => x.key === 'invalid-ratio'));
+    assert.strictEqual(r.report.cn.noCat, 5);                  // 独立计数字段（报告可分别诊断）
+    assert.strictEqual(r.report.cn.nameless, 0);
+  });
+  await ok('无名行 > 5%：nameless-ratio 独立键 + report.cn.nameless 精确计数（与 invalid-ratio 并存可分诊）', async () => {
+    const root = tmpRoot(), old = genOldLib(3, 1);
+    seedRoot(root, old);
+    // 8 行里 1 行空名 = 12.5% > 5%：空名行不入 valid（§6.4「台名非空」定义）→ invalid-ratio 同批命中（hard），
+    // nameless-ratio 照常独立上报（数量/占比分列，报告能看出 invalid 里有多少是无名行）
+    const cn = ['华语音乐,#genre#', '好台,http://a/1.mp3', '台二,http://a/2.mp3', '台三,http://a/3.mp3', '台四,http://a/4.mp3',
+      '台五,http://a/5.mp3', '台六,http://a/6.mp3', '台七,http://a/7.mp3', ',http://a/8.mp3'].join('\r\n');
+    const r = await U.runPipeline(() => {}, { root, floor: 0, inputs: { cn, eu: null } });
+    assert.ok(r.report.reasons.some(x => x.key === 'nameless-ratio' && x.bypassable), '独立 nameless-ratio 键');
+    assert.strictEqual(r.report.cn.nameless, 1);
+    assert.strictEqual(r.report.cn.noCat, 0);
+    assert.strictEqual(r.report.cn.invalid, 1);                // invalid = 无名 + 坏格式（此处全为无名）
+  });
+  await ok('重复行大量去重：deduped 如实计数、不触任何门（AIbot P2-4 补重复行门测试）', async () => {
+    const root = tmpRoot(), old = genOldLib(5, 1);
+    seedRoot(root, old);
+    const lines = ['华语音乐,#genre#'];
+    for (let i = 0; i < 6; i++) lines.push(`台${i},http://a/${i}.mp3`);
+    for (let i = 0; i < 30; i++) lines.push(`重复台${i},http://a/${i % 6}.mp3`);   // 30 行精确 URL 重复全被去重
+    const r = await U.runPipeline(() => {}, { root, floor: 0, inputs: { cn: lines.join('\r\n'), eu: null } });
+    assert.strictEqual(r.gated, false);
+    assert.strictEqual(r.hardAbort, false);
+    assert.strictEqual(r.report.reasons.length, 0);
+    assert.strictEqual(r.report.cn.deduped, 30);
   });
   await ok('欧美层 < 上次 60%：保留旧层发布（replacement=kept）、logos 不动；force 复用原料改用新层（forced）', async () => {
     const root = tmpRoot(), old = genOldLib(5, 10); // 旧欧美 10 行 → 新 1 行 < ceil(10*0.6)=6
@@ -218,6 +246,56 @@ const euOf = (lines, metas) => ({
     assert.strictEqual(st.ok, true);
     assert.strictEqual(st.restored, true);
     assert.strictEqual(fs.readFileSync(path.join(root, 'radio.txt'), 'utf8'), batch1, '恢复为上一批内容');
+  });
+  await ok('代际轮换（AIbot P1-3）：连续两次发布后 prev=上一批、prev-old=上上一批，两代都完整', async () => {
+    const root = tmpRoot(), old = genOldLib(5, 2);
+    seedRoot(root, old);
+    fs.writeFileSync(path.join(root, 'radio-meta.json'), JSON.stringify({ v: 1, generatedAt: 1, stations: {} })); // 四资产齐全：prev 代代可校验
+    const r1 = await U.runPipeline(() => {}, { root, floor: 0, inputs: { cn: FIX('sync-good.txt'), eu: null } });
+    U.publishResult(root, r1, { entry: 'test' });                                   // 第 1 次：prev = 旧库批
+    const batch1 = fs.readFileSync(path.join(root, 'radio.txt'), 'utf8');
+    const r2 = await U.runPipeline(() => {}, { root, floor: 0, inputs: { cn: FIX('sync-drop-80-percent.txt'), eu: null } });
+    U.publishResult(root, r2, { entry: 'test' });                                   // 第 2 次：prev = batch1，prev-old = 旧库批
+    const batch2 = fs.readFileSync(path.join(root, 'radio.txt'), 'utf8');
+    const prev = path.join(root, '.tmp', 'sync-prev'), prevOld = path.join(root, '.tmp', 'sync-prev-old');
+    assert.strictEqual(fs.readFileSync(path.join(prev, 'radio.txt'), 'utf8'), batch1, 'prev = 上一批');
+    assert.strictEqual(fs.readFileSync(path.join(prevOld, 'radio.txt'), 'utf8'), old, 'prev-old 保留上上一批（至少两代）');
+    for (const d of [prev, prevOld]) {                                              // 两代都完整可校验
+      const m = U.readManifestOf(d);
+      assert.ok(m && U.manifestCheckDir(d, m), d + ' 不完整');
+    }
+    assert.ok(!fs.existsSync(path.join(root, '.tmp', 'sync-prev-new')), '轮换后不留半成品 new 目录');
+    assert.notStrictEqual(batch1, batch2);
+  });
+  await ok('轮换空窗兜底：prev 缺失（两步改名间崩溃态）+ 根损坏 → bootManifest 从 prev-old 恢复', async () => {
+    const root = tmpRoot(), old = genOldLib(5, 2);
+    seedRoot(root, old);
+    fs.writeFileSync(path.join(root, 'radio-meta.json'), JSON.stringify({ v: 1, generatedAt: 1, stations: {} }));
+    const r1 = await U.runPipeline(() => {}, { root, floor: 0, inputs: { cn: FIX('sync-good.txt'), eu: null } });
+    U.publishResult(root, r1, { entry: 'test' });
+    const r2 = await U.runPipeline(() => {}, { root, floor: 0, inputs: { cn: FIX('sync-drop-80-percent.txt'), eu: null } });
+    U.publishResult(root, r2, { entry: 'test' });                                   // 两次发布后 prev=batch1、prev-old=旧库快照
+    fs.rmSync(path.join(root, '.tmp', 'sync-prev'), { recursive: true, force: true }); // 模拟「旧 prev 已改名、new 未就位」瞬时空窗
+    fs.writeFileSync(path.join(root, 'radio.txt'), 'corrupted!');                    // 根资产同时损坏
+    const st = U.bootManifest(root);
+    assert.strictEqual(st.ok, true);
+    assert.strictEqual(st.restored, true);
+    assert.strictEqual(fs.readFileSync(path.join(root, 'radio.txt'), 'utf8'), old, '从 prev-old 兜底恢复完整一代');
+  });
+  await ok('混态根（部分文件已是新批 + 旧 manifest）→ hash 不匹配恢复上一批完整生成物', async () => {
+    const root = tmpRoot(), old = genOldLib(5, 2);
+    seedRoot(root, old);
+    fs.writeFileSync(path.join(root, 'radio-meta.json'), JSON.stringify({ v: 1, generatedAt: 1, stations: {} }));
+    const r1 = await U.runPipeline(() => {}, { root, floor: 0, inputs: { cn: FIX('sync-good.txt'), eu: null } });
+    U.publishResult(root, r1, { entry: 'test' });
+    const batch1 = fs.readFileSync(path.join(root, 'radio.txt'), 'utf8');
+    const r2 = await U.runPipeline(() => {}, { root, floor: 0, inputs: { cn: FIX('sync-drop-80-percent.txt'), eu: null } });
+    const fresh = r2.arts['radio.txt'];                                              // 模拟逐文件 rename 进行到一半即崩溃：
+    fs.writeFileSync(path.join(root, 'radio.txt'), fresh);                           // radio.txt 已是新批、manifest 仍指旧批（prev=旧库批）
+    const st = U.bootManifest(root);
+    assert.strictEqual(st.ok, true);
+    assert.strictEqual(st.restored, true);
+    assert.strictEqual(fs.readFileSync(path.join(root, 'radio.txt'), 'utf8'), old, '回滚为 prev 里的上一批完整生成物');
   });
   await ok('冷启动 bootstrap：无 manifest 但四资产齐全可解析 → 写 version:bootstrap 继续', () => {
     const root = tmpRoot(), old = genOldLib(5, 2);

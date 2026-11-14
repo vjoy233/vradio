@@ -2,6 +2,12 @@
   "version": 1,
   "kind": "quality-summary",
   "description": "源质量聚合 sidecar 契约（B2）。QualityStore = 本机共享质量数据：Web HTTP 经专用 /api/quality 读写 data/quality.json，Android 写 filesDir/quality.json；不进 radio.* 主 Store。radio.health 继续只管死台/停运，两者不得合并。",
+  "files": {
+    "web": "data/quality.json = { v:1, rev:number, ops:[opId…], data:{身份URL:stationRecord} }——rev 服务端唯一发号、ops 是幂等去重日志，均为 Web 服务端并发机器，Android 侧没有这层包装",
+    "android": "filesDir/quality.json = { v:1, stations:{身份URL:stationRecord} }——纯本机文件，无 rev/ops",
+    "shared": "stationRecord 内层形态双端完全一致：{ cf:number, sources:{ 源URL:{ okCount,failCount,lastOkAt,lastFailAt,lastPlaybackAt,latSum,latN,disconnects,modes:[…],lastDiag|null,lastPlayFail|null } } }；跨端交换/导入只认这一层（Web 取 .data、Android 取 .stations 得到同一映射），rev/ops 包装层不参与跨端语义",
+    "roundTripFixture": "fixtures/quality-aggregate.json——双端以相同事件序列驱动各自 QualityStore，聚合输出必须逐字段等于 expected（Web test/quality-store.js + Android ContractTest 双端点名）"
+  },
   "aggregate": {
     "identityUrl": "string——台身份键（s.u[0]）",
     "sourceCount": "number——源数",
@@ -32,7 +38,7 @@
     "ok": "boolean",
     "latencyMs": "number",
     "bytes": "number",
-    "mode": "direct|hls|proxy",
+    "mode": "direct|hls|proxy——必填枚举，无空值/unknown；两端记录入口负责归一（缺失/非法按实际尝试过的 variant URL 形态兜底：m3u8→hls、其余→direct，归不出即不发该事件），服务端枚举校验保持严格",
     "at": "number——epoch ms"
   },
   "api": {

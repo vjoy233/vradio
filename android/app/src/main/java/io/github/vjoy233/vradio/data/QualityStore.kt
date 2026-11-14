@@ -10,8 +10,10 @@ import java.io.File
    filesDir/quality.json —— 不进 radio.* 主 Store、不占 /api/store 2MB 配额、与 radio.health
    （死台/停运）永不合并。样本来源固定四类：手动逐源诊断 / boot·sync·manual 体检通道 = diagnostic；
    真实播放成功·断流·重连·切源·失败 = playback（自动体检绝不产 playback——接线层 AppVm 保证）。
-   存储形态（Web data/quality.json 同构）：每台（键 = 身份 URL s.u[0]）→ 每源聚合值 + 最近一次诊断
-   + 最近一次播放失败（不留 5 条完整历史，字节上限是最终约束）。写失败只丢样本不影响播放。
+   存储形态分层（AIbot P1-2 修正：内层同构、包装各异，契约 quality-summary.json files 节冻结）：
+   本文件 = {v,stations}（纯本机）；Web 服务端 data/quality.json = {v,rev,ops,data}（rev/ops 是
+   Web 服务端并发机器）。**共享的是台/源内层聚合形态**：每台（键 = 身份 URL s.u[0]）→ 每源聚合值 +
+   最近一次诊断 + 最近一次播放失败（不留 5 条完整历史，字节上限是最终约束）。写失败只丢样本不影响播放。
    ⚠ 与 Web 侧聚合口径的三个拍板（CONTRACTS.md B2 节留底）：
    ① 30 天窗近似——存储只有聚合值（无逐样本时间戳），「近 30 天成功率/样本数」以 lastObservedAt
      新鲜度门控 + 全量计数器近似（行超 30 天无任何观察 → unknown）；
@@ -106,25 +108,41 @@ class QualityStore(private val dir: File, private val clock: () -> Long = System
 
   /* ---------- 样本记录 ---------- */
 
-  /** 体检/逐源诊断样本（trigger = manual|boot|sync）。at 用 DiagnosticResult.checkedAt（真实采样时刻）。 */
+  /** mode 归一（AIbot P1-1，契约 opEvent.mode 必填枚举 direct|hls|proxy）：缺失/非法按实际尝试过的
+   *  variant URL 形态兜底（m3u8 → hls、其余 → direct——耗尽/断流等空 mode 路径也尝试过具体 variant）；
+   *  连 URL 都没有返回 null（调用方丢弃该事件——契约无 unknown 值，不发不造假）。与 Web qNormMode 镜像。 */
+  private fun normMode(mode: String, url: String): String? = when (mode) {
+    "direct", "hls", "proxy" -> mode
+    else -> when {
+      url.isEmpty() -> null
+      RE_HLS.containsMatchIn(url) -> "hls"
+      else -> "direct"
+    }
+  }
+
+  /** 体检/逐源诊断样本（trigger = manual|boot|sync）。at 用 DiagnosticResult.checkedAt（真实采样时刻）。
+   *  mode 归一永不为空（AIbot P1-1：诊断结果缺 mode 按源 URL 形态兜底，归不出即丢事件不造假）。 */
   @Synchronized
   fun recordDiagnostic(identityUrl: String, r: DiagnosticResult, trigger: String) {
     if (identityUrl.isEmpty() || r.url.isEmpty()) return
+    val mode = normMode(r.mode, r.url) ?: return
     val (q, s) = sourceOf(identityUrl, r.url) ?: return
-    apply(q, s, trigger, r.ok, r.latencyMs, r.mode, r.checkedAt, diagnostic = true)
+    apply(q, s, trigger, r.ok, r.latencyMs, mode, r.checkedAt, diagnostic = true)
     s.lastDiag = QEvent(trigger, r.ok, r.checkedAt, r.latencyMs)
     trim(keepHint); save()
   }
 
   /** 真实播放样本（trigger = play|watchdog|switch|error）。断流类（error/watchdog）计 disconnects。
-   *  自动体检绝不走这里（接线层约束，样本分流测试兜底）。latencyMs≤0 不进延迟均值。 */
+   *  自动体检绝不走这里（接线层约束，样本分流测试兜底）。latencyMs≤0 不进延迟均值。
+   *  mode 归一永不为空（AIbot P1-1：AppVm 旧状态/Media3 事件回流等空 mode 路径按源 URL 形态兜底）。 */
   @Synchronized
   fun recordPlayback(identityUrl: String, sourceUrl: String, ok: Boolean, latencyMs: Long,
                      mode: String, trigger: String) {
     if (identityUrl.isEmpty() || sourceUrl.isEmpty()) return
+    val m = normMode(mode, sourceUrl) ?: return
     val (q, s) = sourceOf(identityUrl, sourceUrl) ?: return
     val at = clock()
-    apply(q, s, trigger, ok, latencyMs, mode, at, diagnostic = false)
+    apply(q, s, trigger, ok, latencyMs, m, at, diagnostic = false)
     if (!ok) s.lastPlayFail = QEvent(trigger, ok, at, latencyMs)
     trim(keepHint); save()
   }

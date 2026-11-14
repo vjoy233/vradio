@@ -3,7 +3,9 @@
    rev 服务端唯一发号）；file:// 或后端不可用降级 localStorage（键 'quality.local'，~200KB 丢最旧台）。
    **不进 radio.* 主 Store、不占 /api/store 2MB 配额、不进备份**；与 radio.health（死台/停运）永不合并，
    聚合结果不得直接改写死台隐藏条件（契约硬点）。
-   存储形态（与 Android filesDir/quality.json 同构，双方互为语义镜像）：每台（键 = 身份 URL s.u[0]）→
+   存储形态分层（AIbot P1-2 修正：内层同构、包装各异，契约 files 节冻结）：本文件/服务端 data/quality.json
+   = {v,rev,ops,data}（rev/ops 是 Web 服务端并发机器），Android filesDir/quality.json = {v,stations}（纯本机）；
+   **共享的是台/源内层聚合形态**：每台（键 = 身份 URL s.u[0]）→
    {cf, sources:{源URL:{okCount,failCount,lastOkAt,lastFailAt,lastPlaybackAt,latSum,latN,disconnects,
    modes[],lastDiag,lastPlayFail}}}——仅聚合值 + 最近一次诊断 + 最近一次播放失败，不留完整历史。
    ⚠ 与 Android 侧冻结的四个口径（android/CONTRACTS.md B2 节留档，实现逐条对齐）：
@@ -30,6 +32,17 @@ const QCAPS = {
   goodRate: 0.8, goodLat: 2500, goodCf: 3, fairRate: 0.5,
 };
 const Q_RE_HLS = /\.m3u8?(\?|$)/i; // 直流形态判定（与 CheckStream/getSourceState 同款）
+
+/* ---------- 纯函数：mode 归一（AIbot P1-1，契约 opEvent.mode 必填枚举） ----------
+   服务端 /api/quality 对 mode 严格枚举校验（direct|hls|proxy，Q_MODES 不动），空/非法 mode 会 409 整批
+   丢样本——所有质量事件入口在此归一：缺失/非法时按「实际尝试过的 variant URL 形态」兜底（m3u8 → hls、
+   其余 → direct；级联耗尽/断流等拿不到引擎 mode 的路径也必然尝试过具体 variant）；连 URL 都没有才返回
+   空串（调用方丢弃该事件——契约无 unknown 值，不发不造假）。 */
+function qNormMode(mode, url) {
+  if (mode === 'direct' || mode === 'hls' || mode === 'proxy') return mode;
+  if (!url) return '';
+  return /\.m3u8?(\?|$)/i.test(url) ? 'hls' : 'direct';
+}
 
 /* ---------- 纯函数：op 事件应用（server.js qCommit 与客户端共用） ---------- */
 /* op = 契约 opEvent {id,identityUrl,sourceUrl,kind,trigger,ok,latencyMs,bytes,mode,at}；
@@ -194,19 +207,25 @@ const QualityStore = {
 
   nextId() { return this.sid + ':' + Date.now() + ':' + (++this.seq); },
   emit(op) { qApplyOp(this.stations, op); this.pend.push(op); if (this.pend.length > 256) this.pend.splice(0, this.pend.length - 256); this.save(); },
-  /* 手动逐源诊断 / 体检通道样本（trigger = manual|boot|sync）。result = checkDetail 结构（at 用 checkedAt 真实采样时刻） */
+  /* 手动逐源诊断 / 体检通道样本（trigger = manual|boot|sync）。result = checkDetail 结构（at 用 checkedAt 真实采样时刻）。
+     mode 经 qNormMode 归一永不为空（AIbot P1-1：诊断结果缺 mode 按源 URL 形态兜底，归不出即丢事件不造假） */
   recordDiagnostic(identityUrl, result, trigger) {
     if (!identityUrl || !result || !result.url) return;
+    const mode = qNormMode(result.mode, result.url);
+    if (!mode) return;
     this.emit({ id: this.nextId(), identityUrl, sourceUrl: result.url, kind: 'diagnostic',
       trigger, ok: !!result.ok, latencyMs: result.latencyMs || 0, bytes: result.bytes || 0,
-      mode: result.mode || '', at: result.checkedAt || Date.now() });
+      mode, at: result.checkedAt || Date.now() });
   },
-  /* 真实播放样本（trigger = play|watchdog|switch|error；断流类 error/watchdog 计 disconnects——app.js 映射） */
+  /* 真实播放样本（trigger = play|watchdog|switch|error；断流类 error/watchdog 计 disconnects——app.js 映射）。
+     mode 经 qNormMode 归一永不为空（AIbot P1-1：耗尽/断流等空 mode 路径按实际尝试的 variant 形态兜底） */
   recordPlayback(identityUrl, ev) {
     if (!identityUrl || !ev || !ev.sourceUrl) return;
+    const mode = qNormMode(ev.mode, ev.sourceUrl);
+    if (!mode) return;
     this.emit({ id: this.nextId(), identityUrl, sourceUrl: ev.sourceUrl, kind: 'playback',
       trigger: ev.trigger, ok: !!ev.ok, latencyMs: ev.latencyMs || 0, bytes: 0,
-      mode: ev.mode || '', at: ev.at || Date.now() });
+      mode, at: ev.at || Date.now() });
   },
 
   sizeOf() { try { return JSON.stringify({ v: 1, stations: this.stations }).length; } catch (_) { return 0; } },
@@ -237,4 +256,4 @@ const QualityStore = {
   },
 };
 if (typeof window !== 'undefined') window.QualityStore = QualityStore;
-if (typeof module !== 'undefined') module.exports = { QualityStore, QCAPS, qApplyOp, qTrim, qSummary, qStability };
+if (typeof module !== 'undefined') module.exports = { QualityStore, QCAPS, qNormMode, qApplyOp, qTrim, qSummary, qStability };

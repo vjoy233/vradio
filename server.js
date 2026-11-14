@@ -136,8 +136,9 @@ function storeWrite(data) {
 // 不作整段覆盖条件、版本落后不拒绝合并；仅 schema 错误/单批超限/无法合并（含 2MB 硬上限）返回 409。
 // rev 服务端唯一发号（成功应用 ≥1 条才 +1，纯去重命中不动号）。安全边界复用 store 口径：跨源拒绝、
 // 请求体/单批操作数封顶、tmp+rename + 串行队列、坏文件按空库恢复。
-// B2 落地：聚合应用走 quality-store.js 纯函数 qApplyOp（每台 {cf, sources:{源URL:{聚合值…}}} 形态，与
-// Android filesDir/quality.json 同构）；keep = 客户端随批附带的收藏+最近保护集（≤64 条 http(s) URL），
+// B2 落地：聚合应用走 quality-store.js 纯函数 qApplyOp（每台 {cf, sources:{源URL:{聚合值…}}} 内层形态与
+// Android filesDir/quality.json 一致；本文件包装 = {v,rev,ops,data}、Android = {v,stations}，契约 files 节冻结）；
+// keep = 客户端随批附带的收藏+最近保护集（≤64 条 http(s) URL），
 // trim 时保留——B2 临场设计（契约 trimOrder 的保护集服务端落地）。trim 下钻序见 quality-store.js。 ----------
 const QUALITY_FILE = path.join(DATA_DIR, 'quality.json');
 const Q_MAX = 2 * 1024 * 1024, Q_OPS_MAX = 32, Q_BODY_MAX = 256 * 1024, Q_OPLOG = 512;

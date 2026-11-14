@@ -478,7 +478,10 @@ function buildRadioMeta(merged, prevMeta, cnCands, euLines, now, upstreamDefault
 }
 
 /* ---------- 发布协议（§13.3 逐字）：临时目录生成全资产 + SHA-256 → 备份上一批 → 替换根生成物 →
-   manifest 最后提交。多文件 rename 在 Windows 非事务，靠 manifest 提交标记 + 启动校验回退兜底 ---------- */
+   manifest 最后提交。多文件 rename 在 Windows 非事务，靠 manifest 提交标记 + 启动校验回退兜底。
+   回滚副本代际轮换（AIbot P1-3）：新副本先整写整验到 .tmp/sync-prev-new，再两步改名切换
+   （旧 prev → sync-prev-old、new → prev）——任何时刻至少存在一代完整上一批（两步改名间的瞬时空窗由
+   prev-old 兜底，bootManifest 回退顺序 prev → prev-old）；prev-old 保留到下一次轮换才被替换 ---------- */
 const sha256Buf = buf => crypto.createHash('sha256').update(buf).digest('hex');
 function publishSync(root, arts, opt = {}) {
   for (const name of SYNC_ASSETS) if (typeof arts[name] !== 'string') throw new Error('生成物不全：' + name); // 质量门最后一条：全成才替换
@@ -491,16 +494,29 @@ function publishSync(root, arts, opt = {}) {
   });
   const manifest = { version: opt.version || String(ts), generatedAt: ts, files };
   fs.writeFileSync(path.join(tmpDir, 'sync-manifest.json'), JSON.stringify(manifest, null, 2));
-  const prevDir = path.join(tmpBase, 'sync-prev'); // 上一批回滚副本（发布前不得删除；至少保留当前+上一批）
-  try { fs.rmSync(prevDir, { recursive: true, force: true }); } catch (_) {}
-  fs.mkdirSync(prevDir, { recursive: true });
-  for (const name of [...SYNC_ASSETS, 'sync-manifest.json'])
-    if (fs.existsSync(path.join(root, name))) fs.copyFileSync(path.join(root, name), path.join(prevDir, name));
+  // 上一批回滚副本：先写临时代并整体验证（不碰现行 prev）。副本 manifest：root manifest 有效则原样携带
+  //（描述的就是这批资产）；否则（首发布/存量仓库无 manifest）按副本资产现算一份，保证副本自描述可恢复
+  const prevDir = path.join(tmpBase, 'sync-prev'), prevNew = path.join(tmpBase, 'sync-prev-new'), prevOld = path.join(tmpBase, 'sync-prev-old');
+  try { fs.rmSync(prevNew, { recursive: true, force: true }); } catch (_) {} // 上次崩溃残留的半成品先清（现行 prev 不受影响）
+  fs.mkdirSync(prevNew, { recursive: true });
+  for (const name of SYNC_ASSETS)
+    if (fs.existsSync(path.join(root, name))) fs.copyFileSync(path.join(root, name), path.join(prevNew, name));
+  const rootM = readManifestOf(root), carryM = rootM && manifestCheckDir(root, rootM);
+  const prevFiles = SYNC_ASSETS.filter(n => fs.existsSync(path.join(prevNew, n)))
+    .map(n => { const buf = fs.readFileSync(path.join(prevNew, n)); return { path: n, bytes: buf.length, sha256: sha256Buf(buf) }; });
+  fs.writeFileSync(path.join(prevNew, 'sync-manifest.json'),
+    JSON.stringify(carryM ? rootM : { version: 'prev-' + ts, generatedAt: ts, files: prevFiles }, null, 2));
+  const nm = readManifestOf(prevNew);
+  if (SYNC_ASSETS.every(n => fs.existsSync(path.join(root, n))) && (!nm || !manifestCheckDir(prevNew, nm)))
+    throw new Error('回滚副本写校验失败，中止发布（现行上一批副本未动）'); // 资产齐全的仓库副本必须可校验；过渡态（缺资产）尽力快照不强拦
+  try { fs.rmSync(prevOld, { recursive: true, force: true }); } catch (_) {} // 清上次轮换的旧代（此刻起以 prev-new 为最新完整代）
+  if (fs.existsSync(prevDir)) fs.renameSync(prevDir, prevOld); // Windows rename 目标须不存在：先旧→old，再 new→prev
+  fs.renameSync(prevNew, prevDir);
   for (const name of SYNC_ASSETS) fs.renameSync(path.join(tmpDir, name), path.join(root, name)); // tmp 与根同卷，逐文件 rename
   fs.writeFileSync(path.join(root, 'sync-manifest.json.tmp'), JSON.stringify(manifest, null, 2));
   fs.renameSync(path.join(root, 'sync-manifest.json.tmp'), path.join(root, 'sync-manifest.json')); // manifest 最后提交
   for (const d of fs.readdirSync(tmpBase).filter(x => /^sync-\d/.test(x) && x !== path.basename(tmpDir)))
-    try { fs.rmSync(path.join(tmpBase, d), { recursive: true, force: true }); } catch (_) {} // 清理过老临时目录
+    try { fs.rmSync(path.join(tmpBase, d), { recursive: true, force: true }); } catch (_) {} // 清理过老临时目录（prev/prev-old 不匹配 /^sync-\d/，不受影响）
   return manifest;
 }
 function readManifestOf(dir) {
@@ -533,7 +549,8 @@ function assetsComplete(root) { // 四资产齐全且可解析（bootstrap 门�
   return true;
 }
 /* 启动校验（server.js 调用）：无 manifest 且四资产齐全 → bootstrap 继续；缺资产 → 不静默混态（ok:false 供前端 toast）；
-   manifest 校验失败 → 恢复 .tmp/sync-prev 上一批完整生成物与 manifest */
+   manifest 校验失败 → 恢复上一批完整生成物与 manifest（回退顺序 .tmp/sync-prev → .tmp/sync-prev-old——
+   代际轮换两步改名间的瞬时空窗/恢复中途再次失败都有完整一代可兜底，AIbot P1-3） */
 function bootManifest(root, log = () => {}) {
   const missing = SYNC_ASSETS.filter(f => !fs.existsSync(path.join(root, f)));
   const m = readManifestOf(root);
@@ -543,14 +560,15 @@ function bootManifest(root, log = () => {}) {
   }
   if (manifestCheckDir(root, m)) return { ok: true, version: m.version };
   log('sync-manifest.json 校验失败（缺文件/哈希不匹配），尝试恢复上一批生成物');
-  const prevDir = path.join(root, '.tmp', 'sync-prev');
-  const pm = readManifestOf(prevDir);
-  if (pm && manifestCheckDir(prevDir, pm)) {
+  for (const prevName of ['sync-prev', 'sync-prev-old']) {
+    const prevDir = path.join(root, '.tmp', prevName);
+    const pm = readManifestOf(prevDir);
+    if (!(pm && manifestCheckDir(prevDir, pm))) continue;
     try {
       for (const f of pm.files) fs.copyFileSync(path.join(prevDir, f.path), path.join(root, f.path));
       fs.copyFileSync(path.join(prevDir, 'sync-manifest.json'), path.join(root, 'sync-manifest.json'));
       const m2 = readManifestOf(root);
-      if (m2 && manifestCheckDir(root, m2)) { log('已恢复上一批完整生成物与 manifest'); return { ok: true, version: m2.version, restored: true }; }
+      if (m2 && manifestCheckDir(root, m2)) { log(`已从 ${prevName} 恢复上一批完整生成物与 manifest`); return { ok: true, version: m2.version, restored: true }; }
     } catch (e) { log('恢复失败：' + (e.message || e)); }
   }
   return { ok: false, missing, corrupt: true };
@@ -641,16 +659,19 @@ async function runPipeline(log = () => {}, opt = {}) {
     if (body.length) merged.push(`${cat},#genre#`, ...body);
   }
   const after = countEntries(merged);
-  report.cn = { total: stats.total, valid: stats.valid, invalid: sum.invalid, deduped: sum.deduped, keptLocal: cnText == null };
+  report.cn = { total: stats.total, valid: stats.valid, invalid: sum.invalid, nameless: stats.nameless, noCat: stats.noCat, deduped: sum.deduped, keptLocal: cnText == null }; // nameless/noCat 独立字段（AIbot P2-4 分别诊断）
   report.eu = { oldCore: oldEuCore, newCore: newEuCore, kept: !!res.euKeptDecision || !euLines };
 
   // 4) 替换前质量门（§6.4 六条）。格式/安全类（invalid-ratio/min-total/meta-too-large）不可强制；
-  //    数量下降/分类缩水类决策门（total-drop/no-categories/nameless-ratio/eu-collapse）可强制绕过
+  //    数量下降/分类缩水类决策门（total-drop/no-categories/nameless-ratio/nocat-ratio/eu-collapse）可强制绕过。
+  //    无名/无分类拆两条独立口径（AIbot P2-4）：无名行不入 valid（计入 invalid 分母，§6.4「台名非空」定义），
+  //    无分类行本身合法（valid++）只归 nocat-ratio——报告可分别诊断，不再合并一个键
   if (stats.total && stats.valid / stats.total < GATE_CN_VALID)
     reason('invalid-ratio', `国内格式有效行 ${(100 * stats.valid / stats.total).toFixed(1)}% 低于 95%`, false);
-  const nameless = stats.nameless + stats.noCat;
-  if (stats.total && nameless / stats.total > GATE_NAMELESS)
-    reason('nameless-ratio', `无名/无分类项 ${(100 * nameless / stats.total).toFixed(1)}% 超过 5%`, true);
+  if (stats.total && stats.nameless / stats.total > GATE_NAMELESS)
+    reason('nameless-ratio', `无名项 ${stats.nameless} 行，占 ${(100 * stats.nameless / stats.total).toFixed(1)}% 超过 5%`, true);
+  if (stats.total && stats.noCat / stats.total > GATE_NAMELESS)
+    reason('nocat-ratio', `无分类项 ${stats.noCat} 行（节头之前的合法行），占 ${(100 * stats.noCat / stats.total).toFixed(1)}% 超过 5%`, true);
   if (!merged.some(l => l.endsWith('#genre#'))) reason('no-categories', '候选分类数为 0', true);
   if (before > 0 && after < Math.floor(before * GATE_DROP))
     reason('total-drop', `总台数 ${before} → ${after}（降超 20%）`, true);
@@ -809,12 +830,16 @@ if (require.main === module) {
       .catch(e => { console.error('台标生成失败:', e); process.exit(1); });
   } else if (argv.includes('--init-meta')) {
     try { initMeta(); } catch (e) { console.error('资产补齐失败:', e); process.exit(1); }
-  } else if (argv.includes('--check-only')) { // 只生成候选质量报告，不覆盖正式数据
+  } else if (argv.includes('--check-only')) { // 只生成候选质量报告，不覆盖正式数据——联网报告入口（AIbot P2-5）：
+    // 会拉取 GitHub 上游并对欧美台逐个真实探活（与全量同步同一 runPipeline），非离线校验；
+    // 离线纯函数/门路径测试走 test/sources.js 的 opt.inputs 注入，不经本入口
+    console.log('[vradio] --check-only：联网报告入口（依赖 GitHub 上游 + 欧美台逐个真实探活，非离线校验；离线测试见 npm test 的 test/sources.js 注入路径）');
     runPipeline(m => console.log('[vradio]', m)).then(r => {
       console.log(JSON.stringify(r.report, null, 2));
       if (r.hardAbort || r.gated) process.exitCode = 1;
     }).catch(e => { console.error('同步失败:', e); process.exit(1); });
-  } else if (argv.includes('--report')) { // 写 data/last-sync-report.json（可丢失运行时报告），不发布
+  } else if (argv.includes('--report')) { // 写 data/last-sync-report.json（可丢失运行时报告），不发布——同 --check-only 为联网入口
+    console.log('[vradio] --report：联网报告入口（依赖 GitHub 上游 + 欧美台逐个真实探活，非离线校验）');
     runPipeline(m => console.log('[vradio]', m)).then(r => {
       const p = writeSyncReport(ROOT, r.report);
       console.log('[vradio] 报告已写入 ' + p);

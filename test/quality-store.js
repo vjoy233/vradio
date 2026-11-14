@@ -4,7 +4,7 @@
 // qTrim 下钻淘汰序 + keep 保护集、QualityStore 本地 op 构建/rebase 重放（ops 重试不重复计数）。
 // Node 直跑：quality-store.js 双兼容（经典 script + CommonJS），浏览器 API 全在函数体内守卫。
 const assert = require('assert');
-const { QualityStore, QCAPS, qApplyOp, qTrim, qSummary, qStability } = require('../quality-store');
+const { QualityStore, QCAPS, qNormMode, qApplyOp, qTrim, qSummary, qStability } = require('../quality-store');
 
 let pass = 0, fail = 0;
 const ok = (name, fn) => Promise.resolve().then(fn).then(
@@ -168,6 +168,57 @@ const newStations = () => ({});
     const merged = Q.rebase(base);                         // pull 后本地视图 = base + pend 重放一次
     assert.strictEqual(merged[ID].sources[ID].okCount, 3);
     assert.strictEqual(Q.pend.length, 2);                  // 未确认 ops 保留（重试由服务端 op.id 幂等兜底）
+  });
+
+  console.log('[6] mode 归一（AIbot P1-1：契约 opEvent.mode 必填枚举，入口永不为空防 /api/quality 409 整批丢样本）');
+  const newQ = () => { const Q = Object.create(QualityStore); Q.mode = 'local'; Q.stations = {}; Q.pend = []; Q.keepHint = []; Q.seq = 0; Q.sid = 'tabz'; return Q; };
+  await ok('qNormMode：合法枚举原样；缺失/非法按 variant URL 形态兜底（m3u8→hls、其余→direct）；无 URL 归不出', () => {
+    assert.strictEqual(qNormMode('direct', ''), 'direct');
+    assert.strictEqual(qNormMode('proxy', 'http://x/1.m3u8'), 'proxy');
+    assert.strictEqual(qNormMode('', 'http://x/1.m3u8'), 'hls');
+    assert.strictEqual(qNormMode('', 'http://x/1.mp3'), 'direct');
+    assert.strictEqual(qNormMode('weird', 'http://x/live'), 'direct');
+    assert.strictEqual(qNormMode('', ''), '', '连 URL 都没有 → 空串（调用方丢弃事件，不造假 unknown）');
+  });
+  await ok('recordPlayback 耗尽路径形态（mode 空、trigger=error、ok=false）→ op.mode 非空', () => {
+    const Q = newQ();
+    Q.recordPlayback('https://ex.example/live', { sourceUrl: 'https://ex.example/live/64.mp3', ok: false, latencyMs: 0, mode: '', trigger: 'error' });
+    assert.strictEqual(Q.pend.length, 1);
+    assert.strictEqual(Q.pend[0].mode, 'direct');            // 实际尝试过的 variant 形态兜底
+    assert.strictEqual(Q.pend[0].kind, 'playback');
+  });
+  await ok('recordPlayback 断流（m3u8 源 + Media3/旧状态空 mode）→ 归一 hls；非法串同样归一', () => {
+    const Q = newQ();
+    Q.recordPlayback('https://ex.example/h', { sourceUrl: 'https://ex.example/h/index.m3u8', ok: false, mode: '', trigger: 'watchdog' });
+    Q.recordPlayback('https://ex.example/h', { sourceUrl: 'https://ex.example/h/index.m3u8', ok: true, mode: 'unknown', trigger: 'switch' });
+    assert.deepStrictEqual(Q.pend.map(o => o.mode), ['hls', 'hls']);
+  });
+  await ok('recordDiagnostic 诊断结果缺 mode → 按源 URL 形态归一；无 URL 事件丢弃', () => {
+    const Q = newQ();
+    Q.recordDiagnostic('https://ex.example/d', { url: 'https://ex.example/d/a.m3u8', ok: true, latencyMs: 100, checkedAt: 1 }, 'boot');
+    Q.recordDiagnostic('https://ex.example/d', { url: '', ok: true }, 'boot');
+    assert.strictEqual(Q.pend.length, 1);
+    assert.strictEqual(Q.pend[0].mode, 'hls');
+    assert.strictEqual(Q.pend[0].trigger, 'boot');
+  });
+  await ok('归一后所有 op 的 mode 都在服务端枚举内（Q_MODES 严格校验的直接前置）', () => {
+    const Q = newQ();
+    Q.recordDiagnostic('https://a.example/x', { url: 'https://a.example/x.mp3', ok: true, mode: '', checkedAt: 2 }, 'manual');
+    Q.recordPlayback('https://a.example/x', { sourceUrl: 'https://a.example/x.mp3', ok: false, mode: undefined, trigger: 'error' });
+    Q.recordPlayback('https://a.example/x', { sourceUrl: 'https://a.example/y.m3u8?t=1', ok: true, mode: null, trigger: 'play' });
+    for (const o of Q.pend) assert.ok(['direct', 'hls', 'proxy'].includes(o.mode), 'mode 非枚举值：' + o.mode);
+  });
+
+  console.log('[7] 双端聚合黄金样本 round-trip（AIbot P1-2：contracts/fixtures/quality-aggregate.json，Android ContractTest 同源消费）');
+  await ok('fixture 事件序列驱动 qApplyOp → qSummary 逐字段等于 expected（包装层各异、内层一致）', () => {
+    const fx = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '..', 'contracts', 'fixtures', 'quality-aggregate.json'), 'utf8'));
+    const stations = {};
+    for (const e of fx.events)
+      qApplyOp(stations, { id: 'fx:' + e.at, identityUrl: fx.identityUrl, sourceUrl: e.sourceUrl, kind: e.kind,
+        trigger: e.trigger, ok: e.ok, latencyMs: e.latencyMs, bytes: e.bytes, mode: e.mode, at: e.at });
+    const qa = qSummary(stations, fx.identityUrl, null, fx.expected.lastObservedAt);
+    assert.notStrictEqual(qa, null);
+    assert.deepStrictEqual(qa, fx.expected);
   });
 
   console.log(`\n${pass} 通过，${fail} 失败`);

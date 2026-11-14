@@ -37,6 +37,7 @@ const Player = {
   qLastSi: -1,      // 上次到达 playing 的源序号（同台换源到达 = switch、同源重连到达 = play）
   qDown: false,     // 本次离开 playing 已发过 disconnect（防 watchdog→重连失败→级联双计一次断流）
   qEmittedT0: 0,    // 已发过 playing 事件的 load 锚（resume 不经 load，重复 playing 不采样）
+  qLastMode: '',    // 最近一次装载 variant 的 mode（AIbot P1-1：curPlay 已清的耗尽善后边界兜底，onqos 的 mode 永不为空）
 
   init(el, vol0) {
     this.audio = el; this.vol = this.gvol = vol0; el.volume = vol0;
@@ -200,6 +201,7 @@ const Player = {
     if (this.halt && this.pctx.i > 0) { this.heldNext = true; return; }
     const cur = urls[this.pctx.i++];
     this.curSi = cur.si; this.curPlay = cur.u; this.retried = false;
+    this.qLastMode = cur.u.startsWith('/proxy') ? 'proxy' : (/\.m3u8(\?|$)/i.test(cur.u) ? 'hls' : 'direct'); // B2：记最近尝试 variant 的 mode（耗尽事件兜底）
     this.connecting = this.station; this.emit(true); // 换源重试期间保持连接中指示
     this.say('连接中… 源' + this.pctx.i + '/' + urls.length);
     this.load(cur.u, () => { if (my === this.token) this.next(); });
@@ -311,7 +313,11 @@ const Player = {
      口径与 Android 冻结一致：CONNECTING→PLAYING = 成功（首达/同源重连 play、同台换源到达 switch）；
      PLAYING→CONNECTING = 断流（同源重连 watchdog / 级联换源 error，均计 disconnects，一次断流只计一次）；
      级联耗尽 = error。resume 不经 load 不采样；暂停态不是断流（sessionPlayed 随 pause 清零）。 */
-  qosMode() { return this.curPlay ? (this.curPlay.startsWith('/proxy') ? 'proxy' : (/\.m3u8(\?|$)/i.test(this.curPlay) ? 'hls' : 'direct')) : ''; },
+  qosMode() { // curPlay 已清（耗尽善后/边界态）用最近尝试过的 variant mode 兜底——级联耗尽也尝试过具体 variant，
+    // 契约 opEvent.mode 必填枚举不允许空（AIbot P1-1；QualityStore.qNormMode 是第二道网）
+    if (this.curPlay) return this.curPlay.startsWith('/proxy') ? 'proxy' : (/\.m3u8(\?|$)/i.test(this.curPlay) ? 'hls' : 'direct');
+    return this.qLastMode;
+  },
   qosPlaying() {
     if (!this.onqos || !this.station) return;
     if (this.qEmittedT0 === this.loadT0) return; // resume/重复 playing：非新建流不采样

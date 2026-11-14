@@ -1,8 +1,9 @@
 // 质量 sidecar API 测试（B0 骨架 + B2 聚合形态，契约 contracts/quality-summary.json）：真服务端到端——
 // 方法校验、跨源拒绝、rev 发号/条件获取（notModified）、op.id 幂等（重试不重复计数）、
 // 多标签同 baseRev 并发合流、keep 保护集附带（B2 trim 落地）、schema/批量上限 409、损坏文件按空库恢复；
-// /api/myradio 行清洗与封顶。B2 起服务端聚合走 quality-store.js 纯函数（每台 {cf, sources:{源URL:{…}}}，
-// 与 Android filesDir/quality.json 同构）；纯函数单测见 test/quality-store.js。
+// 耗尽/断流路径空 mode 事件经客户端入口归一后不再 409（AIbot P1-1）、服务端枚举保持严格。
+// /api/myradio 行清洗与封顶。B2 起服务端聚合走 quality-store.js 纯函数（每台 {cf, sources:{源URL:{…}}}
+// 内层形态与 Android 一致；包装层 {v,rev,ops,data} vs {v,stations} 见契约 files 节）；纯函数单测见 test/quality-store.js。
 // 用户数据保护（同 smoke 口径）：my-radio.txt 与 data/quality.json 先备份 .smokebak，跑完还原现场。
 const assert = require('assert'), http = require('http'), net = require('net'), fs = require('fs'), path = require('path');
 const { spawn } = require('child_process');
@@ -104,6 +105,20 @@ const op = (id, ok, at, extra = {}) => Object.assign({
     await ok('schema 违规 op → 409（kind 不合法）', async () => {
       const r = await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ baseRev: 0, ops: [op('t9', true, 1, { kind: 'vacuum' })] }));
       assert.strictEqual(r.status, 409);
+    });
+    await ok('耗尽/断流路径空 mode 事件经客户端入口归一后不再 409（AIbot P1-1；服务端枚举保持严格）', async () => {
+      const { QualityStore } = require('../quality-store');
+      const Q = Object.create(QualityStore); Q.mode = 'local'; Q.stations = {}; Q.pend = []; Q.keepHint = []; Q.seq = 0; Q.sid = 'tq';
+      // 真实播放失败路径形态（app.js qosMap exhaust/disconnect 分支）：引擎 mode 拿不到 → 空
+      Q.recordPlayback('https://ex.example/live', { sourceUrl: 'https://ex.example/live/64.mp3', ok: false, latencyMs: 0, mode: '', trigger: 'error' });
+      Q.recordPlayback('https://ex.example/live', { sourceUrl: 'https://ex.example/live/index.m3u8', ok: false, latencyMs: 0, mode: '', trigger: 'watchdog' });
+      assert.strictEqual(Q.pend.length, 2);
+      assert.deepStrictEqual(Q.pend.map(o => o.mode), ['direct', 'hls']);   // 按实际尝试的 variant 形态兜底
+      const r = await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ baseRev: 0, ops: Q.pend }));
+      assert.strictEqual(r.status, 200);                                    // 归一后整批合入（旧版此处 409 丢样本）
+      assert.strictEqual(JSON.parse(r.body).applied, 2);
+      const r2 = await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ baseRev: 0, ops: [op('tbad', true, 1, { mode: '' })] }));
+      assert.strictEqual(r2.status, 409, '裸空 mode op 仍被服务端拒（契约枚举不动，无 unknown）');
     });
     await ok('单批 33 条 → 409（批量上限）', async () => {
       const ops = Array.from({ length: 33 }, (_, i) => op(`bx${i}`, true, 4000 + i));

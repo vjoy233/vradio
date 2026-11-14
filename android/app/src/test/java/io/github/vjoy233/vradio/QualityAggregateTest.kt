@@ -163,6 +163,30 @@ class QualityAggregateTest {
     assertEquals("fair", s.stability)                                   // 率 9/13≈0.69、cf=2 → fair
   }
 
+  /* ---------- mode 归一（AIbot P1-1：入口永不为空——耗尽/旧状态/Media3 事件回流的空 mode 按实际尝试的 variant 形态兜底） ---------- */
+
+  @Test fun mode空值按URL形态兜底() { // 级联耗尽 error 事件 mode=""（旧状态/异常路径）也能落样本
+    val q = store()
+    q.recordPlayback("http://a/1", "http://a/1/64.mp3", false, 0, "", "error")      // 直流 URL → direct
+    q.recordPlayback("http://a/2", "http://a/2/index.m3u8", false, 0, "", "watchdog") // m3u8 → hls
+    assertEquals("icy", q.summary("http://a/1")!!.metadata)     // 观测 modes = {direct}（归一后非空）
+    assertEquals("none", q.summary("http://a/2")!!.metadata)    // 观测 modes = {hls}
+  }
+
+  @Test fun mode非法串同样归一且proxy原样() {
+    val q = store()
+    q.recordPlayback("http://a/1", "http://a/1.mp3", true, 100, "weird", "play")    // 非枚举 → 按形态
+    q.recordPlayback("http://a/2", "http://a/2.mp3", true, 100, "proxy", "play")    // 合法枚举原样
+    assertEquals("icy", q.summary("http://a/1")!!.metadata)
+    assertEquals("none", q.summary("http://a/2")!!.metadata)    // proxy 并入非 icy 侧
+  }
+
+  @Test fun 诊断缺mode归一落样本() {
+    val q = store()
+    q.recordDiagnostic("http://a/1", DiagnosticResult("http://a/1.m3u8", true, "OK", true, "", 200, "", 9000, 300, "", now), "manual")
+    assertEquals("none", q.summary("http://a/1")!!.metadata)    // 空 mode → m3u8 形态 → hls
+  }
+
   /* ---------- trim 契约淘汰序 ---------- */
 
   @Test fun trim淘汰序非保护集最久未访问先走() {

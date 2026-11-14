@@ -90,4 +90,22 @@ for (const f of ['backup-v2.json', 'backup-v3.json']) {
   }
 }
 
+// 双端质量聚合黄金样本形状冻结（AIbot P1-2：round-trip 驱动在 test/quality-store.js 与 Android ContractTest，
+// 此处只验形态——events 覆盖契约 opEvent 必填枚举、expected 覆盖 aggregate 全字段、files 节双包装描述在位）
+{
+  const qc = JSON.parse(fs.readFileSync('contracts/quality-summary.json', 'utf8'));
+  assert.ok(qc.files && qc.files.web.includes('{ v:1, rev') && qc.files.android.includes('{ v:1, stations'),
+    'quality-summary 缺 files 双包装形态描述（Web {v,rev,ops,data} vs Android {v,stations}）');
+  const fx = JSON.parse(fs.readFileSync('contracts/fixtures/quality-aggregate.json', 'utf8'));
+  assert.ok(Array.isArray(fx.events) && fx.events.length >= 5, 'quality-aggregate 样本不足');
+  const kinds = new Set(['diagnostic', 'playback']), modes = new Set(['direct', 'hls', 'proxy']);
+  for (const e of fx.events) {
+    for (const k of ['kind', 'trigger', 'sourceUrl', 'ok', 'latencyMs', 'bytes', 'mode', 'at'])
+      assert.ok(k in e, `quality-aggregate 事件缺 ${k}`);
+    assert.ok(kinds.has(e.kind) && modes.has(e.mode), `quality-aggregate 事件枚举越界：${e.kind}/${e.mode}`);
+  }
+  for (const k of Object.keys(qc.aggregate))
+    assert.ok(k in fx.expected, `quality-aggregate expected 缺聚合字段 ${k}`);
+}
+
 console.log(`contract keys OK: ${expected.length}（web/server/android 三侧一致；excluded ${spec.excluded.length}）`);

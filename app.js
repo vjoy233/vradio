@@ -74,20 +74,30 @@ const App = {
     let c; try { c = JSON.parse(Store.get('radio.cfg') || 'null'); } catch (_) { c = null; }
     this.cfg = this.normCfg(c);
   },
-  normCfg(c) { // 结构校验/补齐（导入的 JSON 也走这里，坏形状回退空配置）
-    c = c && typeof c === 'object' && !Array.isArray(c) ? c : {};
-    for (const k of ['moves', 'names', 'tag']) c[k] = this.normStrMap(c[k]);                      // URL → 字符串
-    c.renames = this.normStrMap(c.renames, true);                                                // 分类名 → 分类名（键非 URL，不做 URL 过滤）
+  normCfg(c) { // 结构校验/补齐（导入的 JSON 也走这里，坏形状回退空配置）。v2（B0）：无 v 视为 v1 走迁移，
+    // 未知字段忽略（只保留已知字段集），坏结构在调用方回退空配置
+    c = this.migrateCfgV1(c);
+    const o = { v: 2 };
+    for (const k of ['moves', 'names', 'tag']) o[k] = this.normStrMap(c[k]);                      // URL → 字符串
+    o.renames = this.normStrMap(c.renames, true);                                                // 分类名 → 分类名（键非 URL，不做 URL 过滤）
     const urlKeys = m => Object.fromEntries(Object.entries(m).filter(([k]) => /^https?:\/\//.test(k)));
-    c.hideS = c.hideS && typeof c.hideS === 'object' ? urlKeys(c.hideS) : {};                   // URL → 1（手藏电台）
+    o.hideS = c.hideS && typeof c.hideS === 'object' ? urlKeys(c.hideS) : {};                   // URL → 1（手藏电台）
     // 追加备选源（P1-a/r2 ⑨）：URL → [追加源 URL…]。条数 6 / 单条 512 封顶对齐 mystation 护栏口径；只追加不动身份
     const urlArrMap = m => { const o = {}; for (const [k, v] of Object.entries(m || {})) if (/^https?:\/\//.test(k) && Array.isArray(v)) { const a = [...new Set(v.map(x => String(x).trim().slice(0, 512)).filter(x => /^https?:\/\//.test(x)))].slice(0, 6); if (a.length) o[k.trim()] = a; } return o; };
-    c.srcs = urlArrMap(c.srcs);
+    o.srcs = urlArrMap(c.srcs);
+    // 源生命周期三字段（B0 契约冻结，B1 接线播放/体检/详情语义）：人工顺序只生成运行时顺序不物理重排 s.u[]；
+    // 禁用表结构同款（URL → 被禁源列表）；标签只改展示。键/元素清洗与 srcs 同口径
+    o.srcManualOrder = urlArrMap(c.srcManualOrder);
+    o.srcDisabled = urlArrMap(c.srcDisabled);
+    o.srcLabels = this.normStrMap(c.srcLabels);
     const strKeys = m => Object.fromEntries(Object.entries(m).filter(([k, v]) => typeof k === 'string' && k.trim() && v !== null && v !== false));
-    c.hideC = c.hideC && typeof c.hideC === 'object' ? strKeys(c.hideC) : {};                   // 分类名 → 1（藏分类）
-    if (!Array.isArray(c.cats)) c.cats = [];
-    c.cats = [...new Set(c.cats.filter(x => typeof x === 'string' && x.trim() && !x.includes('|')).map(x => x.trim()))];
-    return c;
+    o.hideC = c.hideC && typeof c.hideC === 'object' ? strKeys(c.hideC) : {};                   // 分类名 → 1（藏分类）
+    o.cats = Array.isArray(c.cats) ? [...new Set(c.cats.filter(x => typeof x === 'string' && x.trim() && !x.includes('|')).map(x => x.trim()))] : [];
+    return o;
+  },
+  migrateCfgV1(c) { // v1（无 v 字段）→ v2：字段集合兼容、仅补版本语义，原样透传给 normCfg 清洗；未知字段随 normCfg 丢弃
+    if (!c || typeof c !== 'object' || Array.isArray(c)) return {};
+    return c.v === undefined ? Object.assign({}, c, { v: 2 }) : c;
   },
   normStrMap(m, anyKey) { const o = {}; for (const [k, v] of Object.entries(m || {})) if (typeof v === 'string' && v.trim() && (anyKey || /^https?:\/\//.test(k))) o[k.trim()] = v.trim(); return o; },
   saveCfg() { Store.set('radio.cfg', JSON.stringify(this.cfg)); },
@@ -903,7 +913,7 @@ const App = {
   },
 
   /* —— 配置导入导出（owner 拍板：只含维护层；收藏另有 m3u 导出）—— */
-  cfgCount(c) { return Object.keys(c.moves).length + Object.keys(c.names).length + Object.keys(c.hideS).length + Object.keys(c.renames).length + Object.keys(c.hideC).length + Object.keys(c.srcs).length + c.cats.length; },
+  cfgCount(c) { return Object.keys(c.moves).length + Object.keys(c.names).length + Object.keys(c.hideS).length + Object.keys(c.renames).length + Object.keys(c.hideC).length + Object.keys(c.srcs).length + Object.keys(c.srcManualOrder).length + Object.keys(c.srcDisabled).length + Object.keys(c.srcLabels).length + c.cats.length; },
   exportCfg() {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify({ v: 1, cfg: this.cfg }, null, 2)], { type: 'application/json' }));
@@ -937,11 +947,22 @@ const App = {
     if (!d) { alert('导入失败：不是 vradio 完整备份文件'); return; }
     const n = Store.KEYS.filter(k => typeof d[k] === 'string').length;
     if (!n) { alert('导入失败：备份中无有效数据'); return; }
-    if (!confirm(`导入将覆盖本地全部数据（备份含 ${n} 个数据项：收藏/维护配置/健康标记/歌曲历史全部替换）。继续？`)) return;
+    // 版本映射（B0 契约）：v1 无 my 不动 my-radio.txt；v2 读取 my 数组（含空数组 = 恢复为空）
+    const ver = j.v | 0 || 1;
+    const my = ver >= 2 && Array.isArray(j.my) ? j.my.filter(x => typeof x === 'string' && x.trim()) : null;
+    const myNote = my ? `、个人电台 ${my.filter(l => !l.endsWith('#genre#')).length} 台` : '';
+    if (!confirm(`导入将覆盖本地全部数据（备份 v${ver}，含 ${n} 个数据项${myNote}：收藏/维护配置/健康标记/歌曲历史全部替换）。继续？`)) return;
     for (const k of Store.KEYS) { if (typeof d[k] === 'string') localStorage.setItem(k, d[k]); else localStorage.removeItem(k); } // 白名单键直接落镜像（原生写）
     Store.flush(); // 推后端（http 形态）；file:// 下 no-op
+    if (my) this.restoreMyRadio(my); // v2 起带个人电台行（async 失败仅提示，不回滚 Store——预览/事务三阶段在 B4 v3 落地）
     this.applyServerStore();
     $('status').textContent = '已恢复完整备份';
+  },
+  restoreMyRadio(lines) { // v2+ 备份的 my-radio.txt 恢复（B0 最小实现：http 形态经 /api/myradio 全量替换；file:// 无个人文件概念仅提示）
+    if (!location.protocol.startsWith('http')) { $('status').textContent = '已恢复完整备份（file:// 形态无法恢复个人电台列表）'; return; }
+    fetch('/api/myradio', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lines }) })
+      .then(r => r.json()).then(r => { if (!r.ok) $('status').textContent = `已恢复完整备份（个人电台恢复失败：${r.error || '写入失败'}）`; })
+      .catch(() => { $('status').textContent = '已恢复完整备份（个人电台恢复失败：网络错误）'; });
   },
 
   boot() {

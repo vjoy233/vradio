@@ -1,0 +1,20 @@
+{
+  "v": 2,
+  "at": 1731500000000,
+  "data": {
+    "radio.favs": "[{\"k\":\"华语音乐|示例台\",\"u\":[\"https://main.example/live\"]}]",
+    "radio.recents": "[{\"k\":\"华语音乐|示例台\",\"n\":\"示例台\",\"u\":[\"https://main.example/live\"]}]",
+    "radio.health": "{\"https://dead.example/live\":{\"u\":[\"https://dead.example/live\"],\"t\":1731400000000,\"t0\":1731300000000,\"n\":2,\"perm\":0}}",
+    "radio.cfg": "{\"v\":2,\"moves\":{},\"names\":{},\"tag\":{},\"renames\":{},\"hideS\":{},\"hideC\":{},\"srcs\":{},\"srcManualOrder\":{},\"srcDisabled\":{},\"srcLabels\":{},\"cats\":[]}",
+    "radio.songs": "{\"https://main.example/live\":[{\"t\":\"示例歌 - 示例曲\",\"at\":1731490000000}]}",
+    "radio.volperst": "{\"https://main.example/live\":80}",
+    "radio.srcmem2": "{\"https://main.example/live\":{\"i\":0,\"t\":1731490000000}}",
+    "radio.vol": "90",
+    "radio.view": "grid",
+    "radio.showdead": "0",
+    "radio.theme": "auto",
+    "radio.baseline": "done",
+    "radio.baselineProg": "[]"
+  },
+  "my": ["自建,#genre#", "我的电台,https://example.test/live"]
+}

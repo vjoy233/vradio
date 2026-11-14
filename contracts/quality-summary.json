@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "kind": "quality-summary",
+  "description": "源质量聚合 sidecar 契约（B2）。QualityStore = 本机共享质量数据：Web HTTP 经专用 /api/quality 读写 data/quality.json，Android 写 filesDir/quality.json；不进 radio.* 主 Store。radio.health 继续只管死台/停运，两者不得合并。",
+  "aggregate": {
+    "identityUrl": "string——台身份键（s.u[0]）",
+    "sourceCount": "number——源数",
+    "directCount": "number——直流形态源数",
+    "okCount": "number——成功样本数（诊断+播放）",
+    "failCount": "number——失败样本数",
+    "lastOkAt": "number——最近一次成功 epoch ms（无样本=0）",
+    "lastFailAt": "number——最近一次失败 epoch ms（无样本=0）",
+    "lastPlaybackAt": "number——最近一次真实播放 epoch ms（无样本=0）",
+    "lastObservedAt": "number——派生字段 = max(lastOkAt, lastFailAt, lastPlaybackAt)；发现页只能用本字段，不得引入别名",
+    "avgLatencyMs": "number——成功样本平均延迟",
+    "disconnects": "number——断流次数（playback 事件 error/watchdog 类）",
+    "metadata": "icy|none|mixed——曲讯可得性",
+    "stability": "good|fair|poor|unknown——见 stabilityRules"
+  },
+  "stabilityRules": {
+    "good": "近 30 天成功率 >= 0.8 且平均延迟 < 2500ms 且连续失败 < 3",
+    "fair": "近 30 天成功率 >= 0.5（不满足 good）",
+    "poor": "成功率 < 0.5 或连续失败 >= 3",
+    "unknown": "样本少于 3 次"
+  },
+  "opEvent": {
+    "id": "string——幂等键（客户端标签页:时间戳:序号 形态；只用于服务端去重，不得暴露到发现页/备份）",
+    "identityUrl": "string——http(s)",
+    "sourceUrl": "string——http(s)",
+    "kind": "diagnostic|playback——自动体检只产 diagnostic，不得伪装播放成功",
+    "trigger": "manual|boot|sync|play|watchdog|switch|error",
+    "ok": "boolean",
+    "latencyMs": "number",
+    "bytes": "number",
+    "mode": "direct|hls|proxy",
+    "at": "number——epoch ms"
+  },
+  "api": {
+    "GET /api/quality?rev=<optional>": "{ rev, data } 或命中当前版本 { rev, notModified: true }（不重复传输全量）",
+    "POST /api/quality": "body { baseRev, ops:[opEvent…] } → { ok, rev, applied }；baseRev 只是客户端观测版本不作覆盖条件；同一 op.id 已处理则跳过（重试/多标签不重复计数）；仅 schema 错误、单批操作数/字节数超限或无法合并返回 409"
+  },
+  "caps": {
+    "fileHardLimit": "2MB——去重记录与聚合数据一起受此约束",
+    "sourcesPerStation": 6,
+    "trimOrder": "非收藏且非最近播放台 → 最久未访问台 → 源历史较多者 → 最旧诊断；同时间戳按 identityUrl 字典序打破平局"
+  }
+}

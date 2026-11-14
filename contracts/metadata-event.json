@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "kind": "metadata-event",
+  "description": "曲讯统一事件契约（B3-A）。播放层始终发出兼容格式事件；feature flag metadataV2Enabled 关闭时走 LegacyMetadataSink（保留现状曲讯/icy-br/MediaSession/radio.songs），开启时走 MetadataV2Sink——两者不得同时写历史。",
+  "event": {
+    "stationIdentityUrl": "string——台身份键（世代校验用）",
+    "title": "string——清洗后的完整显示文本",
+    "artist": "string——可选拆分；拆分失败为空串",
+    "track": "string——可选拆分；拆分失败 = title",
+    "program": "string——节目名（无则空串）",
+    "bitrateKbps": "number——icy-br；无 = 0",
+    "source": "icy|none|…——曲讯来源",
+    "at": "number——epoch ms",
+    "confidence": "parsed|stream——artist 拆出 = parsed，否则 stream"
+  },
+  "normalizeRules": [
+    "清理空白；支持半角/全角连接号（' - ' 与全角形态）",
+    "去除重复台名前缀",
+    "空曲讯不覆盖有效曲名",
+    "切台/刷新/全部失败先清空旧曲讯再接受新世代事件（防旧连接串台）",
+    "短时间重复曲名不重复入史",
+    "HLS 无 ICY 保持空曲讯，不猜歌名"
+  ],
+  "eventOrder": "校验 identityUrl/世代 token → 清洗 → 丢弃过旧事件 → 更新当前曲讯 → 与上一曲比较 → 必要时写 radio.songs → 更新 MediaSession/UI",
+  "sinks": {
+    "legacy": "现状行为：当前曲讯显示、icy-br、MediaSession、radio.songs（格式不变）",
+    "v2": "规范化后的新消费（统计/发现页派生），由 metadataV2Enabled 控制"
+  },
+  "featureFlag": "metadataV2Enabled"
+}

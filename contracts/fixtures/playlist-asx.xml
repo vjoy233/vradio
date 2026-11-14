@@ -1,0 +1,11 @@
+<ASX version="3.0">
+  <TITLE>示例列表</TITLE>
+  <ENTRY>
+    <TITLE>示例电台一</TITLE>
+    <REF HREF="https://music.example.test/live1.mp3" />
+  </ENTRY>
+  <ENTRY>
+    <TITLE>News Radio</TITLE>
+    <REF HREF="https://news.example.test/live2.aac" />
+  </ENTRY>
+</ASX>

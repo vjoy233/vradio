@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "kind": "radio-keys",
+  "description": "radio.* 持久键三侧白名单契约（Web store.js KEYS = server.js STORE_KEYS = Android Consts.kt C.KEYS）。新增/删除键必须三侧同步并更新本文件（B0 拍板：本轮仍为 13 键）。excluded 中的键不入主源（可重建/自身状态）。",
+  "keys": {
+    "radio.favs": { "type": "json", "backup": true },
+    "radio.recents": { "type": "json", "backup": true },
+    "radio.health": { "type": "json", "backup": true },
+    "radio.cfg": { "type": "json", "backup": true },
+    "radio.songs": { "type": "json", "backup": true },
+    "radio.volperst": { "type": "json", "backup": true },
+    "radio.srcmem2": { "type": "json", "backup": true },
+    "radio.vol": { "type": "string", "backup": true },
+    "radio.view": { "type": "string", "backup": true },
+    "radio.showdead": { "type": "string", "backup": true },
+    "radio.theme": { "type": "string", "backup": true },
+    "radio.baseline": { "type": "string", "backup": true },
+    "radio.baselineProg": { "type": "string", "backup": true }
+  },
+  "excluded": ["radio.logos", "radio.storeDirty"],
+  "storageClasses": {
+    "radio.*": "Web/Android 共同消费、需主 Store 仲裁的用户状态；只允许本文件 keys 列出的键",
+    "sidecar": "质量(quality.json)/诊断历史/收听统计(listen-stats.json)/可选备份 sidecar——不进 /api/store、不占 2MB 主源配额",
+    "runtime-cache": "台标缓存/Widget 快照/时移环形缓冲——可丢失可重建，不进 v3 默认备份"
+  }
+}

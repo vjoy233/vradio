@@ -20,8 +20,10 @@ data class Station(
   val u0: String get() = u[0]
 }
 
-/** radio.cfg 清洗后的形态（normCfg 同语义：URL 键过滤 + 条数/长度封顶）。 */
+/** radio.cfg 清洗后的形态（normCfg 同语义：URL 键过滤 + 条数/长度封顶）。v2（B0）：新增源生命周期三字段
+ *  ——人工顺序只生成运行时顺序不物理重排 u[]；禁用表语义在播放/体检层（B1 接线）；标签只改展示。 */
 data class Cfg(
+  val v: Int = 2,                                    // 配置版本（无 v = v1，迁移见 CfgCodec.parse）
   val moves: Map<String, String> = emptyMap(),        // URL → 移动到分类
   val names: Map<String, String> = emptyMap(),        // URL → 重命名
   val tag: Map<String, String> = emptyMap(),          // URL → 原名快照（失配清单用）
@@ -29,6 +31,9 @@ data class Cfg(
   val hideS: Map<String, Boolean> = emptyMap(),       // URL → 手动隐藏电台
   val hideC: Map<String, Boolean> = emptyMap(),       // 分类名 → 隐藏分类
   val srcs: Map<String, List<String>> = emptyMap(),   // URL → 追加备选源（每台封顶 6 条）
+  val srcManualOrder: Map<String, List<String>> = emptyMap(), // URL → 人工源顺序（元素同 srcs 清洗；不重排 u[]）
+  val srcDisabled: Map<String, List<String>> = emptyMap(),   // URL → 被禁源列表（播放与自动探活都跳过）
+  val srcLabels: Map<String, String> = emptyMap(),    // 源 URL → 展示标签
   val cats: List<String> = emptyList(),               // 自建分类
 )
 

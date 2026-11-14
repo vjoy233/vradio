@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "kind": "metadata-golden",
+  "description": "MetadataNormalizer 黄金样本（B3-A 双端一致）：normalizeMetadata(in.raw, in.ctx) 必须逐字段等于 out。连接号口径：半/全角连接号（- － — –）前后带空格均视为 artist/track 分隔。",
+  "cases": [
+    {
+      "name": "半角连接号拆分",
+      "in": { "raw": { "title": "Artist - Title", "program": "", "bitrateKbps": 128, "source": "icy", "at": 1731500000000 }, "ctx": { "identityUrl": "https://main.example/live" } },
+      "out": { "stationIdentityUrl": "https://main.example/live", "title": "Artist - Title", "artist": "Artist", "track": "Title", "program": "", "bitrateKbps": 128, "source": "icy", "confidence": "parsed", "at": 1731500000000 }
+    },
+    {
+      "name": "全角连接号拆分",
+      "in": { "raw": { "title": "周杰伦 － 晴天", "bitrateKbps": 0, "source": "icy", "at": 1731500001000 }, "ctx": { "identityUrl": "https://main.example/live" } },
+      "out": { "stationIdentityUrl": "https://main.example/live", "title": "周杰伦 － 晴天", "artist": "周杰伦", "track": "晴天", "program": "", "bitrateKbps": 0, "source": "icy", "confidence": "parsed", "at": 1731500001000 }
+    },
+    {
+      "name": "无分隔整段为曲名",
+      "in": { "raw": { "title": "整段就是歌名", "bitrateKbps": 64, "source": "icy", "at": 1731500002000 }, "ctx": { "identityUrl": "https://main.example/live" } },
+      "out": { "stationIdentityUrl": "https://main.example/live", "title": "整段就是歌名", "artist": "", "track": "整段就是歌名", "program": "", "bitrateKbps": 64, "source": "icy", "confidence": "stream", "at": 1731500002000 }
+    },
+    {
+      "name": "空白清理（前后空 + 连续空格）",
+      "in": { "raw": { "title": "  Artist  -  Title  ", "bitrateKbps": 0, "source": "icy", "at": 1731500003000 }, "ctx": { "identityUrl": "https://main.example/live" } },
+      "out": { "stationIdentityUrl": "https://main.example/live", "title": "Artist - Title", "artist": "Artist", "track": "Title", "program": "", "bitrateKbps": 0, "source": "icy", "confidence": "parsed", "at": 1731500003000 }
+    },
+    {
+      "name": "重复台名前缀去除（ctx 带 stationName）",
+      "in": { "raw": { "title": "动感101 - 动感101 - 歌名", "bitrateKbps": 0, "source": "icy", "at": 1731500004000 }, "ctx": { "identityUrl": "https://main.example/live", "stationName": "动感101" } },
+      "out": { "stationIdentityUrl": "https://main.example/live", "title": "动感101 - 歌名", "artist": "动感101", "track": "歌名", "program": "", "bitrateKbps": 0, "source": "icy", "confidence": "parsed", "at": 1731500004000 }
+    },
+    {
+      "name": "空曲讯（不覆盖语义由管线保证，本样本只冻结空产出形态）",
+      "in": { "raw": { "title": "", "bitrateKbps": 0, "source": "none", "at": 1731500005000 }, "ctx": { "identityUrl": "https://main.example/live" } },
+      "out": { "stationIdentityUrl": "https://main.example/live", "title": "", "artist": "", "track": "", "program": "", "bitrateKbps": 0, "source": "none", "confidence": "stream", "at": 1731500005000 }
+    },
+    {
+      "name": "电台名 - 歌名（常见前缀形态，无重复不误删）",
+      "in": { "raw": { "title": "News FM - Headline", "bitrateKbps": 96, "source": "icy", "at": 1731500006000 }, "ctx": { "identityUrl": "https://news.example/live", "stationName": "别的台" } },
+      "out": { "stationIdentityUrl": "https://news.example/live", "title": "News FM - Headline", "artist": "News FM", "track": "Headline", "program": "", "bitrateKbps": 96, "source": "icy", "confidence": "parsed", "at": 1731500006000 }
+    }
+  ]
+}

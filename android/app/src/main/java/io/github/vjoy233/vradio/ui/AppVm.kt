@@ -26,9 +26,9 @@ import io.github.vjoy233.vradio.data.HttpText
 import io.github.vjoy233.vradio.data.Library
 import io.github.vjoy233.vradio.data.Logos
 import io.github.vjoy233.vradio.data.MyRadio
+import io.github.vjoy233.vradio.data.PlaylistParser
 import io.github.vjoy233.vradio.data.QualityStore
-import io.github.vjoy233.vradio.data.RadioTxt
-import io.github.vjoy233.vradio.data.SafeTarget
+import io.github.vjoy233.vradio.data.RadioTxtimport io.github.vjoy233.vradio.data.SafeTarget
 import io.github.vjoy233.vradio.data.Store
 import io.github.vjoy233.vradio.check.OkHttpRaw
 import io.github.vjoy233.vradio.data.OkHttpText
@@ -143,6 +143,9 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   enum class Imp { BACKUP, M3U, CFG }
   enum class Exp { BACKUP, M3U, SONGS, CFG }
+  /** B4 歌单导入确认载荷：hits=库内命中台（确认后恢复收藏，N2 语义）；extra=库外新台（确认后批量入 my-radio）。
+   *  确认前零副作用（B4：取消=无副作用），四桶计数 dup/invalid 随行进完成态文案 */
+  data class PlaylistImp(val hits: List<Station>, val extra: List<Station>, val dup: Int, val invalid: Int, val fmt: String)
 
   private val toastCh = Channel<String>(Channel.BUFFERED)
   val toasts: Flow<String> = toastCh.receiveAsFlow()
@@ -1075,27 +1078,25 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
           pendingImp = Imp.BACKUP to p
           confirmReq.value = "导入将覆盖本地全部数据（备份含 $n 个数据项：收藏/维护配置/健康标记/歌曲历史全部替换）。继续？"
         }
-        Imp.M3U -> {                                                      // N2 泛导入：任意 m3u——库内/已知 URL 恢复收藏态；库外台收集→确认后入 my-radio
-          val list = runCatching { RadioTxt.parse(text) }.getOrDefault(emptyList())
-          if (list.isEmpty()) { toast("导入失败：未解析到任何电台"); return@launch }
-          // 分流须先于收藏变异（AIbot P1-1：原顺序逐台全量收藏会把库外 URL 也写进 favs，known 随之
-          // 遮蔽一切，extra 恒空、入库确认分支永不可达）；收藏按库内解析命中批量入内存，
-          // 收尾 rebind 一次落盘（AIbot P2-5：免逐台「全量序列化+全量写盘」的主线程 O(N²)）
-          val (added, extra) = withContext(Dispatchers.Main) {
-            val (hits, ex) = runCatching { lib.partitionImport(list) }
-              .getOrDefault(emptyList<Station>() to emptyList())
-            var n = 0
-            for (hit in hits) if (!runCatching { lib.isFav(hit) }.getOrDefault(false)) {
-              runCatching { lib.favs.add(FavEntry(hit.key, hit.u.take(6))) }; n++
-            }
-            runCatching { lib.rebind() }                                  // AIbot P3：导入后立即回绑（改名台休眠条目不等下次 reload 自愈）+ 收藏增量一次写齐
-            stamp.value++
-            n to ex
+        Imp.M3U -> {                                                      // B4 歌单导入：m3u/pls/xspf/asx/纯 URL 统一解析（PlaylistParser，
+                                                                          // 纯本地不联网探活）→ 四桶预览（新增/已知/重复/非法）→ 确认后已知台恢复收藏（N2 语义）+ 新台入 my-radio
+          val r = runCatching { PlaylistParser.parse(text) }.getOrNull()
+          if (r == null || (r.entries.isEmpty() && r.invalid == 0 && r.dups == 0)) {
+            toast("导入失败：未解析到任何电台（识别为 ${r?.format ?: "未知"} 格式）"); return@launch
           }
-          updateShortcuts()
-          if (extra.isEmpty()) { toast("已恢复收藏：新增收藏 $added 个（其余已在收藏中）"); return@launch }
-          pendingImp = Imp.M3U to extra
-          confirmReq.value = "库内恢复收藏 $added 个。另有 ${extra.size} 个库外电台，是否写入自定义电台（my-radio.txt）？"
+          // 分流纯决策不变异（AIbot P1-1：收藏变异必须后置到确认——B4 取消=零副作用；原顺序逐台全量收藏会把
+          // 库外 URL 写进 favs，known 随之遮蔽一切、extra 恒空）；库内命中→favHits，库外台→extra 待确认入 my-radio
+          val sts = r.entries.map { Station(it.category, it.name, mutableListOf(it.url)) }
+          val (hits, extra) = withContext(Dispatchers.Main) {
+            runCatching { lib.partitionImport(sts) }
+              .getOrDefault(emptyList<Station>() to emptyList())
+          }
+          val known = r.entries.size - extra.size
+          pendingImp = Imp.M3U to PlaylistImp(hits, extra, r.dups, r.invalid, r.format)
+          confirmReq.value = "识别为 ${r.format} 格式，共 ${r.entries.size} 条：新增 ${extra.size}、已知 $known（将恢复收藏）、" +
+            "文件内重复 ${r.dups}、地址不合法 ${r.invalid}。\n" +
+            (if (extra.isEmpty()) "没有新电台需要写入。是否恢复已知电台的收藏？"
+             else "新增电台将写入个人列表 my-radio.txt（自带查重/清洗/封顶），导入后建议跑一次「体检」。继续？")
         }
         Imp.CFG -> {
           val j = runCatching { JSONObject(text) }.getOrNull()
@@ -1132,12 +1133,21 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         when (p.first) {
           Imp.BACKUP -> {
             val pay = p.second as Backup.ImportPayload
+            // 三阶段纪律（B4，§13.2）：提交前快照 Store 当前值 + my-radio 原文本，任一步失败回滚现场
+            val snap = Store.snapshot()
+            val myOld = myRadio.readText()
             var myOk = true
             withContext(Dispatchers.IO) {
               Store.applyAll(pay.data)                                    // 白名单键写入/缺键 remove
-              pay.my?.let { myOk = runCatching { myRadio.replace(it.joinToString("\n")) }.getOrDefault(false) }   // v2 含 my-radio（v1 无则不动）
+              pay.my?.let { myOk = runCatching { myRadio.replace(it.joinToString("\n")) }.getOrDefault(false) }   // v1 无 my 不动；v2 读 my；v3 读 myRadio
+              if (!myOk) {                                                // 回滚：Store 与 my-radio 双恢复（不允许 Store 已恢复而文件半恢复）
+                Store.applyAll(snap)
+                runCatching { myRadio.replace(myOld) }
+              }
               lib.myText = myRadio.readText()
             }
+            if (!myOk) { toast("导入失败：个人电台恢复超限（500 行/64KB），已回滚到导入前状态"); return@launch }
+            // pay.quality（v3 sidecar）：B2 前无消费方——parseImport 已校验留存，此处不落盘（B4 收尾报告注明）
             // AIbot P1-2：Store 已被整体替换，三层内存态必须显式刷新——缺一层 = 重启才生效，
             // 且播放层旧 volperst/srcmem 内存会在下次调音量/换源时整体回写冲掉刚导入的值（数据损坏向）
             lib.reloadStore()                                             // 收藏/最近/健康标记/cfg 内存重载
@@ -1147,19 +1157,29 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
             refreshUi3()
             stamp.value++; primeAll()
             updateShortcuts()                                             // E3：收藏已整体替换，快捷方式重建
-            toast(if (myOk) "已恢复完整备份" else "已恢复完整备份（my-radio 超限未恢复：500 行/64KB）")   // AIbot P3：超限失败明示不静默
+            toast("已恢复完整备份（v${pay.ver}）" + (if (pay.quality != null) "，含质量 sidecar（本版已校验留存、暂不落盘）" else ""))
           }
-          Imp.M3U -> {                                                    // N2：库外台批量入 my-radio（append 自带查重/清洗/封顶/SafeTarget）
-            @Suppress("UNCHECKED_CAST") val extra = p.second as List<Station>
+          Imp.M3U -> {                                                    // B4 四桶确认后执行：已知台恢复收藏（N2 语义）+ 新台批量入 my-radio
+            val p2 = p.second as PlaylistImp                              // （append 自带查重/清洗/SafeTarget/封顶）
+            var n = 0
+            withContext(Dispatchers.Main) {
+              for (hit in p2.hits) if (!runCatching { lib.isFav(hit) }.getOrDefault(false)) {
+                runCatching { lib.favs.add(FavEntry(hit.key, hit.u.take(6))) }; n++
+              }
+              runCatching { lib.rebind() }                                // 回绑 + 收藏增量一次写齐（AIbot P2-5/P3：改名台休眠条目不等下次 reload 自愈）
+              stamp.value++
+            }
+            updateShortcuts()                                             // E3：收藏可能新增，快捷方式刷新
             var ok = 0; var skip = 0
             withContext(Dispatchers.IO) {
-              for (s in extra) {
+              for (s in p2.extra) {
                 if (runCatching { myRadio.append(s.n, s.c, s.u0) }.getOrDefault(false)) ok++ else skip++
               }
               if (ok > 0) lib.myText = myRadio.readText()
             }
             if (ok > 0) { lib.reload(); stamp.value++; primeAll() }
-            toast("已写入自定义电台 $ok 个" + (if (skip > 0) "，跳过 $skip 个（重复/封顶/地址不合规）" else ""))
+            toast((if (n > 0) "已恢复收藏 $n 个。" else "") + "已写入自定义电台 $ok 个" +
+              (if (skip > 0) "，跳过 $skip 个（重复/封顶/地址不合规）" else "") + "——可到设置跑一次体检验证")
           }
           Imp.CFG -> {
             val c = p.second as Cfg

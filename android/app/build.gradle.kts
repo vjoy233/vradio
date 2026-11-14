@@ -79,6 +79,9 @@ dependencies {
   // —— 测试（纯 JVM，秒级离线口径对齐 test/smoke.js）——
   testImplementation("junit:junit:4.13.2")
   testImplementation("org.json:json:20250107") // android.jar 里的 org.json 是抛异常桩，纯 JVM 单测须挂真实现
+  // 同理（B4）：android.jar 的 org.xmlpull.v1.XmlPullParserFactory 也是抛异常桩——data/PlaylistParser.kt 的
+  // XML 解析在单测环境须挂真实现（kxml2 = Android 平台内置的同一解析器，设备运行时用平台实现不进 APK）
+  testImplementation("net.sf.kxml:kxml2:2.3.0")
 }
 
 // —— 数据文件打包：仓库根 radio.txt/logos.txt（update-sources.js 产出的单一数据源）→ assets，随行写 data-stamp.txt

@@ -9,21 +9,33 @@ import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-/* 导入导出五件套（对标 app.js exportFavs/exportSongs/exportCfg/exportAll/importAll；备份 v2 = 13 键快照 + my-radio 行数组，D11）。
-   v2 的 my 行 = my-radio.txt 原始行（不含结尾空行）；导入 v1（无 my 字段）不动 my-radio.txt。 */
+/* 导入导出五件套（对标 app.js exportFavs/exportSongs/exportCfg/exportAll/importAll）。
+   备份 v3（r4/B4，契约 contracts/backup-v3.schema.json）：{format:"vradio-backup",version:3,createdAt,app,
+   data:13键快照, myRadio:my-radio.txt 原始行, extensions:{}}；导出统一 v3；导入兼容 v1（无 my 不动 my-radio.txt）/
+   v2（读 my 数组）/v3（读 myRadio + extensions.sidecars.quality 解析校验留存——B2 前无消费方，暂不落盘）。
+   版本映射与 Web backup.js（BackupV3.read）同构；黄金样本 contracts/fixtures/backup-v2.json、backup-v3.json 双端一致消费。 */
 object Backup {
 
-  /* 导入恢复载荷：data = 白名单过滤后的 13 键快照；my = null 表示 v1 无 my 字段 */
-  data class ImportPayload(val data: Map<String, String>, val my: List<String>?)
+  /* 导入恢复载荷：data = 白名单过滤后的 13 键快照；my = null 表示该版本不带个人电台字段（v1，或 v2/v3 字段
+     缺失）→ 不动 my-radio.txt；quality = v3 extensions.sidecars.quality（已裁剪，B2 前仅校验留存） */
+  data class ImportPayload(
+    val ver: Int,                        // 1|2|3（预览文案用）
+    val data: Map<String, String>,
+    val my: List<String>?,
+    val quality: JSONObject? = null,     // {v:1, data:{…迁移字段}}
+  )
 
   fun exportAll(lib: Library, myText: String, at: Long): String {
     val o = JSONObject()
-    o.put("v", 2)
-    o.put("at", at)
+    o.put("format", "vradio-backup")
+    o.put("version", 3)
+    o.put("createdAt", at)
+    o.put("app", "android")
     val d = JSONObject()
     for ((k, v) in lib.store.snapshot()) d.put(k, v)
     o.put("data", d)
-    o.put("my", JSONArray(myLines(myText)))
+    o.put("myRadio", JSONArray(myLines(myText)))
+    o.put("extensions", JSONObject()) // 质量侧 Android 生产方在 B2（QualityStore）——落地前恒空，listenStats B3 同理
     return o.toString(2)
   }
 
@@ -37,9 +49,57 @@ object Backup {
       if (v is String) data[k] = v // typeof string 才收（app.js importAll 同判）
     }
     if (data.isEmpty()) return null // 备份中无有效数据
-    val m = j.optJSONArray("my")
-    val my = if (m == null) null else (0 until m.length()).mapNotNull { i -> m.opt(i) as? String }
-    return ImportPayload(data, my)
+    // 版本映射固定（B0 契约）：v1 无 my；v2 读 my；v3 读 myRadio（app 字段忽略差异）；字段缺失按不动处理
+    val ver = when {
+      j.optInt("version", 0) == 3 || j.optInt("v", 0) == 3 -> 3
+      j.optInt("v", 0) == 2 -> 2
+      else -> 1
+    }
+    val src = when (ver) { 3 -> j.optJSONArray("myRadio"); 2 -> j.optJSONArray("my"); else -> null }
+    val my = if (src == null) null else (0 until src.length()).mapNotNull { i -> src.opt(i) as? String }
+    // v3 extensions.sidecars.quality：解析校验留存（B2 前无消费方不落盘）；listenStats/未知扩展忽略不失败
+    var quality: JSONObject? = null
+    if (ver == 3) {
+      val qd = j.optJSONObject("extensions")?.optJSONObject("sidecars")?.optJSONObject("quality")?.optJSONObject("data")
+      if (qd != null) quality = JSONObject().put("v", 1).put("data", qualityTrim(qd))
+    }
+    return ImportPayload(ver, data, my, quality)
+  }
+
+  /* 质量聚合迁移字段裁剪（与 Web backup.js qualityTrim 同款白名单，contracts/quality-summary.json aggregate 面
+     ——全为计数/时间戳/延迟，无响应正文/DNS/IP；未列出字段两侧一律剔除）。条目 2000 封顶。 */
+  private val Q_FIELDS = listOf("okCount", "failCount", "lastOkAt", "lastFailAt", "lastPlaybackAt", "lastObservedAt",
+    "latSum", "latN", "avgLatencyMs", "sourceCount", "directCount", "disconnects", "modes", "metadata", "stability")
+
+  fun qualityTrim(data: JSONObject): JSONObject {
+    val out = JSONObject()
+    var n = 0
+    for (k in data.keys().asSequence().toList()) {
+      if (n >= 2000) break
+      if (!Regex("^https?://").containsMatchIn(k) || k.length > 512) continue
+      val v = data.optJSONObject(k) ?: continue
+      val e = JSONObject()
+      for (f in Q_FIELDS) {
+        if (!v.has(f)) continue
+        when (f) {
+          "modes" -> v.optJSONObject(f)?.let { m ->
+            val mm = JSONObject()
+            var c = 0
+            for (mk in m.keys().asSequence().toList()) {
+              if (mk.length <= 16) { mm.put(mk, 1); if (++c >= 8) break }
+            }
+            if (mm.length() > 0) e.put(f, mm)
+          }
+          "metadata", "stability" -> (v.opt(f) as? String)?.trim()?.take(16)?.takeIf { it.isNotEmpty() }?.let { e.put(f, it) }
+          else -> {
+            val x = (v.opt(f) as? Number)?.toDouble() ?: (v.opt(f) as? String)?.toDoubleOrNull()
+            if (x != null && x.isFinite() && x >= 0) e.put(f, Math.min(x, 1e9).toLong())
+          }
+        }
+      }
+      if (e.length() > 0) { out.put(k, e); n++ }
+    }
+    return out
   }
 
   /* 收藏导出 = 带 #VRADIO:FAV 标记的 m3u（通用播放器可读；导回同文件恢复收藏态）。无收藏返回空串（调用方提示） */
@@ -83,7 +143,7 @@ object Backup {
     return o.toString(2)
   }
 
-  private fun myLines(myText: String): List<String> { // 原始行，去尾部空行（v2 契约：不含结尾空行）
+  private fun myLines(myText: String): List<String> { // 原始行，去尾部空行（v3 契约：不含结尾空行）
     val ls = myText.split(Regex("\\r?\\n")).toMutableList()
     while (ls.isNotEmpty() && ls.last().trim().isEmpty()) ls.removeAt(ls.size - 1)
     return ls

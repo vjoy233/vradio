@@ -140,13 +140,14 @@ fun SettingsScreen(vm: AppVm) {
       item {
         Section("导入导出")
         PairRow("备份全部", { expBackup.launch("vradio-backup.json") }, "恢复备份", { impBackup.launch(arrayOf("*/*")) })
-        PairRow("导出收藏 m3u", { expM3u.launch("vradio-favorites.m3u") }, "导入收藏 m3u", { impM3u.launch(arrayOf("*/*")) })
+        PairRow("导出收藏 m3u", { expM3u.launch("vradio-favorites.m3u") }, "导入歌单", { impM3u.launch(arrayOf("*/*")) })
         PairRow("导出歌曲历史", { expSongs.launch("vradio-songs.txt") }, "导出维护配置", { expCfg.launch("vradio-config.json") })
         OutlinedButton(onClick = { impCfg.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
           Text("导入维护配置")
         }
-        Info("备份 = 全部个人数据 v2（收藏/配置/健康标记/歌曲历史/自定义电台，与 Web 版互通）；" +
-          "m3u 给外部播放器、导回恢复收藏；songs txt 拿去音乐 App 搜歌")
+        Info("备份 = 全部个人数据 v3（收藏/配置/健康标记/歌曲历史/自定义电台，与 Web 版互通，兼容读 v1/v2）；" +
+          "歌单导入支持 m3u / pls / xspf / asx / 纯链接 txt——本地解析不联网探活，预览新增/已知/重复/非法四桶后写入，" +
+          "已知台恢复收藏、新台入 my-radio；songs txt 拿去音乐 App 搜歌")
       }
       item {
         Section("疑难与反馈")

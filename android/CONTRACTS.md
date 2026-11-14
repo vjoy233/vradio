@@ -41,6 +41,26 @@
   `filesDir/quality.json`（B2 QualityStore.kt）。`radio.logos`/`radio.storeDirty` 继续排除在白名单外。
 - **备份版本映射**：v1 无 my 不动 my-radio；v2 读取 `my` 数组；v3（B4）读取 `myRadio` 数组 + `extensions`
   sidecar 可选导出；导出统一 v3。Web/Android 黄金样本互读为验收硬项。
+- **B4 API 面（歌单多格式导入 + 备份 v3，2026-11-15 落地）**：
+  - `model/ImportedStation.kt`：`data class ImportedStation(name, category, url, logo, externalId, sourceFormat)`
+    ——与 Web playlist-import.js 条目同构；logo/externalId 仅供预览/未来扩展（my-radio.txt 行格式冻结无此列，入库不落盘）。
+  - `data/PlaylistParser.kt`：`parse(text, format? = null, baseUrl? = null): Result(format, entries, invalid, dups)`
+    ——PLS/XSPF/ASX(WAX/WMX)/m3u(csv 收敛)/纯 URL 五格式；识别顺序 = 显式提示 → 文件头 → 内容特征 → 纯 URL
+    （`detect`/`normHint` 与 Web 同序同果）；条目封顶 500、台名 40 字/分类 24 字、URL 只收 http(s)、文件内按
+    URL 去重；XmlPullParser 显式关 DOCTYPE 处理（外部实体/外部 DTD 不解析，未声明实体引用不展开）、XML 文本
+    2MB 先钳；ENTRYREF 不递归；**纯 JVM 零网络、不 import android.***（单测挂 kxml2 真实现——android.jar 的
+    XmlPullParserFactory 是抛异常桩，同 org.json 先例，仅 testImplementation 不进 APK）。
+  - `data/Backup.kt` v3：`exportAll(lib, myText, at)` → `{format:"vradio-backup",version:3,createdAt,app:"android",
+    data,myRadio,extensions:{}}`（extensions 恒空——质量 sidecar 生产方在 B2/listenStats 在 B3）；`parseImport`
+    兼容 v1/v2/v3，`ImportPayload` 增 `ver` 与 `quality: JSONObject?`（v3 extensions.sidecars.quality 经
+    `qualityTrim` 白名单裁剪后校验留存，B2 前无消费方不落盘）；`qualityTrim` 与 Web backup.js 同款白名单
+    （contracts/quality-summary.json aggregate 面，条目 2000 封顶）。
+  - 导入 UI（SettingsScreen「导入歌单」/AppVm `Imp.M3U`）：PlaylistParser 解析 → `Library.partitionImport`
+    分流（纯决策不变异，取消=零副作用）→ 四桶计数 confirm（新增/已知/重复/非法）→ 确认后已知台恢复收藏
+    （N2 语义）+ 新台批量 `MyRadio.append`（自带查重/清洗/SafeTarget/封顶）。注意 SafeTarget 非对称：Web
+    合并写只验 http(s)，内网地址在 Android 侧会被 append 拒（文案计入「跳过」）。
+  - 备份导入三阶段回滚（AppVm `Imp.BACKUP`）：提交前快照 `Store.snapshot()` + `myRadio.readText()`，
+    my 超限拒收即 `Store.applyAll(snap)` + `myRadio.replace(myOld)` 双恢复现场。
 
 ---
 

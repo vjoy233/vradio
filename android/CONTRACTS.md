@@ -39,6 +39,30 @@
   `filesDir/quality.json`（B2 QualityStore.kt）。`radio.logos`/`radio.storeDirty` 继续排除在白名单外。
 - **备份版本映射**：v1 无 my 不动 my-radio；v2 读取 `my` 数组；v3（B4）读取 `myRadio` 数组 + `extensions`
   sidecar 可选导出；导出统一 v3。Web/Android 黄金样本互读为验收硬项。
+- **B5 面（2026-11-15 实施：桌面 Widget + 网络策略/流量保护，plan-expansion-r4 §9）**：
+  - `widget/`：`RadioWidgetProvider`（AppWidgetProvider，§9.1 骨架：onUpdate 逐 id 快照渲染、
+    onReceive 固定 action → 命令 + updateAll）、`WidgetCommands`（toggle/stepFav(ctx,±1)——经
+    SessionToken 绑定 PlaybackService 送自定义 SessionCommand（`PlayerHolder.ACT_W_TOGGLE/ACT_W_STEP`，
+    refresh 同款接线）进现有 MediaSession，**不直接调用 PlayerHolder、不假设进程已初始化**（绑定即冷启，
+    Application.onCreate 先 ensure；进程无 UI 时 ⏮⏭/空台续播走 `WidgetCommands.wireFallback` 的
+    文件侧 Library 兜底，AppVm onCleared 回装）、`WidgetPush`（AppVm + PlaybackService 双收集
+    `PlayerHolder.ui` 推送，幂等；曲讯节流 ≥5s）、`WidgetState`（纯 JVM：快照 JSON round-trip/
+    `shouldPush` 节流/`stepIdx` 环形切台/展示文案）。**widget action 只携带固定 action 字符串，
+    不携带外部 URL/可执行内容**；台标位图化留 TODO（首版首字母色块，phParams 同款色相 hash）。
+  - `network/NetworkPolicy.kt`（纯 JVM，ConnectivityManager 经 `NetProbe` 接口注入）：
+    `state()` = WIFI/CELLULAR/OFFLINE/UNKNOWN；`allow(op, rules)` → `Decision(ALLOW|CONFIRM|DENY, 原因)`，
+    矩阵按 §9.2 表——**播放两网都允许、永远不被静默阻断（离线也不拦）**；SINGLE_CHECK 移动数据
+    允许但提示；FULL_CHECK/SYNC 移动数据按用户三态（`CellularRule`，默认 CONFIRM，Wi-Fi 全允许）；
+    LOGO_PREFETCH Wi-Fi 优先（`logoWifiOnly` 开关/override）；**WIDGET 恒拒**（不主动联网护栏）；
+    UNKNOWN 宽松不误拦。接入点：AppVm 手动体检/端内同步入口先过门（CONFIRM → `netGate` 确认弹窗，
+    拒绝不发）、AddStation 探活移动数据一次性提示、`primeAll`/收藏/正在播的台标补全过 Wi-Fi 优先门。
+  - `network/TrafficEstimator.kt`（纯 JVM）：`bytesFor(kbps, durationMs)`（kbps 下限 32、溢出饱和、
+    0/负时长归 0）+ `estimateText`（无码率按 128kbps 假设并明示「估算」，不冒充精确计费）+
+    `fmt`；设置页「网络与流量」节展示（AppVm 30s 采样累计会话收听时长）。
+  - **键域声明**：`widget.snap`（Widget 快照 JSON）与 `net.fullCheck`/`net.sync`/`net.logoWifi`
+    存 Android 私有 SharedPreferences（`Prefs`，文件 "vradio"），**`widget.*`/`net.*` 不进 radio.*
+    三侧契约、不进 vradio-backup.json/v3 extensions**。JVM 测试：`WidgetStateTest`/
+    `NetworkPolicyTest`/`TrafficEstimatorTest`。
 
 ---
 

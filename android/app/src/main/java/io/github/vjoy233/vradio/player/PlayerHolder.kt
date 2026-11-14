@@ -59,6 +59,9 @@ import org.json.JSONObject
 object PlayerHolder {
 
   private const val ACTION_REFRESH = "io.github.vjoy233.vradio.REFRESH" // 通知栏「刷新」自定义 action（plan-refresh-live §4.3）
+  const val ACT_W_TOGGLE = "io.github.vjoy233.vradio.WIDGET_TOGGLE"    // 桌面 Widget 播放/暂停（B5 §9.1：经 SessionCommand 送进本层）
+  const val ACT_W_STEP = "io.github.vjoy233.vradio.WIDGET_STEP"        // 桌面 Widget 收藏间切台（dir 见 EXTRA_W_DIR）
+  const val EXTRA_W_DIR = "dir"                                        // 切台方向（1=下一收藏 -1=上一收藏）
   private const val TICK_MS = 2000L         // 看门狗巡检粒度（阈值 C.WATCHDOG_MS=12s）
   private const val VOL_DEBOUNCE_MS = 300L  // volperst 攒批落盘（player.js:100-103 写放大护栏同款）
   private const val SLEEP_TICK_MS = 1000L   // 睡眠定时秒级心跳（player.js:284）
@@ -599,15 +602,19 @@ object PlayerHolder {
       MediaSession.ConnectionResult.AcceptedResultBuilder(session)
         .setAvailableSessionCommands( // 自定义 sessionCommand 必须显式放行，否则通知栏按钮静默不渲染（方案审计 R1-9）
           MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
-            .add(SessionCommand(ACTION_REFRESH, Bundle.EMPTY)).build())
+            .add(SessionCommand(ACTION_REFRESH, Bundle.EMPTY))
+            .add(SessionCommand(ACT_W_TOGGLE, Bundle.EMPTY))   // Widget 控制面（B5 §9.1，refresh 同款接线）
+            .add(SessionCommand(ACT_W_STEP, Bundle.EMPTY)).build())
         .build()
     override fun onCustomCommand(session: MediaSession, controller: MediaSession.ControllerInfo,
       customCommand: SessionCommand, args: Bundle): ListenableFuture<SessionResult> {
-      if (customCommand.customAction == ACTION_REFRESH) {
-        refresh() // 回调在主线程（ExoPlayer 要求面）；暂停态直接起播，与播放栏按钮同语义
-        return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+      when (customCommand.customAction) {
+        ACTION_REFRESH -> refresh() // 回调在主线程（ExoPlayer 要求面）；暂停态直接起播，与播放栏按钮同语义
+        ACT_W_TOGGLE -> toggle()    // Widget 播放/暂停：空台走 onPlayLast（VRadioApp 装配的兜底或 AppVm 的续播）
+        ACT_W_STEP -> onStepFav?.invoke(args.getInt(EXTRA_W_DIR, 1))   // ⏮⏭ 收藏间切台（同通知栏线控语义）
+        else -> return super.onCustomCommand(session, controller, customCommand, args)
       }
-      return super.onCustomCommand(session, controller, customCommand, args)
+      return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
     }
   }
 

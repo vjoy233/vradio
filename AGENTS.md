@@ -34,7 +34,7 @@ npm test         # = node test/run.js，零依赖测试总入口：契约键三�
 | `logos.txt` | 台标数据（欧美音乐/国际新闻·谈话两分类，同步自动生成/`--logos` 重建），行格式 `分类|台名,图片URL`。**数据文件，勿手工维护** |
 | `hls.min.js` | 本地化的 hls.js v1.5.20（Apache-2.0 第三方库），勿改 |
 | `my-radio.txt` | 用户个人补充列表（gitignored），同步/导入后常驻重并，永不被覆盖 |
-| `android/` | 安卓原生版（Kotlin+Compose+Media3，monorepo 子目录，ADR-0002）。分层/环境搭建/国内镜像/命令见 [android/README.md](android/README.md)，并行开发契约见 [android/CONTRACTS.md](android/CONTRACTS.md)；依赖白名单封闭清单制（okhttp 是 D6 唯一破例）。radio.txt/logos.txt 由仓库根数据文件经 gradle task 打包进 assets，**两侧共同消费同一份数据**；播放行为两侧镜像、以 Web 为准（手动刷新回直播头等能力两侧同步，方案与语义见 docs/plan-refresh-live.md）；改动 android/ 后跑 `cd android && ./gradlew test`（CI 另有干净环境验证，path filter `android/**`） |
+| `android/` | 安卓原生版（Kotlin+Compose+Media3，monorepo 子目录，ADR-0002）。分层/环境搭建/国内镜像/命令见 [android/README.md](android/README.md)，并行开发契约见 [android/CONTRACTS.md](android/CONTRACTS.md)；依赖白名单封闭清单制（okhttp 是 D6 唯一破例）。radio.txt/logos.txt 由仓库根数据文件经 gradle task 打包进 assets，**两侧共同消费同一份数据**；播放行为两侧镜像、以 Web 为准（手动刷新回直播头等能力两侧同步，方案与语义见 docs/plan-refresh-live.md）；改动 android/ 后跑 `cd android && ./gradlew test`（CI 另有干净环境验证，path filter `android/**`）。B5 起安卓侧另有桌面 Widget 与网络策略面（`widget/`/`network/`），其 `widget.*`/`net.*` 私有键域（SharedPreferences）**只存安卓本地，不进 radio.\* 三侧契约、不进 vradio-backup.json**；Widget 不主动联网 |
 
 ## 架构要点
 

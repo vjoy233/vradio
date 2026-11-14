@@ -66,9 +66,23 @@ app/src/main/java/io/github/vjoy233/vradio/
   ui/      Compose：列表双视图/搜索/分类/收藏/最近/播放条/选源浮层/歌史/设置/添加电台
   check/   CheckStream（字节验收四常数钉死）/ Health（死台分档生命周期）
   sync/    Gh（api.github.com 客户端）/ ClassifyCn（金样平价移植）/ LightUpdate（D7 轻更新）/ SyncEngine（M4 端内同步）
+  widget/  桌面 Widget（B5）：RadioWidgetProvider/WidgetCommands/WidgetPush + WidgetState（纯 JVM 快照/节流/切台逻辑）
+  network/ 网络策略与流量估算（B5，纯 JVM）：NetworkPolicy（NetProbe 注入）/ TrafficEstimator
 ```
 
-数据层/体检同步层为纯 JVM（不 import android.*），单测离线秒级（对齐 Web 侧 `npm test` 口径）。
+数据层/体检同步层/widget 纯逻辑/网络策略层为纯 JVM（不 import android.*），单测离线秒级（对齐 Web 侧 `npm test` 口径）。
+
+## 桌面 Widget 与网络策略（B5，plan-expansion-r4 §9）
+
+- **Widget**：桌面长按 → 小部件 → 「VRadio 电台」（4×1 起步可横向拉宽）。显示当前台名/首字母色块/曲讯一行，
+  按钮 = 上一收藏/播放暂停/下一收藏，点非按钮区打开应用。控制经 MediaSession 自定义命令进现有播放链
+  （进程被系统回收后点击会自动唤醒）；进程不在时显示最近快照。Widget 本身**不主动联网**；
+  快照存 Android 私有键 `widget.snap`（**不进 radio.\* 契约、不进备份**，换机/清数据即清空属预期）。
+  台标第一版为首字母色块（RemoteViews 加载网络图不可靠，位图化在后续版本）。
+- **网络策略**（设置 → 网络与流量）：**播放任何网络都不拦**；单台探活移动数据放行但提示；
+  全量体检/主库同步在移动数据下默认「每次确认」（可改允许/禁止）；台标补全 Wi-Fi 优先（可关）。
+  会话级流量估算按已知码率（无 ICY 码率时按 128kbps 并标注「估算」）30 秒采样累计，非精确计费。
+  策略设置存私有键 `net.*`（同样不进契约/备份）。
 
 ## 发布（M5）
 

@@ -7,6 +7,7 @@ import android.content.IntentFilter
 import android.content.pm.ShortcutInfo
 import android.content.pm.ShortcutManager
 import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
@@ -33,10 +34,15 @@ import io.github.vjoy233.vradio.model.FavEntry
 import io.github.vjoy233.vradio.model.PState
 import io.github.vjoy233.vradio.model.Station
 import io.github.vjoy233.vradio.model.SongRec
+import io.github.vjoy233.vradio.network.NetProbe
+import io.github.vjoy233.vradio.network.NetworkPolicy
+import io.github.vjoy233.vradio.network.TrafficEstimator
 import io.github.vjoy233.vradio.player.PlayerHolder
 import io.github.vjoy233.vradio.sync.Gh
 import io.github.vjoy233.vradio.sync.LightUpdate
 import io.github.vjoy233.vradio.sync.SyncEngine
+import io.github.vjoy233.vradio.widget.WidgetCommands
+import io.github.vjoy233.vradio.widget.WidgetPush
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
@@ -123,6 +129,61 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   enum class Imp { BACKUP, M3U, CFG }
   enum class Exp { BACKUP, M3U, SONGS, CFG }
 
+  /* ---------- B5：网络策略与流量（plan-expansion-r4 §9.2；设置本地态存 Prefs，非 radio.* 契约） ---------- */
+
+  /** 探测面：ConnectivityManager 经 NetProbe 注入（network/ 纯 JVM 不碰 android.*）；查不到一律 UNKNOWN 宽松 */
+  private val policy = NetworkPolicy(object : NetProbe {
+    override fun online(): Boolean? {
+      val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return null
+      val net = cm.activeNetwork ?: return false                       // 无活动网络 = 离线
+      val caps = cm.getNetworkCapabilities(net) ?: return null
+      return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+    override fun metered(): Boolean? {
+      val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return null
+      return cm.isActiveNetworkMetered
+    }
+  })
+
+  val netFullCheck = MutableStateFlow("confirm")   // 移动数据全量体检（allow/confirm/deny）
+  val netSync = MutableStateFlow("confirm")        // 移动数据主库同步（同款三态）
+  val netLogoWifi = MutableStateFlow(true)         // 台标补全 Wi-Fi 优先
+  val trafficTxt = MutableStateFlow("")            // 本次收听流量估算（设置页展示；估算口径非精确计费）
+  val netGate = MutableStateFlow<Pair<NetworkPolicy.Op, String>?>(null)   // 移动数据大流量操作确认门
+
+  private var listenMs = 0L                        // 本次会话累计收听时长（不持久化：会话级口径）
+  private var lastKbps = 0                         // 最近一次已知码率（0=无 ICY，估算按 128kbps 并明示）
+
+  private fun netRules() = NetworkPolicy.Rules(
+    cellFullCheck = ruleOf(netFullCheck.value),
+    cellSync = ruleOf(netSync.value),
+    logoWifiOnly = netLogoWifi.value,
+  )
+  private fun ruleOf(s: String) = when (s) {
+    "allow" -> NetworkPolicy.CellularRule.ALLOW
+    "deny" -> NetworkPolicy.CellularRule.DENY
+    else -> NetworkPolicy.CellularRule.CONFIRM
+  }
+
+  fun setNetFullCheck(v: String) { netFullCheck.value = v; Prefs.set(ctx, Prefs.NET_FULL_CHECK, v) }
+  fun setNetSync(v: String) { netSync.value = v; Prefs.set(ctx, Prefs.NET_SYNC, v) }
+  fun setNetLogoWifi(b: Boolean) { netLogoWifi.value = b; Prefs.set(ctx, Prefs.NET_LOGO_WIFI, b) }
+
+  /** 确认门：允许则放行原操作（大流量二段式——DENY 在入口已拦，CONFIRM 弹门，ALLOW 直跑） */
+  fun proceedGate() {
+    val g = netGate.value ?: return
+    netGate.value = null
+    when (g.first) {
+      NetworkPolicy.Op.FULL_CHECK -> runManualHealth()
+      NetworkPolicy.Op.SYNC -> runFullSync()
+      else -> Unit
+    }
+  }
+  fun cancelGate() { netGate.value = null }
+
+  /** 台标补全 Wi-Fi 优先：策略判过才发请求（已缓存台标的同步窥探不受影响） */
+  private fun logoAllowed() = policy.allow(NetworkPolicy.Op.LOGO_PREFETCH, netRules()).ok
+
   private val toastCh = Channel<String>(Channel.BUFFERED)
   val toasts: Flow<String> = toastCh.receiveAsFlow()
   fun toast(msg: String) { toastCh.trySend(msg) }
@@ -156,7 +217,28 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     wirePlayer()
     resumeOnStart.value = Prefs.get(ctx, Prefs.RESUME, false)   // N4
     audioOffload.value = Prefs.get(ctx, Prefs.OFFLOAD, false)   // E5
+    netFullCheck.value = Prefs.get(ctx, Prefs.NET_FULL_CHECK, "confirm")   // B5 网络策略三键
+    netSync.value = Prefs.get(ctx, Prefs.NET_SYNC, "confirm")
+    netLogoWifi.value = Prefs.get(ctx, Prefs.NET_LOGO_WIFI, true)
     viewModelScope.launch(Dispatchers.IO) { boot() }
+    // B5：Widget 状态推送（与 PlaybackService 侧收集生命周期互补，onUi 幂等去重不双刷）
+    viewModelScope.launch { PlayerHolder.ui.collect { WidgetPush.onUi(ctx, it) } }
+    // B5：流量估算采样（30s 一跳，仅播放中累计；估算口径防精确计费误导）
+    viewModelScope.launch {
+      while (true) {
+        delay(30000)
+        val u = PlayerHolder.ui.value
+        if (u.st == PState.PLAYING) {
+          listenMs += 30000
+          if (u.kbps > 0) lastKbps = u.kbps
+          trafficTxt.value = TrafficEstimator.estimateText(lastKbps, listenMs, listenMs / 60000)
+        }
+      }
+    }
+  }
+
+  override fun onCleared() {   // VM 亡后通知栏/Widget 的 ⏮⏭ 与空台续播仍可用：回装文件侧兜底（VRadioApp 同款）
+    WidgetCommands.wireFallback(ctx)
   }
 
   /* ---------- boot 编排（app.js boot + sync.js bootQuiet 平移；安卓不跑首启基线，plan M3 拍板）：
@@ -277,8 +359,10 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     PlayerHolder.logoProvider = { s -> logos.get(s) }                     // 锁屏 artwork 同步窥探口径
   }
 
-  /* 台标预取（收藏 + 正在播优先，请求量可控）；完成后重渲一次取新解析到的 URL */
+  /* 台标预取（收藏 + 正在播优先，请求量可控）；完成后重渲一次取新解析到的 URL。
+     B5：Wi-Fi 优先策略——移动数据（未开「也允许」）整段跳过，已缓存台标的同步窥探不受影响 */
   private fun primeAll() = viewModelScope.launch(Dispatchers.IO) {
+    if (!logoAllowed()) return@launch
     val favs = withContext(Dispatchers.Main) {                             // favs 快照归 Main（审计 P2：IO 迭代与 Main 变异并发 CME）
       runCatching { lib.favs.toList() }.getOrDefault(emptyList())
     }
@@ -378,7 +462,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       runCatching { lib.recordRecent(s) }
       stamp.value++
     }
-    viewModelScope.launch(Dispatchers.IO) { runCatching { logos.prime(s, true) } }   // 正在播台标优先补全
+    viewModelScope.launch(Dispatchers.IO) { if (logoAllowed()) runCatching { logos.prime(s, true) } }   // 正在播台标优先补全（B5 策略门）
     PlayerHolder.play(s, prefer)
   }
 
@@ -395,7 +479,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       val fav = runCatching { lib.isFav(s) }.getOrDefault(false)
       stamp.value++
       updateShortcuts()                                                  // E3：快捷方式随收藏增减刷新
-      if (fav) viewModelScope.launch(Dispatchers.IO) { runCatching { logos.prime(s, true) } }   // 新收藏优先补台标
+      if (fav && logoAllowed()) viewModelScope.launch(Dispatchers.IO) { runCatching { logos.prime(s, true) } }   // 新收藏优先补台标（B5 策略门）
     }
   }
 
@@ -524,8 +608,17 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     withContext(Dispatchers.Main) { runCatching { lib.applyHealthToStations() }; stamp.value++ }
   }
 
-  fun manualHealth() {                                                    // 手动全量（并发 5=Web runCheck 口径；反馈走设置页文案 + 完成 toast）
+  fun manualHealth() {                                                    // 手动全量入口（B5：移动数据先过策略门——允许直跑/需确认弹门/禁止明示）
     if (manualRun.value) return
+    val d = policy.allow(NetworkPolicy.Op.FULL_CHECK, netRules())
+    when {
+      d.kind == NetworkPolicy.Kind.DENY -> { healthResult.value = "未开始：${d.why}"; toast(healthResult.value) }
+      d.confirm -> netGate.value = NetworkPolicy.Op.FULL_CHECK to d.why
+      else -> runManualHealth()
+    }
+  }
+
+  private fun runManualHealth() {                                         // 手动全量（并发 5=Web runCheck 口径；反馈走设置页文案 + 完成 toast）
     viewModelScope.launch {
       manualRun.value = true
       healthAbort.set(false)
@@ -638,16 +731,21 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     }
   }
 
-  /* ---------- M4 端内同步（WiFi-only：移动数据给提示不跑；完成后 diff 摘要 + 收藏点名 + 增量体检） ---------- */
+  /* ---------- M4 端内同步（B5：移动数据按策略门默认需确认；完成后 diff 摘要 + 收藏点名 + 增量体检） ---------- */
 
-  fun fullSyncNow() {
+  fun fullSyncNow() {                                                    // 入口：先过网络策略门，再过电量门
+    val d = policy.allow(NetworkPolicy.Op.SYNC, netRules())
+    when {
+      d.kind == NetworkPolicy.Kind.DENY -> { syncMsg.value = "未开始：${d.why}"; toast(syncMsg.value) }
+      d.confirm -> netGate.value = NetworkPolicy.Op.SYNC to d.why
+      else -> runFullSync()
+    }
+  }
+
+  private fun runFullSync() {
     viewModelScope.launch {
       if (syncBusy.value) return@launch
       if (updateBusy.value) { syncMsg.value = "数据更新进行中，稍后再同步"; return@launch }   // 审计 P2：互锁（与 checkUpdate 对称）
-      if (!unmetered()) {
-        syncMsg.value = "移动数据下不同步（欧美台逐个实测流量大）——连 WiFi 后再试"
-        toast(syncMsg.value); return@launch
-      }
       if (!charging()) {                                                 // E13 电量前置（充电中跳过；<5% 拒 / <20% 警告放行）
         val bp = battPct()
         if (bp < 5) {
@@ -701,6 +799,10 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     if (dup != null) { addMsg.value = "该流地址已存在（「${dup.trim().substringBefore(',')}」），同一地址请直接使用现有电台"; return }
     viewModelScope.launch {
       addBusy.value = true; addMsg.value = "探活中…（最长 12 秒，蜻蜓系建流慢属正常）"
+      // B5 网络策略：单台探活移动数据允许但一次性提示；离线直接明示（不发注定失败的请求）
+      val pd = policy.allow(NetworkPolicy.Op.SINGLE_CHECK, netRules())
+      if (!pd.ok) { addMsg.value = "未探活：${pd.why}"; addBusy.value = false; return@launch }
+      if (policy.state() == NetworkPolicy.State.CELLULAR) toast(pd.why)
       try {
         val v = withContext(Dispatchers.IO) { runCatching { checker.check(u, C.MYSTATION_TIMEOUT_MS) }.getOrNull() }
         if (v == null || !v.ok) {

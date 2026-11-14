@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 桌面 Widget 第一版（plan-expansion-r4 §9.1）：首字母色块 + 台名/曲讯一行 + 上一收藏/播放暂停/下一收藏。
+     RemoteViews 只支持平台视图（LinearLayout/TextView/ImageButton），色板 = Web 深色主题（index.html 变量）。
+     点击面：w_root（非按钮区）= 打开应用；w_prev/w_play/w_next = 固定 action 广播（RadioWidgetProvider 接线）。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/w_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:background="@drawable/widget_bg"
+    android:paddingStart="12dp"
+    android:paddingEnd="8dp">
+
+  <TextView
+      android:id="@+id/w_letter"
+      android:layout_width="44dp"
+      android:layout_height="44dp"
+      android:gravity="center"
+      android:textColor="#ffffff"
+      android:textSize="20sp"
+      android:textStyle="bold" />
+
+  <LinearLayout
+      android:layout_width="0dp"
+      android:layout_height="wrap_content"
+      android:layout_weight="1"
+      android:orientation="vertical"
+      android:layout_marginStart="10dp"
+      android:paddingEnd="4dp">
+
+    <TextView
+        android:id="@+id/w_name"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:textColor="#e8ecf1" />
+
+    <TextView
+        android:id="@+id/w_song"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:textSize="11sp"
+        android:textColor="#8b97a5" />
+  </LinearLayout>
+
+  <!-- 平台 attr 的无边框按压反馈（app 主题 attr 在宿主进程不可解析，勿用 ?attr/） -->
+  <ImageButton
+      android:id="@+id/w_prev"
+      android:layout_width="40dp"
+      android:layout_height="40dp"
+      android:src="@drawable/ic_widget_prev"
+      android:scaleType="centerInside"
+      android:background="?android:attr/selectableItemBackgroundBorderless"
+      android:contentDescription="上一收藏" />
+
+  <ImageButton
+      android:id="@+id/w_play"
+      android:layout_width="44dp"
+      android:layout_height="44dp"
+      android:src="@drawable/ic_widget_play"
+      android:scaleType="centerInside"
+      android:background="?android:attr/selectableItemBackgroundBorderless"
+      android:contentDescription="播放或暂停" />
+
+  <ImageButton
+      android:id="@+id/w_next"
+      android:layout_width="40dp"
+      android:layout_height="40dp"
+      android:src="@drawable/ic_widget_next"
+      android:scaleType="centerInside"
+      android:background="?android:attr/selectableItemBackgroundBorderless"
+      android:contentDescription="下一收藏" />
+</LinearLayout>

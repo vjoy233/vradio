@@ -79,22 +79,22 @@ class BackupV3Test {
     assertEquals(0, j.getJSONObject("extensions").length())
   }
 
-  @Test fun qualitySidecarParsedAndTrimmed() { // v3 sidecar：判定 + 迁移字段裁剪（未知字段剔除、modes 归一）
+  @Test fun qualitySidecarParsedAndTrimmed() { // v3 sidecar：判定 + 迁移字段裁剪（嵌套形态、未知字段剔除）
     val j = JSONObject(res("fixtures/backup-v3.json"))
     val data = JSONObject()
-    val entry = JSONObject().put("okCount", 5).put("failCount", 1).put("lastOkAt", 99)
-      .put("modes", JSONObject().put("direct", 1).put("proxy", 7))
-      .put("metadata", "icy").put("stability", "good")
+    val src = JSONObject().put("okCount", 5).put("failCount", 1).put("lastOkAt", 99)
+      .put("modes", org.json.JSONArray(listOf("direct", "proxy", "bogus")))
       .put("rawResponse", "SECRET").put("dns", "1.2.3.4")
+    val entry = JSONObject().put("cf", 1).put("sources", JSONObject().put("https://main.example/live", src))
     data.put("https://main.example/live", entry)
-    data.put("ftp://bad.example/x", JSONObject().put("okCount", 1))
+    data.put("ftp://bad.example/x", JSONObject().put("cf", 0).put("sources", JSONObject()))
     j.put("extensions", JSONObject().put("sidecars", JSONObject().put("quality", JSONObject().put("v", 1).put("data", data))))
     val p = Backup.parseImport(j.toString())!!
     assertNotNull(p.quality)
     val q = p.quality!!.getJSONObject("data").getJSONObject("https://main.example/live")
+      .getJSONObject("sources").getJSONObject("https://main.example/live")
     assertEquals(5, q.getInt("okCount"))
-    assertEquals(1, q.getJSONObject("modes").getInt("proxy")) // modes 归一为 1
-    assertEquals("icy", q.getString("metadata"))
+    assertEquals(org.json.JSONArray(listOf("direct", "proxy")).toString(), q.getJSONArray("modes").toString()) // modes 只收合法枚举去重（JSONArray 无 equals，比字符串）
     assertTrue(!q.has("rawResponse") && !q.has("dns")) // 响应正文/DNS 类字段绝不迁移
     assertTrue(!p.quality!!.getJSONObject("data").has("ftp://bad.example/x")) // 非 http(s) 键丢弃
   }

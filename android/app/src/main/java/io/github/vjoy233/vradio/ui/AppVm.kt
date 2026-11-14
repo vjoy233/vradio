@@ -28,7 +28,8 @@ import io.github.vjoy233.vradio.data.Logos
 import io.github.vjoy233.vradio.data.MyRadio
 import io.github.vjoy233.vradio.data.PlaylistParser
 import io.github.vjoy233.vradio.data.QualityStore
-import io.github.vjoy233.vradio.data.RadioTxtimport io.github.vjoy233.vradio.data.SafeTarget
+import io.github.vjoy233.vradio.data.RadioTxt
+import io.github.vjoy233.vradio.data.SafeTarget
 import io.github.vjoy233.vradio.data.Store
 import io.github.vjoy233.vradio.check.OkHttpRaw
 import io.github.vjoy233.vradio.data.OkHttpText

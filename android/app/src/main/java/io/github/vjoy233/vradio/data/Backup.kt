@@ -68,8 +68,19 @@ object Backup {
 
   /* 质量聚合迁移字段裁剪（与 Web backup.js qualityTrim 同款白名单，contracts/quality-summary.json aggregate 面
      ——全为计数/时间戳/延迟，无响应正文/DNS/IP；未列出字段两侧一律剔除）。条目 2000 封顶。 */
-  private val Q_FIELDS = listOf("okCount", "failCount", "lastOkAt", "lastFailAt", "lastPlaybackAt", "lastObservedAt",
-    "latSum", "latN", "avgLatencyMs", "sourceCount", "directCount", "disconnects", "modes", "metadata", "stability")
+  private val Q_SRC_NUM = listOf("okCount", "failCount", "lastOkAt", "lastFailAt", "lastPlaybackAt", "latSum", "latN", "disconnects")
+
+  private fun num(x: Any?): Long? {
+    val d = (x as? Number)?.toDouble() ?: (x as? String)?.toDoubleOrNull() ?: return null
+    if (!d.isFinite() || d < 0) return null
+    return Math.min(d, 1e9).toLong()
+  }
+
+  private fun ev(x: Any?): JSONObject? {
+    val o = x as? JSONObject ?: return null
+    return JSONObject().put("t", (o.opt("t") as? String ?: "").take(16)).put("ok", o.opt("ok") == true)
+      .put("at", num(o.opt("at")) ?: 0L).put("lat", num(o.opt("lat")) ?: 0L)
+  }
 
   fun qualityTrim(data: JSONObject): JSONObject {
     val out = JSONObject()
@@ -78,26 +89,30 @@ object Backup {
       if (n >= 2000) break
       if (!Regex("^https?://").containsMatchIn(k) || k.length > 512) continue
       val v = data.optJSONObject(k) ?: continue
-      val e = JSONObject()
-      for (f in Q_FIELDS) {
-        if (!v.has(f)) continue
-        when (f) {
-          "modes" -> v.optJSONObject(f)?.let { m ->
-            val mm = JSONObject()
-            var c = 0
-            for (mk in m.keys().asSequence().toList()) {
-              if (mk.length <= 16) { mm.put(mk, 1); if (++c >= 8) break }
-            }
-            if (mm.length() > 0) e.put(f, mm)
+      val e = JSONObject().put("cf", num(v.opt("cf")) ?: 0L)
+      val srcs = v.optJSONObject("sources") ?: JSONObject()
+      val es = JSONObject()
+      var sc = 0
+      for (su in srcs.keys().asSequence().toList()) {
+        if (sc >= 6) break
+        if (!Regex("^https?://").containsMatchIn(su) || su.length > 512) continue
+        val s = srcs.optJSONObject(su) ?: continue
+        val x = JSONObject()
+        for (f in Q_SRC_NUM) num(s.opt(f))?.let { x.put(f, it) }
+        (s.opt("modes") as? org.json.JSONArray)?.let { arr ->
+          val m = ArrayList<String>()
+          for (i in 0 until arr.length()) {
+            val mk = (arr.opt(i) as? String ?: "").take(16)
+            if (mk in listOf("direct", "hls", "proxy") && !m.contains(mk)) m.add(mk)
+            if (m.size >= 8) break
           }
-          "metadata", "stability" -> (v.opt(f) as? String)?.trim()?.take(16)?.takeIf { it.isNotEmpty() }?.let { e.put(f, it) }
-          else -> {
-            val x = (v.opt(f) as? Number)?.toDouble() ?: (v.opt(f) as? String)?.toDoubleOrNull()
-            if (x != null && x.isFinite() && x >= 0) e.put(f, Math.min(x, 1e9).toLong())
-          }
+          if (m.isNotEmpty()) x.put("modes", org.json.JSONArray(m))
         }
+        ev(s.opt("lastDiag"))?.let { if (it.optLong("at") > 0 || it.optString("t").isNotEmpty()) x.put("lastDiag", it) }
+        ev(s.opt("lastPlayFail"))?.let { if (it.optLong("at") > 0 || it.optString("t").isNotEmpty()) x.put("lastPlayFail", it) }
+        if (x.length() > 0) { es.put(su, x); sc++ }
       }
-      if (e.length() > 0) { out.put(k, e); n++ }
+      if (es.length() > 0 || e.optLong("cf") > 0) { e.put("sources", es); out.put(k, e); n++ }
     }
     return out
   }

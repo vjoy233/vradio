@@ -3,13 +3,20 @@
 // （v3/v1 版本行、my-radio 计数与 v1 说明、sidecar 可恢复性按形态分叉、file:// 不可用项清单）经 vm 沙箱
 // 直测（剥尾部 boot 块，同 test/ui-maintenance.js 法）。真实网络事务不在此测——BackupV3.commitImport
 // 的事务/回滚语义由 test/backup-v3.js 覆盖（B01 自证：本文件只测 UI 壳的纯逻辑，不重复造事务测试）。
+// AIbot review 补：[3] cfgCount × uiCfgDiff 字段集合同口径（tag 计入，P2）；[4] afterRestore 恢复即时生效
+// （对账 + 主列表重拉重并：备份个人台不需整页刷新即入列，P1；http 真链路 + file:// 协议门两形态）。
 const assert = require('assert'), fs = require('fs'), path = require('path'), vm = require('vm');
 
 let pass = 0, fail = 0;
+const pending = []; // 异步用例（afterRestore 走微任务）：先收集、末尾按序逐个执行等齐（App 是单例，桩替换须串行不并发）
 const ok = (name, fn) => {
   try { fn(); pass++; console.log('  ✓', name); }
   catch (e) { fail++; console.error('  ✗', name, '\n     ', String(e && e.message || e).split('\n')[0]); }
 };
+const okA = (name, fn) => pending.push(async () => {
+  try { await fn(); pass++; console.log('  ✓', name); }
+  catch (e) { fail++; console.error('  ✗', name, '\n     ', String(e && e.message || e).split('\n')[0]); }
+});
 
 const UP = path.join(__dirname, '..');
 const { sandbox } = (() => {
@@ -19,10 +26,11 @@ const { sandbox } = (() => {
   const sandbox = { console, setTimeout, clearTimeout, SrcOrder: require('../srcorder') };
   vm.createContext(sandbox);
   vm.runInContext(src.slice(0, m.index) + `
+this.App = App;
 this.uiCfgDiff = uiCfgDiff; this.uiBackupPreview = uiBackupPreview; this.UI_CFG_FIELDS = UI_CFG_FIELDS;`, sandbox);
   return { sandbox };
 })();
-const uiCfgDiff = sandbox.uiCfgDiff, uiBackupPreview = sandbox.uiBackupPreview, UI_CFG_FIELDS = sandbox.UI_CFG_FIELDS;
+const App = sandbox.App, uiCfgDiff = sandbox.uiCfgDiff, uiBackupPreview = sandbox.uiBackupPreview, UI_CFG_FIELDS = sandbox.UI_CFG_FIELDS;
 const snap = o => JSON.parse(JSON.stringify(o)); // vm 跨 realm 原型不同：经 JSON 快照后再 deepStrictEqual
 
 // 与 App.normCfg 产出同构的 cfg 形状（字段全集），便于构造「当前配置」
@@ -122,5 +130,70 @@ ok('仅质量 sidecar + file://：any=false（无可恢复项不出勾选框，U
   assert.strictEqual(pv.side.any, false);
 });
 
-console.log(`\n${pass} 通过，${fail} 失败`);
-process.exit(fail ? 1 : 0);
+/* ============================================================ [3] cfgCount × uiCfgDiff 字段集合同口径（AIbot P2） */
+console.log('[3] cfgCount × uiCfgDiff：tag 计入后 预览明细与「当前/清空 N 项」总数一致');
+const cfgCount = c => App.cfgCount(c);
+ok('tag-only：cfgCount 计 1 项、清空侧 uiCfgDiff 也计 1（不再「列了明细、总数 0 项」）', () => {
+  const cur = App.normCfg({ tag: { 'http://a/1': '旧名' } });
+  assert.strictEqual(cfgCount(cur), 1);
+  assert.deepStrictEqual(snap(uiCfgDiff(cur, App.normCfg(null)).fields.tag), { add: 0, del: 1, chg: 0 });
+  assert.strictEqual(uiCfgDiff(cur, App.normCfg(null)).total, 1);
+});
+ok('tag-only incoming（增侧）：cfgCount 与 uiCfgDiff.add 同口径', () => {
+  const inc = App.normCfg({ tag: { 'http://a/1': '名' } });
+  assert.strictEqual(cfgCount(inc), 1);
+  assert.strictEqual(uiCfgDiff(App.normCfg(null), inc).total, 1);
+  assert.strictEqual(uiCfgDiff(App.normCfg(null), inc).fields.tag.add, 1);
+});
+ok('全空 incoming（重置预览）：uiCfgDiff(cur, 空).total === cfgCount(cur)（11 字段合计含 tag）', () => {
+  const cur = App.normCfg({ moves: { 'http://a/1': '新闻' }, names: { 'http://a/1': '新名' }, tag: { 'http://a/1': '原台' },
+    hideS: { 'http://b/1': 1 }, renames: { 老: '新' }, hideC: { 老: 1 }, srcs: { 'http://a/1': ['http://x/1'] },
+    srcManualOrder: { 'http://a/1': ['http://a/2'] }, srcDisabled: { 'http://a/1': ['http://a/2'] },
+    srcLabels: { 'http://a/1': '标' }, cats: ['自建1', '自建2'] });
+  assert.strictEqual(cfgCount(cur), 12); // 10 个 map 各 1 键 + 2 自建分类
+  assert.strictEqual(uiCfgDiff(cur, App.normCfg(null)).total, cfgCount(cur));
+});
+
+/* ============================================================ [4] afterRestore 恢复即时生效（AIbot P1） */
+console.log('[4] afterRestore：对账 + 主列表重拉重并，备份个人台不需整页刷新');
+okA('调用序：applyServerStore 先、reloadMain 后（不触发播放路径，importAll r.ok 专用）', async () => {
+  const seq = [], o1 = App.applyServerStore, o2 = App.reloadMain;
+  App.applyServerStore = () => seq.push('store');
+  App.reloadMain = async () => { seq.push('main'); return true; };
+  try { await App.afterRestore(); } finally { App.applyServerStore = o1; App.reloadMain = o2; }
+  assert.deepStrictEqual(seq, ['store', 'main']);
+});
+okA('http 形态真链路：恢复后 stations 即时含备份个人台 B、旧个人台 A 随全量替换消失（不需 reload）', async () => {
+  sandbox.location = { protocol: 'http:' }; // vm 全局按需注入（reloadMain 只读 protocol）
+  sandbox.fetch = u => Promise.resolve({ ok: true, text: () => Promise.resolve(u.startsWith('radio.txt')
+    ? '华语音乐,#genre#\r\n主库台,http://m/1\r\n' : '个人,#genre#\r\n个人台B,http://b/1\r\n') }); // my-radio 已是 commitImport 落盘后的备份内容
+  sandbox.Store = { get: () => null, set: () => {} }; // rebind → save* 三落的存储出口
+  sandbox.QualityStore = {}; sandbox.Player = { station: null }; // qualityKeep / applySources 的全局引用
+  const oState = App.state, oCfg = App.cfg, oF = App.favs, oR = App.recents, oH = App.healthMarks,
+    oRender = App.render, oLast = App.showLast, oAss = App.applyServerStore;
+  App.state = { stations: [{ c: '个人', n: '个人台A', u: ['http://a/1'] }] }; // 恢复前：列表只有旧个人台 A
+  App.cfg = App.normCfg(null); App.favs = []; App.recents = []; App.healthMarks = {};
+  App.render = () => {}; App.showLast = () => {}; App.applyServerStore = () => {}; // 对账路径由上例覆盖；DOM 出口全桩
+  try {
+    await App.afterRestore(); // == importAll r.ok 分支（恢复成功，无整页 reload）
+    const names = App.state.stations.map(s => s.n);
+    assert.ok(names.includes('个人台B'), '备份个人台 B 即时入列');
+    assert.ok(names.includes('主库台'), '主库台随重拉在列');
+    assert.ok(!names.includes('个人台A'), '旧个人台 A 被 my-radio 全量替换（URL=身份，A 不在新个人层）');
+  } finally {
+    App.state = oState; App.cfg = oCfg; App.favs = oF; App.recents = oR; App.healthMarks = oH;
+    App.render = oRender; App.showLast = oLast; App.applyServerStore = oAss;
+    delete sandbox.location; delete sandbox.fetch; delete sandbox.Store; delete sandbox.QualityStore; delete sandbox.Player;
+  }
+});
+okA('file:// 形态：reloadMain 协议门恒 false——不发请求不抛（个人台不可恢复的既有降级，文案已明示）', async () => {
+  sandbox.location = { protocol: 'file:' };
+  sandbox.fetch = () => { throw new Error('file:// 不应发请求'); };
+  const oAss = App.applyServerStore;
+  App.applyServerStore = () => {};
+  let done = false;
+  try { await App.afterRestore(); done = true; } finally { App.applyServerStore = oAss; delete sandbox.location; delete sandbox.fetch; }
+  assert.ok(done);
+});
+
+(async () => { for (const t of pending) await t(); console.log(`\n${pass} 通过，${fail} 失败`); process.exit(fail ? 1 : 0); })();

@@ -2232,7 +2232,9 @@ const App = {
   },
 
   /* —— 配置导入导出（owner 拍板：只含维护层；收藏另有 m3u 导出）—— */
-  cfgCount(c) { return Object.keys(c.moves).length + Object.keys(c.names).length + Object.keys(c.hideS).length + Object.keys(c.renames).length + Object.keys(c.hideC).length + Object.keys(c.srcs).length + Object.keys(c.srcManualOrder).length + Object.keys(c.srcDisabled).length + Object.keys(c.srcLabels).length + c.cats.length; },
+  /* tag（失配清单默认名快照）一并计入（AIbot P2）：与 uiCfgDiff 的 UI_CFG_FIELDS 字段集合同口径——
+     否则 tag-only 差异「预览列了明细、总数却是 0 项」自相矛盾（重置/导入两预览共用这两个计数） */
+  cfgCount(c) { return Object.keys(c.moves).length + Object.keys(c.names).length + Object.keys(c.tag).length + Object.keys(c.hideS).length + Object.keys(c.renames).length + Object.keys(c.hideC).length + Object.keys(c.srcs).length + Object.keys(c.srcManualOrder).length + Object.keys(c.srcDisabled).length + Object.keys(c.srcLabels).length + c.cats.length; },
   exportCfg() {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify({ v: 1, cfg: this.cfg }, null, 2)], { type: 'application/json' }));
@@ -2432,12 +2434,19 @@ const App = {
       this._restoreBusy = false;
       btn.disabled = false; btn.textContent = oldLabel;
     }
-    if (r.ok) this.applyServerStore(); // 恢复成功才对账重渲（只重载列表/配置/记忆，不触发自动播放）
+    if (r.ok) await this.afterRestore(); // 恢复成功才即时生效（AIbot P1：Store 对账 + 主列表重拉重并，不触发自动播放）
     $('status').textContent = r.msg; // 结果 = commitImport 的 r.msg 原样展示（成功/回滚/回滚失败文案在 backup.js 内如实区分）
     const title = r.ok ? '备份恢复完成'
       : r.msg.includes('已回滚') ? '恢复失败——已回滚到导入前状态' : '恢复失败——未提交（本机数据未改动）';
     const hint = r.ok ? '' : '\n\n既有恢复路径：用同一备份文件重新导入重试；如担心当前数据状态，可先「备份全部」导出保全。';
     uiChooseDialog(title, r.msg + hint, [{ value: 'x', label: '知道了' }], { safe: 'x' }).catch(() => {});
+  },
+  async afterRestore() { // 恢复成功的即时生效（AIbot P1，importAll r.ok 专用）：先 Store 对账重渲（收藏/配置/记忆，
+    // 不触发自动播放），再主列表重拉重并——commitImport 已把备份的 my-radio.txt 全量替换落盘，applyServerStore
+    // 不重读个人层，缺这步则恢复出的个人台要整页刷新才出现。reloadMain 仅 http（file:// 恒 false 协议门直返：
+    // 该形态个人台本就不可恢复、commitImport 文案已明示）；拉不到主列表时 stations 停留在对账态，绝不清空
+    this.applyServerStore();
+    await this.reloadMain();
   },
   postMyRadio(lines) { // my-radio.txt 全量替换（备份恢复/歌单合并写共用）：返回是否成功；file:// 无后端恒 false
     if (!location.protocol.startsWith('http')) return Promise.resolve(false);

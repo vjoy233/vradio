@@ -195,6 +195,17 @@
   .dsrc.cur .idx, .dsrc.cur .dsrc-u { color:var(--acc); }
   .dacts { display:flex; gap:8px; flex-wrap:wrap; padding:4px 0; }
   .dmore { font-size:15px; } /* 行/卡「详情」图标钮：.fav 同款无边框图标钮 */
+  /* 统一确认弹窗层（ui-redesign §6.8，P4）：#editorConfirm 唯一实例，#manage 同款遮罩机制（hidden div，
+     不引入 <dialog> 新机制）+ .mbox 复用样式；z-index 高于维护面板(10)/toast(11)——确认是最上层模态 */
+  #editorConfirm { position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; padding:16px; z-index:12; }
+  #editorConfirm .ecbox { width:min(460px,100%); }
+  .btn.acc { color:var(--acc); border-color:var(--acc); } /* 确认弹窗主动作（保存/确认撤回等） */
+  .btn.acc:disabled { opacity:.5; }
+  .ecbody { padding:14px; font-size:13px; overflow-y:auto; }
+  .ecbody p { white-space:pre-line; word-break:break-all; }
+  .ecacts { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
+  .ecpreview { border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin:10px 0 2px; font-size:12px; line-height:1.9; word-break:break-all; white-space:pre-line; } /* 撤回确认的影响预览清单（§5.4） */
+  .ecck { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--dim); margin-top:8px; cursor:pointer; }
   #mq { width:100%; margin:10px 0 4px; background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:8px; padding:7px 12px; outline:none; font:inherit; }
   #mq:focus { border-color:var(--acc); }
   .mrow select { background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:4px 6px; font:inherit; font-size:12px; max-width:9em; }
@@ -413,6 +424,12 @@
     <div class="mhead"><b><svg class="ic"><use href="#i-compass"/></svg> 发现电台</b><button class="btn" id="discClose" title="关闭（Esc）"><svg class="ic"><use href="#i-x"/></svg><span>关闭</span></button></div>
     <div id="discBody"></div>
   </div>
+</div>
+<!-- 统一确认弹窗层（ui-redesign §6.8，P4）：离开三选（保存并继续/放弃修改/继续编辑）、冲突三选
+     （重新加载最新值/明确覆盖此对象/继续编辑）、撤回影响预览确认等共用的唯一实例；
+     Promise resolver 在 app.js uiChooseDialog（按钮/Esc/点遮罩只 resolve 一次），内容由其 textContent 构造 -->
+<div id="editorConfirm" hidden>
+  <div class="mbox ecbox" role="alertdialog" aria-modal="true" aria-labelledby="ecHead"></div>
 </div>
 <!-- 结构壳：样式与结构在此，逻辑按模块契约分置；
      顺序 = store（存储收敛层，方案二）→ player（引擎）→ logos（台标数据）→ radio-data（同步生成的全库数据，

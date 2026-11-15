@@ -132,6 +132,293 @@ function uiPlaceTheme(wrap, desktopHost, before, compactHost) {
   return () => { if (mq.removeEventListener) mq.removeEventListener('change', place); else mq.removeListener(place); };
 }
 
+/* ---------- 维护草稿引擎（ui-redesign §5/§6.4/§6.8/§6.9，P4 批次；语义内联自 docs/ui-redesign-assets/
+   handoff-helpers.js——该文件是文档参考实现，不是生产代码） ----------
+   草稿只在 App 内存（身份/基线不持久化，无新增 radio.* 键）；URL 是持久身份——草稿锚定稳定源 URL，
+   绝不物理改 s.u[]。字段清除区分「删除属性」与空字符串（uiReadCell/uiSameCell 的 exists 语义）。
+   调用方纪律：map 键限本次允许的 cfg 字段白名单；键必须是已解析验证的 URL（禁止任意输入当 key）；
+   冲突检测比较完整对象投影（M02 同对象外部变化 → 三选，绝不默认覆盖）；显式覆盖只能由确认结果传
+   force=true（M01 无关对象变化 → 在最新 cfg 上只合并本对象字段）；隐藏撤销同理 force=false（M03）。
+   分类改名/删除是逻辑对象变更集合，走 uiBuildCatNext 原子级联（§6.4 明示不经简单 map 助手拼凑）。 ---------- */
+function uiClone(value) { return JSON.parse(JSON.stringify(value)); }
+function uiReadCell(cfg, map, key) { // 读 cfg 上一个 map 键的「单元格」：exists 区分「键不存在」与「值为空串」
+  const box = cfg[map] || {};
+  return Object.prototype.hasOwnProperty.call(box, key)
+    ? { exists: true, value: uiClone(box[key]) } : { exists: false };
+}
+function uiSameCell(a, b) {
+  return a.exists === b.exists && (!a.exists || JSON.stringify(a.value) === JSON.stringify(b.value));
+}
+function uiApplyCells(latest, cells, force) { // 在最新 cfg 上应用明确条目（map/key/after 均由调用方白名单校验）：
+  // force=false 时任一 before 与最新值不符 → 整体拒绝（M03 撤销「拒绝盲撤」）；force=true 仅限显式确认传入
+  const conflicts = cells.filter(c => !uiSameCell(uiReadCell(latest, c.map, c.key), c.before));
+  if (conflicts.length && !force) return { ok: false, conflicts };
+  const next = uiClone(latest);
+  for (const c of cells) {
+    if (!next[c.map]) next[c.map] = {};
+    if (c.after.exists) next[c.map][c.key] = uiClone(c.after.value);
+    else delete next[c.map][c.key];
+  }
+  return { ok: true, cfg: next, conflicts };
+}
+function uiNewDraft(identityUrl, projection) {
+  return { identityUrl, base: uiClone(projection), patch: {},
+    dirty: false, conflict: false, pendingAction: null, submitting: false };
+}
+function uiSameProj(a, b) { return JSON.stringify(a) === JSON.stringify(b); } // 完整投影比较（JSON 序差异最多保守误报冲突，§6.4）
+function uiResolveUnique(stations, url) { // URL 锚点 → 唯一台（失配/多重匹配 throw，绝不猜同名台——§5.3）
+  const matches = stations.filter(s => s.u.includes(url));
+  if (matches.length !== 1) throw new Error(matches.length ? '源 URL 匹配到多个电台，请重新选择' : '电台已失配（源地址漂移），请重新加载');
+  return matches[0];
+}
+function uiValidName(name) { // 现.askName 校验语义等价，但**不静默裁切**：内联报错由用户修正（§6.8）
+  const v = String(name == null ? '' : name).trim();
+  if (!v) return '名称不能为空';
+  if (/[|,\r\n]/.test(v)) return '名称不能含 | 或逗号（列表分隔符）';
+  if (Array.from(v).length > 24) return '名称最多 24 个字符';
+  return '';
+}
+function uiNameTaken(stations, s, cat, name) { // 同分类撞名（keyOf 串台防护，与现.stRename 同口径：按生效名/分类比较）
+  return stations.some(x => x !== s && x.c === cat && x.n === name);
+}
+function uiHasAdj(cfg, s) { // 该台是否还有任何个人调整（tag 快照「只增有据、无调整即清」的判定依据；B1 全字段口径）
+  return s.u.some(u => !!(cfg.names[u] || cfg.moves[u] || cfg.hideS[u] || cfg.srcs[u] || cfg.srcLabels[u]))
+    || !!(cfg.srcManualOrder[s.u[0]] || cfg.srcDisabled[s.u[0]]);
+}
+function uiTagCells(latest, work, s, baseName) { // tag 快照差量（失配清单显示用）：有任一调整 → 写默认名；全清 → 删键
+  const cells = [];
+  for (const u of s.u) {
+    const before = uiReadCell(latest, 'tag', u);
+    const after = uiHasAdj(work, s) ? { exists: true, value: baseName } : { exists: false };
+    if (!uiSameCell(before, after)) cells.push({ map: 'tag', key: u, before, after });
+  }
+  return cells;
+}
+
+/* ---------- 对象投影（完整投影 = 同对象全部可编辑配置，纳入 M02 冲突检测） ---------- */
+function uiStationProjection(cfg, s) {
+  const out = { kind: 'st', urls: s.u.slice(), name: s.n, category: s.c, hidden: !!s.hidden, maps: {} };
+  for (const map of ['names', 'moves', 'hideS', 'tag', 'srcs', 'srcManualOrder', 'srcDisabled', 'srcLabels']) {
+    out.maps[map] = {};
+    for (const u of s.u) if (Object.prototype.hasOwnProperty.call(cfg[map] || {}, u)) out.maps[map][u] = uiClone(cfg[map][u]);
+  }
+  return out;
+}
+function uiCatProjection(cfg, subj) { // subj = {orig, name}：分类在编辑会话中记录原名与基线（§5.3）
+  return { kind: 'cat', orig: subj.orig, name: subj.name, custom: (cfg.cats || []).includes(subj.name),
+    from: Object.keys(cfg.renames || {}).find(k => cfg.renames[k] === subj.name) || null,
+    hidden: !!cfg.hideC[subj.name],
+    movesTo: Object.keys(cfg.moves || {}).filter(k => cfg.moves[k] === subj.name).sort() };
+}
+function uiSrcProjection(cfg, s) { // §6.9 步骤1：本台 srcs + u[0] 的 srcManualOrder/srcDisabled + 全部源 URL 的 srcLabels + 原始 u 快照
+  const key = s.u.find(x => Object.prototype.hasOwnProperty.call(cfg.srcs || {}, x)) || null;
+  return { kind: 'src', urls: s.u.slice(), srcsKey: key, srcs: key ? uiClone(cfg.srcs[key]) : null,
+    manual: uiClone(cfg.srcManualOrder[s.u[0]] || null), disabled: uiClone(cfg.srcDisabled[s.u[0]] || null),
+    labels: Object.fromEntries(s.u.filter(u => Object.prototype.hasOwnProperty.call(cfg.srcLabels || {}, u)).map(u => [u, cfg.srcLabels[u]])) };
+}
+
+/* ---------- 下一份 cfg（只在最新 cfg 上写本对象的变更集合；M01：无关对象以最新值为准） ---------- */
+function uiBuildStationNext(latest, s, patch, base, force) {
+  const has = (p, k) => Object.prototype.hasOwnProperty.call(p, k);
+  const cells = [];
+  for (const u of s.u) {
+    if (has(patch, 'name')) { // 等于默认名 = 撤键（与.stMove「选默认 = 删 moves 键」同思路），绝不写冗余键
+      const nm = String(patch.name).trim();
+      const def = s.dName || base.name;
+      cells.push({ map: 'names', key: u, before: uiReadCell(latest, 'names', u), after: nm === def ? { exists: false } : { exists: true, value: nm } });
+    }
+    if (has(patch, 'category')) { // 目标 = 默认分类（按最新 cfg 命名折算）→ 撤 moves 键（↺ 语义）
+      const def = (latest.renames || {})[s.dCat] || s.dCat || base.category;
+      cells.push({ map: 'moves', key: u, before: uiReadCell(latest, 'moves', u), after: patch.category === def ? { exists: false } : { exists: true, value: patch.category } });
+    }
+    if (has(patch, 'hidden'))
+      cells.push({ map: 'hideS', key: u, before: uiReadCell(latest, 'hideS', u), after: patch.hidden ? { exists: true, value: 1 } : { exists: false } });
+  }
+  const work = uiApplyCells(latest, cells, true).cfg; // 草稿副本上先套非 tag 条目再算 tag 差量（内部 scratch，恒 force）
+  cells.push(...uiTagCells(latest, work, s, s.dName || base.name));
+  const r = uiApplyCells(latest, cells, force);
+  if (!r.ok) throw new Error('保存时检测到外部修改，请重试'); // 投影比对已挡在前面；此处是竞态兜底
+  return r.cfg;
+}
+function uiBuildSrcNext(latest, s, patch, base, force) { // §6.9 步骤5：本台变更集合合并最新 cfg（uiApplyCells）
+  const cells = [];
+  const key = s.u.find(x => Object.prototype.hasOwnProperty.call(latest.srcs || {}, x)) || s.u[0]; // 挂键 = 台上任一已有 srcs 键，否则主 URL（.srcAppend 同口径）
+  const removes = patch.removes || [], appends = patch.appends || [];
+  const arr = (latest.srcs[key] || []).filter(u => !removes.includes(u)); // 现值 − 移除（值域必是追加源）
+  for (const a of appends) if (!arr.includes(a) && !s.u.includes(a)) arr.push(a); // + 追加（去重、原序在前追加序在后）
+  const bSrc = uiReadCell(latest, 'srcs', key);
+  const aSrc = arr.length ? { exists: true, value: arr } : { exists: false };
+  if (!uiSameCell(bSrc, aSrc)) cells.push({ map: 'srcs', key, before: bSrc, after: aSrc });
+  if (patch.manual !== null) { // 人工顺序：完整序材料化（含禁位殿后，与.moveSrc 同口径）；[] = 撤键
+    const b = uiReadCell(latest, 'srcManualOrder', s.u[0]);
+    const a = patch.manual.length ? { exists: true, value: patch.manual.slice() } : { exists: false };
+    if (!uiSameCell(b, a)) cells.push({ map: 'srcManualOrder', key: s.u[0], before: b, after: a });
+  }
+  if (patch.disabled !== null) { // 禁用表：非空写入、空数组撤键
+    const b = uiReadCell(latest, 'srcDisabled', s.u[0]);
+    const a = patch.disabled.length ? { exists: true, value: patch.disabled.slice() } : { exists: false };
+    if (!uiSameCell(b, a)) cells.push({ map: 'srcDisabled', key: s.u[0], before: b, after: a });
+  }
+  for (const [u, v] of Object.entries(patch.labels || {})) { // 标签：空串 = 删键（删除属性 ≠ 空字符串）
+    const val = String(v).trim();
+    const b = uiReadCell(latest, 'srcLabels', u);
+    const a = val ? { exists: true, value: val } : { exists: false };
+    if (!uiSameCell(b, a)) cells.push({ map: 'srcLabels', key: u, before: b, after: a });
+  }
+  const work = uiApplyCells(latest, cells, true).cfg;
+  cells.push(...uiTagCells(latest, work, s, s.dName || base.name));
+  const r = uiApplyCells(latest, cells, force);
+  if (!r.ok) throw new Error('保存时检测到外部修改，请重试');
+  return r.cfg;
+}
+function uiBuildCatNext(latest, orig, patch, base, force, catExists) { // 分类改名级联（复用现.catRename 顺序：renames →
+  // moves 目标 → hideC 键；撞名合并 = 自建分类让位消失）；隐藏切换随后套在最终名上——一个逻辑对象一次提交
+  const next = uiClone(latest);
+  const has = (p, k) => Object.prototype.hasOwnProperty.call(p, k);
+  const cur = (next.renames || {})[orig] || orig;
+  let finalName = cur;
+  if (has(patch, 'name')) {
+    const neu = String(patch.name).trim();
+    if (neu && neu !== cur) {
+      if ((next.cats || []).includes(cur)) next.cats = catExists(neu) ? next.cats.filter(x => x !== cur) : next.cats.map(x => x === cur ? neu : x);
+      else { const org = Object.keys(next.renames || {}).find(k => next.renames[k] === cur);
+        if (org) next.renames[org] = neu; else next.renames[cur] = neu; }
+      for (const k of Object.keys(next.moves || {})) if (next.moves[k] === cur) next.moves[k] = neu; // 移动目标级联
+      if (next.hideC[cur]) { next.hideC[neu] = 1; delete next.hideC[cur]; } // 隐藏标记随名转移
+      finalName = neu;
+    }
+  }
+  if (has(patch, 'hidden')) { if (patch.hidden) next.hideC[finalName] = 1; else delete next.hideC[finalName]; }
+  return next;
+}
+
+/* ---------- 逐对象编辑器（§6.8）：io 依赖显式注入——resolve（URL/原名锚点 → 唯一对象，失配/多重匹配
+   必须 throw 绝不猜）、readCfg、project（完整投影）、newPatch/dirtyOf/fields（补丁结构与字段白名单）、
+   validate、buildNext（最新 cfg 上只写本对象，返回下一份完整 cfg）、beforeCommit?（保存前追加确认，
+   如分类合并影响）、commit、render、confirmLeave（'save'|'discard'|'stay'）、confirmConflict
+   （'reload'|'overwrite'|'stay'）。弹窗等待期间再收到他页更新 → 每轮对最新对象重校验（attempt ≤4）；
+   校验失败留草稿就地纠错；提交中 submitting=true 禁本对象重复保存（不阻塞音频）；失败保留草稿（§5.2）。
+   一次只进一个对象（draft 单槽）。 ---------- */
+function uiCreateEditor(io) {
+  let draft = null, saving = false;
+  const paint = () => io.render(draft ? uiClone(draft) : null, saving);
+  const fresh = (identity, kind) => {
+    const d = uiNewDraft(identity, io.project(io.readCfg(), io.resolve(identity, kind), kind));
+    d.kind = kind; d.error = ''; d.patch = io.newPatch ? io.newPatch(kind) : {};
+    return d;
+  };
+  async function save() {
+    if (!draft || saving) return false;
+    saving = true; draft.submitting = true; paint();
+    try {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const subj = io.resolve(draft.identityUrl, draft.kind), latest = io.readCfg();
+        const proj = io.project(latest, subj, draft.kind);
+        const error = io.validate(subj, draft.patch, latest, draft.kind);
+        if (error) { draft.error = error; paint(); return false; } // 校验失败：留在编辑，pendingAction 不执行
+        if (!uiSameProj(proj, draft.base)) { // M02 同对象外部变化：留草稿标 conflict，三选（不默认覆盖）
+          draft.conflict = true; paint();
+          const choice = await io.confirmConflict(uiClone(draft), uiClone(proj));
+          if (choice === 'reload') { draft = fresh(draft.identityUrl, draft.kind); paint(); return false; }
+          if (choice !== 'overwrite') return false; // 继续编辑：草稿原样保留
+          const cur = io.resolve(draft.identityUrl, draft.kind), freshCfg = io.readCfg();
+          if (!uiSameProj(io.project(freshCfg, cur, draft.kind), proj)) continue; // 弹窗期间又变：重校验
+          const go = io.beforeCommit ? await io.beforeCommit(cur, draft, freshCfg) : 'go';
+          if (go !== 'go') { paint(); return false; }
+          io.commit(io.buildNext(freshCfg, cur, draft.patch, draft.base, true, draft.kind), draft); // 覆盖也只写本对象
+        } else {
+          const go = io.beforeCommit ? await io.beforeCommit(subj, draft, latest) : 'go';
+          if (go !== 'go') { paint(); return false; }
+          io.commit(io.buildNext(latest, subj, draft.patch, draft.base, false, draft.kind), draft);
+        }
+        draft = fresh(draft.identityUrl, draft.kind); // 保存成功：基线推进到最新、草稿清空（留编辑态）
+        paint(); return true;
+      }
+      draft.error = '对象持续变化，请重新加载后再保存'; paint(); return false;
+    } catch (e) { if (draft) { draft.error = (e && e.message) || '保存失败'; paint(); } return false; }
+    finally { saving = false; if (draft) draft.submitting = false; paint(); }
+  }
+  return {
+    getDraft: () => draft ? uiClone(draft) : null,
+    get saving() { return saving; },
+    begin(url, kind) { draft = fresh(url, kind || 'st'); paint(); },
+    end() { if (!draft) return; draft = null; paint(); },
+    change(field, value) { // 白名单字段编辑：值回到基线即撤补丁（不偷偷写 Store，§6.8）
+      if (!draft || saving) return;
+      if (!(io.fields(draft.kind) || []).includes(field)) throw new Error('不允许编辑此字段');
+      if (uiSameProj(value, draft.base[field])) delete draft.patch[field]; else draft.patch[field] = value;
+      draft.dirty = io.dirtyOf(draft.patch, draft.base); draft.error = ''; paint();
+    },
+    mutate(fn) { // 结构化补丁入口（源草稿的排序/禁用/标签/追加/移除）：fn(patch, base) 就地改，脏态统一收口
+      if (!draft || saving) return;
+      fn(draft.patch, draft.base);
+      draft.dirty = io.dirtyOf(draft.patch, draft.base); draft.error = ''; paint();
+    },
+    externalChanged() { // Store 对账/同步重建后的复核挂点：不替换原 render/同步链，只复核当前草稿 conflict 态
+      if (!draft) return;
+      try { draft.conflict = !uiSameProj(io.project(io.readCfg(), io.resolve(draft.identityUrl, draft.kind), draft.kind), draft.base); }
+      catch (e) { draft.conflict = true; draft.error = e.message; }
+      paint();
+    },
+    async depart(next) { // 离开流程（§5.3）：dirty → 三选；「保存并继续」失败停在编辑不执行 next；Esc=继续编辑
+      if (saving) return false;
+      if (draft && draft.dirty) {
+        const choice = await io.confirmLeave(uiClone(draft));
+        if (choice === 'stay') return false;
+        if (choice === 'save' && !await save()) return false;
+        if (choice !== 'save' && choice !== 'discard') return false;
+      }
+      next(); return true;
+    },
+    save,
+  };
+}
+
+/* ---------- 统一确认弹窗层（§6.8）：#editorConfirm 唯一实例（hidden div + .mbox 复用样式，与
+   #manage/#detail 同款机制，不引入新机制）。Promise 只 resolve 一次（按钮/Esc/点遮罩）；内容用
+   textContent 构造防注入；快速关/开的陈旧事件经 done 标记 + 监听器移除防护（handoff-helpers 排队
+   close 防护的同款语义，接入时不得删）；Esc = opt.safe（默认 'stay' = 继编辑/取消）；最上层参与
+   全局焦点陷阱（嵌套确认关闭不误关父面板）。绝不把 confirm() 布尔结果塞进三选流程。 ---------- */
+function uiChooseDialog(title, message, choices, opt = {}) {
+  const box = $('editorConfirm'), dlg = box.querySelector('.ecbox');
+  if (!box.hidden) return Promise.reject(new Error('确认弹窗已在使用中'));
+  return new Promise(resolve => {
+    const opener = document.activeElement, safe = opt.safe || 'stay';
+    let done = false;
+    const finish = value => {
+      if (done) return; done = true; // 只 resolve 一次（快速关/开的排队事件不再触发）
+      box.removeEventListener('keydown', onKey, true);
+      box.removeEventListener('click', onBackdrop);
+      box.hidden = true; dlg.replaceChildren();
+      const ae = document.activeElement;
+      if (opener && opener.isConnected && (!ae || ae === document.body)) opener.focus(); // 焦点归还呼出点
+      resolve(value);
+    };
+    const onKey = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(safe); } };
+    const onBackdrop = e => { if (e.target === box) finish(safe); }; // 点遮罩 = 安全项（stay），不误触发副作用
+    box.addEventListener('keydown', onKey, true); // capture：抢在全局 Esc 链之前处理确认层
+    box.addEventListener('click', onBackdrop);
+    const head = document.createElement('div'); head.className = 'mhead';
+    const hb = document.createElement('b'); hb.id = 'ecHead'; hb.textContent = title; head.appendChild(hb); // 与静态 aria-labelledby 对应
+    const body = document.createElement('div'); body.className = 'ecbody';
+    const p = document.createElement('p'); p.textContent = message; body.appendChild(p);
+    if (opt.build) opt.build(body); // 扩展内容（撤回确认的影响预览清单/勾选项）
+    const acts = document.createElement('div'); acts.className = 'ecacts';
+    let safeBtn = null;
+    for (const c of choices) {
+      const b = document.createElement('button'); b.type = 'button';
+      b.className = 'btn' + (c.primary ? ' acc' : ''); b.textContent = c.label;
+      b.addEventListener('click', () => finish(c.value), { once: true });
+      if (c.value === safe) safeBtn = b;
+      acts.appendChild(b);
+    }
+    body.appendChild(acts);
+    dlg.replaceChildren(head, body);
+    box.hidden = false;
+    (safeBtn || acts.querySelector('button')).focus(); // 初始焦点落安全项（继续编辑/取消）
+  });
+}
+
 const App = {
   /* 集中状态（docs/review.md 架构-风险 2）：stations 数据 + 渲染哨兵 + 行索引（体检增量更新用，去 O(n²)）
      view：网格/列表视图（boot 从 localStorage 恢复，网格为默认——单列长列表浪费纵向空间）
@@ -1881,9 +2168,12 @@ const App = {
     $('manageBtn').onclick = () => this.manageOpen();
     $('mClose').onclick = () => this.manageClose();
     $('manage').onclick = e => { if (e.target === $('manage')) this.manageClose(); }; // 点遮罩关闭
-    document.addEventListener('keydown', e => { // Esc 关面板（焦点在输入框/下拉里时不抢，让它们先清自身）+ 收起浮层菜单
+    document.addEventListener('keydown', e => { // Esc 关面板（焦点在输入框/下拉里时不抢，让它们先清自身）+ 收起浮层菜单。
+      // Esc 链（ui-redesign §5.1/P4）：确认弹窗（editorConfirm，自身 Esc=继续编辑/取消，capture 已 stopPropagation）
+      // → 快捷键浮层 → #detail → #discover → #manage → 浮层菜单——确认层开着时一律不下传，嵌套确认不误关父面板
       if (e.key === 'Escape') {
-        keysClose(); // 快捷键浮层（N8）：最上层，先关
+        if (!$('editorConfirm').hidden) return; // 最上层是确认弹窗：由 uiChooseDialog 的 capture 分支收口
+        keysClose(); // 快捷键浮层（N8）
         if (!$('detail').hidden && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) this.closeDetail(); // 详情中心（B1）
         if (!$('discovery').hidden && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) this.closeDiscovery(); // 发现页（B3）
         if (!$('manage').hidden && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) this.manageClose();
@@ -1892,8 +2182,8 @@ const App = {
         this.themeMenuClose(); // 主题三选菜单（§6.11）：Esc 收起 + 焦点归还
         this.srcPopClose(); // 选源浮层（AIbot P2-1）：Esc 收起 + 焦点归还，与 ? 帮助的 Esc 自述一致
       }
-      if (e.key === 'Tab' && (!$('manage').hidden || !$('detail').hidden || !$('discovery').hidden)) { // 焦点困在弹窗内（UI 审计 P2-7）：aria-modal 此前 Tab 可穿透到被遮罩的主页（B1 扩到详情、B3 扩到发现页）
-        const dlg = !$('manage').hidden ? $('manage') : !$('detail').hidden ? $('detail') : $('discovery');
+      if (e.key === 'Tab' && (!$('editorConfirm').hidden || !$('manage').hidden || !$('detail').hidden || !$('discovery').hidden)) { // 焦点困在最上层弹窗内（UI 审计 P2-7）：确认弹窗优先（最上层只困确认层）
+        const dlg = !$('editorConfirm').hidden ? $('editorConfirm') : !$('manage').hidden ? $('manage') : !$('detail').hidden ? $('detail') : $('discovery');
         const f = [...dlg.querySelectorAll('button,input,select')].filter(x => !x.disabled && x.offsetParent !== null);
         if (!f.length) return;
         const first = f[0], last = f[f.length - 1];

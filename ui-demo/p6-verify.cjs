@@ -317,14 +317,30 @@ const pickPort = () => new Promise((resolve, reject) => { // 82xx 段随机起�
   report.result = 'FAIL'; report.failure = String(e && e.stack || e); process.exitCode = 1; // AIbot PR#34 P2：断言失败必须非零退出——validation.json 之外，退出码是 CI/编排脚本的成败信号
   console.error('FAIL:', e.message);
 } finally {
+  // 清理失败门（AIbot 三次复核 P2）：任何 browser/server/worktree 未回收都置 FAIL + 非零退出 + 写进 validation.json，
+  // 不能只 console 警告后返回成功。注入：VR_FAULT_CLEANUP=1 时在临时 worktree 里钉一个子进程令 remove 必败。
+  const faultPinOn = wtAlive && process.env.VR_FAULT_CLEANUP === '1';
+  let faultPin = null;
+  if (faultPinOn) faultPin = spawn(process.execPath, ['-e', 'setTimeout(()=>{},120000)'], { cwd: wt, stdio: 'ignore' }); // 进程 cwd 不可删（文件句柄带 FILE_SHARE_DELETE 拦不住 git）
+  const cleanupErr = []; let srvGone = !srv, wtGone = !wtAlive;
+  try { if (browser) await browser.close(); } catch (e) { cleanupErr.push('browser:' + String(e.message || e).split('\n')[0]); }
+  try { if (srv) {
+    const waitExit = ms => new Promise(r => { const t = setTimeout(r, ms); srv.once('exit', () => { clearTimeout(t); r(); }); });
+    srv.kill(); await waitExit(3000);
+    if (srv.exitCode === null && !srv.signalCode) { srv.kill('SIGKILL'); await waitExit(2000); } // 高负载下 exit 事件偶发迟到：超时补杀再等
+    srvGone = srv.exitCode !== null || !!srv.signalCode;
+    if (!srvGone) cleanupErr.push('server: kill 后 5s 无退出信号'); } } catch (e) { srvGone = false; cleanupErr.push('server:' + String(e.message || e).split('\n')[0]); }
+  if (wtAlive) { try { git(`worktree remove --force "${wt}"`); wtGone = true; }
+    catch (_) { await new Promise(r => setTimeout(r, 800)); try { git(`worktree remove --force "${wt}"`); wtGone = true; }
+      catch (e2) { cleanupErr.push('worktree remove 两连败:' + String(e2.message || e2).split('\n')[0]); } } }
   if (wtAlive) { // 自举实例才做宿主不变终检（外部实例本就有 VRADIO_ALLOW_EXTERNAL 确认在先；自举时 base 也非空，以 wtAlive 为准）
     if (hostSnap() === before) report.notes.push('Z2 宿主 data/store.json + my-radio.txt 运行前后哈希不变');
     else { report.result = 'FAIL'; report.failure = (report.failure || '') + ' Z2 宿主持久面被改动: ' + before + ' → ' + hostSnap(); process.exitCode = 1; }
   }
+  if (cleanupErr.length === 0 && srvGone && wtGone) report.notes.push('Z3 清理失败门：browser 关闭 / server 退出 / worktree 移除全部成功（零泄漏成立）');
+  else { report.result = 'FAIL'; report.failure = (report.failure || '') + ' Z3 清理失败门未过（不得宣称零泄漏）: ' + cleanupErr.join(' | ') + (srvGone ? '' : ' [server未退出]') + (wtGone ? '' : ' [worktree未移除]'); process.exitCode = 1; }
+  if (faultPin) { try { faultPin.kill(); await new Promise(r => setTimeout(r, 500)); git(`worktree remove --force "${wt}"`); console.error('（注入钉已拔除并补清理——Z3 失败记录保留为门验证证据）'); } catch (_) { try { faultPin.kill(); } catch (_) {} console.error('注入钉拔除后仍需手动清理:', wt); } }
   fs.writeFileSync(path.join(output, 'validation.json'), JSON.stringify(report, null, 2) + '\n');
-  try { if (browser) await browser.close(); } catch (_) {}
-  try { if (srv) { srv.kill(); await new Promise(r => { const t = setTimeout(r, 3000); srv.once('exit', () => { clearTimeout(t); r(); }); }); } } catch (_) {}
-  if (wtAlive) { try { git(`worktree remove --force "${wt}"`); } catch (_) { await new Promise(r => setTimeout(r, 800)); try { git(`worktree remove --force "${wt}"`); } catch (e2) { console.error('临时 worktree 清理失败（请手动 git worktree remove --force）:', wt); } } }
   console.log(JSON.stringify({ result: report.result, assertions: report.assertions.length, screenshots: report.screenshots.length, errors: report.errors }, null, 1));
 }
 })().catch(e => { console.error('p6-verify 异常：', e); process.exitCode = 1; });

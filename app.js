@@ -2206,6 +2206,10 @@ const App = {
       if (!Player.station) return resumeLast();
       Player.isPaused() ? Player.resume() : Player.pause();
     };
+    // 上一/下一收藏台（P3/G19 双端语义，§4.3）：与 ←/→ 键、锁屏媒体键同走 stepFav（无收藏时其内部走状态栏提示）；
+    // boot 单次绑定，紧凑/桌面双端可见（布局只在 CSS 分叉）
+    $('prevFav').onclick = () => this.stepFav(-1);
+    $('nextFav').onclick = () => this.stepFav(1);
     $('refreshBtn').onclick = () => this.doRefresh(); // 手动刷新回直播头（plan-refresh-live §3.2）：当前源整链重开
     // 音量：静音键 + 拖动百分比反馈（UI 审计 P3-6）；每台音量记忆（A3/r2 ②语义①）——
     // 拖动经 rememberVol 分流（正在播写台记忆、台首调全局锚点随行、无台写全局），0 与静音同为瞬态不入记忆

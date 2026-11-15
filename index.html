@@ -19,7 +19,10 @@
   #q:focus { border-color:var(--acc); }
   .btn { background:var(--panel); border:1px solid var(--line); color:var(--tx); border-radius:8px; padding:7px 12px; cursor:pointer; white-space:nowrap; font:inherit; transition:border-color .15s, background-color .15s; display:inline-flex; align-items:center; gap:5px; }
   .ic { width:1em; height:1em; flex:0 0 auto; } /* sprite 引用：1em 随按钮字号缩放，stroke 走 currentColor 继承主题色（UI 审计 P3-1） */
-  #pp .ic { width:17px; height:17px; }
+  #pp .ic, #prevFav .ic, #nextFav .ic { width:17px; height:17px; } /* 中部三键（P3）：prev/next 与 pp 同尺寸 */
+  /* 播放器底栏三组（P3/§4.3/§6.5）：紧凑态 display:contents 对布局透明——子级仍为 footer flex 的直接布局项，
+     旧紧凑布局除新增 #prevFav/#nextFav（#pp 两侧，G19 双端语义）外零变化 */
+  .player-identity, .player-main, .player-helpers { display:contents; }
   .btn:hover { border-color:var(--acc); }
   .btn.on { color:var(--acc); border-color:var(--acc); }
   .btn:active, .chip:active, .row:active, .card:active { transform:translateY(1px); } /* 按压物理反馈（UI 审计 A 批：此前无 :active 态） */
@@ -338,6 +341,18 @@
     html.ui-refresh #list:not(.grid) .row .meta { margin-left:auto; text-align:right; }
     /* 长名完整提示（§4.2/§9.3）：单例 tooltip 定位在触发行下方、不越视口；pointer-events:none 不拦悬停 */
     html.ui-refresh #namett { position:fixed; z-index:12; background:var(--ui-surface); color:var(--ui-text); border:1px solid var(--ui-line); border-radius:8px; padding:5px 10px; font-size:12px; line-height:1.5; max-width:min(420px,80vw); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; box-shadow:0 8px 24px rgba(0,0,0,.25); pointer-events:none; }
+    /* 播放器底栏三列（§6.5 骨架原样）：identity 弹性截断 | main 自适应居中 | helpers 右对齐可换行（1024 允许两行，
+       小音量条不挤主播放——§4.3）；main 大圆播放键 + 幽灵 prev/next（参考图 01/12） */
+    html.ui-refresh .player-dock { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(280px,1fr); align-items:center; gap:16px; }
+    html.ui-refresh .player-identity { display:flex; align-items:center; gap:10px; min-width:0; }
+    html.ui-refresh .player-main { display:flex; align-items:center; justify-content:center; gap:8px; }
+    html.ui-refresh .player-helpers { display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:center; gap:6px 8px; min-width:0; }
+    html.ui-refresh #status { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    html.ui-refresh #pp { width:48px; height:48px; padding:0; justify-content:center; border-radius:50%; background:var(--ui-accent); border-color:var(--ui-accent); color:var(--ui-on-accent); }
+    html.ui-refresh #prevFav, html.ui-refresh #nextFav { width:44px; height:44px; padding:0; justify-content:center; border:none; background:none; color:var(--ui-muted); }
+    html.ui-refresh #prevFav:hover, html.ui-refresh #nextFav:hover { border:none; background:var(--ui-raised); color:var(--ui-text); }
+    /* toast/歌曲历史/快捷键表锚到实际底栏上方（--dock-h 实测，§4.3）；紧凑态保持各自现值不动 */
+    html.ui-refresh #toast, html.ui-refresh #songhist, html.ui-refresh #keys { bottom:calc(var(--dock-h,100px) + 16px); }
   }
   @media (prefers-reduced-motion:reduce) { html.ui-refresh .vinyl { animation:none !important; } } /* 唱片旋转为 P3 接线，先立规约（§6.5） */
 </style>
@@ -358,6 +373,8 @@
 <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454l0 .008" /></symbol>
 <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12" /><path d="M6 6l12 12" /></symbol>
 <symbol id="i-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v16l13 -8l-13 -8" /></symbol>
+<symbol id="i-prev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6l6 6" /></symbol>
+<symbol id="i-next" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6l-6 6" /></symbol>
 <symbol id="i-pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1l0 -12" /><path d="M14 6a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1l0 -12" /></symbol>
 <symbol id="i-sleep" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h6l-6 8h6" /><path d="M14 4h6l-6 8h6" /></symbol>
 <symbol id="i-star" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17.75l-6.172 3.245l1.179 -6.873l-5 -4.867l6.9 -1l3.086 -6.253l3.086 6.253l6.9 1l-5 4.867l1.179 6.873l-6.158 -3.245" /></symbol>
@@ -439,30 +456,42 @@
 <div id="list" role="list" aria-label="电台列表"></div>
 </main>
 </div>
-<footer>
+<!-- 播放器底栏三组（P3/§4.3/§6.5）：.player-identity（台名/曲讯/均衡器）+ .player-main（上一收藏/播放/下一收藏，
+     G19 双端语义：#prevFav/#nextFav 与 ←/→ 键同义、紧凑态也显示）+ .player-helpers（刷新/睡眠/选源/详情/静音/
+     状态/音量）。全部现有 id 原位保留、监听不动；紧凑态三组 display:contents（子级仍为 footer flex 的直接布局
+     项，除新增按钮外布局零变化），桌面 ui-refresh 才落三列 grid -->
+<footer class="player-dock">
   <div id="prog" hidden><i></i></div>
-  <button class="btn" id="pp" aria-label="播放 / 暂停"><svg class="ic"><use href="#i-play"/></svg></button>
-  <button class="btn" id="refreshBtn" aria-label="刷新，回到直播最新处" title="刷新：断开当前连接，回到直播最新处"><svg class="ic"><use href="#i-sync"/></svg></button> <!-- 手动刷新回直播头（plan-refresh-live）：与 header「同步源」同 icon 不同语境，title 消歧 -->
-  <span id="eq" aria-hidden="true"><i></i><i></i><i></i></span>
-  <div id="now" aria-live="polite"><div id="nowline" role="button" tabindex="0">未在播放</div><div id="song" role="button" tabindex="0" hidden></div></div> <!-- 两行：台名 + 曲讯（B-6）；键盘可达（audit-r2 P3-2）：可点 div 补 role/tabindex，Enter/Space 在 app.js 接线 -->
-  <span id="sleepWrap">
-    <button class="btn" id="sleepBtn" title="睡眠定时：到点渐弱停止" aria-label="睡眠定时"><svg class="ic"><use href="#i-sleep"/></svg><span id="sleepLab"></span></button>
-    <!-- 睡眠菜单（UI 审计 P3-7）：一次点选替代 15→30→60 循环（想设 60 分钟原要按三下）；进行中点击按钮直接取消 -->
-    <span id="sleepMenu" hidden>
-      <button type="button" class="btn" data-min="15">15 分钟</button>
-      <button type="button" class="btn" data-min="30">30 分钟</button>
-      <button type="button" class="btn" data-min="60">60 分钟</button>
+  <div class="player-identity">
+    <div id="now" aria-live="polite"><div id="nowline" role="button" tabindex="0">未在播放</div><div id="song" role="button" tabindex="0" hidden></div></div> <!-- 两行：台名 + 曲讯（B-6）；键盘可达（audit-r2 P3-2）：可点 div 补 role/tabindex，Enter/Space 在 app.js 接线 -->
+    <span id="eq" aria-hidden="true"><i></i><i></i><i></i></span>
+  </div>
+  <div class="player-main">
+    <button class="btn" id="prevFav" aria-label="上一收藏台" title="上一收藏台（与 ← 键同义）"><svg class="ic"><use href="#i-prev"/></svg></button>
+    <button class="btn" id="pp" aria-label="播放 / 暂停"><svg class="ic"><use href="#i-play"/></svg></button>
+    <button class="btn" id="nextFav" aria-label="下一收藏台" title="下一收藏台（与 → 键同义）"><svg class="ic"><use href="#i-next"/></svg></button>
+  </div>
+  <div class="player-helpers">
+    <button class="btn" id="refreshBtn" aria-label="刷新，回到直播最新处" title="刷新：断开当前连接，回到直播最新处"><svg class="ic"><use href="#i-sync"/></svg></button> <!-- 手动刷新回直播头（plan-refresh-live）：与 header「同步源」同 icon 不同语境，title 消歧 -->
+    <span id="sleepWrap">
+      <button class="btn" id="sleepBtn" title="睡眠定时：到点渐弱停止" aria-label="睡眠定时"><svg class="ic"><use href="#i-sleep"/></svg><span id="sleepLab"></span></button>
+      <!-- 睡眠菜单（UI 审计 P3-7）：一次点选替代 15→30→60 循环（想设 60 分钟原要按三下）；进行中点击按钮直接取消 -->
+      <span id="sleepMenu" hidden>
+        <button type="button" class="btn" data-min="15">15 分钟</button>
+        <button type="button" class="btn" data-min="30">30 分钟</button>
+        <button type="button" class="btn" data-min="60">60 分钟</button>
+      </span>
     </span>
-  </span>
-  <span id="srcWrap" hidden>
-    <button class="btn" id="srcBtn" title="备选源：切换当前电台的播放源 / 恢复默认" aria-label="备选源" aria-haspopup="true" aria-expanded="false"><svg class="ic"><use href="#i-dots"/></svg></button>
-    <!-- 选源浮层（②a）：正在听的多源台一键切源；点行 = 用此源播放，底部 ↺ 恢复默认源 -->
-    <span id="srcMenu" hidden></span>
-  </span>
-  <button class="btn" id="detailBtn" hidden title="电台详情：逐源诊断 / 源启停与排序 / 歌曲历史" aria-label="电台详情"><svg class="ic"><use href="#i-info"/></svg></button> <!-- 详情中心入口（B1）：正在播的台；台名行保留「回到正在播」语义不抢点 -->
-  <button class="btn" id="muteBtn" aria-label="静音" title="静音 / 取消静音"><svg class="ic"><use href="#i-vol"/></svg></button>
-  <span id="status" role="status" aria-live="polite"></span>
-  <input type="range" id="vol" min="0" max="100" value="90" aria-label="音量">
+    <span id="srcWrap" hidden>
+      <button class="btn" id="srcBtn" title="备选源：切换当前电台的播放源 / 恢复默认" aria-label="备选源" aria-haspopup="true" aria-expanded="false"><svg class="ic"><use href="#i-dots"/></svg></button>
+      <!-- 选源浮层（②a）：正在听的多源台一键切源；点行 = 用此源播放，底部 ↺ 恢复默认源 -->
+      <span id="srcMenu" hidden></span>
+    </span>
+    <button class="btn" id="detailBtn" hidden title="电台详情：逐源诊断 / 源启停与排序 / 歌曲历史" aria-label="电台详情"><svg class="ic"><use href="#i-info"/></svg></button> <!-- 详情中心入口（B1）：正在播的台；台名行保留「回到正在播」语义不抢点 -->
+    <button class="btn" id="muteBtn" aria-label="静音" title="静音 / 取消静音"><svg class="ic"><use href="#i-vol"/></svg></button>
+    <span id="status" role="status" aria-live="polite"></span>
+    <input type="range" id="vol" min="0" max="100" value="90" aria-label="音量">
+  </div>
 </footer>
 <audio id="audio" preload="none"></audio>
 <div id="songhist" hidden></div>

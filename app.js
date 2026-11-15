@@ -118,6 +118,38 @@ function uiChooseResume(opt) { // 续听候选（§6.3，本批次先立纯函�
 function uiPhaseRunning(phase, hidden, reduce) {
   return phase === 'playing' && !hidden && !reduce;
 }
+
+/* ---------- 数据分区预览纯函数（ui-redesign §5.5，P5）：cfg 差异计数——只算数不触 DOM，test/ui-data.js
+   直测。uiCfgDiff 逐字段统计 增/删/改 键数（cats 数组按去重集合差、无「改」态；其余数组值整值比较——
+   srcs/srcManualOrder 等元素顺序有意义）；计数可交换 → 键序无关。空 incoming（重置/空配置导入）= 全清
+   计数，是「将清空全部 N 项」明示的依据。 ---------- */
+const UI_CFG_FIELDS = [ // 预览展示序 + 中文标签（cfg 字段 → 面板行；tag = 失配清单用的默认名快照，一并计入）
+  ['moves', '电台移动分类'], ['names', '电台改名'], ['hideS', '隐藏电台'], ['renames', '分类改名'],
+  ['hideC', '隐藏分类'], ['cats', '自建分类'], ['srcs', '追加备选源'], ['srcManualOrder', '源手动排序'],
+  ['srcDisabled', '源禁用'], ['srcLabels', '源标签'], ['tag', '维护标记快照'],
+];
+function uiCfgDiff(cur, inc) {
+  const out = { fields: {}, total: 0 };
+  for (const [k] of UI_CFG_FIELDS) {
+    let add = 0, del = 0, chg = 0;
+    if (k === 'cats') { // 数组字段：按去重集合差计 增/删
+      const a = new Set(Array.isArray(cur && cur.cats) ? cur.cats : []);
+      const b = new Set(Array.isArray(inc && inc.cats) ? inc.cats : []);
+      for (const x of b) if (!a.has(x)) add++;
+      for (const x of a) if (!b.has(x)) del++;
+    } else {
+      const a = (cur && cur[k]) || {}, b = (inc && inc[k]) || {};
+      for (const key of Object.keys(b)) {
+        if (!Object.prototype.hasOwnProperty.call(a, key)) add++;
+        else if (JSON.stringify(a[key]) !== JSON.stringify(b[key])) chg++;
+      }
+      for (const key of Object.keys(a)) if (!Object.prototype.hasOwnProperty.call(b, key)) del++;
+    }
+    out.fields[k] = { add, del, chg };
+    out.total += add + del + chg;
+  }
+  return out;
+}
 /* 主题入口窄屏收纳（§6.11，boot 装配一次并留销毁函数）：同一节点（#themeWrap 含三选菜单）搬家——≤640px 收进
    #lowfreq（「⋯ 更多」内，文字 span 由 CSS 放出）、更宽回顶栏原锚点（#file 之前）；监听/radio.theme 随节点走，
    不复制 id。跨断点焦点：焦点在将隐藏的菜单内先关菜单（归还触发器）；DOM 搬家必脱焦——焦点还给随行 themeBtn，
@@ -2174,12 +2206,42 @@ const App = {
     a.download = 'vradio-config.json'; a.click(); URL.revokeObjectURL(a.href);
     $('status').textContent = `已导出维护配置（${this.cfgCount(this.cfg)} 项，vradio-config.json）`;
   },
-  importCfg(text) {
-    let j; try { j = JSON.parse(text); } catch (_) { alert('导入失败：不是合法 JSON 文件'); return; }
-    const c = this.normCfg(j && j.cfg);
-    if (!confirm(`导入将覆盖本地全部维护配置（新配置共 ${this.cfgCount(c)} 项，含 ${c.cats.length} 个自建分类）。继续？`)) return;
-    this.cfg = c; this.saveCfg(); this.reapplyCfg();
-    $('status').textContent = '已导入维护配置';
+  mDataErr(msg) { // 数据分区就地错误（§5.5：不用 alert——#editorConfirm 是 role=alertdialog，可聚焦/读屏可达）
+    uiChooseDialog('导入失败', msg, [{ value: 'x', label: '关闭' }], { safe: 'x' }).catch(() => {});
+  },
+  importCfg(text) { // §5.5：解析 → normCfg 校验 → 差异预览 → 明确覆盖确认 → 提交（提交语义不变：normCfg → 全量覆盖 → saveCfg → reapplyCfg）
+    let j; try { j = JSON.parse(text); } catch (_) { return this.mDataErr('文件不是合法 JSON，无法导入。'); }
+    if (!j || typeof j !== 'object' || Array.isArray(j)) return this.mDataErr('文件不是 vradio 维护配置对象（应为 { v, cfg } 形态的 JSON）。');
+    const hasCfg = j.cfg && typeof j.cfg === 'object' && !Array.isArray(j.cfg);
+    const c = this.normCfg(j.cfg); // 校验走实际 normCfg（坏形状字段被清洗/丢弃，以清洗后结果为准预览）
+    const d = uiCfgDiff(this.cfg, c), curN = this.cfgCount(this.cfg), newN = this.cfgCount(c);
+    uiChooseDialog('导入维护配置 · 覆盖预览',
+      hasCfg ? '导入将全量覆盖本地维护配置（个人调整层——不删除收藏、电台主库、个人文件）。请核对差异后确认：'
+        : '文件中没有 cfg 配置对象——按「空配置」导入，等同于清空全部个人维护配置。',
+      [{ value: 'ok', label: '确认覆盖导入', primary: true }, { value: 'stay', label: '取消' }], {
+      safe: 'stay',
+      build: body => {
+        const pre = document.createElement('div'); pre.className = 'ecpreview';
+        const lines = [];
+        if (!newN && curN) lines.unshift(`将清空全部 ${curN} 项个人维护配置`); // 空 incoming 必须明示（§5.5）
+        for (const [k, lab] of UI_CFG_FIELDS) {
+          const f = d.fields[k], seg = [];
+          if (f.add) seg.push('新增 ' + f.add);
+          if (f.del) seg.push('删除 ' + f.del);
+          if (f.chg) seg.push('修改 ' + f.chg);
+          if (seg.length) lines.push(lab + '：' + seg.join(' · '));
+        }
+        if (!d.total) lines.push('导入内容与当前配置一致（无差异）');
+        pre.textContent = lines.join('\n');
+        body.appendChild(pre);
+        const sum = document.createElement('p'); sum.className = 'ecsum';
+        sum.textContent = `覆盖后共 ${newN} 项（当前 ${curN} 项，含 ${c.cats.length} 个自建分类）。`;
+        body.appendChild(sum);
+      } }).then(ok => {
+        if (!ok) return;
+        this.cfg = c; this.saveCfg(); this.reapplyCfg();
+        $('status').textContent = `已导入维护配置（覆盖后 ${newN} 项）`;
+      }).catch(() => {}); // 确认层被占用（理论罕见）：静默放弃，不打断既有弹窗
   },
   resetCfg() { // §5.4 表「重置全部维护配置」：单独列出数量与范围；不删除收藏、主库、个人文件或歌史
     if (!confirm(`清空全部维护配置（共 ${this.cfgCount(this.cfg)} 项：分类重命名/隐藏、电台改名/移动/隐藏/追加源/源排序与启停）？分类与电台将回到同步默认——不删除收藏、主库、个人文件或歌史。`)) return;

@@ -225,7 +225,13 @@
   .ecbody { padding:14px; font-size:13px; overflow-y:auto; }
   .ecbody p { white-space:pre-line; word-break:break-all; }
   .ecacts { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
-  .ecpreview { border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin:10px 0 2px; font-size:12px; line-height:1.9; word-break:break-all; white-space:pre-line; } /* 撤回确认的影响预览清单（§5.4） */
+  .ecpreview { border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin:10px 0 2px; font-size:12px; line-height:1.9; word-break:break-all; white-space:pre-line; } /* 撤回确认/导入重置预览的影响清单（§5.4/§5.5） */
+  .ecrows { border:1px solid var(--line); border-radius:8px; padding:4px 10px; margin:10px 0 2px; font-size:12px; } /* 备份恢复覆盖预览行（§5.5/图10：数据项 | 本次影响 两列） */
+  .ecrow { display:flex; gap:10px; padding:5px 0; border-bottom:1px dashed var(--line); }
+  .ecrow:last-child { border-bottom:none; }
+  .ecrow .k { flex:0 0 8.5em; color:var(--dim); }
+  .ecrow .v { flex:1; min-width:0; word-break:break-all; }
+  .ecsum { font-size:12px; color:var(--dim); margin:8px 0 0; word-break:break-all; }
   .ecck { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--dim); margin-top:8px; cursor:pointer; }
   #mq { width:100%; margin:10px 0 4px; background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:8px; padding:7px 12px; outline:none; font:inherit; }
   #mq:focus { border-color:var(--acc); }
@@ -248,16 +254,19 @@
   .merr { color:var(--warn); font-size:12px; padding:2px 0; word-break:break-all; }
   .econflict { color:var(--warn); font-size:12px; border:1px dashed var(--warn); border-radius:6px; padding:4px 8px; margin-bottom:6px; }
   .lbin { flex:0 1 10em; min-width:6em; background:var(--panel); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:2px 6px; outline:none; font:inherit; font-size:12px; } /* 源标签行内输入（§6.9 替代 prompt） */
-  /* 「数据」分区骨架（§5.5，P4）：mfoot 原样迁入 */
+  /* 「数据」分区（§5.5，P5）：三组动作按卡分组（图09）；file:// 能力矩阵容器空时零占位 */
   #mData { flex:1; min-height:0; overflow-y:auto; scrollbar-width:thin; scrollbar-color:var(--line) transparent; }
-  #mData .mfoot { border-top:none; }
+  #mDataEnv:empty { display:none; }
+  #mData .dcard { border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin:10px 14px; }
+  #mData .dcard b { display:block; font-size:13px; margin-bottom:4px; }
+  #mData .dcard p { margin:0 0 8px; font-size:12px; color:var(--dim); line-height:1.7; }
+  .dacts2 { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   .mnote { padding:10px 14px 0; font-size:12px; color:var(--dim); }
   /* 添加自定义电台（A-2）：面板电台页顶部表单，先探活（拒绝假流/死链）再写入 my-radio.txt（持久层，区别于 cfg 显示层） */
   #mAdd { display:flex; gap:6px; padding:10px 14px 0; flex-wrap:wrap; }
   #mAdd input { flex:1; min-width:110px; background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:6px 8px; outline:none; font:inherit; font-size:12px; }
   #mAdd input:focus { border-color:var(--acc); }
   #mAdd select { background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:6px; font:inherit; font-size:12px; max-width:9em; }
-  .mfoot { display:flex; gap:8px; justify-content:flex-end; padding:10px 14px; border-top:1px solid var(--line); flex-wrap:wrap; align-items:center; } /* wrap：动作按钮窄屏换行不溢出 */
   .mck { display:inline-flex; align-items:center; gap:5px; font-size:12px; color:var(--dim); margin-right:auto; white-space:nowrap; cursor:pointer; } /* 备份「含质量数据」复选（B4）：靠 margin-right:auto 推到行首，按钮组靠右 */
   /* 更多菜单（UI 审计 P2-6）：桌面 display:contents 按钮原样排布；≤640px 收进锚定 header 右下的浮层 */
   #lowfreq { display:contents; }
@@ -581,23 +590,43 @@
       <input id="mq" type="search" placeholder="搜索要维护的电台（含已隐藏），如：动感 / CNN / 戏曲" aria-label="搜索电台">
       <div id="mlist" role="list"></div>
     </div>
-    <!-- 「数据」分区（§5.5，P4 只做骨架）：现有导入导出/备份恢复/歌单按钮组原样迁入，动作语义与绑定一行不改；
-         B4 备份预览/恢复 UI、cfg 导入预览重做、重置计数在 P5 接入 -->
+    <!-- 「数据」分区（§5.5，P5）：三组独立动作按卡分组（图09 信息层级）——完整备份 / 维护配置 / 个人列表。
+         全部现有 id（mExport/mImport/mReset/mBackup/mRestore/mPlaylist/mPaste/mSidecar/mfile*）原位保留，
+         动作绑定与语义一行不改；cfg 导入差异预览/备份覆盖预览/重置预览/file:// 能力矩阵在 P5 接入 -->
     <div id="mData" hidden>
-      <div class="mnote">数据工具会先处理未保存的编辑草稿；备份恢复/配置导入的预览与结果展示在 P5 重做（现为既有确认流程）。</div>
-      <div class="mfoot">
-        <label class="mck"><input type="checkbox" id="mSidecar" title="备份附带本机质量与收听统计数据（探活/播放的聚合统计 + 按日收听时长，跨机迁移用；不含任何响应正文；默认不含）">含统计数据</label>
-        <button class="btn" id="mBackup" title="导出全部本地数据为 v3 完整备份（收藏/维护配置/健康标记/歌曲历史 + 个人电台 my-radio；可勾选附带质量/收听统计数据）——换浏览器/换机的兜底通道">备份全部</button>
-        <button class="btn" id="mRestore" title="从完整备份恢复（v1/v2/v3 均可读；覆盖本地全部数据，预览确认后执行）">恢复备份</button>
-        <button class="btn" id="mPlaylist" title="导入歌单文件（m3u / pls / xspf / asx / txt）：先解析为纯本地条目（不联网探活），预览新增/已知/重复/非法四桶，确认后新台写入 my-radio.txt">导入歌单</button>
-        <button class="btn" id="mPaste" title="粘贴纯链接文本（每行一个 http(s) 流地址）导入个人列表">粘贴链接</button>
-        <button class="btn" id="mExport" title="导出维护配置为 JSON（备份/换机；收藏另有 m3u 导出）">导出配置</button>
-        <button class="btn" id="mImport" title="导入维护配置 JSON（覆盖本地全部维护配置，确认后执行）">导入配置</button>
-        <button class="btn" id="mReset" title="清空全部维护配置，分类与电台回到同步默认">重置</button>
-        <input type="file" id="mfile" accept=".json,application/json" hidden aria-label="导入维护配置文件">
-        <input type="file" id="mfile2" accept=".json,application/json" hidden aria-label="导入完整备份文件">
-        <input type="file" id="mfile3" accept=".m3u,.pls,.xspf,.asx,.wax,.wmx,.txt,audio/x-mpegurl,audio/x-scpls,application/xml,text/plain" hidden aria-label="导入歌单文件">
+      <div class="mnote">备份、导入、重置各自一次提交、互不隶属电台编辑草稿；执行前会先处理未保存的草稿，预览确认后生效。</div>
+      <div id="mDataEnv"></div>
+      <div class="dsec2">
+        <div class="dcard">
+          <b>完整备份</b>
+          <p>打包全部本地数据（收藏/维护配置/健康标记/歌曲历史 + 个人电台）导出 vradio-backup.json，可勾选附带质量与收听统计；恢复前先看覆盖预览，失败如实区分未提交/已回滚并给恢复路径。</p>
+          <div class="dacts2">
+            <label class="mck"><input type="checkbox" id="mSidecar" title="备份附带本机质量与收听统计数据（探活/播放的聚合统计 + 按日收听时长，跨机迁移用；不含任何响应正文；默认不含）">含统计数据</label>
+            <button class="btn" id="mBackup" title="导出全部本地数据为 v3 完整备份（收藏/维护配置/健康标记/歌曲历史 + 个人电台 my-radio；可勾选附带质量/收听统计数据）——换浏览器/换机的兜底通道">备份全部</button>
+            <button class="btn" id="mRestore" title="从完整备份恢复（v1/v2/v3 均可读；覆盖本地全部数据，覆盖预览确认后执行，提交中不可重复触发）">恢复备份</button>
+          </div>
+        </div>
+        <div class="dcard">
+          <b>维护配置</b>
+          <p>导出/导入个人调整（改名/移动/隐藏/追加源/源排序启停标签）；导入先出差异预览再覆盖，重置先列出清除范围——都不删除电台主库和收藏。</p>
+          <div class="dacts2">
+            <button class="btn" id="mExport" title="导出维护配置为 JSON（备份/换机；收藏另有 m3u 导出）">导出配置</button>
+            <button class="btn" id="mImport" title="导入维护配置 JSON：先解析校验出差异预览，明确覆盖确认后执行">导入配置</button>
+            <button class="btn" id="mReset" title="清空全部维护配置：预览清除数量与范围后确认，分类与电台回到同步默认（不删除收藏/主库/个人文件/歌史）">重置</button>
+          </div>
+        </div>
       </div>
+      <div class="dcard">
+        <b>个人列表</b>
+        <p>歌单文件（m3u/pls/xspf/asx/txt）与粘贴链接导入个人列表：先解析为纯本地条目，四桶预览后新台写入 my-radio.txt（http 形态）。</p>
+        <div class="dacts2">
+          <button class="btn" id="mPlaylist" title="导入歌单文件（m3u / pls / xspf / asx / txt）：先解析为纯本地条目（不联网探活），预览新增/已知/重复/非法四桶，确认后新台写入 my-radio.txt">导入歌单</button>
+          <button class="btn" id="mPaste" title="粘贴纯链接文本（每行一个 http(s) 流地址）导入个人列表">粘贴链接</button>
+        </div>
+      </div>
+      <input type="file" id="mfile" accept=".json,application/json" hidden aria-label="导入维护配置文件">
+      <input type="file" id="mfile2" accept=".json,application/json" hidden aria-label="导入完整备份文件">
+      <input type="file" id="mfile3" accept=".m3u,.pls,.xspf,.asx,.wax,.wmx,.txt,audio/x-mpegurl,audio/x-scpls,application/xml,text/plain" hidden aria-label="导入歌单文件">
     </div>
   </div>
 </div>

@@ -71,6 +71,7 @@ fun AppRoot() {
         checking = detailBusy,
         onSongs = { vm.closeDetail(); vm.showSongs.value = true },
         logo = vm.logoOf(ds),
+        quality = vm.qualitySummaryOf(ds),   // B2 稳定性徽标行（无样本 null 不渲染）
         onDismiss = { vm.closeDetail() },
       )
     }

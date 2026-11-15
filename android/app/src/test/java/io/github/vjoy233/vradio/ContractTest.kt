@@ -3,16 +3,23 @@ package io.github.vjoy233.vradio
 import io.github.vjoy233.vradio.consts.C
 import io.github.vjoy233.vradio.data.Backup
 import io.github.vjoy233.vradio.data.CfgCodec
+import io.github.vjoy233.vradio.data.QualityStore
+import io.github.vjoy233.vradio.model.DiagnosticResult
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 
 /* 契约测试（B0）：与 Web test/contracts.js 同源——读仓库根 contracts/radio-keys.json（经 gradle test resources
-   接线），比对 C.KEYS 三侧白名单；v2/v3 备份黄金样本互读；radio.cfg v2 迁移与新字段 round-trip。 */
+   接线），比对 C.KEYS 三侧白名单；v2/v3 备份黄金样本互读；radio.cfg v2 迁移与新字段 round-trip；
+   B2 质量聚合黄金样本 round-trip（AIbot P1-2，Web test/quality-store.js [7] 同源消费）。 */
 class ContractTest {
+
+  @get:Rule val tmp = TemporaryFolder()
 
   private fun res(name: String): String =
     javaClass.classLoader!!.getResourceAsStream(name)!!.bufferedReader().readText()
@@ -68,5 +75,48 @@ class ContractTest {
     assertEquals("车机备用", v2.srcLabels["https://b.example/y"])
     val back = CfgCodec.parse(CfgCodec.toJson(v2)) // round-trip 不丢字段
     assertEquals(v2, back)
+  }
+
+  @Test fun qualityFilesShapeInContract() { // AIbot P1-2：契约 files 节冻结双包装形态描述（Web 侧 test/contracts.js 同款断言）
+    val qc = JSONObject(res("quality-summary.json"))
+    val files = qc.getJSONObject("files")
+    assertTrue(files.getString("web").contains("{ v:1, rev"))
+    assertTrue(files.getString("android").contains("{ v:1, stations"))
+  }
+
+  @Test fun qualityAggregateGoldenRoundTrip() { // AIbot P1-2：双端黄金样本——两包装层（{v,stations} vs {v,rev,ops,data}）共享内层聚合形态
+    val fx = JSONObject(res("fixtures/quality-aggregate.json"))
+    val id = fx.getString("identityUrl")
+    var now = 0L
+    val q = QualityStore(tmp.newFolder(), { now })   // playback 的 at 取 clock：逐事件推进到 fixture 时刻
+    val evs = fx.getJSONArray("events")
+    for (i in 0 until evs.length()) {
+      val e = evs.getJSONObject(i)
+      val url = e.getString("sourceUrl"); val mode = e.getString("mode")
+      if (e.getString("kind") == "diagnostic")
+        q.recordDiagnostic(id, DiagnosticResult(url, e.getBoolean("ok"),
+          if (e.getBoolean("ok")) "OK" else "NETWORK", mode == "hls", mode, 0, "",
+          e.getLong("bytes"), e.getLong("latencyMs"), "", e.getLong("at")), e.getString("trigger"))
+      else {
+        now = e.getLong("at")
+        q.recordPlayback(id, url, e.getBoolean("ok"), e.getLong("latencyMs"), mode, e.getString("trigger"))
+      }
+    }
+    now = fx.getJSONObject("expected").getLong("lastObservedAt")   // 评估时刻 = 30 天窗内
+    val s = q.summary(id)!!
+    val exp = fx.getJSONObject("expected")
+    assertEquals(exp.getString("identityUrl"), s.identityUrl)
+    assertEquals(exp.getInt("sourceCount"), s.sourceCount)
+    assertEquals(exp.getInt("directCount"), s.directCount)
+    assertEquals(exp.getInt("okCount"), s.okCount)
+    assertEquals(exp.getInt("failCount"), s.failCount)
+    assertEquals(exp.getLong("lastOkAt"), s.lastOkAt)
+    assertEquals(exp.getLong("lastFailAt"), s.lastFailAt)
+    assertEquals(exp.getLong("lastPlaybackAt"), s.lastPlaybackAt)
+    assertEquals(exp.getLong("lastObservedAt"), s.lastObservedAt)
+    assertEquals(exp.getLong("avgLatencyMs"), s.avgLatencyMs)
+    assertEquals(exp.getInt("disconnects"), s.disconnects)
+    assertEquals(exp.getString("metadata"), s.metadata)
+    assertEquals(exp.getString("stability"), s.stability)
   }
 }

@@ -365,3 +365,87 @@ class LightUpdate(private val gh: Gh, private val filesDir: File) {
   三个必选回调按 §5.5 签名；带默认值的可选参数（fav/checking/onSongs/logo/onDismiss）由 AppRoot 注入，
   浮层本身不持 vm。手动禁用的源点诊断**不发请求**，显示「该源已被手动禁用，不能诊断」+「取消禁用」。
   入口：SrcSheet 尾行「ⓘ 源详情」+ PlayerBar 台名长按（单击仍=回到正在播 N5；列表行长按保留 N7 收藏语义）。
+
+---
+
+## B2 API 面（r4 扩展契约·Android 侧，2026-11-15，plan-expansion-r4 §6）
+
+> B2 批次落地后的冻结接口；聚合/淘汰序以 `contracts/quality-summary.json` 为单一语义源，与 Web 侧
+> `quality-store.js` / `update-sources.js` 候选管线必须镜像，冲突以 plan-expansion-r4 §6 为准。
+
+- **`filesDir/quality.json` sidecar 声明**：源质量数据落本机 `filesDir/quality.json`（Web HTTP 走
+  `/api/quality` → `data/quality.json`）。**不进 `radio.*` 主 Store、不占 /api/store 2MB 配额、不进
+  备份**（B4 sidecar 勾选导出另议）；与 `radio.health`（死台/停运）永不合并、聚合结果不得直接改写
+  死台隐藏条件。坏文件按空库恢复。文件硬上限 2MB（`C.QUALITY_MAX_BYTES`），每台源聚合封顶 6。
+  **包装层分层（AIbot P1-2，契约 quality-summary.json `files` 节冻结）**：两侧文件包装不同——本文件
+  `{v:1,stations:…}`（纯本机）vs Web 服务端 `data/quality.json` `{v:1,rev,ops,data:…}`（rev/ops 是
+  Web 服务端并发机器）；跨端一致的是 stationRecord 内层聚合形态（双端黄金样本
+  `contracts/fixtures/quality-aggregate.json` round-trip 锁定：Web test/quality-store.js 与
+  ContractTest 同源消费）。
+- **mode 归一（AIbot P1-1）**：`recordDiagnostic`/`recordPlayback` 入口对 mode 归一永不为空
+  （`normMode`：合法枚举原样；缺失/非法按实际尝试过的 variant URL 形态兜底——m3u8→hls、其余→direct；
+  归不出即丢弃该事件，契约无 unknown 值）。Web 侧 `quality-store.js qNormMode` 同款镜像——服务端
+  `/api/quality` 枚举校验保持严格，空 mode 不再引发 409 整批丢样本。
+- **`data/QualityStore.kt`**（纯 JVM）：
+  ```kotlin
+  class QualityStore(dir: File, clock: () -> Long = System::currentTimeMillis, capBytes: Int = C.QUALITY_MAX_BYTES) {
+    fun load()                                                                  // 坏文件按空库恢复
+    fun summary(identityUrl: String, sources: List<String> = emptyList()): QualityAggregate?   // 无记录 null
+    fun recordDiagnostic(identityUrl: String, r: DiagnosticResult, trigger: String)             // trigger=manual|boot|sync
+    fun recordPlayback(identityUrl: String, sourceUrl: String, ok: Boolean, latencyMs: Long, mode: String, trigger: String)  // play|watchdog|switch|error
+    fun trim(keep: Set<String>); fun save(); fun sizeBytes(): Int
+    @Volatile var keepHint: Set<String>                                         // 收藏+最近保护集（AppVm Main 快照回填）
+    data class QualityAggregate(identityUrl, sourceCount, directCount, okCount, failCount,
+      lastOkAt, lastFailAt, lastPlaybackAt, lastObservedAt, avgLatencyMs, disconnects, metadata, stability)
+  }
+  ```
+  存储形态：`{v:1, stations:{身份URL:{cf, sources:{源URL:{okCount,failCount,lastOkAt,lastFailAt,
+  lastPlaybackAt,latSum,latN,disconnects,modes[],lastDiag,lastPlayFail}}}}}`——每源聚合值 + 最近一次
+  诊断 + 最近一次播放失败，不留完整历史。**与 Web 侧需要对齐的四个拍板（Web quality-store.js 实现
+  时逐条对齐，不一致以本节修订为准）**：
+  1. **30 天窗近似**：存储无逐样本时间戳，「近 30 天成功率/样本数」= lastObservedAt 新鲜度门控
+     （行超 30 天无观察 → unknown）+ 全量计数器近似；
+  2. **连续失败** = 台级 `cf` 计数器（任一源 ok 清零、fail +1），`cf≥3` 一票否决进 poor；
+  3. **metadata(icy|none|mixed)** 由观测 modes 派生（op 事件无 icy 字段）：纯 direct → icy、纯
+     hls → none、混合 → mixed；
+  4. **trimOrder 下钻实现**：受害台 = 非保护集优先、再最久未访问（同刻 identityUrl 字典序）→
+     先清该台最大历史源的 lastDiag/lastPlayFail（旧者先）→ 再丢该源 → 台空才整台丢。
+- **样本来源接线（AppVm，PlayerHolder 不感知 QualityStore）**：probe/体检三通道（手动 manual /
+  boot 静默 boot / 同步后增量 sync）与源详情逐源诊断（manual）写 diagnostic；PlayerUiState 流映射写
+  playback——CONNECTING→PLAYING = 成功（play；同台换源到达 = switch，延迟 = 该源连接锚起算）、
+  PLAYING→CONNECTING 同台 = 断流（同源重连 watchdog / 级联换源 error，均计 disconnects）、级联耗尽
+  （CONNECTING→IDLE 清台 + ⚠ 文案）= error。**自动体检绝不产 playback**；写失败只丢样本不影响播放。
+- **`SourceDetailSheet` B2 扩展参数**：`quality: QualityStore.QualityAggregate? = null`（默认 null 保
+  §5.5 兼容，AppRoot 经 `vm.qualitySummaryOf(ds)` 注入）——NO_ENABLED_SOURCE 文案下方渲染稳定性徽标行
+  （● 稳定/● 一般/● 不稳定/○ 样本不足 + 成功率/平均延迟/断流/样本数）；质量只做展示，永不替代死台
+  隐藏判定（契约硬点）。
+- **`sync/Candidates.kt`**（纯 JVM，镜像 Web 候选管线纯函数）：
+  ```kotlin
+  data class SyncCandidate(stationName, category, url, upstream, upstreamId = "", logoUrl = "",
+    normalizedUrl = "", duplicateKey = "", validationResult: String? = null)
+  object Candidates {
+    fun normalizeUrl(raw: String): String?      // 保守归一化：去空白/scheme·host 小写/删默认端口；保留 path·query·尾斜杠；只用于比对不替换原 URL
+    fun fromLine(cat: String, line: String, upstream: String, upstreamId: String = "", logoUrl: String = ""): SyncCandidate?
+    fun dedupe(candidates: List<SyncCandidate>): List<SyncCandidate>   // 精确 URL → 归一化 URL → 同分类同名（duplicateKey=「分类|台名」共享=多源合并，不同分类同名不并）
+    fun toLine(c: SyncCandidate): String
+  }
+  ```
+  SyncEngine 国内节经此去重（跨节全局 URL 去重是 B2 新增能力；分类/装配口径不变）；`validationResult`
+  预留 null（国内节不探活，欧美节实测已有）。
+- **`sync/RadioMeta.kt` + radio-meta.json 消费**（生成在 Web 同步侧，Android 只消费）：
+  ```kotlin
+  class RadioMeta { companion object { val EMPTY; fun parse(text: String?): RadioMeta? } }   // null=非法/v≠1（更新通道保留旧 meta）；消费侧 ?: EMPTY 兜底
+  data class MetaStation(name, category, sources: List<MetaSource>)
+  data class MetaSource(url, upstream, upstreamId, kind, firstSeenAt)
+  ```
+  - `app/build.gradle.kts` copyRadioData 打包清单**可选包含** radio-meta.json：仓库根缺文件**跳过不报错**
+    （Web 侧生成落地后自然带上），data-stamp 仍只看 radio/logos 两文件提交（meta 单独晚提交不触发
+    D7 误报）。
+  - LightUpdate.apply() 主库与 meta **分开落盘**：下载到但 v≠1/不可解析（`metaInvalid`）→ 保留旧 meta +
+    toast 明示不阻断主库；下载失败/仓库未提供（null）→ 静默保留旧 meta（防 Web 侧未落地期间误报）。
+    `Result` 增 `metaChanged/metaInvalid` 两默认参数；新增 `metaText()` 读 filesDir 副本。
+  - 内容 hash 校验暂缺位：GitHub contents 通道不带 hash（Web sync-manifest.json 落地后再挂，
+    对齐点见收尾报告）。
+- **测试面**：`QualityAggregateTest`（四档/聚合计数/lastObservedAt/分流/trim/坏件/往返/源封顶）、
+  `SyncCandidateTest`（归一化/三层去重/同名合并/来源保留/行序）、`LightUpdateTest` 增 meta 四例；
+  `capBytes` 构造注入令 trim 测试不必造 2MB 数据。

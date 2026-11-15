@@ -105,6 +105,10 @@ val copyRadioData by tasks.registering {
       if (!src.exists()) throw GradleException("缺少仓库根数据文件 $f——先在仓库根跑 npm run sync")
       src.copyTo(File(out, f), overwrite = true)
     }
+    // B2 radio-meta.json（来源追踪旁车，plan-expansion-r4 §6.3）：仓库根暂无该文件时**跳过不报错**
+    // （生成在 Web 同步侧，落地后自然随包带上；消费端 RadioMeta.parse 缺件按空对象兜底）。
+    // data-stamp 仍只看 radio/logos 两文件提交——meta 单独晚提交不触发 D7 误报「有新版」。
+    File(repoRoot, "radio-meta.json").takeIf { it.isFile }?.copyTo(File(out, "radio-meta.json"), overwrite = true)
     val stamp = listOf("radio.txt", "logos.txt").mapNotNull(::lastIso)
       .maxByOrNull { parseIso(it) } ?: Instant.now().toString()
     File(out, "data-stamp.txt").writeText(stamp)

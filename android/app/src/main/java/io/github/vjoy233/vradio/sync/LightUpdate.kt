@@ -17,7 +17,8 @@ import java.time.OffsetDateTime
 class LightUpdate(private val gh: Gh, private val filesDir: File) {
 
   data class Result(val commitIso: String, val radioChanged: Boolean, val logosChanged: Boolean,
-                    val added: Int, val removed: Int, val addedCheck: List<String>)
+                    val added: Int, val removed: Int, val addedCheck: List<String>,
+                    val metaChanged: Boolean = false, val metaInvalid: Boolean = false)
 
   /** check/apply 的失败原因（""=无更新/成功）：契约返回 null 不抛，UI 据此区分「无更新」与「网络失败」。 */
   var lastFailWhy = ""
@@ -58,12 +59,26 @@ class LightUpdate(private val gh: Gh, private val filesDir: File) {
     writeTextAtomic(File(filesDir, "radio.txt"), radio)
     if (logos != null) writeTextAtomic(File(filesDir, "logos.txt"), logos)
     writeTextAtomic(File(filesDir, "stamp.json"), JSONObject().put("commitIso", commitIso).toString())
-    return Result(commitIso, radio != oldRadioText, logos != null, addedKeys.size, removedKeys.size, addedCheck)
+    // B2 radio-meta.json 分开落盘（plan §6.3/§13.3）：主库与 meta 任一份失败不影响另一份。
+    // 校验 = 版本门（v==1）+ 可解析性——GitHub contents 通道不带内容 hash（sync-manifest 侧 Web 生成后
+    // 再挂，见 CONTRACTS.md B2 留档）；下载失败（null，含仓库暂未提供该文件）静默保留旧 meta，
+    // 下载到但校验失败（metaInvalid）由 UI 明示——防仓库尚未生成 meta 时每次更新都误报。
+    var metaChanged = false; var metaInvalid = false
+    val meta = gh.file(GhRepos.SELF, "radio-meta.json")
+    if (meta != null) {
+      if (RadioMeta.parse(meta) != null) {
+        writeTextAtomic(File(filesDir, "radio-meta.json"), meta)
+        metaChanged = true
+      } else metaInvalid = true
+    }
+    return Result(commitIso, radio != oldRadioText, logos != null, addedKeys.size, removedKeys.size,
+      addedCheck, metaChanged, metaInvalid)
   }
 
   /** filesDir 副本读取；null=从未更新（用 assets 打包件）。 */
   fun radioText(): String? = read(File(filesDir, "radio.txt"))
   fun logosText(): String? = read(File(filesDir, "logos.txt"))
+  fun metaText(): String? = read(File(filesDir, "radio-meta.json"))
   fun stamp(): String? = read(File(filesDir, "stamp.json"))?.let {
     try { JSONObject(it).optString("commitIso") } catch (_: Exception) { "" }
   }?.takeIf { it.isNotEmpty() }

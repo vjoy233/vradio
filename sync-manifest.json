@@ -1,0 +1,26 @@
+{
+  "version": "bootstrap",
+  "generatedAt": 1794681339958,
+  "files": [
+    {
+      "path": "radio.txt",
+      "bytes": 120481,
+      "sha256": "f442b141000a199d1a0ef304182f62de627b73c633899df9ddbe644af8b28643"
+    },
+    {
+      "path": "radio-data.js",
+      "bytes": 123814,
+      "sha256": "8d210614abb808abf354c7825fcf8290b164e90347348e847372b2f5c1e26aba"
+    },
+    {
+      "path": "logos.txt",
+      "bytes": 10594,
+      "sha256": "f101a9b7e74e15bba35ba39b2e8e392fe011792cf6df6ba8f9ca7dcf1d156564"
+    },
+    {
+      "path": "radio-meta.json",
+      "bytes": 401543,
+      "sha256": "d43eb3be96c75f2a93cbbd605f0703285a1f71d4452a681240217ff53f67102e"
+    }
+  ]
+}

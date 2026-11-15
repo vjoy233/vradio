@@ -280,6 +280,37 @@ const newStations = () => ({});
     assert.strictEqual(Q.rev, 5);
   });
 
+  console.log('[9] pend 持久化（AIbot #26 本轮复核 P2：刷新/崩溃不丢未确认 ops）');
+  const stubLS = () => { // Node 无 localStorage：注入 Map shim（emit/savePend 走全局引用）
+    const m = new Map(); const had = 'localStorage' in global; const orig = global.localStorage;
+    global.localStorage = { getItem: k => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: k => m.delete(k) };
+    m.undo = () => { if (had) global.localStorage = orig; else delete global.localStorage; };
+    return m;
+  };
+  await ok('emit/丢批/确认同步写 quality.pend；重启恢复→重试成功→存储清空；网络失败保留', async () => {
+    const ls = stubLS();
+    const Q = newSQ();
+    Q.emit(op({ at: 100 })); Q.emit(op({ at: 200 })); clearTimeout(Q.flushT); // emit 触发 debounce flush，测试内掐掉
+    assert.strictEqual(JSON.parse(ls.get('quality.pend')).length, 2, 'emit 即持久化');
+    const Q2 = newSQ(); // 模拟页面重启：全新实例
+    Q2.restorePend();
+    assert.strictEqual(Q2.pend.length, 2, '恢复未确认 ops'); assert.ok(Q2.pend.every(o => typeof o.id === 'string'));
+    const bodies = [];
+    const undo = stubFetch(async (u, opt) => { bodies.push(JSON.parse(opt.body)); return resOK(3); });
+    await Q2.flush();
+    undo();
+    assert.strictEqual(bodies[0].ops.length, 2, '恢复的 ops 随 flush 送出（服务端 op.id 幂等兜底重复）');
+    assert.strictEqual(Q2.pend.length, 0);
+    assert.deepStrictEqual(JSON.parse(ls.get('quality.pend')), [], '确认后持久键清空');
+    const Q3 = newSQ(); // 崩溃夜：flush 网络失败 → pend 留在存储
+    Q3.emit(op({ at: 300 })); clearTimeout(Q3.flushT);
+    const undo2 = stubFetch(async () => { throw new Error('net down'); });
+    await Q3.flush();
+    undo2();
+    assert.strictEqual(JSON.parse(ls.get('quality.pend')).length, 1, '网络失败保留持久化 pend（重启可恢复）');
+    ls.undo();
+  });
+
   console.log(`\n${pass} 通过，${fail} 失败`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error('quality-store 测试异常：', e); process.exit(1); });

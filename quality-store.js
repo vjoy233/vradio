@@ -162,6 +162,16 @@ const QualityStore = {
   bc: null, flushT: 0,
   sid: Math.random().toString(36).slice(2, 10), seq: 0,           // op.id = 随机sessionid:时间戳:序号
 
+  savePend() { // pend 持久化（AIbot #26 本轮复核 P2：刷新/崩溃不丢未确认 ops）——独立键随 pend 每次变更同步写，
+    try { localStorage.setItem('quality.pend', JSON.stringify(this.pend)); } catch (_) {} // 配额满等静默（不阻样本采集）；成功清空后写 []
+  },
+  restorePend() { // 启动恢复：合法 op 形态过滤 + ≤256 对齐内存上界；恢复后走既有 flush（服务端 op.id 幂等合流，重复不双计）
+    try {
+      const p = JSON.parse(localStorage.getItem('quality.pend') || '[]');
+      if (Array.isArray(p)) this.pend = p.filter(x => !!x && typeof x === 'object' && typeof x.id === 'string').slice(-256);
+    } catch (_) { this.pend = []; }
+  },
+
   init() { // App.boot 调用：多标签 BroadcastChannel('quality') 收他页通知重拉 + 关页 flush 兜底
     try {
       this.bc = new BroadcastChannel('quality');
@@ -178,7 +188,9 @@ const QualityStore = {
         const r = await fetch('/api/quality').then(x => x.json());
         if (r && typeof r === 'object' && r.data && typeof r.data === 'object') {
           this.mode = 'server'; this.rev = r.rev || 0;
+          this.restorePend(); // 先恢复未确认 ops 再 rebase（本地视图含重放；下次 flush 送出，op.id 幂等兜底）
           this.stations = this.rebase(r.data);
+          if (this.pend.length) this.flush(); // 恢复即重试（崩溃前未送出的样本尽快补投）
           return;
         }
       } catch (_) {}
@@ -206,7 +218,7 @@ const QualityStore = {
   summary(identityUrl, sources) { return qSummary(this.stations, identityUrl, sources, Date.now()); },
 
   nextId() { return this.sid + ':' + Date.now() + ':' + (++this.seq); },
-  emit(op) { qApplyOp(this.stations, op); this.pend.push(op); if (this.pend.length > 256) this.pend.splice(0, this.pend.length - 256); this.save(); },
+  emit(op) { qApplyOp(this.stations, op); this.pend.push(op); if (this.pend.length > 256) this.pend.splice(0, this.pend.length - 256); this.savePend(); this.save(); },
   /* 手动逐源诊断 / 体检通道样本（trigger = manual|boot|sync）。result = checkDetail 结构（at 用 checkedAt 真实采样时刻）。
      mode 经 qNormMode 归一永不为空（AIbot P1-1：诊断结果缺 mode 按源 URL 形态兜底，归不出即丢事件不造假） */
   recordDiagnostic(identityUrl, result, trigger) {
@@ -249,7 +261,7 @@ const QualityStore = {
       if (x.status === 409) { // 机器可读 code 分类处置（AIbot PR#26 复核 P2）：只丢不可恢复批，容量/暂时失败保留重试
         if (r && r.code === 'schema') {                            // 客户端产非法 op（不可恢复）：保守丢整批留痕，防无限重试
           console.warn('[quality] 本批 op schema 被服务端拒，丢弃 ' + batch.length + ' 条：' + (r.error || ''));
-          this.pend = this.pend.slice(batch.length);
+          this.pend = this.pend.slice(batch.length); this.savePend();
           if (this.pend.length) await this.flush();                // 后续批是另产的 op，恢复默认批宽重试
         } else if (r && r.code === 'batch-limit' && batch.length > 1) {
           await this.flush(false, Math.max(1, batch.length >> 1));  // 单批超限（可恢复）：减半分批重试；单条仍超限则停手留 pend
@@ -258,7 +270,7 @@ const QualityStore = {
         return;                                                    // too-large/无 code（容量/暂时）：pend 保留，下次 load/pull/record 重试
       }
       if (r && r.ok) {
-        this.rev = r.rev; this.pend = this.pend.slice(batch.length);
+        this.rev = r.rev; this.pend = this.pend.slice(batch.length); this.savePend();
         if (this.bc) this.bc.postMessage('rev');
         if (this.pend.length) await this.flush(false, chunk);      // 续投沿用收紧后的批大小（batch-limit 后不回弹）；await = 调用方 await flush() 即完整清仓
       }

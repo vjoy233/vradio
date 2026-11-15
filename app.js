@@ -236,9 +236,8 @@ function uiBuildStationNext(latest, s, patch, base, force) {
   }
   const work = uiApplyCells(latest, cells, true).cfg; // 草稿副本上先套非 tag 条目再算 tag 差量（内部 scratch，恒 force）
   cells.push(...uiTagCells(latest, work, s, s.dName || base.name));
-  const r = uiApplyCells(latest, cells, force);
-  if (!r.ok) throw new Error('保存时检测到外部修改，请重试'); // 投影比对已挡在前面；此处是竞态兜底
-  return r.cfg;
+  return uiApplyCells(latest, cells, force).cfg; // cells 的 before 取自 latest 本身 → 本层结构上无冲突；
+  // 冲突唯一闸门 = 引擎的完整投影比对（force 仅标记「显式覆盖」的意图，语义与 §6.4 一致）
 }
 function uiBuildSrcNext(latest, s, patch, base, force) { // §6.9 步骤5：本台变更集合合并最新 cfg（uiApplyCells）
   const cells = [];
@@ -267,9 +266,7 @@ function uiBuildSrcNext(latest, s, patch, base, force) { // §6.9 步骤5：本�
   }
   const work = uiApplyCells(latest, cells, true).cfg;
   cells.push(...uiTagCells(latest, work, s, s.dName || base.name));
-  const r = uiApplyCells(latest, cells, force);
-  if (!r.ok) throw new Error('保存时检测到外部修改，请重试');
-  return r.cfg;
+  return uiApplyCells(latest, cells, force).cfg; // 同 uiBuildStationNext：before 取自 latest，冲突闸门在引擎投影比对
 }
 function uiBuildCatNext(latest, orig, patch, base, force, catExists) { // 分类改名级联（复用现.catRename 顺序：renames →
   // moves 目标 → hideC 键；撞名合并 = 自建分类让位消失）；隐藏切换随后套在最终名上——一个逻辑对象一次提交

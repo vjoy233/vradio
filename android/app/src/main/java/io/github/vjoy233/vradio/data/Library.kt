@@ -185,9 +185,13 @@ class Library(
   fun reload() { // parse(mainText/myText) → applySources → applyCfg → rebind → 挂死台标
     val byKey = LinkedHashMap<String, Station>(); val byName = HashSet<String>()
     for (s in RadioTxt.parse(mainText)) { byKey[s.key] = s; byName.add(s.n) }
-    for (st in STARTER) if (!byName.contains(st.n)) { // 精确重名的精选台不再并入（主列表同台已代表它）
-      byKey[st.key] = Station(st.c, st.n, st.u.toMutableList(), st.l); byName.add(st.n)
+    for (st in STARTER) { // 精确重名的精选台不再并入（主列表同台已代表它）——代表台打 starter 位；装配现状不变
+      val dup = byKey.values.firstOrNull { it.n == st.n }
+      if (dup != null) dup.starter = true   // B3-C originMask：精确同名命中
+      else { val s = Station(st.c, st.n, st.u.toMutableList(), st.l); s.starter = true; byKey[st.key] = s; byName.add(s.n) }
     }
+    // B3-C originMask（双端冻结口径）：STARTER URL 命中也带位（只打标记不动装配——不同名共存两台都算精选来源）
+    for (st in STARTER) for (s in byKey.values) if (st.u.any { it in s.u }) s.starter = true
     for (s in RadioTxt.parse(myText)) { // 个人层常驻并入（只补源不覆盖）；⚠ 大括号必须显式——裸写双 if 的话
       val cur = byKey[s.key]            // else 会悬挂绑到内层 if（新键台永不并入的隐形 bug，测试逮住）
       if (cur != null) {

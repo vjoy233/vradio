@@ -79,6 +79,9 @@ dependencies {
   // —— 测试（纯 JVM，秒级离线口径对齐 test/smoke.js）——
   testImplementation("junit:junit:4.13.2")
   testImplementation("org.json:json:20250107") // android.jar 里的 org.json 是抛异常桩，纯 JVM 单测须挂真实现
+  // 同理（B4）：android.jar 的 org.xmlpull.v1.XmlPullParserFactory 也是抛异常桩——data/PlaylistParser.kt 的
+  // XML 解析在单测环境须挂真实现（kxml2 = Android 平台内置的同一解析器，设备运行时用平台实现不进 APK）
+  testImplementation("net.sf.kxml:kxml2:2.3.0")
 }
 
 // —— 数据文件打包：仓库根 radio.txt/logos.txt（update-sources.js 产出的单一数据源）→ assets，随行写 data-stamp.txt
@@ -105,6 +108,10 @@ val copyRadioData by tasks.registering {
       if (!src.exists()) throw GradleException("缺少仓库根数据文件 $f——先在仓库根跑 npm run sync")
       src.copyTo(File(out, f), overwrite = true)
     }
+    // B2 radio-meta.json（来源追踪旁车，plan-expansion-r4 §6.3）：仓库根暂无该文件时**跳过不报错**
+    // （生成在 Web 同步侧，落地后自然随包带上；消费端 RadioMeta.parse 缺件按空对象兜底）。
+    // data-stamp 仍只看 radio/logos 两文件提交——meta 单独晚提交不触发 D7 误报「有新版」。
+    File(repoRoot, "radio-meta.json").takeIf { it.isFile }?.copyTo(File(out, "radio-meta.json"), overwrite = true)
     val stamp = listOf("radio.txt", "logos.txt").mapNotNull(::lastIso)
       .maxByOrNull { parseIso(it) } ?: Instant.now().toString()
     File(out, "data-stamp.txt").writeText(stamp)

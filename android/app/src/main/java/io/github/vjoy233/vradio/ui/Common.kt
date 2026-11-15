@@ -163,11 +163,22 @@ fun SegBtn(text: String, on: Boolean, modifier: Modifier = Modifier, onClick: ()
       .clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 7.dp))
 }
 
-/** 确认弹窗（导入覆盖/清空类确认门槛用） */
+/** 确认弹窗（导入覆盖/清空类确认门槛用）；checkLabel 非空时附一行可选复选（B4 sidecar 恢复选择，AIbot 三轮 P1-3） */
 @Composable
-fun ConfirmDialog(title: String, msg: String, okText: String = "继续", onOk: () -> Unit, onDismiss: () -> Unit) {
+fun ConfirmDialog(title: String, msg: String, okText: String = "继续", onOk: () -> Unit, onDismiss: () -> Unit,
+                  checkLabel: String? = null, checked: Boolean = false, onCheckedChange: ((Boolean) -> Unit)? = null) {
   AlertDialog(onDismissRequest = onDismiss,
-    title = { Text(title) }, text = { Text(msg) },
+    title = { Text(title) }, text = {
+      androidx.compose.foundation.layout.Column {
+        Text(msg)
+        if (checkLabel != null) androidx.compose.foundation.layout.Row(
+          verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+        ) {
+          androidx.compose.material3.Checkbox(checked = checked, onCheckedChange = onCheckedChange)
+          Text(checkLabel, fontSize = 13.sp)
+        }
+      }
+    },
     confirmButton = { TextButton(onClick = onOk) { Text(okText) } },
     dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } })
 }

@@ -23,15 +23,27 @@ object Prefs {
   const val NET_SYNC = "net.sync"              // 移动数据主库同步（默认 confirm）
   const val NET_LOGO_WIFI = "net.logoWifi"     // 台标补全 Wi-Fi 优先（默认 true）
 
+  // B3-C 发现页「最近恢复」运行时缓存（health dead→alive 转移记录，JSON {台key: 复活时刻}，7 天过期；
+  // 派生数据不随备份迁移、不是 radio.* 契约键——发现页开关关闭时记录照常积累，不删已有数据）
+  const val RECOVERED = "healthRecovered"
+
   fun get(ctx: Context, k: String, def: Boolean): Boolean =
     ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean(k, def)
 
   fun set(ctx: Context, k: String, v: Boolean) =
     ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(k, v).apply()
 
+  // B2/B3 堆叠链把 String 版读名成 getStr/setStr；B5/B7 调用点沿用 get/set——并集期两对并存，
+  // 语义一致（后续批次收敛为一个名字，UI 集成分支不做改名清扫）
   fun get(ctx: Context, k: String, def: String): String =
     ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).getString(k, def) ?: def
 
   fun set(ctx: Context, k: String, v: String) =
+    ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putString(k, v).apply()
+
+  fun getStr(ctx: Context, k: String, def: String): String =
+    ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).getString(k, def) ?: def
+
+  fun setStr(ctx: Context, k: String, v: String) =
     ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putString(k, v).apply()
 }

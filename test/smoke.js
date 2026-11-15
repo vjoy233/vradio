@@ -148,6 +148,31 @@ const boot = () => new Promise(async (resolve, reject) => { // 起服 + 就绪�
     });
     await ok('/api/sync 拒跨站 POST', async () =>
       assert.strictEqual((await req('POST', '/api/sync', { 'Sec-Fetch-Site': 'cross-site' })).status, 403));
+    // B2 强制同步两步协议形态（不真跑管线）：方法校验/跨源拒/普通 sync 不收 force 字段/force-token 无 stash
+    await ok('/api/sync/force-token 方法校验：GET → 405（只收 POST）', async () =>
+      assert.strictEqual((await req('GET', '/api/sync/force-token')).status, 405));
+    await ok('/api/sync/force-token 拒跨源 Origin → 403', async () =>
+      assert.strictEqual((await req('POST', '/api/sync/force-token', { Origin: 'http://evil.com' }, '{}')).status, 403));
+    await ok('普通 /api/sync 带 force 字段 → 400（强制走两步协议，不认内联 force）', async () => {
+      const r = await req('POST', '/api/sync', { 'Content-Type': 'application/json' }, JSON.stringify({ force: true }));
+      assert.strictEqual(r.status, 400);
+      assert.ok(JSON.parse(r.body).error.includes('force-token'));
+    });
+    await ok('/api/sync/force-token 无 stash → 404（无可强制的同步报告）', async () => {
+      const r = await req('POST', '/api/sync/force-token', { 'Content-Type': 'application/json' }, JSON.stringify({ reportHash: 'deadbeef' }));
+      assert.strictEqual(r.status, 404);
+    });
+    await ok('/api/sync/force-token 裸 JSON 解析失败 → 400', async () =>
+      assert.strictEqual((await req('POST', '/api/sync/force-token', { 'Content-Type': 'application/json' }, 'not json')).status, 400));
+    await ok('/api/boot 形态：GET → 200 且含 ok/missing（manifest bootstrap/恢复的服务端路径）', async () => {
+      const r = await req('GET', '/api/boot');
+      assert.strictEqual(r.status, 200);
+      const j = JSON.parse(r.body);
+      assert.strictEqual(typeof j.ok, 'boolean');
+      assert.ok(Array.isArray(j.missing));
+    });
+    await ok('/api/boot 方法校验：POST → 405', async () =>
+      assert.strictEqual((await req('POST', '/api/boot')).status, 405));
     await ok('/api/nowplaying 对 .M3U8 大小写变形短路返回空（不建旁路连接）', async () => {
       const r = await req('GET', '/api/nowplaying?url=' + encodeURIComponent('http://example.com/live.M3U8'));
       assert.strictEqual(r.status, 200); assert.strictEqual(JSON.parse(r.body).title, '');

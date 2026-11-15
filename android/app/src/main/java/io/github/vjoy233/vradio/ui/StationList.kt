@@ -99,11 +99,12 @@ fun StationList(vm: AppVm) {
       )
       TextButton(onClick = { vm.nav.value = Nav.SETTINGS }) { Text("设置") }
     }
-    // 次行：双视图切换 + 无效源开关（出现过死台才亮，app.js deadBtn 同款）
+    // 次行：双视图切换 + 无效源开关（出现过死台才亮，app.js deadBtn 同款）+ 发现入口（B3-C 开关）
     Row(Modifier.padding(horizontal = 12.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
       SegBtn("网格", view == "grid") { vm.setView("grid") }
       SegBtn("列表", view == "list") { vm.setView("list") }
       if (lu.hasDead) SegBtn("✗ 无效源", showDead) { vm.toggleDead() }
+      if (io.github.vjoy233.vradio.FeatureFlags.DISCOVERY) SegBtn("✦ 发现", false) { vm.showDiscovery.value = true }
     }
     // 分类条（数量角标与列表同口径刷新，P3-5）
     LazyRow(

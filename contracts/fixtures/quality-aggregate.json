@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "kind": "quality-aggregate",
+  "description": "双端质量聚合黄金样本（AIbot P1-2）：Web 与 Android 以完全相同的事件序列驱动各自 QualityStore，聚合输出必须逐字段等于 expected——证明 {v,rev,ops,data}（Web data/quality.json）与 {v,stations}（Android filesDir/quality.json）两种包装层之下共享同一 stationRecord 内层形态（契约 quality-summary.json files 节）。消费方：Web test/quality-store.js + test/contracts.js、Android ContractTest（双端点名，改样本须两侧同步）。",
+  "identityUrl": "https://main.example/live",
+  "events": [
+    { "kind": "diagnostic", "trigger": "manual",  "sourceUrl": "https://main.example/live", "ok": true,  "latencyMs": 800,  "bytes": 12000, "mode": "direct", "at": 1800000001000 },
+    { "kind": "diagnostic", "trigger": "boot",    "sourceUrl": "https://main.example/live", "ok": true,  "latencyMs": 600,  "bytes": 11000, "mode": "direct", "at": 1800000001500 },
+    { "kind": "playback",   "trigger": "play",     "sourceUrl": "https://main.example/live", "ok": true,  "latencyMs": 1000, "bytes": 0,      "mode": "direct", "at": 1800000003000 },
+    { "kind": "playback",   "trigger": "watchdog", "sourceUrl": "https://main.example/live", "ok": false, "latencyMs": 0,    "bytes": 0,      "mode": "direct", "at": 1800000004000 },
+    { "kind": "playback",   "trigger": "switch",   "sourceUrl": "https://main.example/alt.m3u8", "ok": true, "latencyMs": 1200, "bytes": 0,    "mode": "hls",    "at": 1800000005000 }
+  ],
+  "expected": {
+    "identityUrl": "https://main.example/live",
+    "sourceCount": 2,
+    "directCount": 1,
+    "okCount": 4,
+    "failCount": 1,
+    "lastOkAt": 1800000005000,
+    "lastFailAt": 1800000004000,
+    "lastPlaybackAt": 1800000005000,
+    "lastObservedAt": 1800000005000,
+    "avgLatencyMs": 900,
+    "disconnects": 1,
+    "metadata": "mixed",
+    "stability": "good"
+  },
+  "expectedNotes": {
+    "okCount": "diag ok×2 + playback ok×2（play/switch）",
+    "avgLatencyMs": "floor((800+600+1000+1200)/4)",
+    "disconnects": "仅 watchdog 失败计 1（switch 失败不计、诊断失败不计）",
+    "metadata": "modes = {direct,hls} → mixed",
+    "stability": "率 4/5=0.8 ≥0.8、均延迟 900<2500、cf 被 switch 成功清零 → good",
+    "at": "评估时刻 = expected.lastObservedAt（30 天窗内）"
+  }
+}

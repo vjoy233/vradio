@@ -64,6 +64,16 @@ object C {
   const val GH_MAX_BYTES = 4194304       // 4MB 单文件封顶
   const val RING_CHECK_CAP = 50          // diff 摘要名单封顶
 
+  // —— 源质量 sidecar（B2，contracts/quality-summary.json caps/stabilityRules 逐字镜像）——
+  const val QUALITY_MAX_BYTES = 2097152  // quality.json 硬上限 2MB（去重记录+聚合一体受约束；超限按契约淘汰序 trim）
+  const val QUALITY_SOURCES_PER_ST = 6   // 每台源聚合封顶（caps.sourcesPerStation）
+  const val QUALITY_WINDOW_MS = 30L * DAY_MS   // 稳定性评估窗（近 30 天；超窗无样本 = unknown）
+  const val QUALITY_MIN_SAMPLES = 3      // 样本 < 3 = unknown
+  const val QUALITY_GOOD_RATE = 0.8      // good：成功率 ≥0.8 且 avg <2500ms 且连续失败 <3
+  const val QUALITY_GOOD_LAT_MS = 2500L
+  const val QUALITY_GOOD_CF = 3
+  const val QUALITY_FAIR_RATE = 0.5      // fair：≥0.5（不满足 good）；poor：<0.5 或连续失败 ≥3
+
   // —— UI 分类条顺序（华语/欧美置顶，其余 CAT_ORDER 序）——
   val CAT_TOP = listOf("华语音乐", "欧美音乐")
 }

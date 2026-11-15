@@ -1,8 +1,8 @@
 {
   "phase": "p1",
-  "head": "d36137d",
-  "started": "2026-11-15T09:28:42.013Z",
-  "pass": 16,
+  "head": "e98f0a7",
+  "started": "2026-11-15T10:07:11.708Z",
+  "pass": 17,
   "fail": 0,
   "assertions": [
     {
@@ -98,6 +98,12 @@
     {
       "id": "E6d",
       "name": "切范围重置分类（§3.2，原=欧美音乐）",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "id": "Z1",
+      "name": "宿主 data/store.json + my-radio.txt 运行前后哈希不变（真隔离终检）",
       "pass": true,
       "detail": ""
     }

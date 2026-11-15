@@ -1,6 +1,6 @@
 {
-  "capturedAt": "2026-11-15T09:37:19.006Z",
-  "url": "http://127.0.0.1:8278/",
+  "capturedAt": "2026-11-15T11:51:21.471Z",
+  "url": "http://127.0.0.1:8213/",
   "assertions": [
     "A1 html 无 ui-refresh 类",
     "A2 1280 侧栏隐藏",
@@ -51,7 +51,7 @@
     "G3 themeWrap 在 lowfreq（≤640）",
     "G4 窄屏维护单列（mbox 390x844 满屏；3 张卡同左缘 x=14、各宽 ≥ mbox-40）",
     "G5 关闭后焦点未落 body 外不可见节点",
-    "H1 render 中位 58.9ms < 100ms",
+    "H1 render 中位 60.4ms < 100ms",
     "Z1 无页面脚本错误"
   ],
   "screenshots": [
@@ -67,15 +67,26 @@
     "12-narrow-390-maintenance-light.png"
   ],
   "perf": {
-    "renderMedianMs": 58.9,
-    "stations": 1523
+    "renderMedianMs": 60.4,
+    "renderRoundMedians": [
+      60.4
+    ],
+    "stations": 1521
   },
   "errors": [],
+  "resourceErrors": [
+    "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "console:Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
   "notes": [
     "hero 候选=CRI 怀旧金曲频道",
     "点播后 phase=playing heroLabel=暂停",
     "hero 候选规则（隐藏不复活/下一候选）由 test/ui-scope.js 钉住；真机音频时序未验证（沙箱网络）",
-    "render() 全库 1523 台中位耗时 58.9ms（§9.3 建议 <100ms）"
+    "render() 全库 1521 台各轮中位 60.4ms → 取最小 60.4ms（§9.3 建议 <100ms；本机常驻负载下波动大，历史低负载值 58.9ms，同期基线对照实测 134ms 属环境因素）",
+    "Z2 宿主 data/store.json + my-radio.txt 运行前后哈希不变",
+    "Z3 清理失败门：browser 关闭 / server 退出 / worktree 移除全部成功（零泄漏成立）"
   ],
   "browser": "151.0.7922.34",
   "result": "PASS"

@@ -581,6 +581,7 @@ const App = {
     this.rebind(); // 收藏/最近按 URL 回绑（债务 1）——一轮即够（audit B1：历史双调，幂等但白做一遍全量回绑 + 3 次落盘）
     this.render();
     if (!Player.station) this.showLast();
+    if (this.mEditor) this.mEditor.externalChanged(); // 同步重建 = 外部变更：复核当前草稿 conflict 态（§5.2 草稿不因对账丢失）
   },
   /* 维护层套用：电台移动/重命名/手动隐藏/追加源按「任一源 URL 命中」（变体换序免疫）；
      手动隐藏 = 彻底消失（全部/收藏/搜索/体检一律不可见，owner 拍板无正在播例外——手动是明确意图，
@@ -710,6 +711,7 @@ const App = {
     this.loadUi3(); // view/showdead/theme 三 UI 态随对账联动（audit C4）
     this.rebind(); this.render(); this.renderManage();
     for (const s of this.state.stations) if (wasDead.has(s.u[0]) && s.health !== 'dead') this.markRevive(s); // B3：dead→无标记 = 有明确转移，落「最近恢复」
+    if (this.mEditor) this.mEditor.externalChanged(); // 对账回调里复核当前草稿 conflict 态（§6.8：不替换原 render/同步链）
   },
   /* 同步消失名单 × 收藏比对（N4/r2 ⑥）：双通道——显示名 + 消失台 URL 集合（AIbot P3-1：经维护面板本地
      改名的收藏台键名已换、按名会漏，URL 快照按身份公理仍对得上）。必须在 reloadMain 之后调用——
@@ -1250,26 +1252,33 @@ const App = {
     $('status').textContent = `已导出 ${list.length} 个收藏电台（vradio-favorites.m3u）`;
   },
 
-  /* ---------- 维护面板（⚙，owner 两轮拍板）：个人分类/电台调整的编辑界面。
-     分类页：重命名（撞名=合并，confirm 提示不易拆）/隐藏/删除自建（台撤回默认）；电台页：搜索定位后
-     移动（含新建分类）/重命名/隐藏/单台 ↺ 恢复默认；失配清单：同步后 URL 漂移的个人调整可观测 ---------- */
+  /* ---------- 维护面板（⚙，owner 两轮拍板 + ui-redesign P4 重做）：三分区（分类/电台/数据）+ 逐对象
+     行内编辑（草稿保存/取消，未保存离开三选，外部变更冲突三选，§5.1–§5.3）。
+     分类页：编辑（重命名/隐藏草稿化，撞名合并保存时确认影响）/新建/删除自建（独立提交语义不变）；
+     电台页：搜索定位后编辑（名称/分类/隐藏）/备选源/↺ 恢复；失配清单：URL 漂移的个人调整可观测 ---------- */
   mTab: 'cats', mKw: '',
   mExp: '',     // 电台页展开备选源管理的台（keyOf；P1-a/r2 ⑨）——innerHTML 全量重渲，展开态必须外置
-  mSrcVal: '',  // 展开行输入框内容（重渲不清输入，同 mq 持久做法）
+  mSrcVal: '',  // 展开行/源草稿输入框内容（重渲不清输入，同 mq 持久做法）
+  mEditor: null,   // 逐对象编辑器（uiCreateEditor，boot 装配）：一次只进一个对象；草稿只在内存（身份/基线不持久化）
+  _hideUndo: null, // 隐藏撤销补丁（§5.4）：仅 hideS/hideC 的反转条目；撤销 = 在最新 cfg 上 force=false 应用（M03 拒绝盲撤）
   manageOpen() { this.mOpener = document.activeElement; $('manage').hidden = false; this.renderManage(); $('mClose').focus(); }, // 打开即移焦 + 记录归还点（P2-7）
-  manageClose() {
+  manageClose() { // 关闭入口统一走离开流程（§5.3）：dirty → 三选（保存并继续失败则留在面板）；Esc=继续编辑
+    this.mDepart(() => { this.mEditorEnd(); this.manageHide(); });
+  },
+  manageHide() { // 原始关闭（离开流程批准后调用）：焦点归还触发器；主列表滚动不受影响（面板只是遮罩层）
     $('manage').hidden = true;
     const b = this.mOpener && this.mOpener.isConnected ? this.mOpener : $('manageBtn');
     if (b && b.focus) b.focus();
   },
   renderManage() {
     if ($('manage').hidden) return;
-    const cats = this.mTab !== 'st';
-    $('mTabC').classList.toggle('on', cats); $('mTabS').classList.toggle('on', !cats);
-    $('mTabC').setAttribute('aria-pressed', String(cats)); $('mTabS').setAttribute('aria-pressed', String(!cats));
-    $('mCats').hidden = !cats; $('mStations').hidden = cats;
+    const tab = this.mTab || 'cats';
+    for (const [id, on] of [['mTabC', tab === 'cats'], ['mTabS', tab === 'st'], ['mTabD', tab === 'data']]) {
+      $(id).classList.toggle('on', on); $(id).setAttribute('aria-pressed', String(on));
+    }
+    $('mCats').hidden = tab !== 'cats'; $('mStations').hidden = tab !== 'st'; $('mData').hidden = tab !== 'data';
     this.renderMiss();
-    if (cats) this.renderMCats(); else this.renderMStations();
+    if (tab === 'cats') this.renderMCats(); else if (tab === 'st') this.renderMStations();
   },
   askName(title, def = '') { // 弹名 + 校验：非空、无 |（keyOf 分隔符）、24 字内
     let v = null; try { v = prompt(title + '（不能含 |，24 字以内）', def); } catch (_) { return ''; }
@@ -1281,6 +1290,157 @@ const App = {
   },
   cfgTag(s) { for (const u of s.u) this.cfg.tag[u] = s.dName; }, // 原始台名快照：失配清单显示/再搜索用
 
+  /* ---------- 逐对象编辑器接线（P4，§5.2/§5.3/§6.8）：所有离开编辑上下文的入口（关面板/换对象/切分区/
+     独立操作）先 mDepart 过三选门；草稿锚点 = 稳定源 URL / 分类原名，失配绝不猜（uiResolveUnique 抛错） ---------- */
+  mEditHost() { return $('detail').hidden ? $('mEdit') : $('dEdit'); }, // 编辑区宿主：详情开着进 #dEdit，否则 #mEdit
+  mEditorEnd() { if (this.mEditor) this.mEditor.end(); },
+  mDepart(next) { // 独立操作/离开前的草稿门（§5.3）：dirty → 三选弹窗；无编辑器/不脏 → 直接 next
+    if (!this.mEditor) { next(); return Promise.resolve(true); }
+    return this.mEditor.depart(next);
+  },
+  mBeginEditor(kind, identity) { // 换对象：先 depart（dirty 三选）再 begin；锚点失配就地报错、留旧态
+    let began = false;
+    return this.mDepart(() => {
+      try { this.mEditor.begin(identity, kind); began = true; }
+      catch (e) { $('status').textContent = e.message || '对象已失配，无法编辑'; }
+    }).then(ok => ok && began);
+  },
+  mCatResolve(orig) { // 分类锚点解析：原名 → 现名（他页改名跟随映射；被合并/删除则失配要求重载，§5.3）
+    const name = this.cfg.renames[orig] || orig;
+    if (!this.mCatOptions().includes(name)) throw new Error('该分类已被其他页面改名或删除，请重新加载');
+    return { orig, name };
+  },
+  mEditorSubject(draft) { // 草稿锚点 → 当前对象（渲染/显示名用）；失配 throw 由调用方兜
+    return draft.kind === 'cat' ? this.mCatResolve(draft.identityUrl) : uiResolveUnique(this.state.stations, draft.identityUrl);
+  },
+  mEditorDisplayName(draft) {
+    try { const x = this.mEditorSubject(draft); return typeof x === 'string' ? x : x.name || x.n; } catch (_) { return draft.identityUrl; }
+  },
+  mValidate(subj, patch, latest, kind) { // 校验照现规则但不静默裁切（§6.8：内联报错由用户修正）
+    const has = (p, k) => Object.prototype.hasOwnProperty.call(p, k);
+    if (kind === 'st') {
+      const name = has(patch, 'name') ? String(patch.name).trim() : subj.n;
+      const cat = has(patch, 'category') ? patch.category : subj.c;
+      const e = uiValidName(name); if (e) return e;
+      if (!this.mCatOptions().includes(cat)) return '目标分类已被其他页面修改，请重新选择';
+      if (uiNameTaken(this.state.stations, subj, cat, name)) return '该分类下已有同名电台（重名会串台），请换个名字';
+      return '';
+    }
+    if (kind === 'cat') return has(patch, 'name') ? uiValidName(String(patch.name).trim()) : '';
+    return ''; // src 校验在源草稿批接入（mSrcValidate）
+  },
+  async mBeforeCommit(subj, draft, latest) { // 保存前追加确认（§6.8）：分类改名撞上已有分类 → 合并影响明示后再提交
+    if (draft.kind !== 'cat' || !Object.prototype.hasOwnProperty.call(draft.patch, 'name')) return 'go';
+    const neu = String(draft.patch.name).trim();
+    if (!neu || neu === subj.name || !this.mCatOptions().includes(neu)) return 'go';
+    const nSt = this.state.stations.filter(s => s.c === subj.name).length;
+    const nMv = Object.keys(latest.moves).filter(k => latest.moves[k] === subj.name).length;
+    return uiChooseDialog(`「${subj.name}」将并入「${neu}」`,
+      `目标分类已存在：合并后按一个分类处理，不易拆分（想拆只能逐台移动）。\n影响：该分类下 ${nSt} 个电台并入「${neu}」${nMv ? `，${nMv} 条移动目标级联改写` : ''}，隐藏标记随行转移。`,
+      [{ value: 'go', label: '确认合并并保存', primary: true }, { value: 'stop', label: '取消' }], { safe: 'stop' });
+  },
+  mCommit(next, draft) { // 编辑器提交边界（§5.2）：normCfg → saveCfg → reapplyCfg；反馈只说本地生效
+    this.cfg = this.normCfg(next);
+    this.saveCfg();
+    this.reapplyCfg();
+    $('status').textContent = '已保存调整';
+  },
+  mDialogLeave(draft) { // 离开三选（§5.3）：保存并继续 / 放弃修改 / 继续编辑；Esc=继续编辑
+    return uiChooseDialog('有尚未保存的修改',
+      `「${this.mEditorDisplayName(draft)}」还有未保存的修改。保存后继续，还是放弃修改？`,
+      [{ value: 'save', label: '保存并继续', primary: true }, { value: 'discard', label: '放弃修改' }, { value: 'stay', label: '继续编辑' }],
+      { safe: 'stay' });
+  },
+  mDialogConflict(draft) { // 冲突三选（§5.3）：重载最新 / 明确覆盖此对象 / 继续编辑；绝不默认覆盖
+    return uiChooseDialog('此对象已有外部修改',
+      `「${this.mEditorDisplayName(draft)}」在编辑期间被其他页面修改。你的草稿已保留：可重新加载最新值（丢弃本对象草稿），或明确覆盖此对象的已编辑字段（保存前仍会重新校验，且只写本对象）。`,
+      [{ value: 'reload', label: '重新加载最新值' }, { value: 'overwrite', label: '明确覆盖此对象' }, { value: 'stay', label: '继续编辑' }],
+      { safe: 'stay' });
+  },
+
+  /* ---------- 编辑区渲染（§6.6 DOM 存活纪律）：#mEdit/#dEdit 与 mlist/mCats 分离——renderManage 重建
+     列表、Store 对账、台标回调都不碰编辑区；电台/分类编辑器原地更新（不重建输入，光标/焦点不丢）；
+     输入值以草稿补丁为唯一真源（input 事件逐键入补丁），重渲不清输入；失配态保留草稿只读 + 重载/取消 ---------- */
+  renderEditor(draft, saving) {
+    const host = this.mEditHost(), other = host.id === 'mEdit' ? $('dEdit') : $('mEdit');
+    if (other.dataset.sig) { other.innerHTML = ''; delete other.dataset.sig; } // 宿主切换后清旧容器
+    if (!draft) { if (host.dataset.sig) { host.innerHTML = ''; delete host.dataset.sig; } return; }
+    const sig = draft.kind + '|' + draft.identityUrl;
+    let subj = null, fail = '';
+    try { subj = this.mEditorSubject(draft); } catch (e) { fail = e.message; }
+    if (fail) { // 锚点失配（URL 漂移/分类被并）：保留草稿只读展示 + 重载/取消（不能猜一个同名对象覆盖，§5.3）
+      host.innerHTML = `<div class="medit"><div class="medit-h"><b>编辑对象失配</b></div><div class="merr">${this.esc(fail)}</div><div class="emed"><div class="medit-a"><button type="button" class="btn" data-eact="reload">重新加载</button><button type="button" class="btn" data-eact="cancel">取消</button></div></div></div>`;
+      host.dataset.sig = sig;
+      host.querySelector('[data-eact="reload"]').focus();
+      return;
+    }
+    const build = host.dataset.sig !== sig;
+    if (draft.kind === 'st') this.renderEditorSt(host, draft, subj, saving, build);
+    else if (draft.kind === 'cat') this.renderEditorCat(host, draft, subj, saving, build);
+    else this.renderEditorSrc(host, draft, subj, saving, build);
+  },
+  mEditorFoot(draft, saving) { // 错误/冲突横幅 + 保存/取消 + 状态（.emed 内整片更新，不含文本输入不伤焦点）
+    return `${draft.error ? `<div class="merr">${this.esc(draft.error)}</div>` : ''}${
+      draft.conflict ? '<div class="econflict">此对象已被其他页面修改——点「保存」时会询问处理方式（重新加载最新值 / 明确覆盖 / 继续编辑）</div>' : ''}<div class="medit-a">
+      <button type="button" class="btn acc" data-eact="save"${saving || !draft.dirty ? ' disabled' : ''}>${saving ? '保存中…' : '保存'}</button>
+      <button type="button" class="btn" data-eact="cancel"${saving ? ' disabled' : ''}>取消</button>
+      <span class="estatus">${draft.dirty ? '有尚未保存的修改' : draft.conflict ? '草稿保留（外部已修改）' : ''}</span>
+    </div>`;
+  },
+  mEditorPaintFoot(host, draft, saving) { const e = host.querySelector('.emed'); if (e) e.innerHTML = this.mEditorFoot(draft, saving); },
+  renderEditorSt(host, draft, s, saving, build) {
+    const patch = draft.patch, has = k => Object.prototype.hasOwnProperty.call(patch, k);
+    if (build) {
+      host.innerHTML = `<div class="medit" data-kind="st">
+        <div class="medit-h"><b>编辑电台</b><span class="srcs" title="${this.esc(s.n)}">默认名：${this.esc(s.dName || s.n)} · 默认分类：${this.esc(this.cfg.renames[s.dCat] || s.dCat || s.c)}</span><span class="srcs">（仅显示层；收藏/最近按源 URL 回绑不受影响）</span></div>
+        <div class="medit-f">
+          <label>名称 <input type="text" data-f="name" data-fa="name" maxlength="80" aria-label="电台名称"></label>
+          <label>分类 <select data-f="category" data-fa="category" aria-label="所属分类"></select></label>
+          <label class="medit-ck"><input type="checkbox" data-f="hidden"> 隐藏电台（全部/收藏/搜索/体检一律不可见；不删数据，可在此恢复显示）</label>
+        </div>
+        <div class="emed"></div>
+      </div>`;
+      host.dataset.sig = draft.kind + '|' + draft.identityUrl;
+      host.querySelector('[data-fa="name"]').focus(); // 进入编辑即移焦（§5.1）
+    }
+    const nm = has('name') ? String(patch.name) : s.n;
+    const nmEl = host.querySelector('[data-f="name"]');
+    if (nmEl.value !== nm) nmEl.value = nm; // 同值不写（不搅动光标）
+    const cat = has('category') ? patch.category : s.c;
+    const opts = this.mCatOptions().map(c => `<option value="${this.esc(c)}"${c === cat ? ' selected' : ''}>${this.esc(c)}${this.cfg.hideC[c] ? '（已隐藏）' : ''}</option>`).join('');
+    const catEl = host.querySelector('[data-f="category"]');
+    if (catEl.innerHTML !== opts) catEl.innerHTML = opts; // 他页改分类集后下拉随行
+    const hid = has('hidden') ? !!patch.hidden : !!s.hidden;
+    const hidEl = host.querySelector('[data-f="hidden"]');
+    if (hidEl.checked !== hid) hidEl.checked = hid;
+    this.mEditorPaintFoot(host, draft, saving);
+  },
+  renderEditorCat(host, draft, subj, saving, build) {
+    const patch = draft.patch, has = k => Object.prototype.hasOwnProperty.call(patch, k);
+    if (build) {
+      host.innerHTML = `<div class="medit" data-kind="cat">
+        <div class="medit-h"><b>编辑分类</b><span class="srcs">原名：${this.esc(subj.orig)}${subj.name !== subj.orig ? ` · 现名：${this.esc(subj.name)}` : ''}</span></div>
+        <div class="medit-f">
+          <label>名称 <input type="text" data-f="name" data-fa="name" maxlength="80" aria-label="分类名称"></label>
+          <label class="medit-ck"><input type="checkbox" data-f="hidden"> 隐藏该分类（含全部/搜索；电台数据不动，可在此恢复显示）</label>
+        </div>
+        <div class="srcs" style="padding:2px 0">改名会级联更新移动目标与隐藏标记；改成已有分类名 = 保存时确认「合并」（不易拆分）。</div>
+        <div class="emed"></div>
+      </div>`;
+      host.dataset.sig = draft.kind + '|' + draft.identityUrl;
+      host.querySelector('[data-fa="name"]').focus();
+    }
+    const nm = has('name') ? String(patch.name) : subj.name;
+    const nmEl = host.querySelector('[data-f="name"]');
+    if (nmEl.value !== nm) nmEl.value = nm;
+    const hid = has('hidden') ? !!patch.hidden : !!subj.hidden;
+    const hidEl = host.querySelector('[data-f="hidden"]');
+    if (hidEl.checked !== hid) hidEl.checked = hid;
+    this.mEditorPaintFoot(host, draft, saving);
+  },
+  renderEditorSrc() {}, // 源草稿编辑器在源生命周期批接入（§6.9）
+
+
   /* —— 分类页 —— */
   renderMCats() {
     const cnt = new Map(); for (const s of this.state.stations) cnt.set(s.c, (cnt.get(s.c) || 0) + 1); // 数据口径（含隐藏台）
@@ -1290,37 +1450,18 @@ const App = {
       const hid = !!this.cfg.hideC[c], custom = this.cfg.cats.includes(c);
       rows.push(`<div class="mrow${hid ? ' hidden-item' : ''}" data-cat="${this.esc(c)}">
         <span class="nm">${this.esc(c)}</span><span class="cnt">${cnt.get(c) || 0} 台${hid ? '·已隐藏' : ''}</span>
-        <button type="button" class="btn mbtn" data-act="rename" title="重命名；改成已有分类名 = 合并（不易拆分）"><svg class="ic"><use href="#i-pencil"/></svg></button>
-        <button type="button" class="btn mbtn" data-act="hide" title="${hid ? '恢复显示该分类' : '隐藏该分类（彻底消失，含全部/搜索）'}">${hid ? '<svg class="ic"><use href="#i-eye"/></svg>' : '<svg class="ic"><use href="#i-eye-off"/></svg>'}</button>
+        <button type="button" class="btn mbtn" data-act="edit" title="编辑：重命名/隐藏（草稿保存，未保存离开会询问）；改成已有分类名 = 保存时确认合并"><svg class="ic"><use href="#i-pencil"/></svg></button>
         ${custom ? `<button type="button" class="btn mbtn" data-act="del" title="删除自建分类（其中电台回到同步默认分类）"><svg class="ic"><use href="#i-trash"/></svg></button>` : ''}
       </div>`);
     };
-    for (const s of this.state.stations) row(s.c); // 含被隐藏分类（可在此恢复）
+    for (const s of this.state.stations) row(s.c); // 含被隐藏分类（可在编辑里恢复显示）
     for (const c of this.cfg.cats) row(c); // 空自建分类也要能改名/删除
-    $('mCats').innerHTML = rows.join('') + `<div style="padding:10px 0"><button type="button" class="btn" data-act="new"><svg class="ic"><use href="#i-plus"/></svg><span>新建分类</span></button><span class="cnt" style="margin-left:8px">新建后出现在「电台」页的移动下拉；分类条要移入电台才显示</span></div>`;
+    $('mCats').innerHTML = rows.join('') + `<div style="padding:10px 0"><button type="button" class="btn" data-act="new"><svg class="ic"><use href="#i-plus"/></svg><span>新建分类</span></button><span class="cnt" style="margin-left:8px">新建后可在「电台」页把电台编辑进该分类；分类条要移入电台才显示</span></div>`;
   },
-  catNew() {
+  catNew() { // 独立提交语义保留（confirm 即提交，不入草稿，§5.2）
     const c = this.askName('新建分类'); if (!c) return;
     if (this.mCatOptions().includes(c)) { alert('已有同名分类'); return; }
     this.cfg.cats.push(c); this.saveCfg(); this.renderManage();
-  },
-  catRename(c) {
-    const neu = this.askName(`重命名分类「${c}」`, c); if (!neu || neu === c) return;
-    const exists = this.mCatOptions().includes(neu);
-    if (exists && !confirm(`「${c}」将并入「${neu}」——合并后按一个分类处理，不易拆分（想拆只能逐台移动）。继续？`)) return;
-    if (this.cfg.cats.includes(c)) // 自建分类：并入已有名则让位消失，否则数组内改名
-      this.cfg.cats = exists ? this.cfg.cats.filter(x => x !== c) : this.cfg.cats.map(x => x === c ? neu : x);
-    else { const org = Object.keys(this.cfg.renames).find(k => this.cfg.renames[k] === c); // 已重命名过的再改名：改映射值
-      if (org) this.cfg.renames[org] = neu; else this.cfg.renames[c] = neu; }
-    for (const k of Object.keys(this.cfg.moves)) if (this.cfg.moves[k] === c) this.cfg.moves[k] = neu; // 移动目标级联
-    if (this.cfg.hideC[c]) { this.cfg.hideC[neu] = 1; delete this.cfg.hideC[c]; }
-    if (this.state.cat === c) this.state.cat = neu;
-    this.saveCfg(); this.reapplyCfg();
-  },
-  catHide(c) {
-    if (this.cfg.hideC[c]) delete this.cfg.hideC[c];
-    else { this.cfg.hideC[c] = 1; if (this.state.cat === c) this.state.cat = '全部'; }
-    this.saveCfg(); this.reapplyCfg();
   },
   catDel(c) {
     if (!confirm(`删除自建分类「${c}」？其中电台将回到同步默认分类。`)) return;
@@ -1341,18 +1482,18 @@ const App = {
     // 添加电台表单（A-2）分类下拉随行刷新；默认选中当前分类（全部/收藏/最近等非数据分类则落第一项）
     $('mACat').innerHTML = opts.map(c => `<option value="${this.esc(c)}"${c === this.state.cat ? ' selected' : ''}>${this.esc(c)}</option>`).join('');
     box.innerHTML = list.map(s => {
-      const dC = s.dCat || s.c, dN = s.dName || s.n;
+      const dN = s.dName || s.n;
       // moved 按 moves 键命中而非 s.c !== dC：分类级重命名会把整类台的 s.c 都改掉，但那不是单台移动，
       // ↺ 也撤不掉分类改名——按名字比较会让全类台误亮 ↺（PR#5 二轮 review 微小观察）
       const k = keyOf(s), moved = s.u.some(u => this.cfg.moves[u]), named = s.n !== dN;
       const srcl = !!(this.cfg.srcManualOrder[s.u[0]] || this.cfg.srcDisabled[s.u[0]] || s.u.some(u => this.cfg.srcLabels[u])); // 源生命周期调整（B1，台字段键=u[0] 严格命中）：↺ 一并撤销
       const srcd = s.u.some(u => !s.dU.includes(u)) || srcl; // 有追加源（P1-a）：↺ 一并撤销
+      // P4：改名/移动/隐藏合并进「编辑」对象草稿（保存才写 cfg，§5.2），替代旧 prompt/下拉即时保存
       return `<div class="mrow${s.hidden ? ' hidden-item' : ''}" data-k="${this.esc(k)}">
         <span class="nm" title="${this.esc(named ? '原名：' + dN : s.n)}${s.hidden ? '（已隐藏）' : ''}">${this.esc(s.n)}</span>
-        <select data-act="move" aria-label="「${this.esc(s.n)}」的分类">${opts.map(c => `<option value="${this.esc(c)}"${c === s.c ? ' selected' : ''}>${this.esc(c)}${this.cfg.hideC[c] ? '（已隐藏）' : ''}</option>`).join('')}<option value="__new">＋新建分类…</option><option value="__def">↺ 默认（${this.esc(this.cfg.renames[dC] || dC)}）</option></select>
+        <span class="cnt">${[moved && '已移分类', named && '已改名', s.hidden && '已隐藏', srcd && '源已调整'].filter(Boolean).join(' · ')}</span>
+        <button type="button" class="btn mbtn" data-act="edit" title="编辑：名称/分类/隐藏（草稿保存，未保存离开会询问）"><svg class="ic"><use href="#i-pencil"/></svg></button>
         ${(moved || named || s.hidden || srcd) ? `<button type="button" class="btn mbtn" data-act="reset" title="撤销此台全部个人调整（回到默认分类/默认名/显示/移除全部追加源/撤销源启停与排序）"><svg class="ic"><use href="#i-undo"/></svg></button>` : ''}
-        <button type="button" class="btn mbtn" data-act="rename" title="重命名电台（仅显示层，收藏按 URL 不受影响；台标若因改名失配可重新收藏触发解析）"><svg class="ic"><use href="#i-pencil"/></svg></button>
-        <button type="button" class="btn mbtn" data-act="hide" title="${s.hidden ? '取消隐藏' : '隐藏电台（彻底消失，含全部/搜索）'}">${s.hidden ? '<svg class="ic"><use href="#i-eye"/></svg>' : '<svg class="ic"><use href="#i-eye-off"/></svg>'}</button>
         <button type="button" class="btn mbtn" data-act="srcs" aria-expanded="${k === this.mExp}" title="备选源管理：查看全部源 / 探活追加（流地址漂移的手动救援） / 移除追加"><svg class="ic"><use href="#i-dots"/></svg></button>
         ${k === this.mExp ? this.srcRowHtml(s) : ''}
       </div>`;
@@ -1707,37 +1848,8 @@ const App = {
     ListenStats.onState(Player.isPaused() ? 'PAUSED' : 'PLAYING');
   },
 
-  stMove(s, v) {
-    if (v === s.c) return;
-    // 选中「等同默认分类」的目标视同 ↺ 默认：只删 moves 键，不写 moves[u]=默认分类——
-    // 否则位置没变却留下键，↺ 亮起且点了无效果（PR#8 review P3-1；默认分类重命名后按现名比对）
-    const def = this.cfg.renames[s.dCat || s.c] || s.dCat || s.c;
-    if (v === '__def' || v === def) { // 撤回默认：moves 清掉；tag 与 srcRemove 同口径——该台已无任何个人调整才清（仍有改名/隐藏/备源时保留，失配清单才有台名可显，AIbot P3-1）
-      for (const u of s.u) delete this.cfg.moves[u];
-      if (!s.u.some(x => this.cfg.names[x] || this.cfg.hideS[x] || this.cfg.srcs[x])) for (const u of s.u) delete this.cfg.tag[u];
-    }
-    else {
-      if (v === '__new') {
-        v = this.askName('新建分类并移入');
-        if (!v) { this.renderManage(); return; }
-        if (!this.cfg.cats.includes(v) && !this.mCatOptions().includes(v)) this.cfg.cats.push(v);
-      }
-      for (const u of s.u) this.cfg.moves[u] = v;
-      this.cfgTag(s);
-    }
-    this.saveCfg(); this.reapplyCfg();
-  },
-  stRename(s) {
-    const neu = this.askName(`重命名「${s.n}」`, s.n); if (!neu || neu === s.n) return;
-    if (this.state.stations.some(x => x !== s && x.c === s.c && x.n === neu)) { alert('该分类下已有同名电台，换个名字（重名会串台）'); return; }
-    for (const u of s.u) this.cfg.names[u] = neu;
-    this.cfgTag(s); this.saveCfg(); this.reapplyCfg();
-  },
-  stHide(s) {
-    const on = !s.hidden;
-    for (const u of s.u) { if (on) this.cfg.hideS[u] = 1; else delete this.cfg.hideS[u]; }
-    this.cfgTag(s); this.saveCfg(); this.reapplyCfg();
-  },
+  /* 电台改名/移动/隐藏的即时保存入口（.stMove/.stRename/.stHide）已由逐对象草稿编辑器取代（P4 §5.2）：
+     「编辑」进草稿 → 保存经 uiBuildStationNext/uiApplyCells 写 cfg（选默认 = 撤键，与旧 stMove ↺ 语义一致） */
   cfgResetStation(s) {
     for (const u of s.u) { delete this.cfg.moves[u]; delete this.cfg.names[u]; delete this.cfg.hideS[u]; delete this.cfg.tag[u]; delete this.cfg.srcLabels[u]; } // tag 只在失配清单用，恢复默认即清（防只增不减）；标签属展示层调整一并撤（B1）
     for (const k of Object.keys(this.cfg.srcs)) if (s.u.includes(k)) delete this.cfg.srcs[k]; // 追加源一并撤（键=任一源 URL，均在此台 s.u 内）
@@ -2165,8 +2277,48 @@ const App = {
     // file:// 降级模式（reloadMain 必失败）下 stations 停留在 STARTER、不走 applySources 的留底循环——
     // 此处补快照，否则维护面板「电台」页读 s.dName 直接抛错（渲染处另有 || 兜底双保险）；srcLife 同补（B1）
     for (const s of this.state.stations) { if (s.dCat === undefined) { s.dCat = s.c; s.dName = s.n; s.dU = s.u.slice(); this.srcLife(s); } }
+    // 逐对象编辑器（P4 §6.8 接线）：io 全显式注入；render 适配器 = renderEditor；草稿只在内存不持久化
+    this.mEditor = uiCreateEditor({
+      resolve: (id, kind) => kind === 'cat' ? this.mCatResolve(id) : uiResolveUnique(this.state.stations, id),
+      readCfg: () => this.cfg,
+      project: (cfg, subj, kind) => kind === 'cat' ? uiCatProjection(cfg, subj) : kind === 'src' ? uiSrcProjection(cfg, subj) : uiStationProjection(cfg, subj),
+      newPatch: kind => kind === 'src' ? { manual: null, disabled: null, labels: {}, appends: [], removes: [] } : {},
+      dirtyOf: (p, base) => 'manual' in p // src 补丁是结构化对象；st/cat 补丁以「有无键」论脏
+        ? p.manual !== null || p.disabled !== null || Object.keys(p.labels).some(u => (base.labels[u] || '') !== p.labels[u]) || p.appends.length > 0 || p.removes.length > 0
+        : Object.keys(p).length > 0,
+      fields: kind => kind === 'st' ? ['name', 'category', 'hidden'] : kind === 'cat' ? ['name', 'hidden'] : [],
+      validate: (subj, patch, latest, kind) => this.mValidate(subj, patch, latest, kind),
+      buildNext: (latest, subj, patch, base, force, kind) => kind === 'cat' ? uiBuildCatNext(latest, subj.orig, patch, base, force, name => this.mCatOptions().includes(name))
+        : kind === 'src' ? uiBuildSrcNext(latest, subj, patch, base, force)
+        : uiBuildStationNext(latest, subj, patch, base, force),
+      beforeCommit: (subj, draft, latest) => this.mBeforeCommit(subj, draft, latest),
+      commit: (next, draft) => this.mCommit(next, draft),
+      render: (d, saving) => this.renderEditor(d, saving),
+      confirmLeave: draft => this.mDialogLeave(draft),
+      confirmConflict: draft => this.mDialogConflict(draft),
+    });
+    // 编辑区事件委托（#mEdit/#dEdit 共用一套）：字段 input/change → editor.change；保存/取消/重载；
+    // 源草稿动作在源生命周期批接入（data-sact）
+    const mEditField = (el, ev) => {
+      const f = el.dataset.f; if (!f) return false;
+      const d = this.mEditor && this.mEditor.getDraft(); if (!d) return false;
+      if (el.type === 'checkbox') { if (ev === 'change') this.mEditor.change(f, el.checked); return true; }
+      if (ev === 'input') this.mEditor.change(f, el.value); // 逐键入补丁（值回基线自动撤键）
+      return true;
+    };
+    for (const hostId of ['mEdit', 'dEdit']) {
+      $(hostId).addEventListener('input', e => mEditField(e.target, 'input'));
+      $(hostId).addEventListener('change', e => mEditField(e.target, 'change'));
+      $(hostId).onclick = e => {
+        const b = e.target.closest('[data-eact]'); if (!b) return;
+        const a = b.dataset.eact;
+        if (a === 'save') this.mEditor.save();
+        else if (a === 'cancel') this.mEditorEnd(); // 取消 = 丢弃本对象草稿回浏览（§5.3，显式取消不再确认）
+        else if (a === 'reload') { try { this.mEditor.begin(this.mEditor.getDraft().identityUrl, this.mEditor.getDraft().kind); } catch (err) { $('status').textContent = err.message; } }
+      };
+    }
     $('manageBtn').onclick = () => this.manageOpen();
-    $('mClose').onclick = () => this.manageClose();
+    $('mClose').onclick = () => this.manageClose(); // 离开流程内嵌（dirty 三选）
     $('manage').onclick = e => { if (e.target === $('manage')) this.manageClose(); }; // 点遮罩关闭
     document.addEventListener('keydown', e => { // Esc 关面板（焦点在输入框/下拉里时不抢，让它们先清自身）+ 收起浮层菜单。
       // Esc 链（ui-redesign §5.1/P4）：确认弹窗（editorConfirm，自身 Esc=继续编辑/取消，capture 已 stopPropagation）
@@ -2174,9 +2326,11 @@ const App = {
       if (e.key === 'Escape') {
         if (!$('editorConfirm').hidden) return; // 最上层是确认弹窗：由 uiChooseDialog 的 capture 分支收口
         keysClose(); // 快捷键浮层（N8）
-        if (!$('detail').hidden && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) this.closeDetail(); // 详情中心（B1）
-        if (!$('discovery').hidden && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) this.closeDiscovery(); // 发现页（B3）
-        if (!$('manage').hidden && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) this.manageClose();
+        // 编辑区内 Esc = 进入离开确认（§2.3/§5.3：未保存草稿时 Esc → 三选，stay 回原输入）；mq 搜索框自清不在此列
+        const ae = document.activeElement, inEdit = !!(ae && (this.mEditHost().contains(ae) || $('editorConfirm').contains(ae)));
+        if (!$('detail').hidden && !/^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) this.closeDetail(); // 详情中心（B1）
+        if (!$('discovery').hidden && !/^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) this.closeDiscovery(); // 发现页（B3）
+        if (!$('manage').hidden && (inEdit || !/^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName))) this.manageClose();
         $('lowfreq').classList.remove('open'); $('moreBtn').setAttribute('aria-expanded', 'false');
         $('sleepMenu').hidden = true;
         this.themeMenuClose(); // 主题三选菜单（§6.11）：Esc 收起 + 焦点归还
@@ -2204,47 +2358,44 @@ const App = {
     document.addEventListener('click', e => {
       if ($('lowfreq').classList.contains('open') && !e.target.closest('#lowfreq,#moreBtn')) { $('lowfreq').classList.remove('open'); $('moreBtn').setAttribute('aria-expanded', 'false'); }
     });
-    $('mTabC').onclick = () => { this.mTab = 'cats'; this.renderManage(); };
-    $('mTabS').onclick = () => { this.mTab = 'st'; this.renderManage(); };
+    // 三分区切换（§5.1）：切分区 = 离开编辑上下文，先过草稿门再收编辑区
+    const mTabGo = tab => () => this.mDepart(() => { this.mEditorEnd(); this.mTab = tab; this.renderManage(); });
+    $('mTabC').onclick = mTabGo('cats');
+    $('mTabS').onclick = mTabGo('st');
+    $('mTabD').onclick = mTabGo('data');
     let mtimer = 0;
     $('mq').oninput = e => { clearTimeout(mtimer); mtimer = setTimeout(() => { this.mKw = e.target.value.trim(); this.renderMStations(); }, 120); };
     $('mq').onkeydown = e => { if (e.key === 'Escape') { e.target.value = ''; clearTimeout(mtimer); this.mKw = ''; this.renderMStations(); } }; // Esc 清搜索（焦点在输入框时不关面板）
     $('mCats').onclick = e => {
       const b = e.target.closest('[data-act]'); if (!b) return;
-      if (b.dataset.act === 'new') return this.catNew();
+      if (b.dataset.act === 'new') return this.mDepart(() => this.catNew()); // 独立操作先处理现有草稿（§5.2）
       const c = b.dataset.cat || (b.closest('.mrow') || {}).dataset.cat; if (!c) return;
-      if (b.dataset.act === 'rename') this.catRename(c);
-      else if (b.dataset.act === 'hide') this.catHide(c);
-      else if (b.dataset.act === 'del') this.catDel(c);
-    };
-    $('mlist').onchange = e => {
-      const sel = e.target.closest('select[data-act="move"]'); if (!sel) return;
-      const s = this.state.stations.find(x => keyOf(x) === sel.closest('.mrow').dataset.k);
-      if (s) this.stMove(s, sel.value);
+      if (b.dataset.act === 'edit') this.mBeginEditor('cat', c); // 分类对象编辑（草稿化，§5.2）
+      else if (b.dataset.act === 'del') this.mDepart(() => this.catDel(c)); // 独立提交语义不变
     };
     $('mlist').onclick = e => {
       const b = e.target.closest('button[data-act]'); if (!b) return;
       const s = this.state.stations.find(x => keyOf(x) === b.closest('.mrow').dataset.k); if (!s) return;
-      if (b.dataset.act === 'rename') this.stRename(s);
-      else if (b.dataset.act === 'hide') this.stHide(s);
-      else if (b.dataset.act === 'reset') this.cfgResetStation(s);
-      else if (b.dataset.act === 'srcs') { // 展开/收起备选源管理（P1-a/r2 ⑨）；换台展开时清输入残留
+      const act = b.dataset.act;
+      if (act === 'edit') this.mBeginEditor('st', s.u[0]); // 电台对象编辑：名称/分类/隐藏草稿（替代 prompt 即时保存）
+      else if (act === 'reset') this.mDepart(() => this.cfgResetStation(s)); // ↺ 独立操作（预览确认在 §5.4 批接入）
+      else if (act === 'srcs') { // 展开/收起备选源管理（P1-a/r2 ⑨；P4 后续批改草稿编辑器）；换台展开时清输入残留
         this.mExp = this.mExp === keyOf(s) ? '' : keyOf(s);
         this.mSrcVal = '';
         this.renderMStations();
         const i = $('mlist').querySelector('.msrc-add input');
         if (i && this.mExp) i.focus();
       }
-      else if (b.dataset.act === 'srcplay') { this.manageClose(); this.startPlay(s, +b.dataset.i); } // 用此源播放（②）：关面板起播，状态栏可见连接进展
-      else if (b.dataset.act === 'srcadd') this.srcAppend(s, b);
-      else if (b.dataset.act === 'srcdel') this.srcRemove(b.dataset.u);
-      else if (b.dataset.act === 'srcup') this.moveSrc(s, +b.dataset.i, -1); // 源生命周期（B1）
-      else if (b.dataset.act === 'srcdown') this.moveSrc(s, +b.dataset.i, 1);
-      else if (b.dataset.act === 'srcdis' || b.dataset.act === 'srcundis') this.toggleSrcDisabled(s, +b.dataset.i);
-      else if (b.dataset.act === 'srclabel') this.editSrcLabel(s, +b.dataset.i);
-      else if (b.dataset.act === 'srcmemclr') this.resetSrcDefaults(s);
-      else if (b.dataset.act === 'srcorderclr') this.clearSrcOrder(s);
-      else if (b.dataset.act === 'srcdetail') { this.manageClose(); this.openDetail(s); } // 详情中心入口（B1）
+      else if (act === 'srcplay') this.mDepart(() => { this.mEditorEnd(); this.manageHide(); this.startPlay(s, +b.dataset.i); }); // 试听=立即动作，有待保存源先三选（§5.2）
+      else if (act === 'srcadd') this.srcAppend(s, b);
+      else if (act === 'srcdel') this.srcRemove(b.dataset.u);
+      else if (act === 'srcup') this.moveSrc(s, +b.dataset.i, -1); // 源生命周期（B1，本批仍即时；草稿化在源草稿批）
+      else if (act === 'srcdown') this.moveSrc(s, +b.dataset.i, 1);
+      else if (act === 'srcdis' || act === 'srcundis') this.toggleSrcDisabled(s, +b.dataset.i);
+      else if (act === 'srclabel') this.editSrcLabel(s, +b.dataset.i);
+      else if (act === 'srcmemclr') this.resetSrcDefaults(s);
+      else if (act === 'srcorderclr') this.clearSrcOrder(s);
+      else if (act === 'srcdetail') this.mDepart(() => { this.mEditorEnd(); this.manageHide(); this.openDetail(s); }); // 详情中心入口（B1）
     };
     $('mlist').addEventListener('input', e => { if (e.target.matches('.msrc-add input')) this.mSrcVal = e.target.value; }); // 重渲不清输入（坑④）
     $('mlist').addEventListener('keydown', e => { // Enter 直接触发探活追加
@@ -2256,24 +2407,27 @@ const App = {
     });
     $('mMiss').onclick = e => {
       if (!e.target.closest('[data-act="missclear"]')) return;
-      for (const b of this.missList()) { delete this.cfg.moves[b.u]; delete this.cfg.names[b.u]; delete this.cfg.hideS[b.u]; delete this.cfg.srcs[b.u]; delete this.cfg.tag[b.u]; }
-      this.saveCfg(); this.renderManage();
+      this.mDepart(() => { // 清失配项是 cfg 独立操作：先处理现有草稿（§5.2）
+        for (const b of this.missList()) { delete this.cfg.moves[b.u]; delete this.cfg.names[b.u]; delete this.cfg.hideS[b.u]; delete this.cfg.srcs[b.u]; delete this.cfg.tag[b.u]; }
+        this.saveCfg(); this.renderManage();
+      });
     };
+    // 数据分区（§5.5 P4 骨架）：导入/重置/恢复/歌单是 cfg 独立操作先过草稿门；导出/备份只读不拦
     $('mExport').onclick = () => this.exportCfg();
-    $('mImport').onclick = () => $('mfile').click();
+    $('mImport').onclick = () => this.mDepart(() => $('mfile').click());
     $('mfile').onchange = e => { const f = e.target.files[0]; if (!f) return; if (f.size > 2 * 1024 * 1024) { $('status').textContent = '导入失败：文件超过 2MB 上限'; e.target.value = ''; return; } const r = new FileReader(); r.onload = () => this.importCfg(String(r.result)); r.readAsText(f, 'utf-8'); e.target.value = ''; };
-    $('mReset').onclick = () => this.resetCfg();
+    $('mReset').onclick = () => this.mDepart(() => this.resetCfg());
     $('mBackup').onclick = () => this.exportAll();
-    $('mRestore').onclick = () => $('mfile2').click();
+    $('mRestore').onclick = () => this.mDepart(() => $('mfile2').click());
     $('mfile2').onchange = e => { const f = e.target.files[0]; if (!f) return; if (f.size > 2 * 1024 * 1024) { $('status').textContent = '导入失败：备份文件超过 2MB 上限'; e.target.value = ''; return; } const r = new FileReader(); r.onload = () => this.importAll(String(r.result)); r.readAsText(f, 'utf-8'); e.target.value = ''; };
     // 歌单多格式导入（r4/B4）：文件（m3u/pls/xspf/asx/txt）+ 纯 URL 文本粘贴两入口，四桶预览后合并入 my-radio
-    $('mPlaylist').onclick = () => $('mfile3').click();
+    $('mPlaylist').onclick = () => this.mDepart(() => $('mfile3').click());
     $('mfile3').onchange = e => { const f = e.target.files[0]; if (!f) return; if (f.size > 2 * 1024 * 1024) { $('status').textContent = '导入失败：文件超过 2MB 上限'; e.target.value = ''; return; } const r = new FileReader(); r.onload = () => this.importPlaylist(String(r.result), f.name); r.readAsText(f, 'utf-8'); e.target.value = ''; };
-    $('mPaste').onclick = () => {
+    $('mPaste').onclick = () => this.mDepart(() => {
       let v = null; try { v = prompt('粘贴流地址（每行一个 http(s) 链接，最多 500 条）：'); } catch (_) { return; }
       if (v == null) return;
       this.importPlaylist(v, '');
-    };
+    });
 
     // 添加自定义电台（A-2）：面板内表单 → /api/mystation（服务端先探活拒绝假流/死链，再原子写 my-radio.txt；
     // 与 cfg 的分工 = cfg 调整既有台的显示层（localStorage），这里新增列表里不存在的台（数据层文件，跨浏览器持久））

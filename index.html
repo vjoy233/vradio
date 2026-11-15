@@ -209,6 +209,28 @@
   #mq { width:100%; margin:10px 0 4px; background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:8px; padding:7px 12px; outline:none; font:inherit; }
   #mq:focus { border-color:var(--acc); }
   .mrow select { background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:4px 6px; font:inherit; font-size:12px; max-width:9em; }
+  /* 对象编辑区（ui-redesign §5.1/§5.2/§6.6，P4）：#mEdit/#dEdit 与列表容器分离（renderManage 重建不碰、
+     Store 对账不销毁）；行内编辑 = 名称/分类/隐藏 + 保存/取消，校验错误就地展示（不静默裁切） */
+  #mEdit, #dEdit { flex:0 0 auto; }
+  .medit { margin:10px 14px 0; border:1px solid var(--acc); border-radius:8px; padding:10px 12px; background:var(--bg); }
+  .medit-h { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; margin-bottom:6px; }
+  .medit-h b { font-size:13px; }
+  .medit-f { display:flex; flex-direction:column; gap:6px; }
+  .medit-f label { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--dim); flex-wrap:wrap; }
+  .medit-f input[type="text"] { flex:1; min-width:160px; background:var(--panel); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:6px 8px; outline:none; font:inherit; }
+  .medit-f input[type="text"]:focus, .medit-f select:focus, .lbin:focus { border-color:var(--acc); }
+  .medit-f select { background:var(--panel); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:6px; font:inherit; font-size:12px; max-width:16em; }
+  .medit-ck input { accent-color:var(--acc); }
+  .emed { margin-top:8px; }
+  .medit-a { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .estatus { font-size:12px; color:var(--dim); }
+  .merr { color:var(--warn); font-size:12px; padding:2px 0; word-break:break-all; }
+  .econflict { color:var(--warn); font-size:12px; border:1px dashed var(--warn); border-radius:6px; padding:4px 8px; margin-bottom:6px; }
+  .lbin { flex:0 1 10em; min-width:6em; background:var(--panel); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:2px 6px; outline:none; font:inherit; font-size:12px; } /* 源标签行内输入（§6.9 替代 prompt） */
+  /* 「数据」分区骨架（§5.5，P4）：mfoot 原样迁入 */
+  #mData { flex:1; min-height:0; overflow-y:auto; scrollbar-width:thin; scrollbar-color:var(--line) transparent; }
+  #mData .mfoot { border-top:none; }
+  .mnote { padding:10px 14px 0; font-size:12px; color:var(--dim); }
   /* 添加自定义电台（A-2）：面板电台页顶部表单，先探活（拒绝假流/死链）再写入 my-radio.txt（持久层，区别于 cfg 显示层） */
   #mAdd { display:flex; gap:6px; padding:10px 14px 0; flex-wrap:wrap; }
   #mAdd input { flex:1; min-width:110px; background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:6px 8px; outline:none; font:inherit; font-size:12px; }
@@ -381,8 +403,12 @@
     <div class="seg" role="group" aria-label="维护对象切换">
       <button class="btn on" id="mTabC">分类</button>
       <button class="btn" id="mTabS">电台</button>
+      <button class="btn" id="mTabD">数据</button>
     </div>
     <div id="mMiss"></div>
+    <!-- 对象编辑区（ui-redesign §5.1/§6.6，P4）：与下方列表容器分离——renderManage 重建 mlist/mCats、
+         Store 对账、台标回调都不碰这里，编辑草稿与输入值在重渲后存活；详情中心开着时编辑区进 #dEdit -->
+    <div id="mEdit"></div>
     <div id="mCats"></div>
     <div id="mStations" hidden>
       <div id="mAdd">
@@ -394,18 +420,23 @@
       <input id="mq" type="search" placeholder="搜索要维护的电台（含已隐藏），如：动感 / CNN / 戏曲" aria-label="搜索电台">
       <div id="mlist" role="list"></div>
     </div>
-    <div class="mfoot">
-      <label class="mck"><input type="checkbox" id="mSidecar" title="备份附带本机质量与收听统计数据（探活/播放的聚合统计 + 按日收听时长，跨机迁移用；不含任何响应正文；默认不含）">含统计数据</label>
-      <button class="btn" id="mBackup" title="导出全部本地数据为 v3 完整备份（收藏/维护配置/健康标记/歌曲历史 + 个人电台 my-radio；可勾选附带质量/收听统计数据）——换浏览器/换机的兜底通道">备份全部</button>
-      <button class="btn" id="mRestore" title="从完整备份恢复（v1/v2/v3 均可读；覆盖本地全部数据，预览确认后执行）">恢复备份</button>
-      <button class="btn" id="mPlaylist" title="导入歌单文件（m3u / pls / xspf / asx / txt）：先解析为纯本地条目（不联网探活），预览新增/已知/重复/非法四桶，确认后新台写入 my-radio.txt">导入歌单</button>
-      <button class="btn" id="mPaste" title="粘贴纯链接文本（每行一个 http(s) 流地址）导入个人列表">粘贴链接</button>
-      <button class="btn" id="mExport" title="导出维护配置为 JSON（备份/换机；收藏另有 m3u 导出）">导出配置</button>
-      <button class="btn" id="mImport" title="导入维护配置 JSON（覆盖本地全部维护配置，确认后执行）">导入配置</button>
-      <button class="btn" id="mReset" title="清空全部维护配置，分类与电台回到同步默认">重置</button>
-      <input type="file" id="mfile" accept=".json,application/json" hidden aria-label="导入维护配置文件">
-      <input type="file" id="mfile2" accept=".json,application/json" hidden aria-label="导入完整备份文件">
-      <input type="file" id="mfile3" accept=".m3u,.pls,.xspf,.asx,.wax,.wmx,.txt,audio/x-mpegurl,audio/x-scpls,application/xml,text/plain" hidden aria-label="导入歌单文件">
+    <!-- 「数据」分区（§5.5，P4 只做骨架）：现有导入导出/备份恢复/歌单按钮组原样迁入，动作语义与绑定一行不改；
+         B4 备份预览/恢复 UI、cfg 导入预览重做、重置计数在 P5 接入 -->
+    <div id="mData" hidden>
+      <div class="mnote">数据工具会先处理未保存的编辑草稿；备份恢复/配置导入的预览与结果展示在 P5 重做（现为既有确认流程）。</div>
+      <div class="mfoot">
+        <label class="mck"><input type="checkbox" id="mSidecar" title="备份附带本机质量与收听统计数据（探活/播放的聚合统计 + 按日收听时长，跨机迁移用；不含任何响应正文；默认不含）">含统计数据</label>
+        <button class="btn" id="mBackup" title="导出全部本地数据为 v3 完整备份（收藏/维护配置/健康标记/歌曲历史 + 个人电台 my-radio；可勾选附带质量/收听统计数据）——换浏览器/换机的兜底通道">备份全部</button>
+        <button class="btn" id="mRestore" title="从完整备份恢复（v1/v2/v3 均可读；覆盖本地全部数据，预览确认后执行）">恢复备份</button>
+        <button class="btn" id="mPlaylist" title="导入歌单文件（m3u / pls / xspf / asx / txt）：先解析为纯本地条目（不联网探活），预览新增/已知/重复/非法四桶，确认后新台写入 my-radio.txt">导入歌单</button>
+        <button class="btn" id="mPaste" title="粘贴纯链接文本（每行一个 http(s) 流地址）导入个人列表">粘贴链接</button>
+        <button class="btn" id="mExport" title="导出维护配置为 JSON（备份/换机；收藏另有 m3u 导出）">导出配置</button>
+        <button class="btn" id="mImport" title="导入维护配置 JSON（覆盖本地全部维护配置，确认后执行）">导入配置</button>
+        <button class="btn" id="mReset" title="清空全部维护配置，分类与电台回到同步默认">重置</button>
+        <input type="file" id="mfile" accept=".json,application/json" hidden aria-label="导入维护配置文件">
+        <input type="file" id="mfile2" accept=".json,application/json" hidden aria-label="导入完整备份文件">
+        <input type="file" id="mfile3" accept=".m3u,.pls,.xspf,.asx,.wax,.wmx,.txt,audio/x-mpegurl,audio/x-scpls,application/xml,text/plain" hidden aria-label="导入歌单文件">
+      </div>
     </div>
   </div>
 </div>
@@ -415,6 +446,9 @@
   <div class="mbox" role="dialog" aria-modal="true" aria-label="电台详情">
     <div class="mhead"><b><svg class="ic"><use href="#i-info"/></svg> 电台详情</b><button class="btn" id="dClose" title="关闭（Esc）"><svg class="ic"><use href="#i-x"/></svg><span>关闭</span></button></div>
     <div id="detailBody"></div>
+    <!-- 源配置编辑区（ui-redesign §6.9，P4）：详情里的启停/排序/标签动作共用维护面板的同一编辑器草稿
+         （保存才提交）；宿主选择逻辑在 App.mEditHost——详情开着时编辑区渲染到这里 -->
+    <div id="dEdit"></div>
   </div>
 </div>
 <!-- 发现页（B3，plan-expansion-r4 §7.3）：本地派生六分组推荐（纯本地、不联网、不改主列表排序）；

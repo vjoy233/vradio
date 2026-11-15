@@ -1728,10 +1728,19 @@ const App = {
     // 源行随草稿实时重算（详情行动作/编辑器行动作/标签逐键/保存/取消全走这里，data-i 与新有效序一致）
     this.renderEditor(d, saving); if (!$('detail').hidden) this.renderDetail();
   },
-  mSrcEffective(s, patch) { // 草稿感知的有效序（patch 键为 null = 未改用 cfg 现值；[] = 草稿撤销人工排序）
-    const manual = patch.manual !== null ? (patch.manual.length ? patch.manual : null) : (this.cfg.srcManualOrder[s.u[0]] || null);
-    const dis = patch.disabled !== null ? patch.disabled : (this.cfg.srcDisabled[s.u[0]] || null);
-    return SrcOrder.effective(s.u, manual, dis);
+  mSrcDraft(s, patch) { // 草稿有效源集合（review-r2 P1）：原生 s.u − 待保存移除 + 待保存追加 patch.appends——
+    // 追加源探活通过即入列（可见/可标签/可排序/可禁用/可移除），保存才落 cfg；不建此集合则 pending 追加
+    // 只有顶部计数看得见、行集与详情全不渲染，用户无法审查将提交的源（§6.9「追加后可继续管理」不成立）
+    const rm = patch.removes || [], ap = patch.appends || [];
+    return { urls: s.u.filter(u => !rm.includes(u)).concat(ap),
+      manual: patch.manual !== null ? (patch.manual.length ? patch.manual : null) : (this.cfg.srcManualOrder[s.u[0]] || null),
+      disabled: patch.disabled !== null ? patch.disabled : (this.cfg.srcDisabled[s.u[0]] || null) };
+  },
+  mSrcEffective(s, patch) { // 草稿感知的有效序（AIbot P2 + review-r2 P1 扩容）：作用域=草稿有效源集合，urls 随行返回，
+    // 行渲染/行内动作一律 eff.urls[i] 取址（绝不回 s.u[i]——草稿行序与 s.u 下标不同空间）；patch 键 null=未改用 cfg 现值；[]=撤销人工排序
+    const d = this.mSrcDraft(s, patch);
+    const r = SrcOrder.effective(d.urls, d.manual, d.disabled);
+    return { order: r.order, dis: r.dis, urls: d.urls };
   },
   mSrcMove(s, i, d) { // 排序只改草稿：有效序内移动后材料化完整顺序（启用序在前 + 禁用殿后，与旧 moveSrc 同口径）
     this.mEditor.mutate(patch => {
@@ -1740,22 +1749,31 @@ const App = {
       if (at < 0 || to < 0 || to >= eff.order.length) return;
       const mo = eff.order.slice();
       mo.splice(to, 0, mo.splice(at, 1)[0]);
-      patch.manual = [...mo, ...eff.dis].map(x => s.u[x]);
+      patch.manual = [...mo, ...eff.dis].map(x => eff.urls[x]); // 材料化对草稿集合（待保存追加 URL 可入人工序）
     });
   },
-  mSrcToggleDis(s, i) { // 禁用/启用只改草稿（原生源可禁，无删除入口；封顶与旧 toggleSrcDisabled 同为 6）
+  mSrcToggleDis(s, i) { // 禁用/启用只改草稿（原生源可禁，无删除入口；封顶与旧 toggleSrcDisabled 同为 6；待保存追加同管）
     this.mEditor.mutate(patch => {
+      const u = this.mSrcEffective(s, patch).urls[i]; // i 是草稿集合下标（待保存追加也在内）
+      if (!u) return;
       const cur = patch.disabled !== null ? patch.disabled.slice() : (this.cfg.srcDisabled[s.u[0]] || []).slice();
-      const u = s.u[i], at = cur.indexOf(u);
+      const at = cur.indexOf(u);
       if (at >= 0) cur.splice(at, 1);
       else if (cur.length < SRC_CAP) cur.push(u);
       patch.disabled = cur;
     });
   },
-  mSrcRemoveAppend(s, u) { // 只移除追加源；同批追加过则一并从追加列表撤掉
+  mSrcRemoveAppend(s, u) { // 只移除追加源（原生源无删除入口，绝不触碰 s.u）：待保存的从 patch.appends 删即从草稿消失，
+    // 材料化的人工序/禁用表/标签草稿一并清（不留幽灵键——校验按草稿集合点名，幽灵会假报「源集合已变化」）；
+    // 已落库的入 patch.removes 保存才生效（材料化序/禁用同步剔除，落库后装配层对残留 URL 本就忽略）
     this.mEditor.mutate(patch => {
-      if (!patch.removes.includes(u)) patch.removes.push(u);
-      const ai = patch.appends.indexOf(u); if (ai >= 0) patch.appends.splice(ai, 1);
+      const ai = patch.appends.indexOf(u);
+      if (ai >= 0) patch.appends.splice(ai, 1);
+      else if (s.u.includes(u) && !patch.removes.includes(u)) patch.removes.push(u);
+      else return;
+      delete patch.labels[u];
+      if (patch.manual) patch.manual = patch.manual.filter(x => x !== u);
+      if (patch.disabled) patch.disabled = patch.disabled.filter(x => x !== u);
     });
   },
   mSrcLabelInput(u, val) { // 标签逐键入草稿（§6.9：不再 prompt）；空串在保存时 = 删键（删除属性 ≠ 空字符串）
@@ -1763,18 +1781,20 @@ const App = {
     this.mEditor.mutate(patch => { patch.labels[u] = val; });
   },
   mSrcValidate(subj, patch) { // §6.9 步骤4/6：保存前核对最新源集合——重复/条数/URL 合法性；追加源被他台共用/失配 → 停止自动归属
-    const seen = new Set(subj.u);
-    for (const a of patch.appends || []) {
+    const removes = patch.removes || [], appends = patch.appends || [];
+    const natives = subj.u.filter(u => !removes.includes(u)); // 原生−移除：追加去重基线（追加序内去重经 seen.add 累进）
+    const seen = new Set(natives);
+    for (const a of appends) {
       if (!/^https?:\/\//.test(a)) return '追加源需以 http(s):// 开头';
       if (seen.has(a)) return '追加源与本台现有源重复，请先移除';
       seen.add(a);
       const owner = this.state.stations.find(x => x !== subj && x.u.includes(a));
       if (owner) return `追加源已属于其他电台「${owner.n}」，已停止自动归属——请先移除（不能通过改身份归属解决）`;
     }
-    const total = subj.u.filter(u => !(patch.removes || []).includes(u)).length + (patch.appends || []).length;
-    if (total > SRC_CAP) return `每台最多 ${SRC_CAP} 条源，请先移除再追加`;
-    for (const u of patch.manual || []) if (!subj.u.includes(u)) return '人工排序含未知源地址（源集合已变化），请重新加载';
-    for (const u of patch.disabled || []) if (!subj.u.includes(u)) return '禁用表含未知源地址（源集合已变化），请重新加载';
+    const live = natives.concat(appends); // 草稿有效源集合（review-r2 P1）：人工序/禁用表对它点名——待保存追加 URL 合法在列
+    if (live.length > SRC_CAP) return `每台最多 ${SRC_CAP} 条源，请先移除再追加`; // 封顶对「原生−移除+追加」合集生效（探活收编时已前置判满）
+    for (const u of patch.manual || []) if (!live.includes(u)) return '人工排序含未知源地址（源集合已变化），请重新加载';
+    for (const u of patch.disabled || []) if (!live.includes(u)) return '禁用表含未知源地址（源集合已变化），请重新加载';
     return '';
   },
   async mSrcProbe(s, btn) { // §6.9 步骤2：追加 URL 先经既有探活接口验证，通过才进草稿；判满前置（同旧 srcAppend 口径）
@@ -1784,7 +1804,7 @@ const App = {
     if (s.u.includes(u)) { $('status').textContent = '该地址已在源列表中'; return; }
     const d = this.mEditor.getDraft();
     if (d.patch.appends.includes(u)) { $('status').textContent = '该地址已在待保存的追加列表中'; return; }
-    const total = s.u.length - d.patch.removes.length + d.patch.appends.length;
+    const total = s.u.filter(x => !d.patch.removes.includes(x)).length + d.patch.appends.length; // 与 mSrcValidate 同口径：原生−移除+追加合集判满
     if (total >= SRC_CAP) { $('status').textContent = `该台源数将达上限（${SRC_CAP} 条），先移除一条再追加`; return; }
     btn.disabled = true; btn.textContent = '探活中…';
     let r = null;
@@ -1797,8 +1817,8 @@ const App = {
       return;
     }
     this.mSrcVal = '';
-    this.mEditor.mutate(patch => { patch.appends.push(u); });
-    $('status').textContent = `探活通过，已加入待保存的追加列表（${r.detail || '可用'}）——点「保存」写入`;
+    this.mEditor.mutate(patch => { patch.appends.push(u); }); // 入草稿有效集合：行即刻可见可管（review-r2 P1）
+    $('status').textContent = `探活通过，已加入待保存的追加列表（${r.detail || '可用'}）——可排序/禁用/打标签，点「保存」写入`;
   },
   renderEditorSrc(host, draft, s, saving, build) {
     // 源行集合随排序/禁用变化，必须整片重建——data-fa 锚点恢复焦点与 selectionStart（§6.6）
@@ -1814,32 +1834,34 @@ const App = {
   },
   mEditorSrcHtml(draft, s, saving) {
     const patch = draft.patch;
-    const eff = this.mSrcEffective(s, patch);
-    const dft = Player.srcOrder(s)[0]; // 「默认」徽标落点与播放决策同一基座（同旧 srcRowHtml）
+    const eff = this.mSrcEffective(s, patch); // 草稿有效源集合（review-r2 P1）：待保存追加同行同序渲染，可即刻管理
+    const dftU = s.u[Player.srcOrder(s)[0]] || null; // 「默认」徽标按 URL 对齐（落点基座与播放决策同一 srcOrder；待保存行天然不命中）
     const on = Player.station && keyOf(Player.station) === keyOf(s); // keyOf 口径（AIbot P3-3）
+    const curU = on && s.u[Player.curSi] || null; // 「正在用」按 URL：curSi 是装配态下标，草稿行序与它不同空间
     const rows = [...eff.order, ...eff.dis].map(i => {
-      const u = s.u[i], d = eff.dis.includes(i), appended = !s.dU.includes(u);
+      const u = eff.urls[i], d = eff.dis.includes(i), pend = patch.appends.includes(u), appended = !s.dU.includes(u);
       const lb = Object.prototype.hasOwnProperty.call(patch.labels, u) ? patch.labels[u] : (this.cfg.srcLabels[u] || '');
       const at = eff.order.indexOf(i);
-      return `<div class="srcline${on && Player.curSi === i ? ' cur' : ''}${d ? ' off' : ''}">
+      return `<div class="srcline${u === curU ? ' cur' : ''}${d ? ' off' : ''}">
         <i class="idx">${i + 1}</i><span class="u" title="${this.esc(u)}">${this.esc(u)}</span>
         <input type="text" class="lbin" data-lu="${this.esc(u)}" data-fa="lb:${i}" value="${this.esc(lb)}" placeholder="标签（仅展示）" aria-label="源 ${i + 1} 的标签">
-        ${this.srcBadges(s, i, dft)}
+        ${u === dftU ? '<span class="badge">默认</span>' : ''}${u === curU ? '<span class="badge acc">正在用</span>' : ''}${d ? '<span class="badge permb">已禁用</span>' : ''}${pend ? '<span class="badge" title="探活已通过、点「保存」才并入本台源（取消即丢弃）">追加·待保存</span>' : appended ? '<span class="badge">追加</span>' : ''}
         <button type="button" class="btn mbtn" data-sact="up" data-i="${i}" title="上移（草稿内生效，保存后写入人工源顺序）"${d || at <= 0 ? ' disabled' : ''}>上移</button>
         <button type="button" class="btn mbtn" data-sact="down" data-i="${i}" title="下移（草稿内生效，保存后写入人工源顺序）"${d || at < 0 || at >= eff.order.length - 1 ? ' disabled' : ''}>下移</button>
         ${d ? `<button type="button" class="btn mbtn" data-sact="undis" data-i="${i}" title="取消禁用（草稿内生效，保存后恢复参与播放/体检）">启用</button>`
           : `<button type="button" class="btn mbtn" data-sact="dis" data-i="${i}" title="禁用该源（草稿内生效；播放与体检都跳过；主源只禁不删）">禁用</button>`}
-        ${appended ? `<button type="button" class="btn mbtn" data-sact="rm" data-u="${this.esc(u)}" title="移除这条追加源（草稿内生效；原源不可删）">移除</button>` : ''}
-        ${d ? '' : `<button type="button" class="btn mbtn" data-sact="play" data-i="${i}" title="用此源立即播放（有待保存修改会先询问；成功后记源记忆）">▶</button>`}
+        ${appended ? `<button type="button" class="btn mbtn" data-sact="rm" data-u="${this.esc(u)}" title="移除这条追加源（${pend ? '尚未保存，移除即丢弃' : '草稿内生效，保存后落地'}；原源不可删）">移除</button>` : ''}
+        ${d || pend ? '' : `<button type="button" class="btn mbtn" data-sact="play" data-i="${i}" title="用此源立即播放（有待保存修改会先询问；成功后记源记忆）">▶</button>`}
+        ${pend && !d ? '<span class="srcs">保存后可试听</span>' : ''}
       </div>`;
     }).join('');
     const ok = location.protocol.startsWith('http'); // 探活依赖后端，file:// 降级禁用（同添加电台口径）
-    const total = s.u.length - patch.removes.length + patch.appends.length;
+    const total = eff.urls.length; // 与行集合同源（原生−移除+待保存追加），不再是看不见的计数
     return `<div class="medit" data-kind="src">
       <div class="medit-h"><b>源管理：${this.esc(s.n)}</b>
         <button type="button" class="btn mbtn" data-eact="srcmemclr" title="清掉该台「上次成功的源」记忆（立即生效；保留人工排序与禁用）">恢复默认播放源</button></div>
       <div class="msrc">
-        <div class="msrc-t">共 ${total} 条（${eff.dis.length ? `${eff.dis.length} 个禁用；` : ''}有效序=启用源在前）——上移/下移/禁用/标签只改草稿，点「保存」才写入；追加源探活通过才进草稿（每台 ≤${SRC_CAP} 条）；原源只禁不删，不动身份</div>
+        <div class="msrc-t">共 ${total} 条（${patch.appends.length ? `${patch.appends.length} 条待保存追加；` : ''}${eff.dis.length ? `${eff.dis.length} 个禁用；` : ''}有效序=启用源在前）——上移/下移/禁用/标签只改草稿，点「保存」才写入；追加源探活通过才进草稿（每台 ≤${SRC_CAP} 条）；原源只禁不删，不动身份</div>
         ${rows}
         <div class="msrc-add">
           <input type="url" data-fa="app" value="${this.esc(this.mSrcVal || '')}" placeholder="追加流地址 http(s)://…（探活通过才进草稿）" aria-label="追加备选源地址"${ok ? '' : ' disabled title="file:// 降级模式无后端探活，npm start 后可用"'}>
@@ -1913,7 +1935,8 @@ const App = {
   /* —— 备选源管理（P1-a/r2 ⑨ + ②手动选源 + B1 源生命周期）：展开行内按有效序列出全部源（追加的可移除，
      原源只读——身份公理：s.u[0] 是 srcmem/收藏/健康标记的身份键）+ 启用/禁用 + 上移/下移（人工顺序）+
      标签编辑（仅展示）+ 「▶ 用此源播放」（与 footer 浮层双入口）+ 先 /api/check 探活再收的追加输入 —— */
-  srcBadges(s, i, dft) { // 源行徽标片段（footer 浮层/详情中心/源草稿编辑器共用）：默认=有效序首选、正在用=curSi 所在源、已禁用、追加
+  srcBadges(s, i, dft) { // 源行徽标片段（footer 选源浮层专用，装配态口径）：默认=有效序首选、正在用=curSi 所在源、已禁用、追加
+    // 源草稿编辑器不再共用（review-r2 P1）：其行序是草稿集合空间，徽标在 mEditorSrcHtml 内按 URL 对齐自行组装
     // 正在用按 keyOf 而非引用相等（AIbot P3-3）：同步重建 stations 后 Player.station 仍指旧对象，引用比较会丢高亮
     const on = Player.station && keyOf(Player.station) === keyOf(s);
     return (i === dft ? '<span class="badge">默认</span>' : '')
@@ -1924,14 +1947,15 @@ const App = {
   srcOrderView(s) { // 源展示序（footer 浮层/详情共用，B1）：启用源按有效序在前、禁用源殿后（原序）
     return [...(Array.isArray(s.mo) && s.mo.length ? s.mo : s.u.map((_, i) => i)), ...(s.dis || [])];
   },
-  dSrcRows(s) { // 详情源行的序/禁用/标签（AIbot P2）：本台源草稿在编 → 按草稿实时（mSrcEffective + 草稿标签），
-    // 行序与 data-i 随草稿重算；无草稿回装配态（= srcOrderView 拆解）。labels 只含草稿已改键，未改键回落 cfg
+  dSrcRows(s) { // 详情源行的序/禁用/标签（AIbot P2 + review-r2 P1）：本台源草稿在编 → 按草稿实时（mSrcEffective
+    // 草稿有效源集合 + 草稿标签），待保存追加同行可见（urls/pends 随行返回，行 URL 一律 urls[i]、绝不 s.u[i]）；
+    // 无草稿回装配态（= srcOrderView 拆解）。labels 只含草稿已改键，未改键回落 cfg
     const d = this.mEditor && this.mEditor.getDraft();
     if (d && d.kind === 'src' && d.identityUrl === s.u[0]) {
       const eff = this.mSrcEffective(s, d.patch);
-      return { order: eff.order, dis: eff.dis, labels: d.patch.labels || {} };
+      return { order: eff.order, dis: eff.dis, labels: d.patch.labels || {}, urls: eff.urls, pends: d.patch.appends || [] };
     }
-    return { order: Array.isArray(s.mo) && s.mo.length ? s.mo : s.u.map((_, i) => i), dis: s.dis || [], labels: {} };
+    return { order: Array.isArray(s.mo) && s.mo.length ? s.mo : s.u.map((_, i) => i), dis: s.dis || [], labels: {}, urls: s.u, pends: [] };
   },
   /* 旧即时源生命周期入口（srcRowHtml/srcAppend/srcRemove/toggleSrcDisabled/moveSrc/editSrcLabel/clearSrcOrder）
      已由源草稿编辑器取代（P4 §6.9）：排序/禁用/标签/追加/移除只改草稿，保存经 uiBuildSrcNext/uiApplyCells
@@ -2075,17 +2099,21 @@ const App = {
     const st = Player.getSourceState();
     const on = !!(st.station && keyOf(st.station) === k);
     let songs; try { songs = JSON.parse(Store.get('radio.songs') || '{}')[s.u[0]] || []; } catch (_) { songs = []; }
-    const dv = this.dSrcRows(s), dis = dv.dis; // 源行序/禁用/标签：本台源草稿在编时随草稿实时（AIbot P2）
+    const dv = this.dSrcRows(s), dis = dv.dis, urls = dv.urls; // 源行序/禁用/标签：草稿在编时随草稿实时（含待保存追加，review-r2 P1）
+    const pendU = new Set(dv.pends || []);
+    const rmap = {}; (this.detail.results || []).forEach((r, ri) => { if (r) rmap[s.u[ri]] = r; }); // 诊断结果按 URL 回绑：草稿行序与 s.u 下标不同空间
+    const onU = on && st.sourceIndex >= 0 ? s.u[st.sourceIndex] : null, memU = on && st.srcMemIndex >= 0 ? s.u[st.srcMemIndex] : null; // 徽标按 URL 对齐
     const CODE_TXT = { OK: '可用', NETWORK: '网络失败', HTML: 'HTML 假流', HTTP: 'HTTP 错误', EMPTY_PLAYLIST: '空清单', NO_SEGMENT: '无可用分片', SHORT_BODY: '字节不足', REDIRECT_REJECTED: '重定向被拒', INVALID_URL: '地址不合法' };
     const rows = [...dv.order, ...dv.dis].slice(0, SRC_CAP).map(i => { // 每台 6 封顶（与装配/批量诊断同口径，review P1）
-      const u = s.u[i], r = this.detail.results[i], d = dis.includes(i);
+      const u = urls[i], r = rmap[u], d = dis.includes(i), pend = pendU.has(u);
       const lbv = Object.prototype.hasOwnProperty.call(dv.labels, u) ? dv.labels[u] : this.cfg.srcLabels[u];
       const lb = lbv ? `<span class="badge acc" title="源标签">${this.esc(lbv)}</span>` : '';
-      const tag = (i === 0 ? '<span class="badge" title="主源（身份键，不可替换/不可删）">主源</span>' : (s.dU.includes(u) ? '' : '<span class="badge">追加</span>')) + lb
-        + (on && st.sourceIndex === i ? '<span class="badge acc">正在用</span>' : '')
-        + (on && st.srcMemIndex === i && st.sourceIndex !== i ? '<span class="badge">源记忆</span>' : '');
+      const tag = (u === s.u[0] ? '<span class="badge" title="主源（身份键，不可替换/不可删）">主源</span>' : pend ? '<span class="badge" title="探活已通过、点「保存」才并入本台源（取消即丢弃）">追加·待保存</span>' : (s.dU.includes(u) ? '' : '<span class="badge">追加</span>')) + lb
+        + (u === onU ? '<span class="badge acc">正在用</span>' : '')
+        + (u === memU && u !== onU ? '<span class="badge">源记忆</span>' : '');
       const state = d
         ? '<span class="badge permb">已禁用</span><span class="srcs">该源已被手动禁用，不能诊断</span>'
+        : pend ? '<span class="srcs">追加时探活已通过（保存后可诊断/试听）</span>'
         : r ? `<span class="badge ${r.ok ? 'okb' : 'badb'}" title="code: ${this.esc(r.code)}">${CODE_TXT[r.code] || r.code}</span><span class="srcs" title="${this.esc(r.why)}">${this.esc(r.why)} · ${r.latencyMs || 0}ms · ${r.bytes || 0}B · ${r.mode}</span>`
         : '<span class="srcs">未诊断</span>';
       const acts = [
@@ -2095,10 +2123,10 @@ const App = {
         `<button type="button" class="btn mbtn" data-act="dDown" data-i="${i}" title="下移（写进本台源草稿的人工顺序，保存后生效）">↓</button>`,
         `<button type="button" class="btn mbtn" data-act="dLabel" data-i="${i}" title="编辑源标签（仅展示用，写进草稿）">标签</button>`,
         `<button type="button" class="btn mbtn" data-act="dCopy" data-i="${i}">复制</button>`,
-        `<button type="button" class="btn mbtn" data-act="dRecheck" data-i="${i}">诊断</button>`,
-        d ? '' : `<button type="button" class="btn mbtn" data-act="dPlay" data-i="${i}" title="用此源立即播放（失败自动顺延；有待保存的源修改会先询问）">▶ 播放</button>`,
+        pend ? '' : `<button type="button" class="btn mbtn" data-act="dRecheck" data-i="${i}">诊断</button>`,
+        d || pend ? '' : `<button type="button" class="btn mbtn" data-act="dPlay" data-i="${i}" title="用此源立即播放（失败自动顺延；有待保存的源修改会先询问）">▶ 播放</button>`,
       ].join('');
-      return `<div class="dsrc${d ? ' off' : ''}${on && st.sourceIndex === i ? ' cur' : ''}">
+      return `<div class="dsrc${d ? ' off' : ''}${u === onU ? ' cur' : ''}">
         <i class="idx">${i + 1}</i>
         <div class="dsrc-m"><div class="dsrc-u" title="${this.esc(u)}">${this.esc(u)} ${tag}</div><div class="dsrc-i">${state}</div></div>
         <span class="dsrc-a">${acts}</span>
@@ -2107,7 +2135,7 @@ const App = {
     $('detailBody').innerHTML = `
       <div class="dheadinfo">${Logos.visual(s)}<div class="dstats">
         <b title="${this.esc(s.n)}">${this.esc(s.n)}</b>
-        <span class="srcs">${this.esc(s.c)} · ${s.u.length} 个源${dis.length ? ` · ${dis.length} 个已禁用` : ''}${on && st.connecting ? ' · 连接中…' : on && !Player.isPaused() ? ' · 播放中' : ''}</span>
+        <span class="srcs">${this.esc(s.c)} · ${urls.length} 个源${dv.pends && dv.pends.length ? ` · ${dv.pends.length} 条待保存追加` : ''}${dis.length ? ` · ${dis.length} 个已禁用` : ''}${on && st.connecting ? ' · 连接中…' : on && !Player.isPaused() ? ' · 播放中' : ''}</span>
       </div>${this.favBtn(k, fav, s)}</div>
       ${on ? `<div class="dcur">当前源：${st.sourceIndex >= 0 ? `源 ${st.sourceIndex + 1}` : '—'}${st.variantUrl ? ` · ${st.mode === 'hls' ? 'HLS' : '直流'}` : ''}${st.connecting ? '（连接中）' : ''}</div>` : ''}
       <div class="dsec"><b>源诊断</b>${this.detail.loading ? '<span class="srcs">诊断中…</span>' : '<button type="button" class="btn mbtn" data-act="dAll">全部诊断</button>'}</div>
@@ -2610,10 +2638,14 @@ const App = {
       if (e.target === $('detail')) return this.mDepart(() => { this.mEditorEnd(); this.closeDetail(); }); // 点遮罩关闭（有待保存草稿先三选）
       const b = e.target.closest('[data-act]'); if (!b) return;
       const s = this.detailStation(); if (!s) return;
-      const i = +b.dataset.i, act = b.dataset.act;
-      if (act === 'dCopy') this.copySource(s.u[i]);
-      else if (act === 'dPlay') this.mDepart(() => this.playSource(s, i)); // 试听=立即动作；有待保存源先三选（§6.9）
-      else if (act === 'dRecheck') this.recheckSource(s, i);
+      const i = +b.dataset.i, act = b.dataset.act; // i 是 dSrcRows 行序（草稿集合空间，review-r2 P1）
+      const u = this.dSrcRows(s).urls[i];
+      if (act === 'dCopy') { if (u) this.copySource(u); }
+      else if (act === 'dPlay') { // 试听=立即动作；有待保存源先三选（§6.9）。播放/诊断按 URL 回落 s.u 装配下标
+        const si = u ? s.u.indexOf(u) : -1; // 待保存追加未入 s.u：行内本就无 ▶，此处兜底
+        if (si >= 0) this.mDepart(() => this.playSource(s, si));
+      }
+      else if (act === 'dRecheck') { const si = u ? s.u.indexOf(u) : -1; if (si >= 0) this.recheckSource(s, si); }
       else if (act === 'dAll') this.checkStationSources(s);
       else if (act === 'dDis' || act === 'dUndis') this.mSrcDetailOp(s, i, act === 'dDis' ? 'dis' : 'undis'); // 启停 → 本台源草稿（§6.9 共用编辑器）
       else if (act === 'dUp') this.mSrcDetailOp(s, i, 'up');
@@ -2868,7 +2900,11 @@ const App = {
         else if (op === 'dis' || op === 'undis') this.mSrcToggleDis(s, +sb.dataset.i);
         else if (op === 'rm') this.mSrcRemoveAppend(s, sb.dataset.u);
         else if (op === 'srcadd') this.mSrcProbe(s, sb);
-        else if (op === 'play') this.mDepart(() => this.playSource(s, +sb.dataset.i)); // 试听=立即动作；有待保存源先三选（§5.2/§6.9）
+        else if (op === 'play') { // 试听=立即动作；有待保存源先三选（§5.2/§6.9）。data-i 是草稿集合下标，
+          const u = this.mSrcEffective(s, this.mEditor.getDraft().patch).urls[+sb.dataset.i]; // 待保存追加未入 s.u：行内本就无 ▶，
+          const si = u ? s.u.indexOf(u) : -1; // 有 ▶ 的行按 URL 回落装配下标（草稿序与 s.u 下标不同空间，review-r2 P1）
+          if (si >= 0) this.mDepart(() => this.playSource(s, si));
+        }
       };
     }
     $('manageBtn').onclick = () => this.manageOpen();

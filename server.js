@@ -31,6 +31,13 @@ const { qApplyOp, qTrim } = require('./quality-store'); // B2：质量聚合应�
 const { lsDayKeyOk, lsApplyOp } = require('./listen-stats'); // B3：收听统计 op 应用/日期键历法校验（与客户端同语义）
 const ROOT = __dirname, PORT = process.env.PORT || 8137, HOST = process.env.HOST || '127.0.0.1';
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.txt': 'text/plain; charset=utf-8' };
+// 写盘 tmp 名唯一化（pid+单调序号）：同目录双实例（本机 dev 服务常驻 + 测试并行是常态部署形态）共用固定
+// `文件.tmp` 会互踩——A 实例 write 未 rename 时 B 实例 write 同名 tmp 覆盖内容，rename 后落盘的是对方的
+// 数据；Windows 上还常见瞬时 EPERM。串行队列只护本进程，跨进程必须靠 tmp 名本身唯一（test/quality.js
+// 「多标签合流/512 淘汰」用例随机假红的根因，test/quality.js qCommit 2MB 用例注释 AIbot P2 排查的
+// 「写入失败临时通道」同源）。
+let tmpSeq = 0;
+const tmpOf = f => f + '.' + process.pid + '-' + (++tmpSeq) + '.tmp';
 // Host 头白名单（audit A3，防 DNS rebinding）：回环监听（默认）下只认本机名——rebinding 攻击里页面
 // Origin==Host==攻击者域名，所有 Origin 比对失效，从握手层直接拒绝；HOST=0.0.0.0 显式局域网档自担
 // 风险不校验；HOST 指定具体地址时该地址随行放行（127.0.0.2 等其它环回变形会被拒，属可接受收紧）
@@ -86,7 +93,7 @@ function myStationWrite(n, u, c) {
     if (at >= 0) lines.splice(at + 1, 0, `${n},${u}`); // 已有该分类节：节内插入
     else lines.push('', head, `${n},${u}`); // 新分类：尾部开节
     const out = lines.join('\r\n').replace(/^\r\n/, '') + '\r\n';
-    const tmp = MY_FILE + '.tmp';
+    const tmp = tmpOf(MY_FILE);
     fs.writeFile(tmp, out, e => e ? done({ ok: false, error: '写入失败' })
       : fs.rename(tmp, MY_FILE, e2 => done(e2 ? { ok: false, error: '写入失败' } : { ok: true })));
   })).catch(() => ({ ok: false, error: '写入失败' }));
@@ -97,7 +104,7 @@ function myStationWrite(n, u, c) {
 function myRadioReplace(lines) {
   return myQ = myQ.then(() => new Promise(done => {
     const out = lines.length ? lines.join('\r\n') + '\r\n' : '';
-    const tmp = MY_FILE + '.tmp';
+    const tmp = tmpOf(MY_FILE);
     fs.writeFile(tmp, out, e => e ? done({ ok: false, error: '写入失败' })
       : fs.rename(tmp, MY_FILE, e2 => done(e2 ? { ok: false, error: '写入失败' } : { ok: true })));
   })).catch(() => ({ ok: false, error: '写入失败' }));
@@ -123,7 +130,7 @@ function storeRead() { // 懒加载：首访问读盘；坏文件视为空库（
 function storeWrite(data) {
   return storeQ = storeQ.then(() => new Promise(done => {
     storeRead(); // 先装载磁盘态（AIbot P2-1）：rev 只在 GET 路径懒装载——重启后首请求若是 POST 会从 0 重发号，旧窗口高 rev 镜像被静默压掉，违反「rev 服务端唯一发号」公理
-    const rev = storeRev + 1, out = JSON.stringify({ rev, data }), tmp = STORE_FILE + '.tmp';
+    const rev = storeRev + 1, out = JSON.stringify({ rev, data }), tmp = tmpOf(STORE_FILE);
     fs.mkdir(DATA_DIR, { recursive: true }, e => {
       if (e) return done({ ok: false, error: '写入失败' });
       fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
@@ -210,7 +217,7 @@ function qReplace(clean) { // 覆盖写 data（去重日志保留：旧 op 重�
   return qQ = qQ.then(() => new Promise(done => {
     const st = JSON.parse(JSON.stringify(qRead()));
     st.data = clean;
-    const rev = st.rev + 1, out = JSON.stringify(st), tmp = QUALITY_FILE + '.tmp';
+    const rev = st.rev + 1, out = JSON.stringify(st), tmp = tmpOf(QUALITY_FILE);
     if (Buffer.byteLength(out) > Q_MAX) return done({ ok: false, error: 'quality sidecar 超过 2MB 硬上限' });
     fs.mkdir(DATA_DIR, { recursive: true }, e => {
       if (e) return done({ ok: false, error: '写入失败' });
@@ -247,7 +254,7 @@ function qCommit(ops, keep) { // 串行：克隆当前态 → 应用（qApplyOp�
     const rev = st.rev + 1;
     const serialize = () => JSON.stringify({ v: 1, rev, ops: st.ops, ats: st.ats, floorAt: st.floorAt, data: st.data }); // 水位线随盘持久
     qTrim(st.data, keep, () => Buffer.byteLength(serialize()), Q_MAX); // 2MB 逼近时按淘汰序裁（每 2 步复核防过冲）
-    const out = serialize(), tmp = QUALITY_FILE + '.tmp';
+    const out = serialize(), tmp = tmpOf(QUALITY_FILE);
     if (Buffer.byteLength(out) > Q_MAX) return done({ ok: false, error: 'quality sidecar 超过 2MB 硬上限', code: 'too-large' }); // 无法合并（含 2MB 硬上限）→ 409（路由按 code 映射；写失败仍 200 ok:false——临时错误非协议拒）
     fs.mkdir(DATA_DIR, { recursive: true }, e => {
       if (e) return done({ ok: false, error: '写入失败' });
@@ -320,7 +327,7 @@ function lsCommit(ops) { // 串行：克隆当前态 → op.id 去重 + 日桶�
     const rev = st.rev + 1;
     lsTrimDays(st.days);
     const serialize = () => JSON.stringify({ v: 1, rev, ops: st.ops, days: st.days });
-    const out = serialize(), tmp = LS_FILE + '.tmp';
+    const out = serialize(), tmp = tmpOf(LS_FILE);
     if (Buffer.byteLength(out) > LS_MAX) return done({ ok: false, error: 'listen-stats sidecar 超过 2MB 硬上限' });
     fs.mkdir(DATA_DIR, { recursive: true }, e => {
       if (e) return done({ ok: false, error: '写入失败' });
@@ -365,7 +372,7 @@ function lsReplace(clean) { // 覆盖写 days（op 去重日志保留：旧 op �
   return lsQ = lsQ.then(() => new Promise(done => {
     const st = JSON.parse(JSON.stringify(lsRead()));
     st.days = clean;
-    const rev = st.rev + 1, out = JSON.stringify(st), tmp = LS_FILE + '.tmp';
+    const rev = st.rev + 1, out = JSON.stringify(st), tmp = tmpOf(LS_FILE);
     if (Buffer.byteLength(out) > LS_MAX) return done({ ok: false, error: 'listen-stats sidecar 超过 2MB 硬上限' });
     fs.mkdir(DATA_DIR, { recursive: true }, e => {
       if (e) return done({ ok: false, error: '写入失败' });

@@ -35,8 +35,8 @@ function restoreHost(snap) {
     if (snap.files[f]) { fs.mkdirSync(path.dirname(fp), { recursive: true }); fs.writeFileSync(fp, snap.files[f]); }
     else if (fs.existsSync(fp)) fs.unlinkSync(fp);
   }
-  for (const f of fs.existsSync(path.join(ROOT, 'data')) ? fs.readdirSync(path.join(ROOT, 'data')) : []) // tmp+rename 半途残留清理
-    if (/\.tmp$/.test(f)) { try { fs.unlinkSync(path.join(ROOT, 'data', f)); } catch (_) {} }
+  for (const f of fs.existsSync(path.join(ROOT, 'data')) ? fs.readdirSync(path.join(ROOT, 'data')) : []) // tmp+rename 半途残留清理（server.js tmpOf 唯一名含 .tmp 前缀即命中）
+    if (/\.tmp/.test(f)) { try { fs.unlinkSync(path.join(ROOT, 'data', f)); } catch (_) {} }
   if (!snap.dirExisted) { try { fs.rmdirSync(path.join(ROOT, 'data')); } catch (_) {} }
 }
 

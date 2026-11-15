@@ -1,0 +1,36 @@
+# Web CI 门禁（P1，docs/testing-strategy-2026-11.md §3 L2 骨架落地 + §5 PR 必过门）：
+#   node = L0/L1/L2 全量 npm test 在 Node 14/18/20 三版本矩阵（Node 14 leg 是 engines >=14 政策的守门——
+#   出现 14 不兼容默认修代码，只有显式 ADR 才升 engines，见方案 §7 P1 Node 14 政策）；
+#   browser = 正式页面 Chromium PR smoke（.ci/browser 独立供给，根项目零 npm 依赖不破）。
+# 失败 artifact：validation.json 与 pr-smoke 截图（失败才留现场）。
+name: web
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  node:
+    strategy:
+      matrix: { node: ['14', '18', '20'] }
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ matrix.node }}' }
+      - run: npm test
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci --prefix .ci/browser
+      - run: npx --prefix .ci/browser playwright install --with-deps chromium
+      - run: node ui-demo/pr-smoke.cjs
+        env:
+          CI: '1'
+          VRADIO_PLAYWRIGHT: '${{ github.workspace }}/.ci/browser/node_modules/playwright'
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with: { name: pr-smoke-report, path: docs/test-reports/pr-smoke }
+        if-no-files-found: ignore

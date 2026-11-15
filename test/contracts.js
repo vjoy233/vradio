@@ -120,6 +120,10 @@ for (const f of ['backup-v2.json', 'backup-v3.json']) {
     'listen-stats-summary 缺 files 双包装形态描述（Web {v,rev,ops,days} vs Android {v,days}）');
   assert.ok(lc.files.shared.includes('YYYY-MM-DD'), 'listen-stats-summary 缺 days 共享形态/日期键规则描述');
   assert.ok(lc.files.writeFailure.includes('下次 flush'), 'listen-stats-summary 缺写失败保留增量重试语义');
+  // AIbot 三轮 P1：Android pending 启动恢复语义在位（Web 侧无 pending 文件消费——服务端 op 日志已覆盖同语义，
+  // 此处只点名契约描述，行为测试在 Android ListenStatsTest 重启恢复用例）
+  assert.ok(lc.files.android.includes('listen-stats.pending.json') && lc.files.writeFailure.includes('不双计'),
+    'listen-stats-summary 缺 Android 写失败 pending 持久化/启动恢复语义（AIbot 三轮 P1）');
   for (const k of ['id', 'day', 'ms', 'sess'])
     assert.ok(k in lc.opEvent, `listen-stats-summary opEvent 缺 ${k}`);
   assert.ok(lc.api['GET /api/listenstats?rev=<optional>'].includes('notModified'),

@@ -48,14 +48,18 @@ class RadioMeta private constructor(val v: Int, val generatedAt: Long,
       return RadioMeta(1, o.optLong("generatedAt", 0L), out)
     }
 
-    /** meta 与当前 radio 资产的同批绑定校验（AIbot P1-4）：meta 与 radio.txt 不同批时 firstSeenAt 指错台，
-     *  「最近新增」不得展示（置空，不猜）。绑定判据（保守）：
+    /** meta 与当前 radio 资产的同批绑定校验（AIbot P1-4；三轮 P1 升级内容哈希三重见证）：meta 与
+     *  radio.txt 不同批时 firstSeenAt 指错台，「最近新增」不得展示（置空，不猜）。绑定判据（保守）：
      *  ① 两者来源必须同为 filesDir 或同为 assets（gradle 打包对天然同批；filesDir radio + assets meta
-     *     即混态）；② 同为 filesDir 时还须 stamp.json 带 meta=true 见证（LightUpdate.apply 同批写入；
-     *     B2 时代旧 stamp 无该字段 → 无法证明同批 → 不绑定，直到下一次成功更新带回见证）。
+     *     即混态）；② 同为 filesDir 时还须 stamp.json 三重见证全过（LightUpdate.apply 批次末位写）：
+     *     meta=true + radioHash 一致 + metaHash 一致——radio 写成功而 meta 写失败时即便旧 meta 文件与
+     *     旧 stamp（meta=true）残留，新 radio 内容哈希 ≠ 旧 stamp 记录，仍判不绑定（不误绑）。
      *  radioFromFiles/metaFromFiles = 对应 filesDir 副本是否存在；stampMetaOk = stamp 的 meta 见证
-     *  （null = 旧版 stamp 无字段）。 */
-    fun bound(radioFromFiles: Boolean, metaFromFiles: Boolean, stampMetaOk: Boolean?): Boolean =
-      radioFromFiles == metaFromFiles && (!radioFromFiles || stampMetaOk == true)
+     *  （null = 旧版 stamp 无字段）；radioHashOk/metaHashOk = LightUpdate.stampHashOk 的内容哈希核对
+     *  （null = 旧 stamp 无哈希字段——B2/B3 早期 stamp 一律保守不绑定，直到下一次成功更新带回见证）。 */
+    fun bound(radioFromFiles: Boolean, metaFromFiles: Boolean, stampMetaOk: Boolean?,
+              radioHashOk: Boolean? = null, metaHashOk: Boolean? = null): Boolean =
+      radioFromFiles == metaFromFiles &&
+        (!radioFromFiles || (stampMetaOk == true && radioHashOk == true && metaHashOk == true))
   }
 }

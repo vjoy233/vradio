@@ -51,7 +51,6 @@ import io.github.vjoy233.vradio.player.PlayerHolder
 import io.github.vjoy233.vradio.stats.ListenSidecar
 import io.github.vjoy233.vradio.stats.ListenStats
 import io.github.vjoy233.vradio.stats.ListenTracker
-import io.github.vjoy233.vradio.stats.StatsState
 import io.github.vjoy233.vradio.sync.Gh
 import io.github.vjoy233.vradio.sync.LightUpdate
 import io.github.vjoy233.vradio.sync.RadioMeta
@@ -165,8 +164,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   private var listenTracker: ListenTracker? = null
   val showDiscovery = MutableStateFlow(false)
   private val recovered = LinkedHashMap<String, Long>()   // 台 key → 复活时刻（Prefs 缓存 7 天过期）
-  /** radio-meta 与当前 radio 资产同批绑定（AIbot P1-4）：false/混态时发现页「最近新增」置空（不猜）。
-   *  判据见 RadioMeta.bound（filesDir/assets 来源配对 + stamp.meta 见证）。 */
+  /** radio-meta 与当前 radio 资产同批绑定（AIbot P1-4 + 三轮 P1）：false/混态时发现页「最近新增」置空（不猜）。
+   *  判据见 RadioMeta.bound（filesDir/assets 来源配对 + stamp.meta 见证 + radio/meta 内容哈希核对）。 */
   var metaBound = false; private set
 
   /** 渲染快照（唯一渲染入口精神：列表 + 分类角标 + 死台开关可见性 + 空态文案）；
@@ -198,9 +197,11 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     // B3-C：health 复活记录运行时缓存（7 天过期剪裁；坏 JSON 按空表恢复）
     recovered.putAll(runCatching { parseRecovered(Prefs.getStr(ctx, Prefs.RECOVERED, "")) }.getOrDefault(emptyMap()))
     if (FeatureFlags.LISTEN_STATS) {
-      // B3-B：sidecar 装载在 Main 构造（filesDir 小文件）；消费/flush 由开关门控——关 = 不消费不 flush不清数据
-      listenTracker = ListenTracker(SystemClock::elapsedRealtime, System::currentTimeMillis,
-        runCatching { listenSidecar.load() }.getOrDefault(StatsState()))
+      // B3-B：sidecar 装载在 Main 构造（filesDir 小文件）；消费/flush 由开关门控——关 = 不消费不 flush不清数据。
+      // AIbot 三轮 P1：restore 先合流 pending（上次写失败残留的未确认增量快照）——重启不丢，走既有 flush 链路
+      listenTracker = runCatching {
+        ListenTracker.restore(SystemClock::elapsedRealtime, System::currentTimeMillis, listenSidecar)
+      }.getOrNull() ?: ListenTracker(SystemClock::elapsedRealtime, System::currentTimeMillis)
       viewModelScope.launch {   // 30s 周期 flush（页面隐藏 flush 在 onAppHidden；快照覆盖幂等）
         while (true) { delay(30_000); runCatching { flushStats() } }
       }
@@ -233,9 +234,10 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     val fMeta = light.metaText()
     runCatching { quality.load() }                            // B2 质量侧车（坏文件按空库恢复）
     radioMeta.value = RadioMeta.parse(fMeta ?: readAsset("radio-meta.json")) ?: RadioMeta.EMPTY   // 缺件/坏件空对象兜底
-    // AIbot P1-4 混态拦截：meta 与当前 radio 资产须同批（filesDir/assets 来源配对 + stamp.meta 见证）——
-    // 不绑定（如 filesDir radio 配 assets meta、B2 旧 stamp 无见证）→ 发现页「最近新增」置空（不猜）
-    metaBound = RadioMeta.bound(fRadio != null, fMeta != null, light.stampMetaOk())
+    // AIbot P1-4 混态拦截：meta 与当前 radio 资产须同批（filesDir/assets 来源配对 + stamp.meta 见证 +
+    // 三轮 P1 内容哈希核对——新 radio 配残留旧 stamp 时哈希对不上）→ 不绑定则发现页「最近新增」置空（不猜）
+    val hashW = light.stampHashOk()
+    metaBound = RadioMeta.bound(fRadio != null, fMeta != null, light.stampMetaOk(), hashW.first, hashW.second)
     withContext(Dispatchers.Main) {                           // Library 装配收敛主线程（审计 P2：非线程安全集合与渲染读侧单线程化）
       lib.mainText = mainTxt
       lib.myText = myTxt
@@ -936,7 +938,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         texts.second?.let { runCatching { logos.loadBuiltins(it) } }
         val nfMeta = light.metaText()
         radioMeta.value = withContext(Dispatchers.IO) { RadioMeta.parse(nfMeta) ?: RadioMeta.EMPTY }   // B2 meta 随更新收口（缺件空对象；混态已被 apply 删件拦截）
-        metaBound = RadioMeta.bound(true, nfMeta != null, light.stampMetaOk())   // AIbot P1-4：更新后重算绑定（apply 已写 stamp 见证）
+        val hW = light.stampHashOk()   // AIbot 三轮 P1：apply 后即时核对（radio/meta 内容哈希 vs stamp 见证）
+        metaBound = RadioMeta.bound(true, nfMeta != null, light.stampMetaOk(), hW.first, hW.second)   // AIbot P1-4：更新后重算绑定（apply 已写 stamp 见证）
         lib.reload(); stamp.value++
         primeAll()
         updateMsg.value = "已更新到 ${res.commitIso.take(10)} · 台数 +${res.added}/-${res.removed}"

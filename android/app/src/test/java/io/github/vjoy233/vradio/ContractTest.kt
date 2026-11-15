@@ -94,6 +94,10 @@ class ContractTest {
     assertTrue(files.getString("android").contains("{ v:1, days"))
     assertTrue(files.getString("shared").contains("YYYY-MM-DD"))
     assertTrue(files.getString("writeFailure").contains("下次 flush"))
+    // AIbot 三轮 P1：Android 写失败 pending 持久化/启动恢复语义在位（行为测试 = ListenStatsTest 重启恢复用例；
+    // Web test/contracts.js 同款断言双端点名）
+    assertTrue(files.getString("android").contains("listen-stats.pending.json")
+      && files.getString("writeFailure").contains("不双计"))
     val api = lc.getJSONObject("api")
     assertTrue(api.getString("GET /api/listenstats?rev=<optional>").contains("notModified"))
     val post = api.getString("POST /api/listenstats")

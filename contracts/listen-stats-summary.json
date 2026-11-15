@@ -4,9 +4,9 @@
   "description": "本地收听统计 sidecar 契约（B3，plan-expansion-r4 §7.2）。纯本机数据：不进 radio.* 主 Store、不占 2MB 配额、不进默认备份；只记真实播放（诊断成功不算收听），只 PLAYING 累加。",
   "files": {
     "web": "data/listen-stats.json = { v:1, rev:number, ops:[opId…], days:{…} }——rev 服务端唯一发号、ops 是 op.id 幂等去重日志，均为 Web HTTP 服务端并发机器（/api/listenstats 独占读写）",
-    "android": "filesDir/listen-stats.json = { v:1, days:{…} }——纯本机文件，无 rev/ops 包装；落盘确认模型（AIbot 复核 P1）：确认快照 + 未确认增量，写成功才推进确认（失败保留内存下次 flush/启动重试），快照覆盖天然幂等",
+    "android": "filesDir/listen-stats.json = { v:1, days:{…} }——纯本机文件，无 rev/ops 包装；落盘确认模型（AIbot 复核 P1）：确认快照 + 未确认增量，写成功才推进确认（失败保留内存下次 flush/启动重试），快照覆盖天然幂等；启动重试（AIbot 三轮 P1）= 写失败同时把含未确认增量的快照落独立临时文件 filesDir/listen-stats.pending.json（tmp+rename），进程重启 ListenTracker.restore 幂等合流（日键并集/数值取大，不双计）、成功写主快照后原子清理",
     "shared": "days 形态双端完全一致：{ 'YYYY-MM-DD': { ms:number, stations:{ 身份URL:ms }, categories:{ 分类名:ms }, sessions:number } }——日期键须历法有效（02-31/13-01/非闰 02-29 拒绝，双端同规则校验）；90 天裁剪 + 512KB 先删最早日；sessions 口径 = 从非 PLAYING 进入 PLAYING 且非同台同源暂停恢复",
-    "writeFailure": "双端同语义（§7.2 冻结）：统计写入失败只保留内存增量并在下次 flush/启动重试，绝不暂停或中断播放；多次 flush 幂等（Web op.id 服务端去重兜底 / Android 快照覆盖）"
+    "writeFailure": "双端同语义（§7.2 冻结）：统计写入失败只保留内存增量并在下次 flush/启动重试，绝不暂停或中断播放；多次 flush 幂等（Web op.id 服务端去重兜底 / Android 快照覆盖 + pending 恢复合流取大不双计，pending 落盘为 best-effort——同盘故障写不进时退化为纯内存重试不劣于基线）"
   },
   "opEvent": {
     "id": "string ≤64——幂等键（标签页:时间戳:序号 形态；只用于服务端去重，不暴露到 UI/备份）",
@@ -28,7 +28,7 @@
   },
   "tests": {
     "web": "test/listen-stats.js——①状态机/③b 409 分类与条件获取/④真服务端点（GET ?rev= notModified、409 code、op.id 幂等、双标签并发、损坏恢复）",
-    "android": "ListenStatsTest.kt——sidecar 形态/日期键历法校验（与 Web 同键集）/连续写失败→成功增量完整不重复计数（确认快照模型）",
+    "android": "ListenStatsTest.kt——sidecar 形态/日期键历法校验（与 Web 同键集）/连续写失败→成功增量完整不重复计数（确认快照模型）/写失败→pending 落盘→重启 restore 合流→flush 成功不丢不双计→pending 清理（AIbot 三轮 P1 启动恢复）",
     "contract": "test/contracts.js + android ContractTest.kt——本契约文件形状冻结（files 双包装/api 条件获取与 409 code 语义在位）双端点名"
   }
 }

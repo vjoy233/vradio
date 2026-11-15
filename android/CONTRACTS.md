@@ -446,10 +446,15 @@ class LightUpdate(private val gh: Gh, private val filesDir: File) {
   - LightUpdate.apply() 主库与 meta **分开落盘**：下载到但 v≠1/不可解析（`metaInvalid`）→ 保留旧 meta +
     toast 明示不阻断主库；下载失败/仓库未提供（null）→ 静默保留旧 meta（防 Web 侧未落地期间误报）。
     `Result` 增 `metaChanged/metaInvalid` 两默认参数；新增 `metaText()` 读 filesDir 副本。
-  - 内容 hash 校验暂缺位：GitHub contents 通道不带 hash（Web sync-manifest.json 落地后再挂，
-    对齐点见收尾报告）。
+  - 内容 hash 校验：下载通道仍不带 hash（GitHub contents 无内容哈希，Web sync-manifest.json 落地后再挂）；
+    **本地批次见证已补位（AIbot 三轮 P1）**——apply 末位写 stamp.json 三重见证（`meta` 布尔 + `radioHash`/
+    `metaHash` = SHA-256 内容哈希），`stampHashOk()` boot 核对当前 filesDir 两文件与 stamp 记录一致，
+    任一写失败残留的「新文件 + 旧 stamp」由哈希核对拦下（meta 写失败同批删旧件、radio 写失败整体失败）。
+    B2/早期旧 stamp 无哈希字段 → 保守不绑定（同既有拍板）。
 - **测试面**：`QualityAggregateTest`（四档/聚合计数/lastObservedAt/分流/trim/坏件/往返/源封顶）、
-  `SyncCandidateTest`（归一化/三层去重/同名合并/来源保留/行序）、`LightUpdateTest` 增 meta 四例；
+  `SyncCandidateTest`（归一化/三层去重/同名合并/来源保留/行序）、`LightUpdateTest` 增 meta 四例 +
+  批次提交协议三例（AIbot 三轮 P1：meta 写失败注入→删旧件/见证失效、新 radio 配残留旧 stamp 哈希拦截、
+  旧 stamp 无哈希保守不绑定）；
   `capBytes` 构造注入令 trim 测试不必造 2MB 数据。
 
 ---
@@ -525,16 +530,22 @@ class LightUpdate(private val gh: Gh, private val filesDir: File) {
   ——不进 radio.* 主 Store/2MB 配额/
   备份 v3 默认导出；flush = 30s tick + MainActivity.onStop；**落盘确认模型（AIbot 复核 P1，§7.2「写失败只保留
   内存增量并在下次 flush/启动重试」）**：tracker 持确认快照（最近一次成功落盘），flush 只在有未确认增量时写、
-  写成功才推进确认——失败增量保留内存，下次 flush 快照覆盖一次写入全部（不重放不双计，幂等）；开关关不消费
-  不 flush 不清数据。
+  写成功才推进确认——失败增量保留内存，下次 flush 快照覆盖一次写入全部（不重放不双计，幂等）；**启动重试
+  （AIbot 三轮 P1）**：写失败同时把含未确认增量的快照落独立临时文件 `filesDir/listen-stats.pending.json`
+  （tmp+rename、IO 线程 flush 内 best-effort 不碰播放线程），进程重启 `ListenTracker.restore` 以主快照为
+  确认基线、pending 经 `ListenStats.merge`（日键并集/数值取大）幂等合流入账——增量转入待确认走既有 flush
+  链路，成功写主快照后原子清理 pending（残留/清理失败由合流幂等消化不双计，坏 pending 丢弃按主快照冷启）；
+  开关关不消费不 flush 不清数据。
 - **`discovery/Discovery.kt`（纯 JVM）**：`build(DiscoveryInput): Groups` 六分组（精选/稳定直连/最近新增/
   最近恢复/有曲讯/未听过）+ `noQualityData` 名单（不进质量分组的无记录台，UI 在「稳定直连」组头显示
   「另有 N 台暂无质量数据」提示行，不单列分组）；规则：过滤 hidden/隐藏分类（无例外）/dead（正在播·
   连接中例外 = visible 同口径）；无质量记录不进质量分组、不误判 poor；稳定直连 = good 且 directCount>0；
   有曲讯 = metadata==icy；最近新增 = radio-meta.firstSeenAt（**挂 sources[] 为主、台级直挂容错、取最早**，
   `MetaStation.firstSeenAt` 旁挂字段；无 meta 组空；AIbot P1-4 混态拦截——消费前须过 `RadioMeta.bound`
-  同批绑定校验：filesDir/assets 来源配对 + stamp.json 的 `meta` 同批见证（LightUpdate.apply 随行写、
-  meta 拿不到/非法即删旧件、SyncEngine 端内同步后删 meta+写 meta=false；B2 旧 stamp 无字段按混态），
+  同批绑定校验：filesDir/assets 来源配对 + stamp.json 三重见证 = `meta` 布尔 + `radioHash`/`metaHash`
+  内容哈希（AIbot 三轮 P1：LightUpdate.apply 批次提交协议——stamp 末位写，radio 写失败整体失败、
+  meta 写失败删旧件且不记见证，「新文件 + 残留旧 stamp」由哈希核对拦下；SyncEngine 端内同步后删 meta+
+  写 meta=false+radioHash；B2/早期旧 stamp 无字段或无哈希一律按混态保守不绑定），
   不绑定整组置空不猜，其余分组不受影响）；最近恢复 = `RecoveryLog`（dead→alive 转移 Map +
   `Prefs.RECOVERED` 运行时缓存 7 天过期，键非 radio.*；同步重建不产生记录——只有体检通道 wasDead→ok 才记）；
   未听过 = 不在 radio.recents；精选 = `Station.starter`（originMask 位，双端口径 = **STARTER URL 命中或
@@ -546,5 +557,7 @@ class LightUpdate(private val gh: Gh, private val filesDir: File) {
   `MetadataEventTest`（事件形态 + 管线固定序：空曲讯/迟到/串台/去重/入史/reset/v2 入史窗去重）、
   `ListenStatsTest`（fake clock 全矩阵：播放/暂停/续播重锚/连接中/失败/切源/切台/跨午夜/双回拨/
   1s 阈值/90 天/512KB/幂等/写失败/连续写失败→成功增量完整不重复计数（AIbot 复核 P1 确认快照模型）/
+  写失败→pending 落盘→重启恢复不丢不双计→成功清理（AIbot 三轮 P1 启动重试，ListenSidecar.pending/
+  ListenStats.merge/ListenTracker.restore）/
   坏件/summary）、`DiscoveryTest`（六分组矩阵 + originMask
-  装配打点（同名/URL 命中）+ starter 位不参与 equals）。全量 244 用例离线秒级。
+  装配打点（同名/URL 命中）+ starter 位不参与 equals）。全量 251 用例离线秒级。

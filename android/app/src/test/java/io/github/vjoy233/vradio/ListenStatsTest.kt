@@ -311,6 +311,84 @@ class ListenStatsTest {
     assertTrue(t.pending)
   }
 
+  /* ---------- AIbot 三轮 P1：写失败 pending 持久化 + 启动恢复 ---------- */
+
+  private fun dayState(ms: Long, day: String = WALL0_DAY): StatsState {
+    val st = StatsState()
+    st.days[day] = StatsDay(ms, linkedMapOf("http://a/1" to ms), linkedMapOf("华语音乐" to ms), 1)
+    return st
+  }
+
+  @Test fun merge日键并集数值取大() {   // 幂等合流：同键取大（防双计）、异键并集（补丢日）
+    val a = dayState(60_000)
+    a.days["2026-11-15"] = StatsDay(30_000, linkedMapOf("http://b/1" to 30_000), linkedMapOf("欧美音乐" to 30_000), 2)
+    val b = dayState(90_000)   // 同日更大 + 无 11-15
+    val m = ListenStats.merge(a, b)
+    assertEquals(setOf(WALL0_DAY, "2026-11-15"), m.days.keys)
+    assertEquals(90_000L, m.days[WALL0_DAY]!!.ms)
+    assertEquals(90_000L, m.days[WALL0_DAY]!!.stations["http://a/1"])
+    assertEquals(30_000L, m.days["2026-11-15"]!!.ms)   // 只在 a 有的日保留（并集）
+    assertEquals(1, m.days[WALL0_DAY]!!.sessions)      // sessions 同取大（1 vs 1）
+    assertEquals(2, m.days["2026-11-15"]!!.sessions)
+    assertEquals(ListenStats.merge(m, b), m)           // 重复合流幂等（残留 pending 二次恢复不双计）
+  }
+
+  @Test fun 写失败后重启经pending恢复不丢不双计() {   // AIbot 三轮 P1：§7.2「启动重试」跨进程落地
+    var fail = false
+    val sc = ListenSidecar(dir) { t ->
+      if (fail) throw java.io.IOException("disk full")
+      io.github.vjoy233.vradio.data.writeTextAtomic(File(dir, ListenSidecar.FILE), t)
+    }
+    // 阶段一：听 60s → flush 成功落主快照（已确认基线）
+    val c1 = Fake(); val t1 = tracker(c1)
+    t1.onState(PState.PLAYING, s1, "http://a/1"); c1.mono += 60_000; c1.wall += 60_000
+    assertTrue(t1.flush(sc)); assertFalse(t1.pending)
+    // 阶段二：再听 30s → 主写失败（注入）→ 含 90s 增量的失败快照落独立 pending 文件，进程随即被杀
+    c1.mono += 30_000; c1.wall += 30_000
+    fail = true
+    assertFalse(t1.flush(sc))
+    assertTrue(File(dir, ListenSidecar.PENDING).isFile)
+    // 阶段三：重启（Tracker/Sidecar 全新实例）→ restore 合流：90s 在账、增量处于待确认
+    val t2 = ListenTracker.restore({ 0L }, { Fake().wall }, ListenSidecar(dir))
+    assertEquals(90_000L, t2.state.days.values.single().ms)
+    assertEquals(1, t2.state.days.values.single().sessions)   // 恢复不开新 session（不双计）
+    assertTrue(t2.pending)
+    // 阶段四：写盘恢复 → flush 成功 → 主快照 90s 完整、pending 原子清理
+    fail = false
+    assertTrue(t2.flush(sc)); assertFalse(t2.pending)
+    assertFalse(File(dir, ListenSidecar.PENDING).isFile)
+    val disk = ListenSidecar(dir).load()
+    assertEquals(90_000L, disk.days.values.single().ms)
+    assertEquals(90_000L, disk.days.values.single().stations["http://a/1"])
+    assertEquals(1, disk.days.values.single().sessions)
+    // 阶段五：再重启冷读 → 无 pending 幂等（90s 即基线）
+    val t3 = ListenTracker.restore({ 0L }, { Fake().wall }, ListenSidecar(dir))
+    assertFalse(t3.pending)
+    assertEquals(90_000L, t3.state.days.values.single().ms)
+  }
+
+  @Test fun pending残留主快照已含增量不双计() {   // 清理失败形态：主 ≥ pending → 幂等合流 + 无增量 flush 顺手清残留
+    val sc = ListenSidecar(dir)
+    sc.save(dayState(90_000))       // 主快照已含全部增量（= 成功落盘后 clearPending 失败的等价形态）
+    sc.savePending(dayState(60_000))   // 残留旧 pending（⊂ 主）
+    val t = ListenTracker.restore({ 0L }, { Fake().wall }, sc)
+    assertFalse(t.pending)          // 合流 = 主快照（取大），无待确认增量
+    assertEquals(90_000L, t.state.days.values.single().ms)
+    assertTrue(File(dir, ListenSidecar.PENDING).isFile)
+    assertTrue(t.flush(sc))         // 无增量：不写主快照、只清残留
+    assertFalse(File(dir, ListenSidecar.PENDING).isFile)
+    assertEquals(90_000L, ListenSidecar(dir).load().days.values.single().ms)
+  }
+
+  @Test fun 坏pending丢弃按主快照冷启() {   // pending 损坏：宁失勿错——主快照仍是已确认基线
+    val sc = ListenSidecar(dir)
+    sc.save(dayState(60_000))
+    File(dir, ListenSidecar.PENDING).writeText("garbage{")
+    val t = ListenTracker.restore({ 0L }, { Fake().wall }, sc)
+    assertEquals(60_000L, t.state.days.values.single().ms)
+    assertFalse(t.pending)
+  }
+
   /* ---------- summary ---------- */
 
   @Test fun summary七天窗口聚合() {

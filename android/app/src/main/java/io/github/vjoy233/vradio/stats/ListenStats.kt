@@ -19,7 +19,9 @@ import java.util.Locale
    sidecar = filesDir/listen-stats.json（不进 radio.* 主 Store、不占配额、不进备份；坏文件按空库恢复，
    写失败只保留内存增量下次 flush/启动重试——绝不暂停或中断播放）。落盘确认模型（AIbot 复核 P1）：
    ListenTracker 持已确认快照 saved（最近一次成功落盘），flush 只在有未确认增量时写、写成功才推进 saved
-   （失败增量保留内存，下次 flush 快照覆盖一次写入全部、不重放不双计）。
+   （失败增量保留内存，下次 flush 快照覆盖一次写入全部、不重放不双计）。启动重试（AIbot 三轮 P1）：写失败
+   同时把含增量的快照落 filesDir/listen-stats.pending.json（独立临时文件 tmp+rename），进程重启经
+   ListenTracker.restore 幂等合流恢复待确认账、成功写主快照后原子清理——「重启不丢、恢复不双计」。
    状态机映射（AppVm 接线）：IDLE/CONNECTING/PLAYING/PAUSED 直接对应 PState；FAILED = 全部源失败善后
    （IDLE + 台清空的形态）——四者一律不累加（只收口当前会话）。 */
 
@@ -114,6 +116,21 @@ object ListenStats {
     return state
   }
 
+  /** 快照幂等合流（AIbot 三轮 P1：pending 启动恢复）：主快照与 pending 快照同谱系（pending 落于最近一次
+   *  成功落盘之后，逐字段 ⊇ 主）——日键并集、数值字段取大。pending 残留（清理失败后重启）或重复恢复
+   *  都不双计；取大会让 pending 中早于主快照被 90 天裁剪掉的旧日复活一小段，下次 trim 自愈（只影响
+   *  保留期不影响计数正确性）。 */
+  fun merge(a: StatsState, b: StatsState): StatsState {
+    val out = a.deepcopy()
+    for ((k, d) in b.days) {
+      val o = out.days.getOrPut(k) { StatsDay() }
+      o.ms = maxOf(o.ms, d.ms); o.sessions = maxOf(o.sessions, d.sessions)
+      for ((u, v) in d.stations) o.stations[u] = maxOf(o.stations[u] ?: 0L, v)
+      for ((c, v) in d.categories) o.categories[c] = maxOf(o.categories[c] ?: 0L, v)
+    }
+    return out
+  }
+
   /** 最近 N 个自然日汇总（按日键降序取 N）。 */
   fun summary(state: StatsState, days: Int = 7): StatsSummary {
     val ks = state.days.keys.sortedDescending().take(days)
@@ -166,12 +183,13 @@ object ListenStatsCodec {
 }
 
 /** sidecar IO：filesDir/listen-stats.json（tmp+rename；坏文件按空库恢复；写失败返回 false 不抛——增量留在
- *  ListenTracker 未确认账上下次 flush/启动重试）。writeFn 注入供测试模拟写盘失败。 */
+ *  ListenTracker 未确认账上下次 flush 重试，同时把含增量的失败快照落独立 pending 文件供启动恢复（AIbot
+ *  三轮 P1：进程被杀后内存重试账不丢）。writeFn 注入供测试模拟写盘失败（只影响主快照，不走 pending）。 */
 class ListenSidecar(
   private val dir: File,
   private val writeFn: (String) -> Unit = { t -> writeTextAtomic(File(dir, FILE), t) },
 ) {
-  companion object { const val FILE = "listen-stats.json" }
+  companion object { const val FILE = "listen-stats.json"; const val PENDING = "listen-stats.pending.json" }
 
   @Synchronized fun load(): StatsState =
     ListenStatsCodec.parse(runCatching { File(dir, FILE).takeIf { it.isFile }?.readText() }.getOrNull())
@@ -181,6 +199,25 @@ class ListenSidecar(
     runCatching { writeFn(ListenStatsCodec.toJson(state)) }
       .onFailure { println("[vradio] listen-stats.json 落盘失败（保留内存增量，下次 flush/启动重试）: $it") }
       .isSuccess
+
+  /** 写失败兜底（AIbot 三轮 P1）：含未确认增量的失败快照落 filesDir/listen-stats.pending.json（tmp+rename，
+   *  每次失败整体覆盖——新快照 ⊇ 旧快照）。best-effort：pending 也写不进（同盘满）不抛——退化为纯内存
+   *  重试（不劣于修复前）。 */
+  @Synchronized fun savePending(state: StatsState) {
+    runCatching { writeTextAtomic(File(dir, PENDING), ListenStatsCodec.toJson(state)) }
+      .onFailure { println("[vradio] listen-stats.pending.json 落盘失败（退化为内存重试）: $it") }
+  }
+
+  /** pending 恢复：无文件/坏件返回 null（坏件按丢弃——宁失勿错，主快照仍是已确认基线）。 */
+  @Synchronized fun loadPending(): StatsState? =
+    runCatching { File(dir, PENDING).takeIf { it.isFile }?.readText() }.getOrNull()
+      ?.let { ListenStatsCodec.parse(it).takeIf { p -> p != StatsState() } }
+
+  /** 主快照写成功后的清理（AIbot 三轮 P1）：失败不抛——残留 pending 由合流幂等消化（不双计），下次
+   *  flush 成功再清。 */
+  @Synchronized fun clearPending() {
+    runCatching { File(dir, PENDING).delete() }
+  }
 }
 
 /** 深拷贝（确认快照持独立副本——写失败重试期间内存账继续变动互不干扰）。 */
@@ -195,32 +232,48 @@ private fun StatsState.deepcopy(): StatsState {
  *  暂停关账但保留「resume 重锚资格」——续播同台同源不开新 session（暂停时长不计）；连接中/失败/停机彻底关。
  *  落盘确认模型（AIbot 复核 P1，§7.2「写失败只保留内存增量并在下次 flush/启动重试」）：saved = 已确认快照
  *  （最近一次成功落盘；boot 装载态即基线）；flush 只在有未确认增量时写、写成功才推进 saved——失败增量保留
- *  内存，下次 flush 快照覆盖一次写入失败期间全部增量（不重放不双计，天然幂等）。 */
+ *  内存并落 pending 快照文件（AIbot 三轮 P1：进程被杀后启动恢复），下次 flush 快照覆盖一次写入失败期间
+ *  全部增量（不重放不双计，天然幂等）。confirmed 入参 = boot 恢复时主快照作基线（initial 已并入 pending）。 */
 class ListenTracker(
   private val mono: () -> Long,
   private val wall: () -> Long,
   initial: StatsState = StatsState(),
+  confirmed: StatsState? = null,
 ) {
-  companion object { const val TICK_MIN_MS = 1000L }   // ≥1s 才入账（Web tickMin 同款；不足 1s 不动锚、跨 tick 累计）
+  companion object {
+    const val TICK_MIN_MS = 1000L   // ≥1s 才入账（Web tickMin 同款；不足 1s 不动锚、跨 tick 累计）
+
+    /** boot 恢复（AIbot 三轮 P1）：主快照 + pending（写失败残留的含增量快照）幂等合流为内存账、主快照为
+     *  已确认基线——pending 增量转入「待确认」走既有 flush 链路（成功落主快照后由 flush 清 pending 文件）。
+     *  不抛（sidecar 读盘/解析全容错，坏 pending 丢弃按主快照冷启）。 */
+    fun restore(mono: () -> Long, wall: () -> Long, sidecar: ListenSidecar): ListenTracker {
+      val main = sidecar.load()
+      val pend = sidecar.loadPending() ?: return ListenTracker(mono, wall, main)
+      return ListenTracker(mono, wall, ListenStats.merge(main, pend), main)
+    }
+  }
 
   var state: StatsState = initial
     private set
   private var cur: ListeningSession? = null
   private var pendingResume: Pair<String, String>? = null   // PAUSED 时保留的 (u0, src)：续播重锚资格
-  private var saved: StatsState = initial.deepcopy()        // 已确认快照（最近一次成功落盘；≠ state 即有未确认增量）
+  private var saved: StatsState = (confirmed ?: initial).deepcopy()   // 已确认快照（最近一次成功落盘；≠ state 即有未确认增量）
 
   /** 未确认增量在账（state ≠ 已确认快照）：写失败保留，下次 flush 重放（AIbot 复核 P1）。 */
   @get:Synchronized val pending: Boolean get() = state != saved
 
   /** flush（30s tick / 页面隐藏 / 测试注入失败写入器）：收账 + trim → 有未确认增量才写、写成功才推进确认
-   *  快照；失败 false（增量保留内存重试）。@Synchronized：IO 线程 flush 与主线程 onState 互斥（快照深拷贝
-   *  不与内存账变动竞态）。 */
+   *  快照并清 pending 文件；失败 false（增量保留内存 + 落 pending 快照，下次 flush/启动重试）。无增量也清
+   *  pending（残留清理：主快照已含全部内容时恢复账与基线相等——见 merge 幂等）。@Synchronized：IO 线程
+   *  flush 与主线程 onState 互斥（快照深拷贝不与内存账变动竞态）；pending 落盘在 flush 内同为 IO 线程，
+   *  不碰播放线程。 */
   @Synchronized fun flush(sidecar: ListenSidecar): Boolean {
     settle()
     ListenStats.trim(state)
-    if (state == saved) return true                      // 无未确认增量：跳过写（幂等，不重复落盘）
+    if (state == saved) { sidecar.clearPending(); return true }   // 无未确认增量：跳过写（幂等，不重复落盘）
     val snap = state.deepcopy()
-    return if (sidecar.save(snap)) { saved = snap; true } else false
+    return if (sidecar.save(snap)) { saved = snap; sidecar.clearPending(); true }
+           else { sidecar.savePending(snap); false }
   }
 
   /** PState 流入口。FAILED 映射 = 全部源失败善后（IDLE+清台），与 IDLE 同路（关会话）。 */

@@ -150,6 +150,31 @@ function uiCfgDiff(cur, inc) {
   }
   return out;
 }
+function uiBackupPreview(info, opt) { // info = BackupV3.read 结果；opt.http = 当前形态。返回 {rows,notes,unavailable,side}
+  const http = !!(opt && opt.http);
+  const myN = info.my == null ? null : info.my.filter(l => !l.endsWith('#genre#')).length;
+  const qN = info.quality ? Object.keys(info.quality.data).length : 0;
+  const lN = info.ls ? Object.keys(info.ls.data).length : 0;
+  const rows = [{ k: '备份版本', v: 'v' + info.ver + (info.ver < 3 ? '（旧版格式，按兼容口径读取）' : '') }];
+  if (info.app) rows.push({ k: '来源应用', v: info.app });
+  rows.push({ k: 'Store 数据', v: info.n + ' 个数据键（收藏/维护配置/健康标记/歌曲历史等，恢复时全部替换）' });
+  rows.push({ k: '个人电台', v: myN == null ? '备份不含个人电台——本机 my-radio.txt 保持不动'
+    : myN + ' 台（恢复时全量替换 my-radio.txt' + (!http ? '；file:// 形态无法写入，本项将跳过' : '') + '）' });
+  if (info.quality) rows.push({ k: '质量 sidecar', v: qN + ' 台（覆盖本机质量数据' + (!http ? '；需 http 形态，本形态跳过' : '') + '）' });
+  if (info.ls) rows.push({ k: '收听统计 sidecar', v: lN + ' 天（覆盖本机收听统计' + (!http ? '，写本地快照' : '') + '）' });
+  const notes = [];
+  if (info.ver === 1) notes.push('v1 备份不含个人电台数据：恢复不动 my-radio.txt');
+  if (info.ver < 3) notes.push('旧版备份不含质量/收听统计 sidecar');
+  const unavailable = []; // 本形态不可用项（§5.5：依赖后端的项目在预览面板明示，不用 toast 轰炸）
+  if (!http) {
+    if (info.my != null) unavailable.push('个人电台列表恢复——my-radio.txt 写入需要 http 形态（npm start）');
+    if (info.quality) unavailable.push('质量 sidecar 恢复——服务端 /api/quality 需要 http 形态（npm start）');
+  }
+  const side = { qN, lN, hasQuality: !!info.quality, hasLs: !!info.ls,
+    qualityOk: !!info.quality && http, lsOk: !!info.ls,
+    any: (!!info.quality && http) || !!info.ls }; // 勾选框是否需要出现（无 sidecar 或本形态全不可恢复 → 不出勾选）
+  return { rows, notes, unavailable, side };
+}
 /* 主题入口窄屏收纳（§6.11，boot 装配一次并留销毁函数）：同一节点（#themeWrap 含三选菜单）搬家——≤640px 收进
    #lowfreq（「⋯ 更多」内，文字 span 由 CSS 放出）、更宽回顶栏原锚点（#file 之前）；监听/radio.theme 随节点走，
    不复制 id。跨断点焦点：焦点在将隐藏的菜单内先关菜单（归还触发器）；DOM 搬家必脱焦——焦点还给随行 themeBtn，
@@ -2293,44 +2318,97 @@ const App = {
     $('status').textContent = `已导出完整备份 v3（收藏/配置/健康标记/歌曲历史${myRadio.length ? '/个人电台' : ''}${sc}${myNote}；台标缓存可重建不包含）`;
   },
   async importAll(text) {
-    // 阶段一/二：parse + validate/preview（BackupV3.read：版本识别 + 键白名单过滤 + sidecar 判定）
+    // §5.5（P5）：交互壳重做——parse + validate/preview（BackupV3.read：版本识别 + 键白名单过滤 + sidecar 判定）
+    // 后不再走 confirm() 链，改为结构化覆盖预览面板（图10 信息层级）+ sidecar 勾选 + submitting 态；
+    // 阶段三 commitImport 调用与 io 注入表一行语义不改（三阶段四快照回滚在 backup.js，B01 已有事务测试）。
+    if (this._restoreBusy) return; // 提交中禁重复入口（预览「开始恢复」点击后即置，直到事务返回）
     const info = BackupV3.read(text, Store.KEYS);
-    if (!info) { alert('导入失败：不是 vradio 完整备份文件'); return; }
-    if (!info.n) { alert('导入失败：备份中无有效数据'); return; }
+    if (!info) return this.mDataErr('不是 vradio 完整备份文件（支持 v1/v2/v3）。请选择「备份全部」导出的 vradio-backup.json。');
+    if (!info.n) return this.mDataErr('备份中无有效数据（Store 键为空或全被白名单过滤），未做任何改动。');
     const http = location.protocol.startsWith('http');
-    // sidecar 选择（B4 起双 sidecar 一次确认整体覆盖；schema importRules 同口径）：质量仅 http、收听统计双形态
-    const scParts = [info.quality && http ? `质量数据 ${Object.keys(info.quality.data).length} 台` : '',
-      info.ls ? `收听统计 ${Object.keys(info.ls.data).length} 天` : ''].filter(Boolean);
-    let sc = false;
-    if (scParts.length) sc = confirm(`备份含 sidecar（${scParts.join('、')}）。是否一并恢复？\n（将覆盖本机对应数据；取消恢复则本机保持不变）`);
-    const myNote = info.my ? `、个人电台 ${info.my.filter(l => !l.endsWith('#genre#')).length} 台` : '';
-    if (!confirm(`导入将覆盖本地全部数据（备份 v${info.ver}${info.app ? '，来源 ' + info.app : ''}，含 ${info.n} 个数据项${myNote}${sc ? `、sidecar（${scParts.join('、')}，将覆盖本机对应数据）` : ''}：收藏/维护配置/健康标记/歌曲历史全部替换${info.ver === 1 ? '；v1 备份不动个人电台列表' : ''}）。继续？`)) return;
+    const pv = uiBackupPreview(info, { http });
+    let scCb = null, v; // sidecar 勾选项（默认勾选，替换原 confirm）；commitImport 的 sc = 单开关恢复备份所含全部 sidecar
+    try {
+      v = await uiChooseDialog('备份恢复 · 覆盖预览',
+        '恢复将覆盖本地全部数据；恢复不触发自动播放，提交中不可重复触发，结果如实区分「未提交 / 已回滚 / 回滚失败」。请核对覆盖范围：',
+        [{ value: 'ok', label: '开始恢复', primary: true }, { value: 'stay', label: '取消' }], {
+        safe: 'stay',
+        build: body => {
+          const list = document.createElement('div'); list.className = 'ecrows';
+          for (const r of pv.rows) {
+            const row = document.createElement('div'); row.className = 'ecrow';
+            const k = document.createElement('span'); k.className = 'k'; k.textContent = r.k;
+            const b = document.createElement('span'); b.className = 'v'; b.textContent = r.v;
+            row.appendChild(k); row.appendChild(b); list.appendChild(row);
+          }
+          body.appendChild(list);
+          for (const note of pv.notes) { const p = document.createElement('p'); p.className = 'ecsum'; p.textContent = '· ' + note; body.appendChild(p); }
+          if (pv.unavailable.length) { // file:// 下不可用项明示（§5.5）
+            const un = document.createElement('div'); un.className = 'econflict';
+            un.textContent = '本形态（file://）不可用项：\n' + pv.unavailable.map(x => '· ' + x).join('\n');
+            body.appendChild(un);
+          }
+          if (pv.side.any) {
+            const lab = document.createElement('label'); lab.className = 'ecck';
+            const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true;
+            lab.appendChild(cb);
+            const parts = [];
+            if (pv.side.hasQuality) parts.push('质量 ' + pv.side.qN + ' 台' + (pv.side.qualityOk ? '' : '（需 http 形态，本次跳过）'));
+            if (pv.side.hasLs) parts.push('收听统计 ' + pv.side.lN + ' 天' + (http ? '' : '（写本地快照）'));
+            lab.appendChild(document.createTextNode(' 一并恢复统计数据：' + parts.join(' + ') + '（覆盖本机对应数据；取消勾选则全部保持不变）'));
+            body.appendChild(lab);
+            scCb = cb;
+          } else if (pv.side.hasQuality) { // 仅质量 sidecar 且 file://：无可恢复项，明示而非出无效勾选框
+            const p = document.createElement('p'); p.className = 'ecsum';
+            p.textContent = '备份含质量 sidecar，需 http 形态（npm start）才能恢复；本机数据保持不变。';
+            body.appendChild(p);
+          }
+        } });
+    } catch (_) { return; } // 确认层被占用（理论罕见）：放弃恢复，不打断既有弹窗
+    if (v !== 'ok') return;
+    const sc = !!(scCb && scCb.checked);
+    this._restoreBusy = true; // submitting 态：入口禁用 + 按钮禁用换文案（预览按钮由 done 标记防连点）
+    const btn = $('mRestore'), oldLabel = btn.textContent;
+    btn.disabled = true; btn.textContent = '恢复中…';
     // 阶段三 commit（BackupV3.commitImport，AIbot P1-2 抽离可测）：先快照四件（Store + my-radio + 旧质量 +
     // 旧收听统计 sidecar——确认恢复即先读留存，无快照不提交），任一步失败整体回滚（sidecar 旧快照经各自通道
     // 尽力回写，二次失败文案如实点名）；取消在上一步 = 零副作用。io 注入真实现（fetch/localStorage/QualityStore/ListenStats）。
     const lsLocalRead = () => { try { const j = JSON.parse(localStorage.getItem('listenstats.local') || 'null'); return j && j.days && typeof j.days === 'object' ? j.days : {}; } catch (_) { return null; } };
-    const r = await BackupV3.commitImport(info, sc, {
-      http,
-      storeSnap: () => { const s = {}; for (const k of Store.KEYS) s[k] = localStorage.getItem(k); return s; },
-      storeApply: d => { for (const k of Store.KEYS) { if (d[k] != null) localStorage.setItem(k, d[k]); else localStorage.removeItem(k); } },
-      storeFlush: async () => { await Store.flush(); return !Store.dirty; }, // 可等待可判定成功（AIbot 三轮 P1-1）：flush 后 dirty=false 才算落盘成功（file:// 恒成功）
-      getMy: () => fetch('my-radio.txt?t=' + Date.now()).then(r => r.status === 404 ? '' : r.ok ? r.text() : null).catch(() => null), // 404=空列表合法；其余失败 null 中止（三轮 P2-1，不再误当空文件清掉 my-radio）
-      postMy: lines => this.postMyRadio(lines),
-      getQuality: () => fetch('/api/quality').then(r => r.json()).then(j => j && j.data && typeof j.data === 'object' && !Array.isArray(j.data) ? j.data : null).catch(() => null),
-      postQuality: data => fetch('/api/quality', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ replace: true, data }) })
-        .then(x => x.json()).then(j => !!(j && j.ok)).catch(() => false),
-      refreshQuality: () => { QualityStore.pend.length = 0; QualityStore.pull(); }, // 覆盖后缓存对齐服务端：丢弃未确认旧样本（导入=明确覆盖）再重拉
-      getListenStats: () => http // 收听统计双形态：http 读服务端日桶、file:// 读本地快照（缺数据 = 空 days 合法快照；null 仅读失败）
-        ? fetch('/api/listenstats').then(r => r.json()).then(j => j && j.days && typeof j.days === 'object' && !Array.isArray(j.days) ? j.days : null).catch(() => null)
-        : Promise.resolve(lsLocalRead()),
-      postListenStats: days => http // replace 覆盖通道（server B4：{replace:true,days}，与 quality 同纪律）
-        ? fetch('/api/listenstats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ replace: true, days }) })
-            .then(x => x.json()).then(j => !!(j && j.ok)).catch(() => false)
-        : new Promise(res => { try { localStorage.setItem('listenstats.local', JSON.stringify({ v: 1, days })); res(true); } catch (_) { res(false); } }),
-      refreshListenStats: () => { ListenStats.pend.length = 0; ListenStats.dirty = false; ListenStats.pull(); }, // 同 refreshQuality 纪律：丢弃未确认旧增量（防重放复活旧账）再重拉
-    });
-    if (r.ok) this.applyServerStore();
-    $('status').textContent = r.msg;
+    let r;
+    try {
+      r = await BackupV3.commitImport(info, sc, {
+        http,
+        storeSnap: () => { const s = {}; for (const k of Store.KEYS) s[k] = localStorage.getItem(k); return s; },
+        storeApply: d => { for (const k of Store.KEYS) { if (d[k] != null) localStorage.setItem(k, d[k]); else localStorage.removeItem(k); } },
+        storeFlush: async () => { await Store.flush(); return !Store.dirty; }, // 可等待可判定成功（AIbot 三轮 P1-1）：flush 后 dirty=false 才算落盘成功（file:// 恒成功）
+        getMy: () => fetch('my-radio.txt?t=' + Date.now()).then(r => r.status === 404 ? '' : r.ok ? r.text() : null).catch(() => null), // 404=空列表合法；其余失败 null 中止（三轮 P2-1，不再误当空文件清掉 my-radio）
+        postMy: lines => this.postMyRadio(lines),
+        getQuality: () => fetch('/api/quality').then(r => r.json()).then(j => j && j.data && typeof j.data === 'object' && !Array.isArray(j.data) ? j.data : null).catch(() => null),
+        postQuality: data => fetch('/api/quality', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ replace: true, data }) })
+          .then(x => x.json()).then(j => !!(j && j.ok)).catch(() => false),
+        refreshQuality: () => { QualityStore.pend.length = 0; QualityStore.pull(); }, // 覆盖后缓存对齐服务端：丢弃未确认旧样本（导入=明确覆盖）再重拉
+        getListenStats: () => http // 收听统计双形态：http 读服务端日桶、file:// 读本地快照（缺数据 = 空 days 合法快照；null 仅读失败）
+          ? fetch('/api/listenstats').then(r => r.json()).then(j => j && j.days && typeof j.days === 'object' && !Array.isArray(j.days) ? j.days : null).catch(() => null)
+          : Promise.resolve(lsLocalRead()),
+        postListenStats: days => http // replace 覆盖通道（server B4：{replace:true,days}，与 quality 同纪律）
+          ? fetch('/api/listenstats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ replace: true, days }) })
+              .then(x => x.json()).then(j => !!(j && j.ok)).catch(() => false)
+          : new Promise(res => { try { localStorage.setItem('listenstats.local', JSON.stringify({ v: 1, days })); res(true); } catch (_) { res(false); } }),
+        refreshListenStats: () => { ListenStats.pend.length = 0; ListenStats.dirty = false; ListenStats.pull(); }, // 同 refreshQuality 纪律：丢弃未确认旧增量（防重放复活旧账）再重拉
+      });
+    } catch (e) { // io 全兜错理论不抛；兜底仍如实报错并解除 submitting 态（finally 先于本 catch 执行）
+      $('status').textContent = '恢复失败：' + (e && e.message || e);
+      return;
+    } finally { // 无论事务返回还是抛错，submitting 态一律解除
+      this._restoreBusy = false;
+      btn.disabled = false; btn.textContent = oldLabel;
+    }
+    if (r.ok) this.applyServerStore(); // 恢复成功才对账重渲（只重载列表/配置/记忆，不触发自动播放）
+    $('status').textContent = r.msg; // 结果 = commitImport 的 r.msg 原样展示（成功/回滚/回滚失败文案在 backup.js 内如实区分）
+    const title = r.ok ? '备份恢复完成'
+      : r.msg.includes('已回滚') ? '恢复失败——已回滚到导入前状态' : '恢复失败——未提交（本机数据未改动）';
+    const hint = r.ok ? '' : '\n\n既有恢复路径：用同一备份文件重新导入重试；如担心当前数据状态，可先「备份全部」导出保全。';
+    uiChooseDialog(title, r.msg + hint, [{ value: 'x', label: '知道了' }], { safe: 'x' }).catch(() => {});
   },
   postMyRadio(lines) { // my-radio.txt 全量替换（备份恢复/歌单合并写共用）：返回是否成功；file:// 无后端恒 false
     if (!location.protocol.startsWith('http')) return Promise.resolve(false);

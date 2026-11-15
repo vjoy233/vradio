@@ -52,6 +52,11 @@ fun SettingsScreen(vm: AppVm) {
   val confirm by vm.confirmReq.collectAsState()
   val resume by vm.resumeOnStart.collectAsState()      // N4 启动续播（本地 pref，batch1）
   val offload by vm.audioOffload.collectAsState()      // E5 音频卸载（本地 pref，batch1）
+  val netFull by vm.netFullCheck.collectAsState()      // B5 网络与流量
+  val netSync by vm.netSync.collectAsState()
+  val netLogo by vm.netLogoWifi.collectAsState()
+  val traffic by vm.trafficTxt.collectAsState()
+  val gate by vm.netGate.collectAsState()
 
   // SAF 导出（CreateDocument 预填文件名）与导入（OpenDocument 放宽到 */*——SAF 的 mime 上报不稳定）
   val expBackup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { u -> if (u != null) vm.exportTo(u, AppVm.Exp.BACKUP) }
@@ -64,6 +69,16 @@ fun SettingsScreen(vm: AppVm) {
 
   confirm?.let { msg ->
     ConfirmDialog("确认导入", msg, onOk = { vm.applyConfirmed() }, onDismiss = { vm.cancelConfirm() })
+  }
+  // B5：移动数据大流量操作确认门（全量体检/主库同步/轻更新，拒绝则不发；AIbot P1 后轻更新同入 SYNC 门）
+  gate?.let { (act, msg) ->
+    ConfirmDialog(
+      when (act) {
+        io.github.vjoy233.vradio.network.NetGate.Act.SYNC -> "移动数据同步确认"
+        io.github.vjoy233.vradio.network.NetGate.Act.LIGHT_UPDATE -> "移动数据更新确认"
+        else -> "移动数据体检确认"
+      },
+      msg, onOk = { vm.proceedGate() }, onDismiss = { vm.cancelGate() })
   }
 
   Column(Modifier.fillMaxSize().background(pal.bg).statusBarsPadding()) {
@@ -126,6 +141,27 @@ fun SettingsScreen(vm: AppVm) {
           Text(if (syncBusy) "同步中…" else "立即同步")
         }
         if (syncMsg.isNotEmpty()) Info(syncMsg)
+      }
+      item {
+        Section("网络与流量")   // B5（plan-expansion-r4 §9.2）：播放永不阻断；仅约束大流量后台操作
+        ItemTitle("移动数据 · 全量体检", "逐台探测全部电台，移动数据下流量较大")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          listOf("allow" to "允许", "confirm" to "每次确认", "deny" to "禁止").forEach { (v, label) ->
+            FilterChip(selected = netFull == v, onClick = { vm.setNetFullCheck(v) }, label = { Text(label) })
+          }
+        }
+        ItemTitle("移动数据 · 主库同步", "欧美台逐个实测重建，约 1 分钟")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          listOf("allow" to "允许", "confirm" to "每次确认", "deny" to "禁止").forEach { (v, label) ->
+            FilterChip(selected = netSync == v, onClick = { vm.setNetSync(v) }, label = { Text(label) })
+          }
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+          Text("台标补全 Wi-Fi 优先", Modifier.weight(1f), fontSize = 14.sp, color = pal.tx)
+          Switch(checked = netLogo, onCheckedChange = { vm.setNetLogoWifi(it) })
+        }
+        Info("移动数据下默认跳过台标网络补全（列表照常显示首字母色块）；关闭后移动数据也补")
+        ItemTitle("本次收听流量（估）", traffic.ifEmpty { "播放中每 30 秒采样累计；无码率时按 128kbps 估算并标注" })
       }
       item {
         Section("电台")

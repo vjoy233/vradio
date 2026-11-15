@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
   <string name="app_name">VRadio</string>
+  <string name="widget_name">VRadio 电台</string>
+  <string name="widget_desc">当前电台与曲讯，播放/暂停、收藏间切台，点击打开应用</string>
 </resources>

@@ -75,5 +75,20 @@
         <action android:name="androidx.media3.session.MediaSessionService" />
       </intent-filter>
     </service>
+
+    <!-- 桌面 Widget（B5 §9.1）：exported=false + BIND_APPWIDGET 权限声明——APPWIDGET_UPDATE 等
+         系统广播与同 app 的点击 PendingIntent 放行、第三方广播拒收（同 app 发送者按平台规则豁免权限检查）。 -->
+    <receiver
+      android:name=".widget.RadioWidgetProvider"
+      android:exported="false"
+      android:label="@string/widget_name"
+      android:permission="android.permission.BIND_APPWIDGET">
+      <intent-filter>
+        <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+      </intent-filter>
+      <meta-data
+        android:name="android.appwidget.provider"
+        android:resource="@xml/radio_widget_info" />
+    </receiver>
   </application>
 </manifest>

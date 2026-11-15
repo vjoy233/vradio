@@ -339,15 +339,16 @@
     </div>
   </div>
 </div>
-<!-- 结构壳：样式与结构在此，逻辑按模块契约分置五文件；
+<!-- 结构壳：样式与结构在此，逻辑按模块契约分置；
      顺序 = store（存储收敛层，方案二）→ player（引擎）→ logos（台标数据）→ radio-data（同步生成的全库数据，
-     file:// 降级直读，文件缺失仅控制台 404 不影响）→ app（数据/渲染）→ sync（同步/体检编排）；
+     file:// 降级直读，文件缺失仅控制台 404 不影响）→ features（发布开关，B3 独立单元）→ app（数据/渲染）→ sync（同步/体检编排）；
      store 最底层（player/app 的读写出口）、logos 先于 app 装载（boot 渲染行内入口时即引用）；经典 script 是 file:// 硬约束 -->
 <script src="hls.min.js"></script>
 <script src="store.js"></script>
 <script src="player.js"></script>
 <script src="logos.js"></script>
 <script src="radio-data.js"></script>
+<script src="features.js"></script>
 <script src="app.js"></script>
 <script src="sync.js"></script>
 </body>

@@ -23,6 +23,23 @@
 - `model/Model.kt`：`Station`（key/u0/hidden/health/dCat/dName/dU）、`Cfg`、`HealthEntry`、`FavEntry`、`RecentEntry`、`SongRec`、`SrcMem`、`PState`、`PlayerUiState`。
 - `consts/Consts.kt`：`C`（13 键白名单/体检四常数/分档常数/决策链常数/歌史常数/UI 分类序等，每条带 Web 出处注释）。
 
+## r4 扩展契约（B0 起生效，docs/plan-expansion-r4.md）
+
+- **仓库根 `contracts/` 是 Web/Android 双端共同契约面**：`radio-keys.json`（13 键白名单单一来源，三侧
+  store.js KEYS / server.js STORE_KEYS / C.KEYS 漂移由 Web `test/contracts.js` 与 Android `ContractTest.kt`
+  双端拦截）、`source-diagnostic.json`、`quality-summary.json`、`metadata-event.json`、`backup-v3.schema.json`
+  及 `fixtures/` 黄金样本（backup-v2/v3、metadata-golden、playlist-pls/xspf/asx、diagnostic-results）。
+  Android 经 `app/build.gradle.kts` 的 test resources 接线读取（`getResource("radio-keys.json")` /
+  `getResource("fixtures/…")`），改契约文件两侧行为都会被测试点名。
+- **`radio.cfg` v2**：新增 `v`（无 v 视为 v1，迁移 = 补版本语义不动字段）与源生命周期三字段
+  `srcManualOrder` / `srcDisabled` / `srcLabels`（清洗口径 = srcs 同款 URL 数组映射；语义接线在 B1）。
+  Web `normCfg/migrateCfgV1` ↔ Android `CfgCodec.parse/toJson` 必须保持 round-trip 一致。
+- **sidecar 分层**：质量/收听统计等不进 `radio.*` 主 Store、不占 2MB 配额；Web 走专用 `/api/quality`
+  （操作事件合并 + op.id 幂等 + rev 唯一发号，契约详见 `contracts/quality-summary.json`），Android 落
+  `filesDir/quality.json`（B2 QualityStore.kt）。`radio.logos`/`radio.storeDirty` 继续排除在白名单外。
+- **备份版本映射**：v1 无 my 不动 my-radio；v2 读取 `my` 数组；v3（B4）读取 `myRadio` 数组 + `extensions`
+  sidecar 可选导出；导出统一 v3。Web/Android 黄金样本互读为验收硬项。
+
 ---
 
 ## Agent A —— 数据层（data/）

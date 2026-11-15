@@ -18,3 +18,6 @@ docs/ui-audit-assets/
 /data/
 # 本地代码索引（工具产物）
 .codegraph/
+
+# ZCode 会话产物（handoff/review 草稿）
+.zcode/

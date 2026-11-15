@@ -113,3 +113,7 @@ val copyRadioData by tasks.registering {
 
 android { sourceSets.getByName("main").assets.srcDir(genAssetsDir) }
 tasks.named("preBuild") { dependsOn(copyRadioData) }
+
+// —— 契约资源接线（B0，plan-expansion-r4 §4.2）：仓库根 contracts/（radio-keys.json + fixtures/）挂进 test
+//    resources，JVM 单测经 classLoader 读取——Web/Android 双端消费同一份契约文件（漏改任一侧被 ContractTest 拦截）——
+android { sourceSets.getByName("test").resources.srcDir(File(repoRoot, "contracts")) }

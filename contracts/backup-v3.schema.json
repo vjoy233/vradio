@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "kind": "backup-v3",
+  "description": "vradio-backup v3 结构契约（B4）。v1={v:1,at,data}（无 my）；v2={v:2,at,data,my:[]}（Android 现行）；v3 如下。版本映射固定：v1 不修改 my-radio.txt；v2 读取 my 数组；v3 读取 myRadio 数组；导出统一写 v3/myRadio。",
+  "shape": {
+    "format": "常量 \"vradio-backup\"",
+    "version": "常量 3",
+    "createdAt": "number epoch ms",
+    "app": "web|android——产出端标记",
+    "data": "对象——白名单 13 键（radio-keys.json keys），值一律字符串",
+    "myRadio": "字符串数组——my-radio.txt 原始行（不含结尾空行）",
+    "extensions": "对象——默认空；勾选「包含本机 sidecar」后含 sidecars.quality / sidecars.listenStats（各 {v:1,data:{}}，只保留迁移所需字段，删除 raw response/DNS/IP/临时 token/rev/正文）"
+  },
+  "importRules": [
+    "parse → validate/preview → commit 三阶段，不得解析后立刻覆盖 Store",
+    "提交前保存 Store、my-radio.txt 与被选择恢复的 sidecar 快照，任一步失败回滚",
+    "未知扩展字段忽略但不失败",
+    "用户未勾选恢复 sidecar 时目标设备原有 sidecar 保持不变；勾选后语义 = 明确覆盖选中 sidecar",
+    "默认不包含 radio.logos、radio.storeDirty、quality、listen-stats、临时诊断和时移缓冲"
+  ],
+  "interop": "Web/Android 互读 v1/v2/v3；黄金样本 contracts/fixtures/backup-v2.json、backup-v3.json 双端一致消费"
+}

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-VRadio — 零依赖本地网络电台 Web 播放器（国内电台为主、欧美音乐台为辅，面向国内直连环境）。共 9 个源码文件（含 test/smoke.js）+ 3 个数据文件，**无 npm 依赖、无构建步骤**（`npm test` 零依赖烟雾测试，lint/typecheck 无配置）。背景与实测记录详见 README.md，评审与实施依据见 docs/review.md，r2 批次决策见 docs/roadmap-research-r2.md，全面体检见 docs/audit-2026-10-13.md、docs/audit-2026-10-14.md 与 docs/audit-2026-10-14-r2.md（第四轮）。安卓版已立项拍板（2026-10-14，docs/plan-android.md + docs/adr/0001、0002）：原生 Kotlin+Compose+Media3、monorepo `android/` 子目录——**radio.txt/logos.txt 行格式、`radio.*` 持久键、vradio-backup.json 格式为 Web/安卓两侧共同契约，改契约须两侧同步**。
+VRadio — 零依赖本地网络电台 Web 播放器（国内电台为主、欧美音乐台为辅，面向国内直连环境）。共 9 个源码文件（含 test/smoke.js）+ 3 个数据文件，**无 npm 依赖、无构建步骤**（`npm test` 零依赖测试总入口，lint/typecheck 无配置）。背景与实测记录详见 README.md，评审与实施依据见 docs/review.md，r2 批次决策见 docs/roadmap-research-r2.md，全面体检见 docs/audit-2026-10-13.md、docs/audit-2026-10-14.md 与 docs/audit-2026-10-14-r2.md（第四轮）。安卓版已立项拍板（2026-10-14，docs/plan-android.md + docs/adr/0001、0002）：原生 Kotlin+Compose+Media3、monorepo `android/` 子目录——**radio.txt/logos.txt 行格式、`radio.*` 持久键、vradio-backup.json 格式为 Web/安卓两侧共同契约，改契约须两侧同步**；r4 扩展批次（2026-11-14 起，docs/plan-expansion-r4.md）：`contracts/` 目录是双端契约单一来源（键白名单/诊断/质量/元数据/备份 v3 schema + fixtures 黄金样本），`radio.cfg` 升 v2（源生命周期三字段 srcManualOrder/srcDisabled/srcLabels）。
 
 ## 常用命令
 
@@ -8,7 +8,7 @@ VRadio — 零依赖本地网络电台 Web 播放器（国内电台为主、欧�
 npm start        # = node server.js，启动后访问 http://localhost:8137（换端口：PORT=9000）
 npm run sync     # = node update-sources.js，同步电台源（约 1 分钟，含欧美台逐个实测 + 台标随行更新）
 npm run sync -- --logos   # = node update-sources.js --logos，只重建 logos.txt 台标（数秒）
-npm test         # = node test/smoke.js，离线冒烟：安全护栏矩阵/幂等/store 发号（秒级）
+npm test         # = node test/run.js，零依赖测试总入口：契约键三侧比对 → 纯函数/fixture 各文件 → smoke 压轴（秒级）
 ```
 
 - **零依赖是核心设计**：只用 Node ≥ 14 内置模块 + 本地化的 hls.min.js，不要引入任何 npm 依赖。
@@ -24,9 +24,11 @@ npm test         # = node test/smoke.js，离线冒烟：安全护栏矩阵/幂�
 | `logos.js` | 台标数据唯一所有者：三级来源（STARTER 内置 → logos.txt → 运行时解析）/永久缓存/收藏+正在播优先补全/负缓存 7 天 |
 | `app.js` | 应用层：列表/搜索（多词空格 AND）/分类/收藏（行内 ☆ + 双击行/移动端长按行收藏）/最近播放/导入导出/网格+列表双视图渲染/无效源默认隐藏/明暗主题切换/⚙ 维护面板（个人分类与电台调整 + 添加自定义电台 + 追加备选源 + 行内 ▶ 用此源播放）/footer 选源浮层（正在听的多源台切源/恢复默认）/曲讯轮询+码率显示+歌曲历史（含导出）/键盘快捷键+`?` 帮助/回到正在播；集中 state 对象 + 单一 render 入口 |
 | `sync.js` | 同步/体检编排（手动全量 + 开机静默体检，`busy` 互斥手动优先；同步 diff 摘要 + 消失收藏台前端点名）：只调用 App/Player 暴露的接口，不改对方状态 |
-| `server.js` | 静态服务（拒 dotfile/`.bak`/`data` 段——store.json 全量个人数据不可被直接 GET）+ `/proxy?url=` 流代理（绕 CORS）+ `POST /api/sync`（响应含 addedCheck 体检测名单）+ `/api/check?url=` 探活（≤4 源）+ `POST /api/mystation`（添加电台：探活先行 + 原子写 my-radio.txt）+ `/api/nowplaying?url=`（ICY 曲讯 + icy-br 码率旁路）+ `/api/store`（GET 全量 / POST 覆盖写 data/store.json：Origin 校验 + 键白名单 + 2MB 封顶 + tmp+rename 串行队列 + rev 唯一发号） |
+| `features.js` | 发布开关（B3 独立发布单元，r4）：`window.FEATURES`（metadataV2/listenStats/discovery，默认全关）；发布配置非用户数据，不入 radio.*、可经 localStorage['feat.*'] 开发覆盖 |
+| `contracts/` | 双端契约单一来源（r4/B0）：radio-keys.json（13 键白名单——store.js KEYS / server.js STORE_KEYS / Android C.KEYS 漂移由 test/contracts.js + Android ContractTest.kt 双端拦截）、source-diagnostic/quality-summary/metadata-event/backup-v3.schema 契约描述 + fixtures/ 黄金样本（backup-v2/v3、metadata-golden、playlist-pls/xspf/asx、diagnostic-results）。**改契约须两侧测试同步点名** |
+| `server.js` | 静态服务（拒 dotfile/`.bak`/`data` 段——store.json 全量个人数据不可被直接 GET）+ `/proxy?url=` 流代理（绕 CORS）+ `POST /api/sync`（响应含 addedCheck 体检测名单）+ `/api/check?url=` 探活（≤4 源）+ `POST /api/mystation`（添加电台：探活先行 + 原子写 my-radio.txt）+ `/api/nowplaying?url=`（ICY 曲讯 + icy-br 码率旁路）+ `/api/store`（GET 全量 / POST 覆盖写 data/store.json：Origin 校验 + 键白名单 + 2MB 封顶 + tmp+rename 串行队列 + rev 唯一发号）+ `/api/quality`（质量 sidecar：GET ?rev= 条件获取 / POST {baseRev,ops} 操作事件合并——op.id 幂等去重 + rev 唯一发号 + 409 仅限 schema/批量超限/2MB 超限，B0 骨架/B2 接 QualityStore）+ `/api/myradio`（my-radio.txt 全量替换：行形态清洗 + 500 行/64KB 封顶，v2+ 备份恢复通道） |
 | `update-sources.js` | 源同步引擎 + 网络安全护栏（`safeTarget`/`guardLookup`/`tryUrl`（畸形重定向头归 null，audit-r2 P2-1）导出供 server.js 复用）+ 欧美台台标提取（tvg-logo→logos.txt）+ 同步 diff 摘要（台名集合 added/removed）+ radio-data.js 随行产出；可独立作 CLI 运行（改它时两种入口都不能坏，另有 `--logos` 只重建台标） |
-| `test/smoke.js` | 零依赖冒烟测试（audit R1）：静态拦截矩阵（大小写/尾点变形、方法、nosniff）/ 跨源与 Host 白名单 / safeTarget+guardLookup+tryUrl（畸形 Location 不抛）/ classifyCn 幂等 / store 白名单+发号 round-trip / 探活与曲讯 API 的 405；离线秒级，已有 data/store.json 自动备份还原 |
+| `test/smoke.js` | 零依赖冒烟测试（audit R1）：静态拦截矩阵（大小写/尾点变形、方法、nosniff）/ 跨源与 Host 白名单 / safeTarget+guardLookup+tryUrl（畸形 Location 不抛）/ classifyCn 幂等 / store 白名单+发号 round-trip / 探活与曲讯 API 的 405；离线秒级，已有 data/store.json 自动备份还原。`test/run.js` 是总入口（逐文件子进程执行 test/*.js），`test/contracts.js`（键契约三侧比对 + fixtures 形态）、`test/quality.js`（质量 sidecar API：rev/幂等/合流/409/损坏恢复）随批新增 |
 | `radio.txt` | 电台数据库（1600+ 台）。**数据文件，由同步生成**，不要手工维护 |
 | `radio-data.js` | radio.txt 的经典 script 包装（`window.RADIO_DATA`=全文，同步随行生成，tmp+rename 原子写）。**数据文件，由同步生成**，file:// 降级模式的全库数据源 |
 | `logos.txt` | 台标数据（欧美音乐/国际新闻·谈话两分类，同步自动生成/`--logos` 重建），行格式 `分类|台名,图片URL`。**数据文件，勿手工维护** |
@@ -36,7 +38,7 @@ npm test         # = node test/smoke.js，离线冒烟：安全护栏矩阵/幂�
 
 ## 架构要点
 
-- **前端模块契约**（改代码前必读，详见 docs/review.md 十一节债务 2）：player 拥有 audio/hls/播放态/音量，logos 拥有台标数据（三级来源/缓存/按需补全），app 拥有 stations/渲染/收藏，sync 只编排；跨模块只走暴露接口，UI 反馈与数据回流经 Player 的 onstate/onstatus/onlogo/onvol 等回调注入（player 不反向伸手进 app/logos）。**用经典 script 而非 ES modules 是硬约束**（file:// 下 module 加载受 CORS 限制必挂），且装载顺序 = **store**（存储收敛层，player/app 的持久化出口）→ player → logos → **radio-data**（同步生成的数据全局，缺失时仅控制台 404）→ app（boot 渲染行内入口时即引用 logos/数据）→ sync。
+- **前端模块契约**（改代码前必读，详见 docs/review.md 十一节债务 2）：player 拥有 audio/hls/播放态/音量，logos 拥有台标数据（三级来源/缓存/按需补全），app 拥有 stations/渲染/收藏，sync 只编排；跨模块只走暴露接口，UI 反馈与数据回流经 Player 的 onstate/onstatus/onlogo/onvol 等回调注入（player 不反向伸手进 app/logos）。**用经典 script 而非 ES modules 是硬约束**（file:// 下 module 加载受 CORS 限制必挂），且装载顺序 = **store**（存储收敛层，player/app 的持久化出口）→ player → logos → **radio-data**（同步生成的数据全局，缺失时仅控制台 404）→ **features**（发布开关，r4/B3）→ app（boot 渲染行内入口时即引用 logos/数据）→ sync。
 - **身份公理**：URL = 持久身份，名字 = 显示层。收藏/最近（`radio.favs`/`radio.recents`）记录源 URL，电台改名/换分类后按 URL 回绑；带 URL 的休眠条目永不回收。
 - **数据装配管线**（`app.js` 的 `applySources`）：主列表 replace → STARTER 精选层按精确名去重并入 → my-radio.txt 个人层常驻并入 → **维护层套用**（`applyCfg`，radio.cfg，owner 三轮拍板）：电台移动/重命名/手动隐藏/**追加备选源**按「任一源 URL 命中」回绑（同步重建后自动复用），分类重命名最后映射（改名时移动目标/隐藏标记级联改写）；追加源（P1-a，cfg.srcs）**只挂台尾不动身份键**（`s.u[0]` 是 srcmem/收藏/健康标记的键），每台封顶 6 条、先 `/api/check` 探活再收（拒绝假流/死链，口径同 mystation）；手动隐藏 = 彻底消失（全部/收藏/搜索/体检一律不可见，无正在播例外——与死台隐藏的自动例外口径不同）。装配默认口径留底在 `s.dCat/dName/dU`（面板 ↺ 恢复/撤回移动/撤回追加源用；`reapplyCfg` 回滚 c/n/u 三项后重套），面板改动经 `reapplyCfg` 即时生效。电台重命名禁止同分类撞名（keyOf 串台防护）；配置导入 = 全量覆盖 + confirm（srcs 走 normCfg 清洗：键须 URL、值数组、元素 http(s)、条数/长度封顶）；失配（URL 漂移，含 srcs）在面板顶部出清单。
 - **播放三级策略**（`player.js` 的 `variants()`/`load()`，顺序不能乱）：① mp3/AAC 直流（`<audio>` 原生跨域；蜻蜓 `ls.qingting.fm/live/{id}.m3u8` 自动换算成同 id 的 `lhttp.../64k.mp3`）→ ② m3u8 直连 hls.js → ③ 本地 `/proxy` 兜底。央广 ngcdn 系 CDN 锁了 CORS，只走得通第 ③ 级。**默认源决策链**（单次点播内从高到低）：手动指定 `play(s, prefer)` > 成功源记忆（`radio.srcmem2`，FIFO 300；键升级一次性失效旧记忆，防存量「代理旧路」压住启发式）> 静态启发式（`srcOrder`：直流形态优先——首个 variant 非 m3u8 即 mp3/aac 直达或蜻蜓换算 64k mp3；稳定排序同级保持行序）> 级联自愈顺延，onAir 把赢家写回 srcmem。**手动选源**双入口（grill 拍板）：footer 选源浮层（`#srcMenu`，正在听的多源台主入口：整行点选/「默认」「正在用」「追加」徽标/↺ 恢复默认源=清 srcmem 立即按启发式重播）+ ⚙ 备选源管理行内 ▶（未播态预选源）；一律立即切换并起播，不新增持久存储。**断流自愈**（A-1）：error 级联（onerror/HLS fatal）自动顺延备选源之外，stalled/waiting 看门狗（12s 无进展）与 ended（直播不该 ended）也自愈——先重连当前源一次再顺延；成功源序号按台主 URL 持久化（见上方决策链），下次点播该源先行。**每台音量**（A3/r2）：`play()` 套用 `radio.volperst[s.u[0]]`，无记忆用全局 `gvol`（`radio.vol`，仅无记忆台首调时随行更新——语义①）；静音态切台保持静音，取消静音按「当前台记忆→全局」恢复；0 不入记忆。**多标签防双播**（N3）：BroadcastChannel('vradio') 'playing' 广播、他页让位暂停（建流期让位要清 connecting 指示），不支持/file:// 异常静默降级。

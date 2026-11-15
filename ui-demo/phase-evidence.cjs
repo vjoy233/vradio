@@ -217,6 +217,64 @@ async function main() {
       inFoot ? ok('F8b', '键盘 Tab 可达底栏控件（列表末行 → footer）', '') : bad('F8b', 'Tab 到 footer', '6 次 Tab 未达');
     }
 
+    if (PHASE === 'p3') { /* PR#31 验收证据：组件层——台标单层外框/双视图/详情浮层遮罩/底栏三组/onphase 接线与减动效/长名 */
+      const on = await open('1');
+      await on.setViewportSize({ width: 1440, height: 900 }); await sleep(400);
+
+      console.log('[P3-G1] 列表/网格双视图（DOM 形态切换）');
+      let form = await on.evaluate(() => ({ cards: document.querySelectorAll('#list .card').length, rows: document.querySelectorAll('#list .row').length }));
+      (form.cards > 0 && form.rows === 0) ? ok('G1a', '默认网格视图（.card 行/卡形态）', JSON.stringify(form)) : bad('G1a', '默认网格', JSON.stringify(form));
+      await on.screenshot({ path: path.join(OUT, 'p3-1440-grid.png') });
+      await on.click('#listBtn'); await sleep(400);
+      form = await on.evaluate(() => ({ cards: document.querySelectorAll('#list .card').length, rows: document.querySelectorAll('#list .row').length }));
+      (form.rows > 0 && form.cards === 0) ? ok('G1b', '切列表视图（.row 两行详情形态）', JSON.stringify(form)) : bad('G1b', '列表视图', JSON.stringify(form));
+      await on.screenshot({ path: path.join(OUT, 'p3-1440-listview.png') });
+      await on.click('#gridBtn'); await sleep(300);
+
+      console.log('[P3-G2] 台标恰一层统一外框（PR#31 P1 修复 502693b 的 DOM 级取证）');
+      const wrap = await on.evaluate(() => ({ nested: document.querySelectorAll('.station-logo .station-logo').length,
+        tone: document.querySelectorAll('.station-logo[data-tone]').length, logos: document.querySelectorAll('.station-logo').length }));
+      (wrap.nested === 0 && wrap.logos > 0 && wrap.tone === wrap.logos)
+        ? ok('G2', '无嵌套外框、每个台标都带 data-tone（单层统一框）', JSON.stringify(wrap)) : bad('G2', '台标外框', JSON.stringify(wrap));
+
+      console.log('[P3-G3] 详情浮层 #detail：fixed 遮罩呈现（不推文档流）+ Esc 关闭');
+      const shBefore = await on.evaluate(() => document.scrollingElement.scrollHeight);
+      await on.click('#list [data-more]'); await sleep(900); // 打开首台详情（B1 结构化探活随行）
+      const det = await on.evaluate(() => { const d = document.querySelector('#detail'); return { hidden: d.hidden, pos: getComputedStyle(d).position, sh: document.scrollingElement.scrollHeight }; });
+      (!det.hidden && det.pos === 'fixed' && Math.abs(det.sh - shBefore) < 300)
+        ? ok('G3a', '详情浮层 position:fixed 且页面不被推开（P3 1218042 修复项）', JSON.stringify(det)) : bad('G3a', '详情遮罩', `before=${shBefore} ${JSON.stringify(det)}`);
+      await on.screenshot({ path: path.join(OUT, 'p3-detail.png') });
+      await on.keyboard.press('Escape'); await sleep(300);
+      (await on.evaluate(() => document.querySelector('#detail').hidden)) ? ok('G3b', 'Esc 关闭详情', '') : bad('G3b', 'Esc 关闭', '仍可见');
+
+      console.log('[P3-G4] 底栏三组容器 + ⏮⏭ 收藏切台键（G19 双端语义）');
+      const foot = await on.evaluate(() => ({ id: !!document.querySelector('footer .player-identity'), main: !!document.querySelector('footer .player-main'),
+        help: !!document.querySelector('footer .player-helpers'), prev: !!document.querySelector('#prevFav'), next: !!document.querySelector('#nextFav') }));
+      (foot.id && foot.main && foot.help && foot.prev && foot.next)
+        ? ok('G4', '三组容器 + #prevFav/#nextFav 就位', JSON.stringify(foot)) : bad('G4', '底栏三组', JSON.stringify(foot));
+
+      console.log('[P3-G5] onphase 播放态接线 + reduced-motion 唱片静止（§4.4/§6.10）');
+      await on.evaluate(() => App.onPhase('playing', App.state.stations[0])); // App 层处理器直调：验证 DOM 接线（唱片类/按钮四态），非引擎造假
+      const vinylOn = await on.evaluate(() => { const v = document.querySelector('#resumeHero .vinyl'); return { run: v.classList.contains('running'),
+        anim: getComputedStyle(v).animationName, btn: (document.querySelector('#heroPlay') || {}).textContent || '' }; });
+      (vinylOn.run && vinylOn.anim !== 'none')
+        ? ok('G5a', 'playing → 唱片 .running + vinylspin 运行（按钮四态须真实 Player.station——onPhase 仅当前台事件重渲 hero，无播放时不重渲是正确行为；真实音频时序属验收文档既列未验证项）', JSON.stringify(vinylOn)) : bad('G5a', 'playing 接线', JSON.stringify(vinylOn));
+      await on.emulateMedia({ reducedMotion: 'reduce' }); await sleep(400); // reduceMq change 监听触发 syncVinyl 重算
+      const vinylRm = await on.evaluate(() => { const v = document.querySelector('#resumeHero .vinyl'); return { run: v.classList.contains('running'), anim: getComputedStyle(v).animationName }; });
+      (vinylRm.anim === 'none') ? ok('G5b', '系统减动效 → 唱片静止（animation none）', JSON.stringify(vinylRm)) : bad('G5b', '减动效', JSON.stringify(vinylRm));
+      await on.emulateMedia({ reducedMotion: 'no-preference' }); await sleep(300);
+      await on.evaluate(() => App.onPhase('paused', App.state.stations[0]));
+      const vinylPa = await on.evaluate(() => { const v = document.querySelector('#resumeHero .vinyl'); return { run: v.classList.contains('running'), btn: (document.querySelector('#heroPlay') || {}).textContent || '' }; });
+      (!vinylPa.run)
+        ? ok('G5c', 'paused → 唱片停转（.running 摘除）', JSON.stringify(vinylPa)) : bad('G5c', 'paused 接线', JSON.stringify(vinylPa));
+
+      console.log('[P3-G6] 长名 .station-title + data-fn 全名快照（§4.2/§9.3）');
+      const st = await on.evaluate(() => { const t = document.querySelector('#list .station-title');
+        return t ? { has: true, fn: !!(t.closest('[data-k]') && t.closest('[data-k]').dataset.fn), tt: !!document.querySelector('#namett') } : { has: false }; }); // data-fn 挂在行/卡容器（app.js:680），非 span 自身
+      (st.has && st.fn && st.tt) ? ok('G6', '行/卡名称 .station-title[data-fn] + #namett 单例 tooltip 就位', JSON.stringify(st)) : bad('G6', 'station-title', JSON.stringify(st));
+      await on.screenshot({ path: path.join(OUT, 'p3-1440-hero.png') });
+    }
+
     await browser.close();
   } finally { srv.kill(); }
   const started = new Date().toISOString();

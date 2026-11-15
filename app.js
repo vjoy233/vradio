@@ -1257,8 +1257,7 @@ const App = {
      分类页：编辑（重命名/隐藏草稿化，撞名合并保存时确认影响）/新建/删除自建（独立提交语义不变）；
      电台页：搜索定位后编辑（名称/分类/隐藏）/备选源/↺ 恢复；失配清单：URL 漂移的个人调整可观测 ---------- */
   mTab: 'cats', mKw: '',
-  mExp: '',     // 电台页展开备选源管理的台（keyOf；P1-a/r2 ⑨）——innerHTML 全量重渲，展开态必须外置
-  mSrcVal: '',  // 展开行/源草稿输入框内容（重渲不清输入，同 mq 持久做法）
+  mSrcVal: '',  // 源草稿追加输入框内容（重渲不清输入，同 mq 持久做法）
   mEditor: null,   // 逐对象编辑器（uiCreateEditor，boot 装配）：一次只进一个对象；草稿只在内存（身份/基线不持久化）
   _hideUndo: null, // 隐藏撤销补丁（§5.4）：仅 hideS/hideC 的反转条目；撤销 = 在最新 cfg 上 force=false 应用（M03 拒绝盲撤）
   manageOpen() { this.mOpener = document.activeElement; $('manage').hidden = false; this.renderManage(); $('mClose').focus(); }, // 打开即移焦 + 记录归还点（P2-7）
@@ -1288,7 +1287,7 @@ const App = {
     const seen = new Set(); for (const s of this.state.stations) if (s.c) seen.add(s.c);
     return [...seen, ...this.cfg.cats];
   },
-  cfgTag(s) { for (const u of s.u) this.cfg.tag[u] = s.dName; }, // 原始台名快照：失配清单显示/再搜索用
+  /* tag 快照维护已收敛进 uiTagCells（P4）：任一调整存在才写默认名、全清即删键（旧 cfgTag「只增不减」退役） */
 
   /* ---------- 逐对象编辑器接线（P4，§5.2/§5.3/§6.8）：所有离开编辑上下文的入口（关面板/换对象/切分区/
      独立操作）先 mDepart 过三选门；草稿锚点 = 稳定源 URL / 分类原名，失配绝不猜（uiResolveUnique 抛错） ---------- */
@@ -1327,7 +1326,8 @@ const App = {
       return '';
     }
     if (kind === 'cat') return has(patch, 'name') ? uiValidName(String(patch.name).trim()) : '';
-    return ''; // src 校验在源草稿批接入（mSrcValidate）
+    if (kind === 'src') return this.mSrcValidate(subj, patch);
+    return '';
   },
   async mBeforeCommit(subj, draft, latest) { // 保存前追加确认（§6.8）：分类改名撞上已有分类 → 合并影响明示后再提交
     if (draft.kind !== 'cat' || !Object.prototype.hasOwnProperty.call(draft.patch, 'name')) return 'go';
@@ -1438,7 +1438,133 @@ const App = {
     if (hidEl.checked !== hid) hidEl.checked = hid;
     this.mEditorPaintFoot(host, draft, saving);
   },
-  renderEditorSrc() {}, // 源草稿编辑器在源生命周期批接入（§6.9）
+  /* ---------- 源草稿（§6.9 六步，P4）：排序/禁用/标签只改草稿（保存才提交），追加先探活、每台 ≤6 条；
+     原生源可禁不提供删除、只移除追加源；展示序按 SrcOrder.effective 语义（不复制引擎选源）；
+     保存前核对最新源集合（重复/条数/URL 合法/他台占用 → 停止自动归属）。详情中心的启停/排序/标签
+     动作共用同一编辑器草稿（不保留绕过草稿的即时保存分支）。 ---------- */
+  mEditorStation() { const d = this.mEditor && this.mEditor.getDraft(); if (!d || d.kind !== 'src') return null; try { return uiResolveUnique(this.state.stations, d.identityUrl); } catch (_) { return null; } },
+  mEditorRepaint() { if (this.mEditor) this.renderEditor(this.mEditor.getDraft(), this.mEditor.saving); },
+  mSrcEffective(s, patch) { // 草稿感知的有效序（patch 键为 null = 未改用 cfg 现值；[] = 草稿撤销人工排序）
+    const manual = patch.manual !== null ? (patch.manual.length ? patch.manual : null) : (this.cfg.srcManualOrder[s.u[0]] || null);
+    const dis = patch.disabled !== null ? patch.disabled : (this.cfg.srcDisabled[s.u[0]] || null);
+    return SrcOrder.effective(s.u, manual, dis);
+  },
+  mSrcMove(s, i, d) { // 排序只改草稿：有效序内移动后材料化完整顺序（启用序在前 + 禁用殿后，与旧 moveSrc 同口径）
+    this.mEditor.mutate(patch => {
+      const eff = this.mSrcEffective(s, patch);
+      const at = eff.order.indexOf(i), to = at + d;
+      if (at < 0 || to < 0 || to >= eff.order.length) return;
+      const mo = eff.order.slice();
+      mo.splice(to, 0, mo.splice(at, 1)[0]);
+      patch.manual = [...mo, ...eff.dis].map(x => s.u[x]);
+    });
+  },
+  mSrcToggleDis(s, i) { // 禁用/启用只改草稿（原生源可禁，无删除入口；封顶与旧 toggleSrcDisabled 同为 6）
+    this.mEditor.mutate(patch => {
+      const cur = patch.disabled !== null ? patch.disabled.slice() : (this.cfg.srcDisabled[s.u[0]] || []).slice();
+      const u = s.u[i], at = cur.indexOf(u);
+      if (at >= 0) cur.splice(at, 1);
+      else if (cur.length < SRC_CAP) cur.push(u);
+      patch.disabled = cur;
+    });
+  },
+  mSrcRemoveAppend(s, u) { // 只移除追加源；同批追加过则一并从追加列表撤掉
+    this.mEditor.mutate(patch => {
+      if (!patch.removes.includes(u)) patch.removes.push(u);
+      const ai = patch.appends.indexOf(u); if (ai >= 0) patch.appends.splice(ai, 1);
+    });
+  },
+  mSrcLabelInput(u, val) { // 标签逐键入草稿（§6.9：不再 prompt）；空串在保存时 = 删键（删除属性 ≠ 空字符串）
+    if (!this.mEditor) return;
+    this.mEditor.mutate(patch => { patch.labels[u] = val; });
+  },
+  mSrcValidate(subj, patch) { // §6.9 步骤4/6：保存前核对最新源集合——重复/条数/URL 合法性；追加源被他台共用/失配 → 停止自动归属
+    const seen = new Set(subj.u);
+    for (const a of patch.appends || []) {
+      if (!/^https?:\/\//.test(a)) return '追加源需以 http(s):// 开头';
+      if (seen.has(a)) return '追加源与本台现有源重复，请先移除';
+      seen.add(a);
+      const owner = this.state.stations.find(x => x !== subj && x.u.includes(a));
+      if (owner) return `追加源已属于其他电台「${owner.n}」，已停止自动归属——请先移除（不能通过改身份归属解决）`;
+    }
+    const total = subj.u.filter(u => !(patch.removes || []).includes(u)).length + (patch.appends || []).length;
+    if (total > SRC_CAP) return `每台最多 ${SRC_CAP} 条源，请先移除再追加`;
+    for (const u of patch.manual || []) if (!subj.u.includes(u)) return '人工排序含未知源地址（源集合已变化），请重新加载';
+    for (const u of patch.disabled || []) if (!subj.u.includes(u)) return '禁用表含未知源地址（源集合已变化），请重新加载';
+    return '';
+  },
+  async mSrcProbe(s, btn) { // §6.9 步骤2：追加 URL 先经既有探活接口验证，通过才进草稿；判满前置（同旧 srcAppend 口径）
+    const inp = btn.closest('.msrc-add').querySelector('input');
+    const u = (inp.value || '').trim().replace(/\s+/g, ''); // URL 内不该有空白/换行，容错顺手清（坑③）
+    if (!/^https?:\/\//.test(u)) { $('status').textContent = '追加源需以 http(s):// 开头'; return; }
+    if (s.u.includes(u)) { $('status').textContent = '该地址已在源列表中'; return; }
+    const d = this.mEditor.getDraft();
+    if (d.patch.appends.includes(u)) { $('status').textContent = '该地址已在待保存的追加列表中'; return; }
+    const total = s.u.length - d.patch.removes.length + d.patch.appends.length;
+    if (total >= SRC_CAP) { $('status').textContent = `该台源数将达上限（${SRC_CAP} 条），先移除一条再追加`; return; }
+    btn.disabled = true; btn.textContent = '探活中…';
+    let r = null;
+    // t=12000 与 /api/mystation 同口径（AIbot P1-1）：蜻蜓系慢源建流 5-10s 属正常，默认窗口会整类误拒
+    try { r = await fetch('/api/check?t=12000&url=' + encodeURIComponent(u)).then(x => x.json()); }
+    catch (e) { $('status').textContent = '追加失败（探活请求）：' + (e && e.message || e); }
+    if (!r || !r.ok) { // 失败保留输入、不写草稿（§6.9 步骤2），重绘恢复按钮态
+      if (r) $('status').textContent = '探活未通过，未追加（输入保留）：' + (r.detail || '源不可用（假流/死链）');
+      this.mEditorRepaint();
+      return;
+    }
+    this.mSrcVal = '';
+    this.mEditor.mutate(patch => { patch.appends.push(u); });
+    $('status').textContent = `探活通过，已加入待保存的追加列表（${r.detail || '可用'}）——点「保存」写入`;
+  },
+  renderEditorSrc(host, draft, s, saving, build) {
+    // 源行集合随排序/禁用变化，必须整片重建——data-fa 锚点恢复焦点与 selectionStart（§6.6）
+    const ae = document.activeElement;
+    let anchor = null, pos = 0;
+    if (ae && host.contains(ae) && ae.dataset && ae.dataset.fa != null) { anchor = ae.dataset.fa; pos = ae.selectionStart != null ? ae.selectionStart : 0; }
+    host.innerHTML = this.mEditorSrcHtml(draft, s, saving);
+    host.dataset.sig = draft.kind + '|' + draft.identityUrl;
+    if (anchor != null) {
+      const t = host.querySelector(`[data-fa="${anchor.replace(/"/g, '\\"')}"]`);
+      if (t) { t.focus({ preventScroll: true }); try { if (t.setSelectionRange && pos != null) t.setSelectionRange(pos, pos); } catch (_) {} }
+    }
+  },
+  mEditorSrcHtml(draft, s, saving) {
+    const patch = draft.patch;
+    const eff = this.mSrcEffective(s, patch);
+    const dft = Player.srcOrder(s)[0]; // 「默认」徽标落点与播放决策同一基座（同旧 srcRowHtml）
+    const on = Player.station && keyOf(Player.station) === keyOf(s); // keyOf 口径（AIbot P3-3）
+    const rows = [...eff.order, ...eff.dis].map(i => {
+      const u = s.u[i], d = eff.dis.includes(i), appended = !s.dU.includes(u);
+      const lb = Object.prototype.hasOwnProperty.call(patch.labels, u) ? patch.labels[u] : (this.cfg.srcLabels[u] || '');
+      const at = eff.order.indexOf(i);
+      return `<div class="srcline${on && Player.curSi === i ? ' cur' : ''}${d ? ' off' : ''}">
+        <i class="idx">${i + 1}</i><span class="u" title="${this.esc(u)}">${this.esc(u)}</span>
+        <input type="text" class="lbin" data-lu="${this.esc(u)}" data-fa="lb:${i}" value="${this.esc(lb)}" placeholder="标签（仅展示）" aria-label="源 ${i + 1} 的标签">
+        ${this.srcBadges(s, i, dft)}
+        <button type="button" class="btn mbtn" data-sact="up" data-i="${i}" title="上移（草稿内生效，保存后写入人工源顺序）"${d || at <= 0 ? ' disabled' : ''}>上移</button>
+        <button type="button" class="btn mbtn" data-sact="down" data-i="${i}" title="下移（草稿内生效，保存后写入人工源顺序）"${d || at < 0 || at >= eff.order.length - 1 ? ' disabled' : ''}>下移</button>
+        ${d ? `<button type="button" class="btn mbtn" data-sact="undis" data-i="${i}" title="取消禁用（草稿内生效，保存后恢复参与播放/体检）">启用</button>`
+          : `<button type="button" class="btn mbtn" data-sact="dis" data-i="${i}" title="禁用该源（草稿内生效；播放与体检都跳过；主源只禁不删）">禁用</button>`}
+        ${appended ? `<button type="button" class="btn mbtn" data-sact="rm" data-u="${this.esc(u)}" title="移除这条追加源（草稿内生效；原源不可删）">移除</button>` : ''}
+        ${d ? '' : `<button type="button" class="btn mbtn" data-sact="play" data-i="${i}" title="用此源立即播放（有待保存修改会先询问；成功后记源记忆）">▶</button>`}
+      </div>`;
+    }).join('');
+    const ok = location.protocol.startsWith('http'); // 探活依赖后端，file:// 降级禁用（同添加电台口径）
+    const total = s.u.length - patch.removes.length + patch.appends.length;
+    return `<div class="medit" data-kind="src">
+      <div class="medit-h"><b>源管理：${this.esc(s.n)}</b>
+        <button type="button" class="btn mbtn" data-eact="srcmemclr" title="清掉该台「上次成功的源」记忆（立即生效；保留人工排序与禁用）">恢复默认播放源</button></div>
+      <div class="msrc">
+        <div class="msrc-t">共 ${total} 条（${eff.dis.length ? `${eff.dis.length} 个禁用；` : ''}有效序=启用源在前）——上移/下移/禁用/标签只改草稿，点「保存」才写入；追加源探活通过才进草稿（每台 ≤${SRC_CAP} 条）；原源只禁不删，不动身份</div>
+        ${rows}
+        <div class="msrc-add">
+          <input type="url" data-fa="app" value="${this.esc(this.mSrcVal || '')}" placeholder="追加流地址 http(s)://…（探活通过才进草稿）" aria-label="追加备选源地址"${ok ? '' : ' disabled title="file:// 降级模式无后端探活，npm start 后可用"'}>
+          <button type="button" class="btn mbtn" data-sact="srcadd"${ok && !saving ? '' : ' disabled'}>探活并追加</button>
+        </div>
+      </div>
+      <div class="emed">${this.mEditorFoot(draft, saving)}</div>
+    </div>`;
+  },
 
 
   /* —— 分类页 —— */
@@ -1488,14 +1614,13 @@ const App = {
       const k = keyOf(s), moved = s.u.some(u => this.cfg.moves[u]), named = s.n !== dN;
       const srcl = !!(this.cfg.srcManualOrder[s.u[0]] || this.cfg.srcDisabled[s.u[0]] || s.u.some(u => this.cfg.srcLabels[u])); // 源生命周期调整（B1，台字段键=u[0] 严格命中）：↺ 一并撤销
       const srcd = s.u.some(u => !s.dU.includes(u)) || srcl; // 有追加源（P1-a）：↺ 一并撤销
-      // P4：改名/移动/隐藏合并进「编辑」对象草稿（保存才写 cfg，§5.2），替代旧 prompt/下拉即时保存
+      // P4：改名/移动/隐藏合并进「编辑」对象草稿；备选源管理 = 源草稿编辑器（§6.9，保存才提交）
       return `<div class="mrow${s.hidden ? ' hidden-item' : ''}" data-k="${this.esc(k)}">
         <span class="nm" title="${this.esc(named ? '原名：' + dN : s.n)}${s.hidden ? '（已隐藏）' : ''}">${this.esc(s.n)}</span>
         <span class="cnt">${[moved && '已移分类', named && '已改名', s.hidden && '已隐藏', srcd && '源已调整'].filter(Boolean).join(' · ')}</span>
         <button type="button" class="btn mbtn" data-act="edit" title="编辑：名称/分类/隐藏（草稿保存，未保存离开会询问）"><svg class="ic"><use href="#i-pencil"/></svg></button>
         ${(moved || named || s.hidden || srcd) ? `<button type="button" class="btn mbtn" data-act="reset" title="撤销此台全部个人调整（回到默认分类/默认名/显示/移除全部追加源/撤销源启停与排序）"><svg class="ic"><use href="#i-undo"/></svg></button>` : ''}
-        <button type="button" class="btn mbtn" data-act="srcs" aria-expanded="${k === this.mExp}" title="备选源管理：查看全部源 / 探活追加（流地址漂移的手动救援） / 移除追加"><svg class="ic"><use href="#i-dots"/></svg></button>
-        ${k === this.mExp ? this.srcRowHtml(s) : ''}
+        <button type="button" class="btn mbtn" data-act="srcs" title="备选源管理：排序/禁用/标签/探活追加（草稿保存，未保存离开会询问）"><svg class="ic"><use href="#i-dots"/></svg></button>
       </div>`;
     }).join('') || '<div class="empty">没有匹配的电台</div>';
     if (!kw && all.length > 100) box.innerHTML += '<div class="empty" style="padding:8px 30px;">电台较多，仅列前 100 台——用上方搜索缩小范围</div>';
@@ -1504,7 +1629,7 @@ const App = {
   /* —— 备选源管理（P1-a/r2 ⑨ + ②手动选源 + B1 源生命周期）：展开行内按有效序列出全部源（追加的可移除，
      原源只读——身份公理：s.u[0] 是 srcmem/收藏/健康标记的身份键）+ 启用/禁用 + 上移/下移（人工顺序）+
      标签编辑（仅展示）+ 「▶ 用此源播放」（与 footer 浮层双入口）+ 先 /api/check 探活再收的追加输入 —— */
-  srcBadges(s, i, dft) { // 源行徽标片段（⚙ 面板/footer 浮层/详情中心共用）：默认=有效序首选、正在用=curSi 所在源、已禁用、追加
+  srcBadges(s, i, dft) { // 源行徽标片段（footer 浮层/详情中心/源草稿编辑器共用）：默认=有效序首选、正在用=curSi 所在源、已禁用、追加
     // 正在用按 keyOf 而非引用相等（AIbot P3-3）：同步重建 stations 后 Player.station 仍指旧对象，引用比较会丢高亮
     const on = Player.station && keyOf(Player.station) === keyOf(s);
     return (i === dft ? '<span class="badge">默认</span>' : '')
@@ -1512,118 +1637,17 @@ const App = {
       + ((s.dis || []).includes(i) ? '<span class="badge permb">已禁用</span>' : '')
       + (s.dU.includes(s.u[i]) ? '' : '<span class="badge">追加</span>');
   },
-  srcOrderView(s) { // 源展示序（⚙ 面板/footer 浮层/详情共用，B1）：启用源按有效序在前、禁用源殿后（原序）——上移/下移语义与所见一致
+  srcOrderView(s) { // 源展示序（footer 浮层/详情共用，B1）：启用源按有效序在前、禁用源殿后（原序）
     return [...(Array.isArray(s.mo) && s.mo.length ? s.mo : s.u.map((_, i) => i)), ...(s.dis || [])];
   },
-  srcRowHtml(s) {
-    const dft = Player.srcOrder(s)[0]; // 与 play() 同一决策基座，「默认」徽标/「恢复默认」的落点
-    const on = Player.station && keyOf(Player.station) === keyOf(s); // keyOf 口径（AIbot P3-3），同 srcBadges
-    const dis = s.dis || [], mo = Array.isArray(s.mo) ? s.mo : s.u.map((_, i) => i);
-    const rows = this.srcOrderView(s).map((i, vi) => {
-      const u = s.u[i], d = dis.includes(i), at = mo.indexOf(i);
-      const lb = this.cfg.srcLabels[u] ? `<span class="badge acc" title="源标签（仅展示用）">${this.esc(this.cfg.srcLabels[u])}</span>` : '';
-      const mv = d || !at ? ' disabled' : ''; // 禁用源不参与排序；启用源在有效序内移到头即 no-op（按钮置灰）
-      return `<div class="srcline${on && Player.curSi === i ? ' cur' : ''}${d ? ' off' : ''}">
-      <i class="idx">${i + 1}</i><span class="u" title="${this.esc(u)}">${this.esc(u)}</span>${lb}${this.srcBadges(s, i, dft)}
-      <button type="button" class="btn mbtn" data-act="srcup" data-i="${i}" title="上移（写入人工源顺序，压过启发式默认）"${mv || at <= 0 ? ' disabled' : ''}><svg class="ic"><use href="#i-up"/></svg></button>
-      <button type="button" class="btn mbtn" data-act="srcdown" data-i="${i}" title="下移（写入人工源顺序）"${mv || at >= mo.length - 1 ? ' disabled' : ''}><svg class="ic"><use href="#i-down"/></svg></button>
-      ${d ? `<button type="button" class="btn mbtn" data-act="srcundis" data-i="${i}" title="取消禁用该源（恢复参与播放/体检/诊断）"><svg class="ic"><use href="#i-eye"/></svg></button>`
-        : `<button type="button" class="btn mbtn" data-act="srcdis" data-i="${i}" title="禁用该源（播放与体检都跳过；主源只禁不删，不换身份）"><svg class="ic"><use href="#i-eye-off"/></svg></button>`}
-      <button type="button" class="btn mbtn" data-act="srclabel" data-i="${i}" title="编辑源标签（仅展示用，如：车机备用）"><svg class="ic"><use href="#i-pencil"/></svg></button>
-      ${s.dU.includes(u) ? '' : `<button type="button" class="btn mbtn" data-act="srcdel" data-u="${this.esc(u)}" title="移除这条追加源（原源不可删）"><svg class="ic"><use href="#i-x"/></svg></button>`}
-      ${d ? '' : `<button type="button" class="btn mbtn" data-act="srcplay" data-i="${i}" title="用此源立即播放（失败自动顺延，成功后记住此源）"><svg class="ic"><use href="#i-play"/></svg></button>`}
-    </div>`; }).join('');
-    const ok = location.protocol.startsWith('http'); // 探活依赖后端，file:// 降级禁用（同添加电台口径）
-    return `<div class="msrc">
-      <div class="msrc-t">备选源 ${s.u.length} 条（${dis.length ? `${dis.length} 个已禁用；` : ''}有效序=启用源在前）——点播失败自动逐个切换；追加源只挂本台，不动原源与收藏
-        <span class="msrc-acts">
-          <button type="button" class="btn mbtn" data-act="srcmemclr" title="清掉该台「上次成功的源」记忆（保留人工排序与禁用）">恢复默认播放源</button>
-          <button type="button" class="btn mbtn" data-act="srcorderclr" title="删除该台人工源排序（恢复同步原始顺序 + 启发式默认）">撤销人工排序</button>
-          <button type="button" class="btn mbtn" data-act="srcdetail" title="详情中心：逐源诊断 / 启停 / 排序 / 标签 / 歌曲历史">详情</button>
-        </span></div>
-      ${rows}
-      <div class="msrc-add">
-        <input type="url" value="${this.esc(this.mSrcVal || '')}" placeholder="追加流地址 http(s)://…（mp3/aac 直流或 m3u8）" aria-label="追加备选源地址"${ok ? '' : ' disabled title="file:// 降级模式无后端探活，npm start 后可用"'}>
-        <button type="button" class="btn mbtn" data-act="srcadd"${ok ? '' : ' disabled'}>探活并追加</button>
-      </div>
-    </div>`;
-  },
-  async srcAppend(s, btn) {
-    const inp = btn.closest('.msrc-add').querySelector('input');
-    const u = (inp.value || '').trim().replace(/\s+/g, ''); // URL 内不该有空白/换行，容错顺手清（坑③）
-    if (!/^https?:\/\//.test(u)) { $('status').textContent = '追加源需以 http(s):// 开头'; return; }
-    if (s.u.includes(u)) { $('status').textContent = '该地址已在源列表中'; return; }
-    // 挂键 = 台上任一已有 srcs 键（变体换序免疫，与移动/改名同机制），否则主 URL；判满前置到探活之前——
-    // 否则第 7 条会过完探活才被 slice(0,6) 静默砍掉、状态栏还报成功（AIbot P1-2）
-    const key = s.u.find(x => this.cfg.srcs[x]) || s.u[0];
-    const arr = this.cfg.srcs[key] || [];
-    if (arr.length >= 6) { $('status').textContent = '该台追加源已达上限（6 条），先移除一条再追加'; return; }
-    btn.disabled = true; btn.textContent = '探活中…';
-    let r = null;
-    // t=12000 与 /api/mystation 同口径（AIbot P1-1）：主打场景是给蜻蜓系慢源救援，建流 5-10s 属正常，
-    // 默认 4.5s 窗口会整类误拒；批量体检路径不带 t 仍是 4.5s（ETA 按最坏校准不能放慢）
-    try { r = await fetch('/api/check?t=12000&url=' + encodeURIComponent(u)).then(x => x.json()); }
-    catch (e) { $('status').textContent = '追加失败（探活请求）：' + (e && e.message || e); }
-    if (!r || !r.ok) {
-      if (r) $('status').textContent = '探活未通过，未追加：' + (r.detail || '源不可用（假流/死链）');
-      btn.disabled = false; btn.textContent = '探活并追加';
-      return;
-    }
-    if (!arr.includes(u)) arr.push(u);
-    this.cfg.srcs[key] = arr;
-    this.cfgTag(s); this.mSrcVal = ''; this.saveCfg(); this.reapplyCfg(); // reapplyCfg 内含面板重渲
-    $('status').textContent = `已追加备选源（${r.detail || '探活通过'}）——点播时进入自动切换序列`;
-  },
-  srcRemove(u) {
-    for (const k of Object.keys(this.cfg.srcs)) {
-      const i = this.cfg.srcs[k].indexOf(u); // 原源不在 cfg.srcs 值域里，能找到的必是追加源（UI 也只对追加放 ✕）
-      if (i >= 0) { this.cfg.srcs[k].splice(i, 1); if (!this.cfg.srcs[k].length) delete this.cfg.srcs[k]; break; }
-    }
-    // 移除后该台已无任何个人调整时，tag 快照一并清（audit B2：tag 只增不减的口之二）
-    const st = this.state.stations.find(x => x.u.includes(u));
-    if (st && !st.u.some(x => this.cfg.moves[x] || this.cfg.names[x] || this.cfg.hideS[x] || this.cfg.srcs[x])) for (const x of st.u) delete this.cfg.tag[x];
-    this.saveCfg(); this.reapplyCfg();
-    $('status').textContent = '已移除该追加源';
-  },
+  /* 旧即时源生命周期入口（srcRowHtml/srcAppend/srcRemove/toggleSrcDisabled/moveSrc/editSrcLabel/clearSrcOrder）
+     已由源草稿编辑器取代（P4 §6.9）：排序/禁用/标签/追加/移除只改草稿，保存经 uiBuildSrcNext/uiApplyCells
+     提交；探活口径（t=12000、判满前置、6 条封顶）与恢复动作语义（resetSrcDefaults 只清记忆）原样保留 */
 
-  /* ---------- 源生命周期动作（B1，双端冻结口径）：启停/人工排序/标签/两恢复动作——全部落 cfg 三字段，
-     srcManualOrder/srcDisabled 键 = 身份 URL u[0] 严格命中（台属性），saveCfg+reapplyCfg 即时生效 ---------- */
-  toggleSrcDisabled(s, i) {
-    const key = s.u[0], arr = this.cfg.srcDisabled[key] || [];
-    const u = s.u[i], at = arr.indexOf(u);
-    if (at >= 0) arr.splice(at, 1);
-    else { if (arr.length >= 6) { $('status').textContent = '该台禁用表已达上限（6 条）'; return; } arr.push(u); }
-    if (arr.length) this.cfg.srcDisabled[key] = arr; else delete this.cfg.srcDisabled[key];
-    this.cfgTag(s); this.saveCfg(); this.reapplyCfg(); this.renderDetail();
-    $('status').textContent = at >= 0 ? '已启用该源（恢复参与播放与体检）' : '已禁用该源（播放与体检都跳过）';
-  },
-  moveSrc(s, i, d) { // 上移/下移：在有效序内移动后，把「当前完整顺序（含禁位：启用序在前+禁用殿后）」材料化写进
-    // cfg.srcManualOrder（Android 同口径）；一经写入即压过启发式默认。禁用位殿后 = 取消禁用后回到队尾，行为确定
-    const mo = (Array.isArray(s.mo) && s.mo.length ? s.mo : s.u.map((_, x) => x)).slice();
-    const at = mo.indexOf(i); const to = at + d;
-    if (at < 0 || to < 0 || to >= mo.length) return;
-    mo.splice(to, 0, mo.splice(at, 1)[0]);
-    this.cfg.srcManualOrder[s.u[0]] = [...mo, ...(s.dis || [])].map(x => s.u[x]);
-    this.cfgTag(s); this.saveCfg(); this.reapplyCfg(); this.renderDetail();
-  },
-  editSrcLabel(s, i) { // 标签仅改变展示（详情/面板源行）；空输入 = 删除
-    const u = s.u[i], cur = this.cfg.srcLabels[u] || '';
-    const v = this.askName(`源标签（仅展示用，如：车机备用）`, cur);
-    if (v === cur) return;
-    if (v) this.cfg.srcLabels[u] = v; else delete this.cfg.srcLabels[u];
-    this.saveCfg(); this.renderManage(); this.renderDetail();
-    $('status').textContent = v ? '已保存源标签' : '已删除源标签';
-  },
-  resetSrcDefaults(s) { // 两动作之一（B1 拍板）：恢复默认播放源 = 只清 radio.srcmem2（保留人工序与禁用）
+  resetSrcDefaults(s) { // 两动作之一（B1 拍板）：恢复默认播放源 = 只清 radio.srcmem2（保留人工序与禁用），立即生效
     const had = Player.forgetSrc(s);
     $('status').textContent = had ? '已清除该台的源记忆（下次点播按默认序）' : '本无源记忆，无需恢复';
     this.renderDetail();
-  },
-  clearSrcOrder(s) { // 两动作之二（互不清对方）：撤销人工源排序 = 只删该台 srcManualOrder 键（身份 URL 严格命中）
-    if (!this.cfg.srcManualOrder[s.u[0]]) { $('status').textContent = '本无人工源排序'; this.renderDetail(); return; }
-    delete this.cfg.srcManualOrder[s.u[0]];
-    this.saveCfg(); this.reapplyCfg(); this.renderDetail();
-    $('status').textContent = '已撤销人工源排序，恢复默认顺序';
   },
 
   /* ---------- 详情中心（B1，plan-expansion-r4 §5.3）：台信息 + 逐源诊断 + 源生命周期动作 + 歌曲历史。
@@ -1632,18 +1656,33 @@ const App = {
   dOpener: null, // 打开时焦点（关闭归还，同 manage 面板口径）
   detailStation() { return this.state.stations.find(x => keyOf(x) === this.detail.stationKey); },
   openDetail(s) {
+    const d = this.mEditor && this.mEditor.getDraft();
+    if (d && !(d.kind === 'src' && d.identityUrl === s.u[0])) this.mEditorEnd(); // 开别的台详情：不匹配的草稿不跟过去
     this.detail = { stationKey: keyOf(s), results: [], loading: false, error: '', openedAt: Date.now() };
     this.dOpener = document.activeElement;
     $('detail').hidden = false;
     this.renderDetail();
+    this.mEditorRepaint(); // 宿主切到 #dEdit：本台源草稿编辑器（若有）迁入详情
     $('dClose').focus();
     this.checkStationSources(s); // 打开即诊断全部源（file:// 下给出降级提示）
   },
-  closeDetail() {
+  closeDetail() { // 原始关闭（离开流程批准后调用）
     if ($('detail').hidden) return;
     $('detail').hidden = true;
     const b = this.dOpener && this.dOpener.isConnected ? this.dOpener : null;
     if (b && b.focus) b.focus();
+  },
+  async mSrcDetailOp(s, i, op) { // 详情配置动作 → 本台源草稿（§6.9：共用同一编辑器，不保留绕过草稿的即时保存分支）
+    const d = this.mEditor && this.mEditor.getDraft();
+    const same = d && d.kind === 'src' && d.identityUrl === s.u[0];
+    if (!same && !(await this.mBeginEditor('src', s.u[0]))) return; // 换对象：dirty 三选；失配：报错留旧态
+    if (op === 'up' || op === 'down') this.mSrcMove(s, i, op === 'up' ? -1 : 1);
+    else if (op === 'dis' || op === 'undis') this.mSrcToggleDis(s, i);
+    else if (op === 'label') { const el = this.mEditHost().querySelector(`[data-fa="lb:${i}"]`); if (el) el.focus(); }
+    else if (op === 'clrorder') { // 草稿化裁量（§6.9）：撤销人工排序与面板同语义，写进草稿、保存后生效（不清禁用与源记忆）
+      if (!this.cfg.srcManualOrder[s.u[0]] && !(this.mEditor.getDraft().patch.manual !== null)) { $('status').textContent = '本无人工源排序'; return; }
+      this.mEditor.mutate(patch => { patch.manual = []; });
+    }
   },
   /* 批量诊断名单（B1 review P1）：启用源有效序取前 SRC_CAP 条——手动禁用的源绝不进 /api/check?detail=1
      的 URL 集合（§5.4「禁用源不发诊断请求」），全禁台返回空（零请求）。纯函数可测（test/source-lifecycle.js）；
@@ -1755,11 +1794,14 @@ const App = {
         : r ? `<span class="badge ${r.ok ? 'okb' : 'badb'}" title="code: ${this.esc(r.code)}">${CODE_TXT[r.code] || r.code}</span><span class="srcs" title="${this.esc(r.why)}">${this.esc(r.why)} · ${r.latencyMs || 0}ms · ${r.bytes || 0}B · ${r.mode}</span>`
         : '<span class="srcs">未诊断</span>';
       const acts = [
-        d ? `<button type="button" class="btn mbtn" data-act="dUndis" data-i="${i}">取消禁用</button>`
-          : `<button type="button" class="btn mbtn" data-act="dDis" data-i="${i}" title="禁用后播放与体检都跳过该源">禁用</button>`,
+        d ? `<button type="button" class="btn mbtn" data-act="dUndis" data-i="${i}" title="取消禁用该源（写进本台源草稿，保存后生效）">启用</button>`
+          : `<button type="button" class="btn mbtn" data-act="dDis" data-i="${i}" title="禁用后播放与体检都跳过该源（写进本台源草稿，保存后生效）">禁用</button>`,
+        `<button type="button" class="btn mbtn" data-act="dUp" data-i="${i}" title="上移（写进本台源草稿的人工顺序，保存后生效）">↑</button>`,
+        `<button type="button" class="btn mbtn" data-act="dDown" data-i="${i}" title="下移（写进本台源草稿的人工顺序，保存后生效）">↓</button>`,
+        `<button type="button" class="btn mbtn" data-act="dLabel" data-i="${i}" title="编辑源标签（仅展示用，写进草稿）">标签</button>`,
         `<button type="button" class="btn mbtn" data-act="dCopy" data-i="${i}">复制</button>`,
         `<button type="button" class="btn mbtn" data-act="dRecheck" data-i="${i}">诊断</button>`,
-        d ? '' : `<button type="button" class="btn mbtn" data-act="dPlay" data-i="${i}" title="用此源立即播放（失败自动顺延）">▶ 播放</button>`,
+        d ? '' : `<button type="button" class="btn mbtn" data-act="dPlay" data-i="${i}" title="用此源立即播放（失败自动顺延；有待保存的源修改会先询问）">▶ 播放</button>`,
       ].join('');
       return `<div class="dsrc${d ? ' off' : ''}${on && st.sourceIndex === i ? ' cur' : ''}">
         <i class="idx">${i + 1}</i>
@@ -1778,8 +1820,8 @@ const App = {
       ${rows}
       <div class="dsec"><b>源管理</b></div>
       <div class="dacts">
-        <button type="button" class="btn mbtn" data-act="dResetMem" title="清掉「上次成功的源」记忆（保留人工排序与禁用）">恢复默认播放源（清源记忆）</button>
-        <button type="button" class="btn mbtn" data-act="dClearOrder" title="删除人工源排序，恢复同步原始顺序">撤销人工源排序</button>
+        <button type="button" class="btn mbtn" data-act="dResetMem" title="清掉「上次成功的源」记忆（保留人工排序与禁用；立即生效）">恢复默认播放源（清源记忆）</button>
+        <button type="button" class="btn mbtn" data-act="dClearOrder" title="撤销人工源排序（写进本台源草稿，保存后生效；不清禁用与源记忆）">撤销人工源排序</button>
       </div>
       <div class="dsec"><b>质量摘要</b></div>
       ${this.qualityHtml(s)}
@@ -2088,19 +2130,22 @@ const App = {
     // 既有语义 N5/r2 ⑦，不抢点）；浮层内动作统一委托（Esc/点遮罩关闭在全局键盘与下方 onclick）
     $('detailBtn').onclick = () => { if (Player.station) this.openDetail(Player.station); };
     $('detail').onclick = e => {
-      if (e.target === $('detail')) return this.closeDetail(); // 点遮罩关闭
+      if (e.target === $('detail')) return this.mDepart(() => { this.mEditorEnd(); this.closeDetail(); }); // 点遮罩关闭（有待保存草稿先三选）
       const b = e.target.closest('[data-act]'); if (!b) return;
       const s = this.detailStation(); if (!s) return;
       const i = +b.dataset.i, act = b.dataset.act;
       if (act === 'dCopy') this.copySource(s.u[i]);
-      else if (act === 'dPlay') this.playSource(s, i);
+      else if (act === 'dPlay') this.mDepart(() => this.playSource(s, i)); // 试听=立即动作；有待保存源先三选（§6.9）
       else if (act === 'dRecheck') this.recheckSource(s, i);
       else if (act === 'dAll') this.checkStationSources(s);
-      else if (act === 'dDis' || act === 'dUndis') this.toggleSrcDisabled(s, i);
-      else if (act === 'dResetMem') this.resetSrcDefaults(s);
-      else if (act === 'dClearOrder') this.clearSrcOrder(s);
+      else if (act === 'dDis' || act === 'dUndis') this.mSrcDetailOp(s, i, act === 'dDis' ? 'dis' : 'undis'); // 启停 → 本台源草稿（§6.9 共用编辑器）
+      else if (act === 'dUp') this.mSrcDetailOp(s, i, 'up');
+      else if (act === 'dDown') this.mSrcDetailOp(s, i, 'down');
+      else if (act === 'dLabel') this.mSrcDetailOp(s, i, 'label');
+      else if (act === 'dResetMem') this.resetSrcDefaults(s); // 立即动作（只清源记忆）不变
+      else if (act === 'dClearOrder') this.mSrcDetailOp(s, -1, 'clrorder'); // 撤销人工排序 → 草稿（§6.9 草稿化裁量）
     };
-    $('dClose').onclick = () => this.closeDetail();
+    $('dClose').onclick = () => this.mDepart(() => { this.mEditorEnd(); this.closeDetail(); });
     // 发现页（B3-C）：header「发现」入口（features.discovery 关时隐藏——发布配置非用户数据）；行点击统一 startPlay→Player.play
     $('discBtn').hidden = !FEATURES.discovery;
     $('discBtn').onclick = () => this.openDiscovery();
@@ -2298,23 +2343,46 @@ const App = {
       confirmConflict: draft => this.mDialogConflict(draft),
     });
     // 编辑区事件委托（#mEdit/#dEdit 共用一套）：字段 input/change → editor.change；保存/取消/重载；
-    // 源草稿动作在源生命周期批接入（data-sact）
-    const mEditField = (el, ev) => {
-      const f = el.dataset.f; if (!f) return false;
-      const d = this.mEditor && this.mEditor.getDraft(); if (!d) return false;
-      if (el.type === 'checkbox') { if (ev === 'change') this.mEditor.change(f, el.checked); return true; }
-      if (ev === 'input') this.mEditor.change(f, el.value); // 逐键入补丁（值回基线自动撤键）
-      return true;
-    };
+    // 源草稿动作（data-sact）与源标签输入（data-lu）→ 草稿 mutate；追加输入 Enter 触发探活
     for (const hostId of ['mEdit', 'dEdit']) {
-      $(hostId).addEventListener('input', e => mEditField(e.target, 'input'));
-      $(hostId).addEventListener('change', e => mEditField(e.target, 'change'));
-      $(hostId).onclick = e => {
-        const b = e.target.closest('[data-eact]'); if (!b) return;
-        const a = b.dataset.eact;
-        if (a === 'save') this.mEditor.save();
-        else if (a === 'cancel') this.mEditorEnd(); // 取消 = 丢弃本对象草稿回浏览（§5.3，显式取消不再确认）
-        else if (a === 'reload') { try { this.mEditor.begin(this.mEditor.getDraft().identityUrl, this.mEditor.getDraft().kind); } catch (err) { $('status').textContent = err.message; } }
+      const h = $(hostId);
+      h.addEventListener('input', e => {
+        const el = e.target;
+        if (el.dataset && el.dataset.lu != null) return void this.mSrcLabelInput(el.dataset.lu, el.value); // 源标签逐键入草稿
+        if (el.matches && el.matches('.msrc-add input')) { this.mSrcVal = el.value; return; } // 追加输入跨重渲保留（同 mq 做法）
+        if (el.dataset && el.dataset.f && el.type !== 'checkbox') this.mEditor.change(el.dataset.f, el.value); // 逐键入补丁（值回基线自动撤键）
+      });
+      h.addEventListener('change', e => {
+        const el = e.target;
+        if (el.dataset && el.dataset.f && (el.type === 'checkbox' || el.tagName === 'SELECT')) this.mEditor.change(el.dataset.f, el.type === 'checkbox' ? el.checked : el.value);
+      });
+      h.addEventListener('keydown', e => { // 追加输入 Enter 直接触发探活（与添加电台表单同口径）
+        if (e.key === 'Enter' && e.target.matches && e.target.matches('.msrc-add input')) {
+          e.preventDefault();
+          const b2 = e.target.closest('.msrc-add').querySelector('[data-sact="srcadd"]');
+          if (b2 && !b2.disabled) b2.click();
+        }
+      });
+      h.onclick = e => {
+        const eb = e.target.closest('[data-eact]');
+        if (eb) {
+          const a = eb.dataset.eact;
+          if (a === 'save') this.mEditor.save();
+          else if (a === 'cancel') this.mEditorEnd(); // 取消 = 丢弃本对象草稿回浏览（§5.3，显式取消不再确认）
+          else if (a === 'reload') { const d = this.mEditor.getDraft(); try { this.mEditor.begin(d.identityUrl, d.kind); } catch (err) { $('status').textContent = err.message; } }
+          else if (a === 'srcmemclr') { const s = this.mEditorStation(); if (s) this.resetSrcDefaults(s); } // 立即动作（只清源记忆，不入草稿）
+          return;
+        }
+        const sb = e.target.closest('[data-sact]');
+        if (!sb) return;
+        const s = this.mEditorStation(); if (!s) return;
+        const op = sb.dataset.sact;
+        if (op === 'up') this.mSrcMove(s, +sb.dataset.i, -1);
+        else if (op === 'down') this.mSrcMove(s, +sb.dataset.i, 1);
+        else if (op === 'dis' || op === 'undis') this.mSrcToggleDis(s, +sb.dataset.i);
+        else if (op === 'rm') this.mSrcRemoveAppend(s, sb.dataset.u);
+        else if (op === 'srcadd') this.mSrcProbe(s, sb);
+        else if (op === 'play') this.mDepart(() => this.playSource(s, +sb.dataset.i)); // 试听=立即动作；有待保存源先三选（§5.2/§6.9）
       };
     }
     $('manageBtn').onclick = () => this.manageOpen();
@@ -2327,10 +2395,11 @@ const App = {
         if (!$('editorConfirm').hidden) return; // 最上层是确认弹窗：由 uiChooseDialog 的 capture 分支收口
         keysClose(); // 快捷键浮层（N8）
         // 编辑区内 Esc = 进入离开确认（§2.3/§5.3：未保存草稿时 Esc → 三选，stay 回原输入）；mq 搜索框自清不在此列
-        const ae = document.activeElement, inEdit = !!(ae && (this.mEditHost().contains(ae) || $('editorConfirm').contains(ae)));
-        if (!$('detail').hidden && !/^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) this.closeDetail(); // 详情中心（B1）
+        const ae = document.activeElement;
+        const inDetailEdit = !!(ae && $('dEdit').contains(ae)), inManageEdit = !!(ae && $('mEdit').contains(ae));
+        if (!$('detail').hidden && (inDetailEdit || !/^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName))) this.mDepart(() => { this.mEditorEnd(); this.closeDetail(); }); // 详情中心（B1 + P4 草稿门）
         if (!$('discovery').hidden && !/^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) this.closeDiscovery(); // 发现页（B3）
-        if (!$('manage').hidden && (inEdit || !/^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName))) this.manageClose();
+        if (!$('manage').hidden && (inManageEdit || !/^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName))) this.manageClose();
         $('lowfreq').classList.remove('open'); $('moreBtn').setAttribute('aria-expanded', 'false');
         $('sleepMenu').hidden = true;
         this.themeMenuClose(); // 主题三选菜单（§6.11）：Esc 收起 + 焦点归还
@@ -2379,32 +2448,8 @@ const App = {
       const act = b.dataset.act;
       if (act === 'edit') this.mBeginEditor('st', s.u[0]); // 电台对象编辑：名称/分类/隐藏草稿（替代 prompt 即时保存）
       else if (act === 'reset') this.mDepart(() => this.cfgResetStation(s)); // ↺ 独立操作（预览确认在 §5.4 批接入）
-      else if (act === 'srcs') { // 展开/收起备选源管理（P1-a/r2 ⑨；P4 后续批改草稿编辑器）；换台展开时清输入残留
-        this.mExp = this.mExp === keyOf(s) ? '' : keyOf(s);
-        this.mSrcVal = '';
-        this.renderMStations();
-        const i = $('mlist').querySelector('.msrc-add input');
-        if (i && this.mExp) i.focus();
-      }
-      else if (act === 'srcplay') this.mDepart(() => { this.mEditorEnd(); this.manageHide(); this.startPlay(s, +b.dataset.i); }); // 试听=立即动作，有待保存源先三选（§5.2）
-      else if (act === 'srcadd') this.srcAppend(s, b);
-      else if (act === 'srcdel') this.srcRemove(b.dataset.u);
-      else if (act === 'srcup') this.moveSrc(s, +b.dataset.i, -1); // 源生命周期（B1，本批仍即时；草稿化在源草稿批）
-      else if (act === 'srcdown') this.moveSrc(s, +b.dataset.i, 1);
-      else if (act === 'srcdis' || act === 'srcundis') this.toggleSrcDisabled(s, +b.dataset.i);
-      else if (act === 'srclabel') this.editSrcLabel(s, +b.dataset.i);
-      else if (act === 'srcmemclr') this.resetSrcDefaults(s);
-      else if (act === 'srcorderclr') this.clearSrcOrder(s);
-      else if (act === 'srcdetail') this.mDepart(() => { this.mEditorEnd(); this.manageHide(); this.openDetail(s); }); // 详情中心入口（B1）
+      else if (act === 'srcs') this.mBeginEditor('src', s.u[0]); // 备选源管理 = 本台源草稿（§6.9：排序/禁用/标签/追加保存才提交）
     };
-    $('mlist').addEventListener('input', e => { if (e.target.matches('.msrc-add input')) this.mSrcVal = e.target.value; }); // 重渲不清输入（坑④）
-    $('mlist').addEventListener('keydown', e => { // Enter 直接触发探活追加
-      if (e.key === 'Enter' && e.target.matches('.msrc-add input')) {
-        e.preventDefault();
-        const b2 = e.target.closest('.msrc-add').querySelector('[data-act="srcadd"]');
-        if (b2 && !b2.disabled) b2.click();
-      }
-    });
     $('mMiss').onclick = e => {
       if (!e.target.closest('[data-act="missclear"]')) return;
       this.mDepart(() => { // 清失配项是 cfg 独立操作：先处理现有草稿（§5.2）

@@ -7,7 +7,8 @@
    使宿主零接触且天然空 fixture；运行前后校验宿主两文件哈希不变（Z2 终检）。脚本 clr() 会 POST
    /api/store {data:{}} 清空 radio.*，只准打在自举隔离实例上。VRADIO_URL 指向外部实例时必须显式
    VRADIO_ALLOW_EXTERNAL=1（醒目警告后继续），否则拒绝退出。提交态门：未提交改动拒跑（产物目录豁免）。
-   断言失败 exitCode=1（AIbot PR#34 P2）；Playwright 加载失败也写 FAIL 报告而非裸崩（二次复核 P2）。
+   断言失败 exitCode=1（AIbot PR#34 P2）；Playwright 加载失败也写 FAIL 报告而非裸崩（二次复核 P2）；
+   自举探活失败走统一 try/finally（四轮 P2：不再 process.exit 绕过清理/落盘/Z2）；VR_FAULT_BOOT=1 可注入启动失败。
    产物：docs/ui-redesign-assets/p6/*.png + validation.json。真实音频不可保证（沙箱网络），播放仅验证
    connecting 阶段与记住最近，随后 Player.stop() 收尾。 */
 const fs = require('fs'), path = require('path'), assert = require('assert'), http = require('http'), net = require('net'), os = require('os'), crypto = require('crypto');
@@ -44,12 +45,16 @@ const pickPort = () => new Promise((resolve, reject) => { // 82xx 段随机起�
   const dirty = git('status --porcelain').split('\n').map(l => { const m = l.trim().match(/^(..)\s+(.+)$/); return m ? m[2].replace(/"/g, '') : ''; }).filter(p => p && !p.startsWith('docs/ui-redesign-assets/p6/') && !p.startsWith('ui-demo/p6-fixtures'));
   if (dirty.length) { console.error('存在未提交改动（证据只采自提交态）：\n' + dirty.join('\n')); process.exitCode = 1; return; }
   const before = hostSnap();
+  // —— report/browser 先行声明 + try 上移包住自举段（AIbot 四轮 P2：探活失败原 process.exit(1) 绕过统一
+  //    finally——不留 worktree 移除/FAIL 落盘/Z2；现在 not-ready 走 throw 进 catch/finally 全清理链）——
+  let browser = null;
+  let srv = null, base = process.env.VRADIO_URL || '', wt = null, wtAlive = false; // 外提：finally 清理链要访问
+  const report = { capturedAt: new Date().toISOString(), url: '', assertions: [], screenshots: [], perf: {}, errors: [], notes: [] };
+  try {
   // —— 自举隔离（AIbot PR#34 P0 + 二次复核 P2 my-radio）：临时 worktree 被测实例；外部目标须显式确认 ——
-  let srv = null, base = process.env.VRADIO_URL || '', wt = null, wtAlive = false;
   if (base) {
     if (process.env.VRADIO_ALLOW_EXTERNAL !== '1') {
-      console.error(`拒绝运行：VRADIO_URL=${base} 指向非本脚本自举的实例，而本脚本会清空目标实例全部 radio.* 持久数据（不可恢复）。\n确属有意为之，请加 VRADIO_ALLOW_EXTERNAL=1 后重跑。`);
-      process.exit(1);
+      throw new Error(`拒绝运行：VRADIO_URL=${base} 指向非本脚本自举的实例，而本脚本会清空目标实例全部 radio.* 持久数据（不可恢复）。确属有意为之，请加 VRADIO_ALLOW_EXTERNAL=1 后重跑。`);
     }
     console.warn(`\n⚠⚠⚠ 警告：即将对外部实例 ${base} 运行验收——将清空该实例全部 radio.* 持久数据（不可恢复）⚠⚠⚠\n`);
   } else {
@@ -60,14 +65,13 @@ const pickPort = () => new Promise((resolve, reject) => { // 82xx 段随机起�
     const env = { ...process.env, PORT: String(port), HOST: '127.0.0.1' };
     delete env.VR_TEST_Q_MAX; // 防外部测试注入缝串进验收实例（容量被压小会令页面质量 flush 频繁 409）
     srv = spawn(process.execPath, ['server.js'], { cwd: wt, env, stdio: 'ignore' });
-    let ready = false;
-    for (let i = 0; i < 120 && !ready; i++) { await new Promise(r => setTimeout(r, 100)); if (srv.exitCode !== null) break; try { ready = (await httpGet(base)) === 200; } catch (_) {} }
-    if (!ready) { srv.kill(); console.error(`自举隔离服务未就绪（127.0.0.1:${port}）`); process.exit(1); }
+    let ready = process.env.VR_FAULT_BOOT === '1' ? false : undefined; // 启动失败注入（AIbot 四轮 P2）：跳过探活直接走 not-ready 分支
+    if (ready !== false) { ready = false;
+      for (let i = 0; i < 120 && !ready; i++) { await new Promise(r => setTimeout(r, 100)); if (srv.exitCode !== null) break; try { ready = (await httpGet(base)) === 200; } catch (_) {} } }
+    if (!ready) throw new Error(`自举隔离服务未就绪（127.0.0.1:${port}）——${process.env.VR_FAULT_BOOT === '1' ? 'VR_FAULT_BOOT 启动失败注入' : '端口冲突/服务启动异常'}`);
     console.log(`自举隔离实例 ${base}（cwd=临时 worktree：data/my-radio 全落临时检出，宿主零接触）`);
   }
-  let browser = null;
-  const report = { capturedAt: new Date().toISOString(), url: base, assertions: [], screenshots: [], perf: {}, errors: [], notes: [] };
-  try {
+  report.url = base;
   browser = await chromium.launch({ headless: true }); // launch/newPage 一并进 try：启动失败也走 catch/finally（写 FAIL 报告 + kill 隔离服务）
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1, colorScheme: 'dark' });
   const page = await ctx.newPage();

@@ -307,7 +307,7 @@ const pickPort = () => new Promise((resolve, reject) => { // 82xx 段随机起�
   report.result = 'FAIL'; report.failure = String(e && e.stack || e); process.exitCode = 1; // AIbot PR#34 P2：断言失败必须非零退出——validation.json 之外，退出码是 CI/编排脚本的成败信号
   console.error('FAIL:', e.message);
 } finally {
-  if (!base) { // 自举实例才做宿主不变终检（外部实例本就有 VRADIO_ALLOW_EXTERNAL 确认在先）
+  if (wtAlive) { // 自举实例才做宿主不变终检（外部实例本就有 VRADIO_ALLOW_EXTERNAL 确认在先；自举时 base 也非空，以 wtAlive 为准）
     if (hostSnap() === before) report.notes.push('Z2 宿主 data/store.json + my-radio.txt 运行前后哈希不变');
     else { report.result = 'FAIL'; report.failure = (report.failure || '') + ' Z2 宿主持久面被改动: ' + before + ' → ' + hostSnap(); process.exitCode = 1; }
   }

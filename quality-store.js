@@ -254,6 +254,7 @@ const QualityStore = {
         } else if (r && r.code === 'batch-limit' && batch.length > 1) {
           await this.flush(false, Math.max(1, batch.length >> 1));  // 单批超限（可恢复）：减半分批重试；单条仍超限则停手留 pend
         }
+        if (r && r.code === 'too-large') console.warn('[quality] sidecar 容量拒绝（too-large），' + this.pend.length + ' 条 pend 保留待下次重试；持续出现请重新同步体检数据'); // 容量拒绝留痕（AIbot 三轮 P1）：不静默，pend 有界(≤256) 不丢
         return;                                                    // too-large/无 code（容量/暂时）：pend 保留，下次 load/pull/record 重试
       }
       if (r && r.ok) {

@@ -25,8 +25,8 @@ const req = (m, p, headers = {}, body = null) => new Promise((resolve, reject) =
   });
   r.on('error', reject); r.end(body);
 });
-const boot = () => new Promise(async (resolve, reject) => {
-  const srv = spawn(process.execPath, [path.join(UP, 'server.js')], { env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1' }, stdio: 'ignore' });
+const boot = (extraEnv = {}) => new Promise(async (resolve, reject) => {
+  const srv = spawn(process.execPath, [path.join(UP, 'server.js')], { env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', ...extraEnv }, stdio: 'ignore' });
   for (let i = 0; i < 60; i++) {
     await new Promise(r => setTimeout(r, 100));
     try { const r = await req('GET', '/'); if (r.status === 200) return resolve(srv); } catch (_) {}
@@ -191,6 +191,24 @@ const op = (id, ok, at, extra = {}) => Object.assign({
       assert.strictEqual(j.rev, 0); assert.deepStrictEqual(j.data, {});
       const r = await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ baseRev: 0, ops: [op('fresh1', true, 5000)] }));
       assert.strictEqual(JSON.parse(r.body).rev, 1);
+    });
+
+    // 2MB 硬上限拒绝路径（AIbot 三轮 P1 实证）：VR_TEST_Q_MAX 注入缝压小上限——不可裁的 ops 日志顶满后
+    // 真实 HTTP 链必须回 409 + 机器可读 code:'too-large'（客户端据此与临时写失败区分、保留 pend 重试）
+    srv.kill(); srv = null;
+    try { fs.unlinkSync(QF); } catch (_) {}
+    PORT = await freePort();
+    srv = await boot({ VR_TEST_Q_MAX: '1024' });
+    await ok('qCommit 2MB 超限 → HTTP 409 + code:too-large（真 HTTP 链）', async () => {
+      let hit = null;
+      for (let i = 1; i <= 80 && !hit; i++) {
+        const r = await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ baseRev: 0, ops: [op('cap' + i, true, 20000 + i)] }));
+        const j = JSON.parse(r.body);
+        if (!j.ok) { hit = { status: r.status, j }; } // 首次非 ok 响应即拒（容量被顶满）
+      }
+      assert.ok(hit, '80 条内应触发容量拒绝（oplog 不可裁部分 > 1024B）');
+      assert.strictEqual(hit.status, 409); // 路由按 code 映射 409（AIbot 三轮所指 200 缺口已被 23e1df6 修复，此处实证钉死）
+      assert.strictEqual(hit.j.code, 'too-large');
     });
   } finally {
     if (srv) srv.kill();

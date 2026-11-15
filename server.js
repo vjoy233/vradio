@@ -144,7 +144,7 @@ function storeWrite(data) {
 // keep = 客户端随批附带的收藏+最近保护集（≤64 条 http(s) URL），
 // trim 时保留——B2 临场设计（契约 trimOrder 的保护集服务端落地）。trim 下钻序见 quality-store.js。 ----------
 const QUALITY_FILE = path.join(DATA_DIR, 'quality.json');
-const Q_MAX = 2 * 1024 * 1024, Q_OPS_MAX = 32, Q_BODY_MAX = 256 * 1024, Q_OPLOG = 512;
+const Q_MAX = +(process.env.VR_TEST_Q_MAX || 0) || 2 * 1024 * 1024, Q_OPS_MAX = 32, Q_BODY_MAX = 256 * 1024, Q_OPLOG = 512; // VR_TEST_Q_MAX 仅测试注入缝（真实 HTTP 链压 2MB 拒绝路径用，生产不设）
 const Q_KINDS = new Set(['diagnostic', 'playback']), Q_TRIGGERS = new Set(['manual', 'boot', 'sync', 'play', 'watchdog', 'switch', 'error']), Q_MODES = new Set(['direct', 'hls', 'proxy']);
 let qCache = null, qQ = Promise.resolve();
 function qRead() { // 懒加载 + 坏文件按空库恢复（只清自身，绝不碰 radio.health / store.json）

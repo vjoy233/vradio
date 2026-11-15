@@ -68,8 +68,9 @@ console.log('[3] app.js normCfg 三字段清洗（vm 沙箱装载，剥尾部 Ap
 const UP = path.join(__dirname, '..');
 const { App, sandbox } = (() => {
   const src = fs.readFileSync(path.join(UP, 'app.js'), 'utf8');
-  const m = src.match(/\nApp\.boot\(\);\s*$/);
-  assert(m, 'app.js 尾部 App.boot() 可剥离（装载法依赖此前提）');
+  // B3 起尾部为「document 守卫 boot + CommonJS 出口」双兼容块；旧裸 App.boot() 形态仍兼容
+  const m = src.match(/\nApp\.boot\(\);\s*$/) || src.match(/\nif \(typeof document !== 'undefined'\) App\.boot\(\);[\s\S]*$/);
+  assert(m, 'app.js 尾部 boot 块可剥离（装载法依赖此前提）');
   const sandbox = { console, SrcOrder }; // SrcOrder 注入：srcLife 引用全局 SrcOrder（浏览器由 srcorder.js 经典 script 提供）
   vm.createContext(sandbox);
   vm.runInContext(src.slice(0, m.index) + '\nthis.App = App;', sandbox);

@@ -37,6 +37,8 @@ import com.google.common.util.concurrent.ListenableFuture
 import io.github.vjoy233.vradio.R
 import io.github.vjoy233.vradio.consts.C
 import io.github.vjoy233.vradio.data.Store
+import io.github.vjoy233.vradio.metadata.MetadataNormalizer
+import io.github.vjoy233.vradio.model.MetadataEvent
 import io.github.vjoy233.vradio.model.PState
 import io.github.vjoy233.vradio.model.PlayerUiState
 import io.github.vjoy233.vradio.model.SrcMem
@@ -83,7 +85,9 @@ object PlayerHolder {
 
   var onStepFav: ((Int) -> Unit)? = null                     // ⏮⏭ 收藏间切台（player.js:71-72）
   var onPlayLast: (() -> Unit)? = null                       // 媒体键 play 无台 → 续播上次（player.js:66）
-  var onSong: ((u0: String, title: String) -> Unit)? = null  // ICY 换歌：被替换下的旧曲名入史（app.js:611 口径）
+  // B3-A（plan-expansion-r4 §7.1）：ICY 曲讯只产事件（normalize 后的 MetadataEvent），消费（当前曲讯
+  // 显示/歌史/统计）在 AppVm 侧 Legacy/MetadataV2 sink——播放层不直接操作 radio.songs（模块边界）
+  var onMetadata: ((MetadataEvent) -> Unit)? = null
   var logoProvider: ((Station) -> String)? = null            // 锁屏 artwork 同步窥探（player.js:30 onlogo）
 
   private var token = 0                    // 世代令牌防串台（player.js:137）
@@ -95,7 +99,7 @@ object PlayerHolder {
   private var retried = false              // 当前源是否已「先重连一次」（player.js:16）
   private var curSi = -1                   // 正在试的源序号（player.js:20）
   private var curPlay = ""                 // 当前装载的 variant URL（player.js:21）
-  private var lastSong = ""                // 本台最近曲名（换歌判定，app.js:609-612 同款）
+  private var lastKbps = 0                 // 最近 icy-br（事件随行字段；换源清零与 ui.kbps 同口径）
   private var lastPos = 0L                 // 上次采样位置（进展检测）
   private var wdAt = 0L                    // 最近进展时刻（看门狗基准）
   private var vol = 0.9f                   // 逻辑音量（渐弱/取消的恢复基准，player.js:8）
@@ -173,7 +177,7 @@ object PlayerHolder {
     for (si in order) for (v in variants(s.u[si])) urls.add(Variant(v, si)) // 三级展开序（player.js:135-136）
     pctx = Pctx(urls, ++token)
     station = s; connecting = s
-    lastSong = "" // 切台曲讯清零（app.js:569 切台防串台）
+    lastKbps = 0 // 换台旧码率/曲讯随 ui 清零（app.js:569 切台防串台；曲讯管线 reset 在消费侧看 CONNECTING+空 song）
     val pv = volMem[s.u0]
     val want = if (pv != null) pv / 100f else gvol // 有记忆用记忆、无记忆用全局（player.js:141-142）
     if (vol > 0f) { vol = want; exo.volume = want } // 静音态切台保持静音（player.js:143-144）
@@ -190,7 +194,7 @@ object PlayerHolder {
     halt = false; heldNext = false
     exo.stop(); exo.clearMediaItems()
     station = s; connecting = null
-    curSi = -1; curPlay = ""; retried = false; lastSong = ""
+    curSi = -1; curPlay = ""; retried = false; lastKbps = 0
     markProgress()
     uiMut.update { it.copy(st = PState.IDLE, station = s, song = "", kbps = 0, srcIdx = -1, mode = "", noSrc = true,
       status = "该台所有源都已手动禁用，请先启用一个源") }
@@ -235,7 +239,7 @@ object PlayerHolder {
     exo.stop(); exo.clearMediaItems()
     station = null; connecting = null
     cancelSleep()
-    curSi = -1; curPlay = ""
+    curSi = -1; curPlay = ""; lastKbps = 0
     markProgress()
     uiMut.update { it.copy(st = PState.IDLE, station = null, song = "", kbps = 0, srcIdx = -1, mode = "", noSrc = false,
       status = "") } // 清引擎文案：无台时 PlayerBar 第二行会永久残留「已暂停」等旧状态（G P3）
@@ -307,9 +311,8 @@ object PlayerHolder {
     if (this::exo.isInitialized) exo.volume = vol
   }
 
-  fun setSong(t: String) { // 曲讯写锁屏 + ui（player.js setSong 208-212；台标后解析补刷共用）
+  fun setSong(t: String) { // 曲讯写锁屏 + ui（player.js setSong 208-212；台标后解析补刷共用；B3 起由 AppVm sink 调）
     val s = station ?: return
-    lastSong = t
     uiMut.update { it.copy(song = t) }
     pushMeta(t.ifEmpty { s.n }) // 空串回退台名
   }
@@ -346,6 +349,7 @@ object PlayerHolder {
     uiMut.update { it.copy(st = PState.CONNECTING, srcIdx = cur.si, noSrc = false,
       mode = if (m3u8Re.containsMatchIn(cur.u)) "hls" else "direct", // B1：源详情面板的播放模式展示
       kbps = 0, status = "连接中… 源" + p.i + "/" + p.urls.size) } // AIbot P3：换源清旧码率（无 ICY 的源残留上一源 kbps）
+    lastKbps = 0
     markProgress() // 看门狗计时起点：建流期连接挂死同覆盖（player.js:224-225 口径）
     loadVariant(cur.u)
   }
@@ -457,16 +461,16 @@ object PlayerHolder {
         when (val e = metadata.get(i)) {
           is IcyInfo -> {
             val t = e.title?.trim().orEmpty()
-            if (t.isEmpty() || t == lastSong) continue // 换歌判定：去重（onMetadata 频率高于 Web 15s 轮询，A6）
-            val old = lastSong
-            lastSong = t
-            uiMut.update { it.copy(song = t) }
-            pushMeta(t) // 锁屏歌名
-            if (old.isNotEmpty()) onSong?.invoke(s.u0, old) // 换歌旧曲入史（app.js:611；键=台主 URL 身份公理）
+            if (t.isEmpty()) continue // 空曲讯不覆盖有效曲名（契约 normalizeRules；HLS 不猜歌名）——事件都不发
+            // B3-A：只产事件不消费——normalize（清洗/台名前缀/拆分/置信度）后回调，当前曲讯/歌史/统计
+            // 归 AppVm 侧 sink（dedup 也在那）；世代令牌已在上面验过，迟到事件由管线 identityUrl/at 再拦
+            onMetadata?.invoke(MetadataNormalizer.normalize(
+              MetadataNormalizer.IcyRaw(t, "", lastKbps, "icy", System.currentTimeMillis()),
+              MetadataNormalizer.IcyCtx(s.u0, s.n)))
           }
           is IcyHeaders -> {
             val br = e.bitrate
-            if (br > 0) uiMut.update { it.copy(kbps = br / 1000) } // media3 bitrate 是 bps（icy-br×1000，源码实证），显示口径 = 原始 icy-br kbps（app.js:614 同款）
+            if (br > 0) { lastKbps = br / 1000; uiMut.update { it.copy(kbps = lastKbps) } } // media3 bitrate 是 bps（icy-br×1000，源码实证），显示口径 = 原始 icy-br kbps（app.js:614 同款）
           }
         }
       }

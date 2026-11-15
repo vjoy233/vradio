@@ -16,7 +16,8 @@ import org.junit.rules.TemporaryFolder
 
 /* 契约测试（B0）：与 Web test/contracts.js 同源——读仓库根 contracts/radio-keys.json（经 gradle test resources
    接线），比对 C.KEYS 三侧白名单；v2/v3 备份黄金样本互读；radio.cfg v2 迁移与新字段 round-trip；
-   B2 质量聚合黄金样本 round-trip（AIbot P1-2，Web test/quality-store.js [7] 同源消费）。 */
+   B2 质量聚合黄金样本 round-trip（AIbot P1-2，Web test/quality-store.js [7] 同源消费）；
+   B3 收听统计契约形状冻结（AIbot 复核 P1/P2：条件获取 + 409 code + 落盘确认模型）。 */
 class ContractTest {
 
   @get:Rule val tmp = TemporaryFolder()
@@ -82,6 +83,28 @@ class ContractTest {
     val files = qc.getJSONObject("files")
     assertTrue(files.getString("web").contains("{ v:1, rev"))
     assertTrue(files.getString("android").contains("{ v:1, stations"))
+  }
+
+  @Test fun listenStatsContractShape() { // B3/AIbot 复核 P1/P2：收听统计契约——files 双包装 + 写失败确认模型 +
+    // GET ?rev= 条件获取 + 409 机器可读 code 语义在位（Web test/contracts.js 同款断言双端点名；
+    // 行为驱动在 Web test/listen-stats.js 与 ListenStatsTest 连续写失败→成功测试）
+    val lc = JSONObject(res("listen-stats-summary.json"))
+    val files = lc.getJSONObject("files")
+    assertTrue(files.getString("web").contains("{ v:1, rev"))
+    assertTrue(files.getString("android").contains("{ v:1, days"))
+    assertTrue(files.getString("shared").contains("YYYY-MM-DD"))
+    assertTrue(files.getString("writeFailure").contains("下次 flush"))
+    // AIbot 三轮 P1：Android 写失败 pending 持久化/启动恢复语义在位（行为测试 = ListenStatsTest 重启恢复用例；
+    // Web test/contracts.js 同款断言双端点名）
+    assertTrue(files.getString("android").contains("listen-stats.pending.json")
+      && files.getString("writeFailure").contains("不双计"))
+    val api = lc.getJSONObject("api")
+    assertTrue(api.getString("GET /api/listenstats?rev=<optional>").contains("notModified"))
+    val post = api.getString("POST /api/listenstats")
+    assertTrue(post.contains("'schema'") && post.contains("'batch-limit'"))
+    val tests = lc.getJSONObject("tests")
+    assertTrue(tests.getString("web").contains("test/listen-stats.js"))
+    assertTrue(tests.getString("android").contains("ListenStatsTest"))
   }
 
   @Test fun qualityAggregateGoldenRoundTrip() { // AIbot P1-2：双端黄金样本——两包装层（{v,stations} vs {v,rev,ops,data}）共享内层聚合形态

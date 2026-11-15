@@ -44,6 +44,11 @@ class MainActivity : ComponentActivity() {
     ViewModelProvider(this)[AppVm::class.java].handleIntent(intent)
   }
 
+  override fun onStop() {   // 页面隐藏：B3-B 收听统计 flush（Web visibilitychange 同款时机；开关关时 no-op）
+    super.onStop()
+    runCatching { ViewModelProvider(this)[AppVm::class.java].onAppHidden() }
+  }
+
   /* 高刷新率：不申请时国产 ROM 常对非白名单 app 限速 60Hz。取该屏 supportedModes
      实际最大值设 preferredRefreshRate hint（官方口径：只要更高频率优先 hint 而非
      preferredDisplayModeId，系统自适应降频照常）；≤60Hz 或取不到不设，等价无偏好。 */

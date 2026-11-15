@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "kind": "listen-stats-summary",
+  "description": "本地收听统计 sidecar 契约（B3，plan-expansion-r4 §7.2）。纯本机数据：不进 radio.* 主 Store、不占 2MB 配额、不进默认备份；只记真实播放（诊断成功不算收听），只 PLAYING 累加。",
+  "files": {
+    "web": "data/listen-stats.json = { v:1, rev:number, ops:[opId…], days:{…} }——rev 服务端唯一发号、ops 是 op.id 幂等去重日志，均为 Web HTTP 服务端并发机器（/api/listenstats 独占读写）",
+    "android": "filesDir/listen-stats.json = { v:1, days:{…} }——纯本机文件，无 rev/ops 包装；落盘确认模型（AIbot 复核 P1）：确认快照 + 未确认增量，写成功才推进确认（失败保留内存下次 flush/启动重试），快照覆盖天然幂等；启动重试（AIbot 三轮 P1）= 写失败同时把含未确认增量的快照落独立临时文件 filesDir/listen-stats.pending.json（tmp+rename），进程重启 ListenTracker.restore 幂等合流（日键并集/数值取大，不双计）、成功写主快照后原子清理",
+    "shared": "days 形态双端完全一致：{ 'YYYY-MM-DD': { ms:number, stations:{ 身份URL:ms }, categories:{ 分类名:ms }, sessions:number } }——日期键须历法有效（02-31/13-01/非闰 02-29 拒绝，双端同规则校验）；90 天裁剪 + 512KB 先删最早日；sessions 口径 = 从非 PLAYING 进入 PLAYING 且非同台同源暂停恢复",
+    "writeFailure": "双端同语义（§7.2 冻结）：统计写入失败只保留内存增量并在下次 flush/启动重试，绝不暂停或中断播放；多次 flush 幂等（Web op.id 服务端去重兜底 / Android 快照覆盖 + pending 恢复合流取大不双计，pending 落盘为 best-effort——同盘故障写不进时退化为纯内存重试不劣于基线）"
+  },
+  "opEvent": {
+    "id": "string ≤64——幂等键（标签页:时间戳:序号 形态；只用于服务端去重，不暴露到 UI/备份）",
+    "day": "string——历法有效 YYYY-MM-DD（本地时区自然日；坏键 schema 拒绝整批）",
+    "u0": "string?——台身份 URL（s.u[0]，http(s)、≤512）",
+    "cat": "string?——分类名（≤24）",
+    "ms": "number?——本段增量毫秒（0..86400000，跨午夜按墙钟占比拆两日）",
+    "sess": "integer?——本日 session 计数增量（0..1000）"
+  },
+  "api": {
+    "GET /api/listenstats?rev=<optional>": "{ v, rev, days } 或命中当前版本 { v, rev, notModified:true }（不带 days——多标签 BroadcastChannel 重拉复用同一条件获取语义，AIbot 复核 P2；客户端 pull 携带本地已见 rev）",
+    "POST /api/listenstats": "body { baseRev, ops:[opEvent…] } → { ok, rev, applied }；baseRev 只是客户端观测版本不作覆盖条件（增量合流）；同一 op.id 已处理则跳过（重试/多标签不重复计数）；仅 schema 错误或单批超 64 条返回 409，响应带机器可读 code：'schema'（不可恢复，客户端丢批留痕）/ 'batch-limit'（客户端收窄批宽分批重试）；无 code 的 409 或网络/写失败一律保留未确认 ops 下次 flush 重试（AIbot 复核 P1，不静默丢合法增量）"
+  },
+  "caps": {
+    "batchOps": "64——单批 op 数上限（batch-limit 409 阈值）",
+    "dedupLog": "2048——服务端 op.id 去重日志 FIFO（与数据同受 2MB 约束）",
+    "fileHardLimit": "2MB（服务端 data/listen-stats.json）；512KB（双端 days 裁剪触发线，先删最早日）",
+    "keepDays": 90
+  },
+  "tests": {
+    "web": "test/listen-stats.js——①状态机/③b 409 分类与条件获取/④真服务端点（GET ?rev= notModified、409 code、op.id 幂等、双标签并发、损坏恢复）",
+    "android": "ListenStatsTest.kt——sidecar 形态/日期键历法校验（与 Web 同键集）/连续写失败→成功增量完整不重复计数（确认快照模型）/写失败→pending 落盘→重启 restore 合流→flush 成功不丢不双计→pending 清理（AIbot 三轮 P1 启动恢复）",
+    "contract": "test/contracts.js + android ContractTest.kt——本契约文件形状冻结（files 双包装/api 条件获取与 409 code 语义在位）双端点名"
+  }
+}

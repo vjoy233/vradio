@@ -31,8 +31,10 @@ class LightUpdate(private val gh: Gh, private val filesDir: File) {
     return if (iso(latest) > iso(localStampIso)) latest else null
   }
 
-  /** 下载两文件 → filesDir/radio.txt+logos.txt（tmp+rename）+ 落 stamp；radio 拿不到即整体失败，
-   *  logos 失败不阻断（可重建的非关键件，保留旧文件、logosChanged=false）。oldRadioText = 当前生效全文（diff 旧侧）。 */
+  /** 下载两文件 → filesDir/radio.txt+logos.txt（tmp+rename）+ 落 stamp（批次提交标记，末位写：
+   *  meta=true + radioHash/metaHash 内容哈希双见证，任一写失败即不记 meta 见证并删旧 meta——详见
+   *  apply 内注释）。radio 拿不到/写失败即整体失败，logos/meta 失败不阻断（保留旧文件）。
+   *  oldRadioText = 当前生效全文（diff 旧侧）。 */
   suspend fun apply(oldRadioText: String): Result? {
     lastFailWhy = ""
     val commitIso = latestIso() ?: run { lastFailWhy = "GitHub 不可达（api.github.com，检查网络或稍后再试）"; return null }
@@ -55,22 +57,39 @@ class LightUpdate(private val gh: Gh, private val filesDir: File) {
       if (nm.isNotEmpty() && nm in addedNames && !addedCheck.contains(nm)) addedCheck.add(nm)
     }
     if (addedCheck.size > C.ADDED_CHECK_CAP) addedCheck.subList(C.ADDED_CHECK_CAP, addedCheck.size).clear()
-    // 落盘：radio 必写；logos 拿到才写；stamp 记已应用 commit
-    writeTextAtomic(File(filesDir, "radio.txt"), radio)
-    if (logos != null) writeTextAtomic(File(filesDir, "logos.txt"), logos)
-    writeTextAtomic(File(filesDir, "stamp.json"), JSONObject().put("commitIso", commitIso).toString())
+    // 落盘（批次提交协议，AIbot 三轮 P1：radio/meta/stamp 三件套须同批，stamp 末位写 = 提交标记）：
+    // radio 必写——落盘失败即整体失败 return null（旧批次三件套原样留存，天然一致不混态）；
+    // logos 非关键件失败不阻断（可重建，留旧）；meta 写失败（磁盘/权限）≠ 整体失败——radio 已新，
+    // 旧 meta 留存即混态：删旧件 + 见证 false；stamp 只在全部写成功时记 meta=true + 双内容哈希
+    // （radioHash/metaHash），boot 侧 stampHashOk 核对当前两文件内容与 stamp 记录一致才放行绑定——
+    // 即便删件/stamp 写失败残留旧值，「新 radio + 旧 stamp」的内容哈希也对不上，RadioMeta.bound 仍判
+    // 不绑定（发现页「最近新增」保守置空，不猜），且旧 stamp 使下次 check 重走 apply 自愈。
+    if (runCatching { writeTextAtomic(File(filesDir, "radio.txt"), radio) }.isFailure) {
+      lastFailWhy = "radio.txt 落盘失败（磁盘/权限）"; return null
+    }
+    if (logos != null) runCatching { writeTextAtomic(File(filesDir, "logos.txt"), logos) }
     // B2 radio-meta.json 分开落盘（plan §6.3/§13.3）：主库与 meta 任一份失败不影响另一份。
     // 校验 = 版本门（v==1）+ 可解析性——GitHub contents 通道不带内容 hash（sync-manifest 侧 Web 生成后
-    // 再挂，见 CONTRACTS.md B2 留档）；下载失败（null，含仓库暂未提供该文件）静默保留旧 meta，
-    // 下载到但校验失败（metaInvalid）由 UI 明示——防仓库尚未生成 meta 时每次更新都误报。
+    // 再挂，见 CONTRACTS.md B2 留档）。AIbot P1-4 混态拦截：meta 拿不到/非法时删除旧件——旧 meta 配
+    // 新 radio 会让发现页「最近新增」指错台（宁缺勿混，删除只影响该分组不影响播放）；下载到但校验失败
+    // （metaInvalid）仍由 UI 明示——防仓库尚未生成 meta 时每次更新都误报。
     var metaChanged = false; var metaInvalid = false
+    var metaHash: String? = null
     val meta = gh.file(GhRepos.SELF, "radio-meta.json")
     if (meta != null) {
       if (RadioMeta.parse(meta) != null) {
-        writeTextAtomic(File(filesDir, "radio-meta.json"), meta)
-        metaChanged = true
-      } else metaInvalid = true
-    }
+        if (runCatching { writeTextAtomic(File(filesDir, "radio-meta.json"), meta) }.isSuccess) {
+          metaChanged = true; metaHash = hashText(meta)
+        } else {   // AIbot 三轮 P1：meta 写失败（注入磁盘/权限故障）——radio 已新，删旧件 + 见证 false
+          println("[vradio] radio-meta.json 落盘失败（删旧件防混态，最近新增置空待下次更新自愈）")
+          runCatching { File(filesDir, "radio-meta.json").delete() }
+        }
+      } else { metaInvalid = true; runCatching { File(filesDir, "radio-meta.json").delete() } }
+    } else runCatching { File(filesDir, "radio-meta.json").delete() }   // 混态拦截：新 radio 不留旧 meta
+    val stampO = JSONObject().put("commitIso", commitIso).put("meta", metaChanged)
+      .put("radioHash", hashText(radio))                            // radio/meta 内容哈希批次见证（AIbot 三轮 P1）
+    if (metaHash != null) stampO.put("metaHash", metaHash)
+    runCatching { writeTextAtomic(File(filesDir, "stamp.json"), stampO.toString()) }
     return Result(commitIso, radio != oldRadioText, logos != null, addedKeys.size, removedKeys.size,
       addedCheck, metaChanged, metaInvalid)
   }
@@ -82,6 +101,25 @@ class LightUpdate(private val gh: Gh, private val filesDir: File) {
   fun stamp(): String? = read(File(filesDir, "stamp.json"))?.let {
     try { JSONObject(it).optString("commitIso") } catch (_: Exception) { "" }
   }?.takeIf { it.isNotEmpty() }
+
+  /** stamp 的 meta 同批见证（AIbot P1-4，RadioMeta.bound 入参）：true/false = 本批 apply 是否随行落了 meta；
+   *  null = 旧版（B2 时代）stamp 无该字段——无法证明 filesDir radio/meta 同批，按混态处理。 */
+  fun stampMetaOk(): Boolean? = read(File(filesDir, "stamp.json"))?.let {
+    try { val o = JSONObject(it); if (o.has("meta")) o.optBoolean("meta") else null } catch (_: Exception) { null }
+  }
+
+  /** stamp 哈希见证核对（AIbot 三轮 P1，RadioMeta.bound 入参）：Pair(radioOk, metaOk)——true = 当前
+   *  filesDir 副本内容哈希与 stamp 记录一致（同批）；false = 不一致（新 radio 配残留旧 stamp 等混态）；
+   *  null = 无 stamp / 旧 stamp 无哈希字段（保守不绑定，与 stampMetaOk==null 同口径）。metaHash 仅
+   *  meta=true 批次写入，缺失同样 null——三重见证任一不满足即混态。 */
+  fun stampHashOk(): Pair<Boolean?, Boolean?> {
+    val s = read(File(filesDir, "stamp.json"))?.let { runCatching { JSONObject(it) }.getOrNull() }
+      ?: return null to null
+    if (!s.has("radioHash")) return null to null
+    val r = hashText(read(File(filesDir, "radio.txt")) ?: "") == s.optString("radioHash")
+    val m = if (s.has("metaHash")) hashText(read(File(filesDir, "radio-meta.json")) ?: "") == s.optString("metaHash") else null
+    return r to m
+  }
 
   private fun read(f: File): String? = if (f.isFile) try { f.readText() } catch (_: Exception) { null } else null
 
@@ -101,3 +139,10 @@ class LightUpdate(private val gh: Gh, private val filesDir: File) {
       sec.lines.map { sec.cat + "|" + it.substringBefore(',').trim() }.filter { it.substringAfterLast('|').isNotEmpty() }
     }
 }
+
+/** 内容哈希（SHA-256 十六进制，sync 包内 LightUpdate/SyncEngine 共用）：stamp 批次见证绑定
+ *  radio.txt/radio-meta.json 内容——部分写失败留下的「新文件 + 旧 stamp」混态由 boot 核对拦下
+ *  （AIbot 三轮 P1；GitHub contents 通道不带 hash，本地自算补位）。 */
+internal fun hashText(t: String): String =
+  java.security.MessageDigest.getInstance("SHA-256").digest(t.toByteArray(Charsets.UTF_8))
+    .joinToString("") { "%02x".format(it) }

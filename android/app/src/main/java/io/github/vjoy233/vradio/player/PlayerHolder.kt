@@ -37,6 +37,7 @@ import com.google.common.util.concurrent.ListenableFuture
 import io.github.vjoy233.vradio.R
 import io.github.vjoy233.vradio.consts.C
 import io.github.vjoy233.vradio.data.Store
+import io.github.vjoy233.vradio.timeshift.Timeshift
 import io.github.vjoy233.vradio.model.PState
 import io.github.vjoy233.vradio.model.PlayerUiState
 import io.github.vjoy233.vradio.model.SrcMem
@@ -119,7 +120,8 @@ object PlayerHolder {
     // DefaultMediaSourceFactory 按 URI 形态自动识别直流/HLS（三级塌缩为一级）
     val ds = OkHttpDataSource.Factory(OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).build())
       .setDefaultRequestProperties(mapOf("Icy-MetaData" to "1")) // 主动要 ICY 元数据（Icecast 需请求头）
-    val msf = DefaultMediaSourceFactory(ds).setLoadErrorHandlingPolicy(FastFailPolicy())
+    val msf = DefaultMediaSourceFactory(Timeshift.factory(ds))   // B7 Spike 挂点①：时移 tee 工厂包装
+      .setLoadErrorHandlingPolicy(FastFailPolicy())              // （开关关闭/非直流时纯透传，零行为变化）
     val pb = ExoPlayer.Builder(appCtx)
       .setMediaSourceFactory(msf)
       .setAudioAttributes(AudioAttributes.Builder().setUsage(M3C.USAGE_MEDIA)
@@ -138,6 +140,8 @@ object PlayerHolder {
           .setAudioOffloadMode(AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_ENABLED).build())
         .build()
     }
+    Timeshift.attach(ctx, exo) // B7 Spike 挂点②：回听控制器（读实验开关 + ENDED/error 监听；先于 listener
+                               // 注册——ENDED 先到才能判「快照播完」转 CATCHING_UP）
     exo.addListener(listener)
     fwd = Fwd(exo, this)
     val launch = appCtx.packageManager.getLaunchIntentForPackage(appCtx.packageName)
@@ -236,6 +240,7 @@ object PlayerHolder {
     token++
     halt = false; heldNext = false
     exo.stop(); exo.clearMediaItems()
+    Timeshift.reset() // B7 Spike 挂点④：停播彻底复位
     station = null; connecting = null
     cancelSleep()
     curSi = -1; curPlay = ""
@@ -355,6 +360,7 @@ object PlayerHolder {
 
   private fun loadVariant(u: String) { // player.js load 172-200 的 media3 形态：单级、HLS 自动识别、错误经 onPlayerError 回流
     if (u.isEmpty()) { next(); return } // 兜底：无当前源可重连（理论不可达）直接续摊
+    Timeshift.onNewStream(u) // B7 Spike 挂点③：每条新连接重置时移会话（切台/刷新/自愈重连/换源全汇于此）
     lastPos = -1L
     val b = MediaItem.Builder().setUri(u)
     curMeta?.let { b.setMediaMetadata(it) } // 锁屏元数据随装载（pushMeta 先于装载的建流前调用路径）
@@ -381,9 +387,12 @@ object PlayerHolder {
   private fun onAir() { // 建流成功（≈Web 'playing'，player.js:37 + 245-254）
     connecting = null
     markProgress()
+    Timeshift.onLiveAir() // B7 Spike 挂点⑤：回放播完重连直播起播 → CATCHING_UP → CAPTURING
     val s = station
     if (s != null && pctx?.my == token) {
-      say("直播中")
+      // B7 Spike（AIbot P2-2）：回放期状态明示「回听中」——快照起播也走 onAir（复用既有事件），
+      // 若照旧说「直播中」用户会误以为仍在实时收听；回放结束重连起播时 isReplaying 已翻 false，自然恢复「直播中」
+      say(if (Timeshift.isReplaying()) "回听中…" else "直播中")
       if (s.u.size >= 2 && curSi in s.u.indices) { // 成功源记忆写回（仅多源台）
         val prev = srcMem[s.u0]
         if (prev == null || prev.i != curSi) { // 未变不写（resume 也触发，player.js:249）
@@ -406,7 +415,7 @@ object PlayerHolder {
     logoProvider?.invoke(s)?.takeIf { it.isNotEmpty() }?.let { b.setArtworkUri(Uri.parse(it)) }
     curMeta = b.build()
     // 已在播的 item 用 replaceMediaItem 原位换元数据（同 URI 不触发重载，ICY 换歌不重启流）
-    if (curPlay.isNotEmpty()) runCatching {
+    if (curPlay.isNotEmpty() && !Timeshift.isReplaying()) runCatching { // B7：回放中替换会顶掉快照 item，拦掉
       exo.replaceMediaItem(0, MediaItem.Builder().setUri(curPlay).setMediaMetadata(curMeta!!).build())
     }
   }

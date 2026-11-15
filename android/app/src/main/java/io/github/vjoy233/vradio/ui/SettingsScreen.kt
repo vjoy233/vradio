@@ -32,6 +32,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.vjoy233.vradio.timeshift.TimeshiftSettingRow
 import io.github.vjoy233.vradio.ui.theme.LocalVrPalette
 
 /* 设置页（契约 §Agent C SettingsScreen）：主题三态/无效源显示/手动体检（进度+分档统计完成态）/
@@ -57,6 +58,7 @@ fun SettingsScreen(vm: AppVm) {
   val netLogo by vm.netLogoWifi.collectAsState()
   val traffic by vm.trafficTxt.collectAsState()
   val gate by vm.netGate.collectAsState()
+  val timeshiftOn by vm.timeshiftOn.collectAsState()   // B7 Spike 时移回听（本地 pref，默认关）
 
   // SAF 导出（CreateDocument 预填文件名）与导入（OpenDocument 放宽到 */*——SAF 的 mime 上报不稳定）
   val expBackup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { u -> if (u != null) vm.exportTo(u, AppVm.Exp.BACKUP) }
@@ -111,6 +113,7 @@ fun SettingsScreen(vm: AppVm) {
         }
         Info(if (vm.offloadCap) "DSP 硬解码降播放耗电；不支持的流自动回退软解；更改后重启应用生效"
              else "本机不支持音频卸载（需 Android 13+ 且音频 DSP 支持），已自动置灰")
+        TimeshiftSettingRow(timeshiftOn) { vm.setTimeshift(it) }   // B7 Spike：时移回听实验开关
       }
       item {
         Section("列表")

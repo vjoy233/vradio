@@ -41,6 +41,7 @@ import io.github.vjoy233.vradio.network.NetProbe
 import io.github.vjoy233.vradio.network.NetworkPolicy
 import io.github.vjoy233.vradio.network.TrafficEstimator
 import io.github.vjoy233.vradio.player.PlayerHolder
+import io.github.vjoy233.vradio.timeshift.Timeshift
 import io.github.vjoy233.vradio.sync.Gh
 import io.github.vjoy233.vradio.sync.LightUpdate
 import io.github.vjoy233.vradio.sync.SyncEngine
@@ -116,6 +117,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   /* —— batch1（2026-10-18 拍板）新增态：N4/E5 本地开关（Prefs，非 radio.* 契约）+ E3/E4 入口 —— */
   val resumeOnStart = MutableStateFlow(false)          // N4 启动自动续播（默认关）
   val audioOffload = MutableStateFlow(false)           // E5 音频卸载（默认关，实验性，重启生效）
+  val timeshiftOn = MutableStateFlow(false)            // B7 Spike：时移回听实验开关（本地 pref，默认关）
   val addPreset = MutableStateFlow<String?>(null)      // E4 接流预填 URL（AddStationScreen 消费后自清）
   private var pendingSc: String? = null                // E3 待点播的快捷方式目标（"last" 或台 key）
   private var booted = false
@@ -224,6 +226,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     netFullCheck.value = Prefs.get(ctx, Prefs.NET_FULL_CHECK, "confirm")   // B5 网络策略三键
     netSync.value = Prefs.get(ctx, Prefs.NET_SYNC, "confirm")
     netLogoWifi.value = Prefs.get(ctx, Prefs.NET_LOGO_WIFI, true)
+    timeshiftOn.value = Prefs.get(ctx, Prefs.TIMESHIFT, false)  // B7 Spike（attach 处也会读，幂等）
     viewModelScope.launch(Dispatchers.IO) { boot() }
     // B5：Widget 状态推送（与 PlaybackService 侧收集生命周期互补，onUi 幂等去重不双刷）
     viewModelScope.launch { PlayerHolder.ui.collect { WidgetPush.onUi(ctx, it) } }
@@ -352,6 +355,9 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   fun setResume(b: Boolean) { resumeOnStart.value = b; Prefs.set(ctx, Prefs.RESUME, b) }   // N4
   fun setOffload(b: Boolean) { audioOffload.value = b; Prefs.set(ctx, Prefs.OFFLOAD, b) } // E5（重启生效）
+  fun setTimeshift(b: Boolean) {                                                        // B7 Spike（即时生效）
+    timeshiftOn.value = b; Prefs.set(ctx, Prefs.TIMESHIFT, b); Timeshift.setEnabled(b)
+  }
 
   /* PlayerHolder 回调接线（player 不反向伸手进 UI，方向照抄 Web） */
   private fun wirePlayer() {

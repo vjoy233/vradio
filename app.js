@@ -113,6 +113,24 @@ function uiChooseResume(opt) { // 续听候选（§6.3，本批次先立纯函�
   }
   return null;
 }
+/* 主题入口窄屏收纳（§6.11，boot 装配一次并留销毁函数）：同一节点（#themeWrap 含三选菜单）搬家——≤640px 收进
+   #lowfreq（「⋯ 更多」内，文字 span 由 CSS 放出）、更宽回顶栏原锚点（#file 之前）；监听/radio.theme 随节点走，
+   不复制 id。跨断点焦点：焦点在将隐藏的菜单内先关菜单（归还触发器）；DOM 搬家必脱焦——焦点还给随行 themeBtn，
+   它不可见（lowfreq 收起态）则退到可见入口 #moreBtn，不让焦点落到隐藏节点或 body */
+function uiPlaceTheme(wrap, desktopHost, before, compactHost) {
+  const mq = matchMedia('(max-width:640px)');
+  const place = () => {
+    const ae = document.activeElement, take = !!(ae && wrap.contains(ae));
+    if (take && ae !== $('themeBtn')) App.themeMenuClose(); // 菜单内焦点：先关菜单归还触发器
+    if (mq.matches) compactHost.appendChild(wrap);
+    else desktopHost.insertBefore(wrap, before);
+    if (take) { const tb = $('themeBtn'); (tb.offsetParent ? tb : $('moreBtn')).focus({ preventScroll: true }); }
+  };
+  if (mq.addEventListener) mq.addEventListener('change', place);
+  else mq.addListener(place);
+  place();
+  return () => { if (mq.removeEventListener) mq.removeEventListener('change', place); else mq.removeListener(place); };
+}
 
 const App = {
   /* 集中状态（docs/review.md 架构-风险 2）：stations 数据 + 渲染哨兵 + 行索引（体检增量更新用，去 O(n²)）
@@ -372,13 +390,23 @@ const App = {
   syncDeadUI() {
     $('deadBtn').classList.toggle('on', this.state.showDead); $('deadBtn').setAttribute('aria-pressed', String(this.state.showDead));
   },
-  syncThemeUI() { // this.mq 由 boot 装配（auto 态系统切换监听也在那）；未装配时现取（matches 只读，无副作用）
+  syncThemeUI() { // this.mq 由 boot 装配（auto 态系统切换监听也在那）；未装配时现取（matches 只读，无副作用）。
+    // 三选菜单（§6.11/Q25）：图标 + 「主题：xx」文字 span（显隐走 CSS，boot/系统切换/Store 对账/点选后每次重写恒带）
+    // + aria-pressed 选中态；aria-label/title 只报当前档，不再宣称「点击循环」
     const mq = this.mq || matchMedia('(prefers-color-scheme: light)');
     document.documentElement.dataset.theme = this.state.theme === 'auto' ? (mq.matches ? 'light' : 'dark') : this.state.theme;
     const tn = { auto: '跟随系统', light: '浅色', dark: '深色' }[this.state.theme];
-    $('themeBtn').innerHTML = { auto: '<svg class="ic"><use href="#i-auto"/></svg>', light: '<svg class="ic"><use href="#i-sun"/></svg>', dark: '<svg class="ic"><use href="#i-moon"/></svg>' }[this.state.theme];
-    $('themeBtn').setAttribute('aria-label', '主题：' + tn + '，点击切换');
-    $('themeBtn').title = '主题：' + tn + '（点击循环：跟随系统 → 浅色 → 深色）';
+    $('themeBtn').innerHTML = { auto: '<svg class="ic"><use href="#i-auto"/></svg>', light: '<svg class="ic"><use href="#i-sun"/></svg>', dark: '<svg class="ic"><use href="#i-moon"/></svg>' }[this.state.theme] + `<span class="theme-t">主题：${tn}</span>`;
+    $('themeBtn').setAttribute('aria-label', '主题：' + tn);
+    $('themeBtn').title = '主题：' + tn;
+    for (const b of document.querySelectorAll('#themeMenu [data-theme-v]')) b.setAttribute('aria-pressed', String(b.dataset.themeV === this.state.theme));
+  },
+  themeMenuClose() { // 三选菜单收起统一口（点选/Esc/点外/断点收纳前）：焦点在菜单内则归还 themeBtn（同 srcPopClose 口径）
+    const m = $('themeMenu');
+    if (m.hidden) return;
+    const back = m.contains(document.activeElement);
+    m.hidden = true; $('themeBtn').setAttribute('aria-expanded', 'false');
+    if (back) $('themeBtn').focus();
   },
   loadUi3() { // 三键从镜像读入 + 刷 DOM（boot 装载与 applyServerStore 对账联动共用）
     this.state.view = Store.get('radio.view') === 'list' ? 'list' : 'grid'; // 网格为默认
@@ -1824,10 +1852,24 @@ const App = {
     $('gridBtn').onclick = () => setView('grid');
     $('listBtn').onclick = () => setView('list');
     $('deadBtn').onclick = () => { this.state.showDead = !this.state.showDead; Store.set('radio.showdead', this.state.showDead ? '1' : '0'); this.syncDeadUI(); this.render(); };
-    // 主题：🌓 跟随系统（默认）→ ☀️ 浅色 → 🌙 深色 循环，持久化 radio.theme；
+    // 主题：三选菜单（§6.11/Q25 拍板，替代旧循环切换）——点选写 radio.theme + syncThemeUI，Esc/点外关闭；
     // 生效值写 <html data-theme>，浅色变量只认它（auto 由 matchMedia 实时换算，系统切换即时跟随）
     this.mq = matchMedia('(prefers-color-scheme: light)');
-    $('themeBtn').onclick = () => { this.state.theme = { auto: 'light', light: 'dark', dark: 'auto' }[this.state.theme]; Store.set('radio.theme', this.state.theme); this.syncThemeUI(); };
+    $('themeBtn').onclick = () => {
+      const m = $('themeMenu');
+      m.hidden = !m.hidden;
+      $('themeBtn').setAttribute('aria-expanded', String(!m.hidden));
+      if (!m.hidden) m.querySelector('button')?.focus();
+    };
+    $('themeMenu').onclick = e => {
+      const b = e.target.closest('[data-theme-v]'); if (!b) return;
+      this.themeMenuClose();
+      this.state.theme = b.dataset.themeV; Store.set('radio.theme', this.state.theme); this.syncThemeUI();
+    };
+    document.addEventListener('click', e => { if (!e.target.closest('#themeWrap')) this.themeMenuClose(); }); // 点外收起（themeWrap 内点选不双关）
+    // 主题入口断点收纳（§6.11）：≤640px 收进 lowfreq（「⋯ 更多」内、显示「主题：xx」文字）、更宽回顶栏原锚点；
+    // 同一节点搬家不复制 id；销毁函数留底（P2 桌面壳接管时用）
+    this._placeThemeOff = uiPlaceTheme($('themeWrap'), document.querySelector('header'), $('file'), $('lowfreq'));
     this.mq.addEventListener('change', () => { if (this.state.theme === 'auto') this.syncThemeUI(); });
     this.loadUi3();
 
@@ -1847,6 +1889,7 @@ const App = {
         if (!$('manage').hidden && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) this.manageClose();
         $('lowfreq').classList.remove('open'); $('moreBtn').setAttribute('aria-expanded', 'false');
         $('sleepMenu').hidden = true;
+        this.themeMenuClose(); // 主题三选菜单（§6.11）：Esc 收起 + 焦点归还
         this.srcPopClose(); // 选源浮层（AIbot P2-1）：Esc 收起 + 焦点归还，与 ? 帮助的 Esc 自述一致
       }
       if (e.key === 'Tab' && (!$('manage').hidden || !$('detail').hidden || !$('discovery').hidden)) { // 焦点困在弹窗内（UI 审计 P2-7）：aria-modal 此前 Tab 可穿透到被遮罩的主页（B1 扩到详情、B3 扩到发现页）
@@ -1864,7 +1907,10 @@ const App = {
       const on = $('lowfreq').classList.toggle('open');
       $('moreBtn').setAttribute('aria-expanded', String(on));
     };
-    $('lowfreq').addEventListener('click', e => { if (e.target.closest('.btn')) { $('lowfreq').classList.remove('open'); $('moreBtn').setAttribute('aria-expanded', 'false'); } }); // 点操作项后收起
+    $('lowfreq').addEventListener('click', e => { // 点操作项后收起（themeWrap 除外：它弹自己的三选菜单，面板收起会把菜单藏没）
+      if (e.target.closest('#themeWrap')) return;
+      if (e.target.closest('.btn')) { $('lowfreq').classList.remove('open'); $('moreBtn').setAttribute('aria-expanded', 'false'); }
+    });
     document.addEventListener('click', e => {
       if ($('lowfreq').classList.contains('open') && !e.target.closest('#lowfreq,#moreBtn')) { $('lowfreq').classList.remove('open'); $('moreBtn').setAttribute('aria-expanded', 'false'); }
     });

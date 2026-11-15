@@ -212,6 +212,15 @@
   #sleepMenu { position:absolute; right:0; bottom:calc(100% + 8px); display:flex; flex-direction:column; gap:2px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:6px; min-width:8em; box-shadow:0 8px 24px rgba(0,0,0,.25); z-index:6; }
   #sleepMenu .btn { border:none; background:none; justify-content:flex-start; }
   #sleepMenu .btn:hover { background:var(--bg); } /* 浮层菜单项无默认边框/底色，hover 给底色反馈（AIbot PR#9 review P3-2） */
+  /* 主题三选菜单（§6.11/Q25）：themeBtn 点击弹三选（不再循环切换），当前项 aria-pressed 高亮；普通按钮 popover 不贴 role=menu（§6.6） */
+  #themeWrap { position:relative; display:inline-flex; }
+  #themeMenu { position:absolute; right:0; top:calc(100% + 8px); display:flex; flex-direction:column; gap:2px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:6px; min-width:8em; box-shadow:0 8px 24px rgba(0,0,0,.25); z-index:6; } /* 顶栏在页首：向下弹（footer 菜单向上弹相反）；收进 lowfreq 时同样向下不遮触发器 */
+  #themeMenu .btn { border:none; background:none; justify-content:flex-start; }
+  #themeMenu .btn:hover { background:var(--bg); }
+  #themeMenu .btn[aria-pressed="true"] { color:var(--acc); }
+  /* 主题文字（§6.11）：桌面只留图标；≤640px（含收进 lowfreq 时）显示「主题：xx」——span 显隐全走 CSS，syncThemeUI 每次重写恒带 */
+  #themeBtn .theme-t { display:none; }
+  @media (max-width:640px) { #themeBtn .theme-t { display:inline; } }
   /* 选源浮层（②a）：同 sleepMenu 范式；源行整行可点，URL 截断 title 全显（与 ⚙ 面板同口径） */
   #srcWrap { position:relative; display:inline-flex; }
   #srcMenu { position:absolute; right:0; bottom:calc(100% + 8px); display:flex; flex-direction:column; gap:2px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:6px; min-width:min(24em,88vw); max-width:min(88vw,38em); max-height:46vh; overflow-y:auto; box-shadow:0 8px 24px rgba(0,0,0,.25); z-index:6; }
@@ -297,7 +306,15 @@
   <button class="btn" id="moreBtn" aria-haspopup="true" aria-expanded="false" aria-label="更多操作"><svg class="ic"><use href="#i-dots"/></svg></button>
   <button class="btn" id="deadBtn" aria-pressed="false" hidden title="体检不可用（✗）的电台默认隐藏；点击显示/隐藏它们"><svg class="ic"><use href="#i-x"/></svg><span>无效源</span></button>
   <button class="btn" id="manageBtn" title="分类与电台维护：移动/重命名/隐藏电台，新建/重命名/隐藏分类（个人配置，同步后保留）"><svg class="ic"><use href="#i-gear"/></svg><span>维护</span></button>
-  <button class="btn" id="themeBtn" aria-label="主题：跟随系统，点击切换" title="主题：跟随系统（点击循环：跟随系统 → 浅色 → 深色）"><svg class="ic"><use href="#i-auto"/></svg></button> <!-- 首屏即 SVG（AIbot PR#9 review P3-3）：默认档=auto，boot 前不闪 🌓 emoji -->
+  <!-- 主题三选菜单（§6.11/Q25）：唯一实例静态骨架，app.js 只管显隐与选中态；#themeWrap 整体随断点在顶栏/#lowfreq 间搬家（uiPlaceTheme），监听与 radio.theme 语义不复制 -->
+  <span id="themeWrap">
+    <button class="btn" id="themeBtn" aria-haspopup="true" aria-expanded="false" aria-label="主题：跟随系统" title="主题：跟随系统"><svg class="ic"><use href="#i-auto"/></svg></button> <!-- 首屏即 SVG（AIbot PR#9 review P3-3）：默认档=auto，boot 前不闪 🌓 emoji -->
+    <span id="themeMenu" hidden>
+      <button type="button" class="btn" data-theme-v="auto" aria-pressed="true">跟随系统</button>
+      <button type="button" class="btn" data-theme-v="light" aria-pressed="false">浅色</button>
+      <button type="button" class="btn" data-theme-v="dark" aria-pressed="false">深色</button>
+    </span>
+  </span>
   <input type="file" id="file" accept=".txt,.csv,.m3u" hidden aria-label="导入电台列表文件">
 </header>
 <div id="cats" role="group" aria-label="电台分类"></div>

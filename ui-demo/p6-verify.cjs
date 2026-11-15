@@ -9,6 +9,7 @@
    VRADIO_ALLOW_EXTERNAL=1（醒目警告后继续），否则拒绝退出。提交态门：未提交改动拒跑（产物目录豁免）。
    断言失败 exitCode=1（AIbot PR#34 P2）；Playwright 加载失败也写 FAIL 报告而非裸崩（二次复核 P2）；
    自举探活失败走统一 try/finally（四轮 P2：不再 process.exit 绕过清理/落盘/Z2）；VR_FAULT_BOOT=1 可注入启动失败。
+   Z1 只统计脚本错误（pageerror + 非资源类 console error）；资源加载失败入 resourceErrors 只记不判（链尾收口定性：自举实例无 gitignored my-radio.txt 的 404 是 app.js 个人层三态显式处理的合法空态，Chrome 固定记 console 噪音，JS 无法抑制）。
    产物：docs/ui-redesign-assets/p6/*.png + validation.json。真实音频不可保证（沙箱网络），播放仅验证
    connecting 阶段与记住最近，随后 Player.stop() 收尾。 */
 const fs = require('fs'), path = require('path'), assert = require('assert'), http = require('http'), net = require('net'), os = require('os'), crypto = require('crypto');
@@ -37,7 +38,7 @@ const pickPort = () => new Promise((resolve, reject) => { // 82xx 段随机起�
   let chromium = null;
   try { chromium = require(process.env.VRADIO_PLAYWRIGHT || 'playwright').chromium; } // playwright 包导出命名属性 chromium（与原顶层解构同义）
   catch (e) {
-    const report = { capturedAt: new Date().toISOString(), result: 'FAIL', failure: 'Playwright 加载失败（本机需已安装；用 VRADIO_PLAYWRIGHT 指向全局安装路径，非项目依赖）: ' + e.message, assertions: [], screenshots: [], errors: [], notes: [] };
+    const report = { capturedAt: new Date().toISOString(), result: 'FAIL', failure: 'Playwright 加载失败（本机需已安装；用 VRADIO_PLAYWRIGHT 指向全局安装路径，非项目依赖）: ' + e.message, assertions: [], screenshots: [], errors: [], resourceErrors: [], notes: [] };
     fs.writeFileSync(path.join(output, 'validation.json'), JSON.stringify(report, null, 2) + '\n');
     console.error('FAIL: Playwright 加载失败——', e.message); process.exitCode = 1; return;
   }
@@ -49,7 +50,7 @@ const pickPort = () => new Promise((resolve, reject) => { // 82xx 段随机起�
   //    finally——不留 worktree 移除/FAIL 落盘/Z2；现在 not-ready 走 throw 进 catch/finally 全清理链）——
   let browser = null;
   let srv = null, base = process.env.VRADIO_URL || '', wt = null, wtAlive = false; // 外提：finally 清理链要访问
-  const report = { capturedAt: new Date().toISOString(), url: '', assertions: [], screenshots: [], perf: {}, errors: [], notes: [] };
+  const report = { capturedAt: new Date().toISOString(), url: '', assertions: [], screenshots: [], perf: {}, errors: [], resourceErrors: [], notes: [] };
   try {
   // —— 自举隔离（AIbot PR#34 P0 + 二次复核 P2 my-radio）：临时 worktree 被测实例；外部目标须显式确认 ——
   if (base) {
@@ -77,7 +78,7 @@ const pickPort = () => new Promise((resolve, reject) => { // 82xx 段随机起�
   const page = await ctx.newPage();
   report.browser = browser.version();
   page.on('pageerror', e => report.errors.push('pageerror:' + e.message));
-  page.on('console', m => { if (m.type() === 'error') report.errors.push('console:' + m.text()); });
+  page.on('console', m => { if (m.type() === 'error') { const t = m.text() || ''; (/^Failed to load resource/.test(t) ? report.resourceErrors : report.errors).push('console:' + t); } }); // 资源加载噪音不入 Z1（链尾收口定性：自举实例合法缺 my-radio.txt 的 404，app.js 三态按空列表处理），脚本错误照旧
   const check = (name, ok) => { assert(ok, name); report.assertions.push(name); console.log('  ✓', name); };
   const note = t => report.notes.push(t);
   const shot = async name => { await page.mouse.move(2, 2); await page.screenshot({ path: path.join(output, name) }); report.screenshots.push(name); };
@@ -345,6 +346,6 @@ const pickPort = () => new Promise((resolve, reject) => { // 82xx 段随机起�
   else { report.result = 'FAIL'; report.failure = (report.failure || '') + ' Z3 清理失败门未过（不得宣称零泄漏）: ' + cleanupErr.join(' | ') + (srvGone ? '' : ' [server未退出]') + (wtGone ? '' : ' [worktree未移除]'); process.exitCode = 1; }
   if (faultPin) { try { faultPin.kill(); await new Promise(r => setTimeout(r, 500)); git(`worktree remove --force "${wt}"`); console.error('（注入钉已拔除并补清理——Z3 失败记录保留为门验证证据）'); } catch (_) { try { faultPin.kill(); } catch (_) {} console.error('注入钉拔除后仍需手动清理:', wt); } }
   fs.writeFileSync(path.join(output, 'validation.json'), JSON.stringify(report, null, 2) + '\n');
-  console.log(JSON.stringify({ result: report.result, assertions: report.assertions.length, screenshots: report.screenshots.length, errors: report.errors }, null, 1));
+  console.log(JSON.stringify({ result: report.result, assertions: report.assertions.length, screenshots: report.screenshots.length, errors: report.errors, resourceErrors: report.resourceErrors }, null, 1));
 }
 })().catch(e => { console.error('p6-verify 异常：', e); process.exitCode = 1; });

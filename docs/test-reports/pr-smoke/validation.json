@@ -1,0 +1,47 @@
+{
+  "capturedAt": "2026-11-15T17:03:05.704Z",
+  "url": "http://127.0.0.1:8258/",
+  "assertions": [
+    "S1 全库装配 >50 台（临时实例含 radio.txt 全量）",
+    "S2 无 pageerror（启动段）",
+    "S3 分类条渲染",
+    "F1 多词 AND（界面 1 = 口径 1）",
+    "F2 空态有搜全部出口",
+    "F3 搜全部保词解范围",
+    "T1 三选菜单三项",
+    "T2 浅色生效",
+    "T3 深色恢复",
+    "P1 点播记最近",
+    "P2 onphase 枚举（connecting/playing/buffering/paused/idle）",
+    "P3 停止后 phase=idle",
+    "M1 维护面板三分区",
+    "M2 对象编辑器出现",
+    "M3 dirty 离开三选（保存并继续/放弃修改/继续编辑）",
+    "H1 render 中位 60.3ms < 100ms",
+    "M4 390 无横向溢出",
+    "M5 390 header 收纳（≤640 主题控件进 lowfreq）",
+    "M6 390 无新增 pageerror",
+    "Z1 全程零 pageerror / 非资源 console error"
+  ],
+  "errors": [],
+  "resourceErrors": [
+    "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "console:Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "notes": [
+    "全库 1521 台 @ 151.0.7922.34",
+    "点播后 phase=playing",
+    "render() 全库 1521 台各轮中位 60.3ms → 取最小 60.3ms（空闲窗口探测，口径同 p6 H1）",
+    "资源加载噪音 2 条（自举实例合法 404 只记不判，同 p6 分流口径）",
+    "Z2 宿主 data/store.json + my-radio.txt 运行前后哈希不变",
+    "Z3 清理失败门：browser/server/worktree 全回收（零泄漏成立）"
+  ],
+  "perf": {
+    "renderMedianMs": 60.3,
+    "renderRoundMedians": [
+      60.3
+    ],
+    "stations": 1521
+  },
+  "result": "PASS"
+}

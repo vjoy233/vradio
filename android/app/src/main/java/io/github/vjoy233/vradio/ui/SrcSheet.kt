@@ -125,9 +125,25 @@ private fun codeBadge(r: DiagnosticResult): Pair<String, Int> = when (r.code) {
   else -> "地址不合法" to 2
 }
 
+/** 源详情行可见动作（B1 review P1）：禁用行不渲染「播放/重播」——onPlay(i) 会落到其它启用源，
+ *  按钮语义与实际播放结果不一致；管理动作（复制/取消禁用/上下移）保留。Compose 外纯函数，JVM 直测
+ *  （CfgSourceLifecycleTest），浮层渲染按此列表拼装。 */
+enum class SourceRowAct { PLAY, REPLAY, COPY, DISABLE, UNDISABLE, MOVE_UP, MOVE_DOWN }
+
+fun sourceRowActs(cur: Boolean, off: Boolean): List<SourceRowAct> {
+  val out = ArrayList<SourceRowAct>(5)
+  if (!off) out.add(if (cur) SourceRowAct.REPLAY else SourceRowAct.PLAY)
+  out.add(SourceRowAct.COPY)
+  out.add(if (off) SourceRowAct.UNDISABLE else SourceRowAct.DISABLE)
+  out.add(SourceRowAct.MOVE_UP)
+  out.add(SourceRowAct.MOVE_DOWN)
+  return out
+}
+
 /** 源详情：台名/分类/台标/收藏态 + 每源探活结果（code 徽标/why/延迟/字节/模式）+ 复制/播放此源/
  *  人工排序/启用禁用 + 恢复默认两动作 + 歌史入口。诊断经 CheckStream 直连（Android 无 /api）；
- *  手动禁用的源不发请求，显示「不能诊断」+「取消禁用」。fav/checking/onSongs 为可选扩展参数
+ *  手动禁用的源不发请求，显示「不能诊断」+「取消禁用」，且禁用行不渲染播放/重播（B1 review P1，
+ *  可见性走 sourceRowActs 纯函数）。fav/checking/onSongs 为可选扩展参数
  *  （默认值保 §5.5 签名兼容），由 AppRoot 接线时注入。 */
 @Composable
 fun SourceDetailSheet(
@@ -205,17 +221,21 @@ fun SourceDetailSheet(
           } else {
             Text("未诊断（点下方「诊断全部源」）", fontSize = 11.sp, color = pal.dim, modifier = Modifier.padding(start = 24.dp))
           }
-          // 动作行：播放此源 / 复制 / 禁用（取消禁用）/ 上移 / 下移
+          // 动作行按 sourceRowActs 拼装（B1 review P1）：禁用行隐藏播放/重播只留管理动作（复制/取消禁用/上下移）
           Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(start = 24.dp, top = 2.dp)) {
-            ActText(if (cur) "重播" else "播放") { onPlay(i) }
-            ActText("复制") {
-              (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)
-                ?.setPrimaryClip(ClipData.newPlainText("vradio", u))
-              Toast.makeText(ctx, "已复制源地址", Toast.LENGTH_SHORT).show()
+            for (a in sourceRowActs(cur, off)) when (a) {
+              SourceRowAct.PLAY -> ActText("播放") { onPlay(i) }
+              SourceRowAct.REPLAY -> ActText("重播") { onPlay(i) }
+              SourceRowAct.COPY -> ActText("复制") {
+                (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)
+                  ?.setPrimaryClip(ClipData.newPlainText("vradio", u))
+                Toast.makeText(ctx, "已复制源地址", Toast.LENGTH_SHORT).show()
+              }
+              SourceRowAct.DISABLE -> ActText("禁用", warn = true) { onEdit(SourceAction.ToggleDisable(i)) }
+              SourceRowAct.UNDISABLE -> ActText("取消禁用") { onEdit(SourceAction.ToggleDisable(i)) }
+              SourceRowAct.MOVE_UP -> ActText("↑") { onEdit(SourceAction.Move(i, true)) }
+              SourceRowAct.MOVE_DOWN -> ActText("↓") { onEdit(SourceAction.Move(i, false)) }
             }
-            ActText(if (off) "取消禁用" else "禁用", warn = !off) { onEdit(SourceAction.ToggleDisable(i)) }
-            ActText("↑") { onEdit(SourceAction.Move(i, true)) }
-            ActText("↓") { onEdit(SourceAction.Move(i, false)) }
           }
         }
       }

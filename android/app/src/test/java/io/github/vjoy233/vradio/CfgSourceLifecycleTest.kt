@@ -5,6 +5,8 @@ import io.github.vjoy233.vradio.data.Library
 import io.github.vjoy233.vradio.data.Store
 import io.github.vjoy233.vradio.model.Cfg
 import io.github.vjoy233.vradio.model.HealthEntry
+import io.github.vjoy233.vradio.ui.SourceRowAct
+import io.github.vjoy233.vradio.ui.sourceRowActs
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -18,7 +20,8 @@ import kotlin.io.path.createTempDirectory
 /* CfgSourceLifecycleTest（B1，plan-expansion-r4 §5.4/§5.6）：srcManualOrder/srcDisabled/srcLabels 三字段的
    有效顺序语义（manual 全列/部分列/含未知 URL/无 manual）、禁用剔除与全禁（NO_ENABLED_SOURCE）、
    u[]/u[0] 物理序不动（身份公理）、收藏/健康回绑不受排序影响、旧 cfg 无新字段行为不变、
-   恢复默认两动作彼此独立、cfg round-trip 不丢三字段。 */
+   恢复默认两动作彼此独立、cfg round-trip 不丢三字段；装配每台 6 条统一封顶（B1 review P1）+
+   源详情行动作可见性（B1 review P1：禁用行不渲染播放/重播）。 */
 class CfgSourceLifecycleTest {
   private lateinit var dir: File
 
@@ -191,5 +194,39 @@ class CfgSourceLifecycleTest {
     )
     assertEquals(c, CfgCodec.parse(CfgCodec.toJson(c)))
     assertEquals(4, CfgCodec.count(c))                           // srcs+manual+disabled+labels 各计 1
+  }
+
+  // —— 装配每台 6 条统一封顶（plan §5.4「每台最多 6 条」，B1 review P1：最终源集合收口，保主源首位）——
+
+  @Test fun 追加源超限装配封顶六条保主源首位() {
+    val l = lib(MAIN, """{"v":2,"srcs":{"http://a/1":["http://s/1","http://s/2","http://s/3","http://s/4","http://s/5","http://s/6","http://s/7"]}}""")
+    val s = stA(l)
+    assertEquals(6, s.u.size)                                    // 最终源集合统一封顶（原生+追加）
+    assertEquals("http://a/1", s.u0)                             // 主源身份键永不裁（封顶只裁台尾）
+    assertEquals(listOf("http://a/1", "http://a/2", "http://a/3", "http://s/1", "http://s/2", "http://s/3"), s.u)
+  }
+
+  @Test fun 原生超六源装配同样封顶() {
+    val main = "华语音乐,#genre#\n" + (1..7).joinToString("\n") { "台C,http://c/$it" }
+    val l = lib(main)
+    val s = l.stations.first { it.n == "台C" }
+    assertEquals(6, s.u.size)
+    assertEquals("http://c/1", s.u0)
+  }
+
+  // —— 源详情行动作可见性（B1 review P1：禁用行不渲染播放/重播，只留管理动作）——
+
+  @Test fun 禁用行无播放重播只留管理动作() {
+    val acts = sourceRowActs(cur = true, off = true)             // 正在用+已禁用：也不给重播
+    assertFalse(acts.contains(SourceRowAct.PLAY))
+    assertFalse(acts.contains(SourceRowAct.REPLAY))
+    assertEquals(listOf(SourceRowAct.COPY, SourceRowAct.UNDISABLE, SourceRowAct.MOVE_UP, SourceRowAct.MOVE_DOWN), acts)
+  }
+
+  @Test fun 启用行播放与当前重播() {
+    assertEquals(listOf(SourceRowAct.PLAY, SourceRowAct.COPY, SourceRowAct.DISABLE, SourceRowAct.MOVE_UP, SourceRowAct.MOVE_DOWN),
+      sourceRowActs(cur = false, off = false))
+    assertEquals(listOf(SourceRowAct.REPLAY, SourceRowAct.COPY, SourceRowAct.DISABLE, SourceRowAct.MOVE_UP, SourceRowAct.MOVE_DOWN),
+      sourceRowActs(cur = true, off = false))
   }
 }

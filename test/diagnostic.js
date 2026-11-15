@@ -1,6 +1,7 @@
 // 探活结构化结果测试（B1，契约 contracts/source-diagnostic.json + fixtures/diagnostic-results.json）：
 // 本地回环 fixture 服务器（node http）+ checkDetail 的 testHook 测试专用缝（仅测试用——顶替 safeTarget/guardLookup
-// 判定放行回环目标，生产路径绝不传）。覆盖：直流成功/HTML 错误页/336B 假流（SHORT_BODY）/直流 404 字节法两态（小响应 SHORT_BODY、真吐流 OK——AGENTS 已知坑不信状态码）/清单 404（HTTP）/HLS 无分片/
+// 判定放行回环目标，生产路径绝不传）。覆盖：直流成功/HTML 错误页/大 HTML 谎报 Content-Type（内容嗅探兜底，review P2）/
+// 336B 假流（SHORT_BODY）/直流 404 字节法两态（小响应 SHORT_BODY、真吐流 OK——AGENTS 已知坑不信状态码）/清单 404（HTTP）/HLS 无分片/
 // 分片拉不到（NO_SEGMENT）/分片不吐字节/相对分片路径解析/master→variant 递归/畸形重定向（REDIRECT_REJECTED）/
 // 重定向深度上限/网络失败（NETWORK）/INVALID_URL；checkStream 旧签名兼容。每例断言完整结构字段（code 精确 +
 // httpStatus/bytes/latencyMs 存在性 + 字段集合与契约一致）。零依赖离线，npm test 随跑。
@@ -19,7 +20,7 @@ const freePort = () => new Promise((resolve, reject) => {
 });
 
 // fixture 载荷：够阈值的假音频/分片字节（验收口径 = 持续吐数据 ≥ 阈值，见 AGENTS.md 已知坑）
-const BIG = Buffer.alloc(12000, 1), SEG = Buffer.alloc(8000, 2), FAKE = Buffer.alloc(336, 3), SHORT = Buffer.alloc(100, 4), HTMLBIG = Buffer.from('<html>' + 'x'.repeat(9000) + '</html>');
+const BIG = Buffer.alloc(12000, 1), SEG = Buffer.alloc(8000, 2), FAKE = Buffer.alloc(336, 3), SHORT = Buffer.alloc(100, 4), HTMLBIG = Buffer.from('<html>' + 'x'.repeat(9000) + '</html>'), HTMLSMALL = Buffer.from('<html>' + 'x'.repeat(300) + '</html>');
 const m3u8 = lines => lines.join('\n') + '\n';
 
 let deadPort = 0; // 空闲端口（建服后即关）：分片指向它 = 建连必拒
@@ -27,6 +28,8 @@ const fixture = (port) => http.createServer((req, res) => {
   const p = req.url.split('?')[0];
   if (p === '/ok.mp3') { res.writeHead(200, { 'Content-Type': 'audio/mpeg' }); return res.end(BIG); }
   if (p === '/html') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end(HTMLBIG); }
+  if (p === '/htmloct') { res.writeHead(200, { 'Content-Type': 'application/octet-stream' }); return res.end(HTMLBIG); } // ≥8000B HTML 谎报 CT（review P2：字节达标后内容判定兜底）
+  if (p === '/fakeoct') { res.writeHead(200, { 'Content-Type': 'application/octet-stream' }); return res.end(HTMLSMALL); } // <8000B HTML 谎报 CT：判序冻结仍 SHORT_BODY（HTML 不前置于字节阈值）
   if (p === '/fake') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end(FAKE); } // 336B 假流（黄金样本同型）
   if (p === '/code404') { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('not found'); }
   if (p === '/code404big') { res.writeHead(404, { 'Content-Type': 'audio/mpeg' }); return res.end(BIG); } // 非 2xx 但真吐流：字节法认活（AGENTS 已知坑）
@@ -75,6 +78,10 @@ const shape = (d, url, code, okv) => {
     assert.strictEqual(d.httpStatus, 200); assert.strictEqual(d.bytes, 12000); assert.ok(d.latencyMs >= 0);
   }));
   await ok('HTML 错误页 → HTML（字节够但内容是 HTML）', () => probe('/html', 'HTML', false, d => assert.strictEqual(d.httpStatus, 200)));
+  await ok('大 HTML 错误页谎报 Content-Type → 仍 HTML（字节达标后内容嗅探兜底，review P2 回归）', () =>
+    probe('/htmloct', 'HTML', false, d => assert.strictEqual(d.contentType, 'application/octet-stream')));
+  await ok('小 HTML 谎报 Content-Type → 仍 SHORT_BODY（判序冻结：HTML 判定不前置于字节阈值）', () =>
+    probe('/fakeoct', 'SHORT_BODY', false, d => assert.strictEqual(d.contentType, 'application/octet-stream')));
   await ok('336B 假流 → SHORT_BODY（字节不足先于 HTML 判，黄金样本同型）', () => probe('/fake', 'SHORT_BODY', false, d => {
     assert.strictEqual(d.bytes, 336); assert.strictEqual(d.contentType, 'text/html');
   }));

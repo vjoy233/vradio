@@ -8,8 +8,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/* CheckStream 离线部分：FakeRaw 喂罐头响应，验收字节纪律/HTML 拒收/HLS 链路/相对分片解析。
-   网络实现（OkHttpRaw）不在此测——真流验收靠端上行为验证（AGENTS.md：行为验证 = 实际点播）。 */
+/* CheckStream 离线部分：FakeRaw 喂罐头响应，验收字节纪律/HTML 拒收（含谎报 Content-Type 的内容嗅探，review P2）/
+   HLS 链路/相对分片解析。网络实现（OkHttpRaw）不在此测——真流验收靠端上行为验证（AGENTS.md：行为验证 = 实际点播）。 */
 class CheckStreamTest {
 
   private class FakeRaw(private val map: Map<String, RawHttp.Resp?>) : RawHttp {
@@ -34,6 +34,21 @@ class CheckStreamTest {
   @Test fun 直流HTML错误页拒收() = runBlocking {
     val v = cs(mapOf("http://a/1.mp3" to resp(9000, "text/html"))).check("http://a/1.mp3")
     assertFalse(v.ok)
+    assertEquals(CheckStream.Verdict.Code.HTML, v.code)
+  }
+
+  @Test fun 直流大HTML谎报CT内容嗅探拒收() = runBlocking {   // review P2：字节达标后仍执行 HTML 内容判定（Web htmlLike 同款）
+    val body = ("<html>" + "x".repeat(9000) + "</html>").toByteArray()
+    val v = cs(mapOf("http://a/1.mp3" to resp(9000, "application/octet-stream", body = body))).check("http://a/1.mp3")
+    assertFalse(v.ok)
+    assertEquals(CheckStream.Verdict.Code.HTML, v.code)
+  }
+
+  @Test fun 直流小HTML谎报CT仍按字节不足() = runBlocking {   // 判序冻结：SHORT_BODY 先于 HTML（不前移判定）
+    val body = ("<html>" + "x".repeat(300) + "</html>").toByteArray()
+    val v = cs(mapOf("http://a/1.mp3" to resp(500, "application/octet-stream", body = body))).check("http://a/1.mp3")
+    assertFalse(v.ok)
+    assertEquals(CheckStream.Verdict.Code.SHORT_BODY, v.code)
   }
 
   @Test fun 直流网络失败() = runBlocking {

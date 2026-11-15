@@ -53,13 +53,13 @@ class LibraryTest {
     assertTrue(l.stations.any { it.n == "台M" })
   }
 
-  @Test fun appendSrcsTailKeepU0() { // 追加备选源：只挂台尾不动身份键 s.u[0]；封顶 6
+  @Test fun appendSrcsTailKeepU0() { // 追加备选源：只挂台尾不动身份键 s.u[0]；最终源集合统一封顶 6（B1 review P1：原生+追加合计）
     Store.set("radio.cfg", "{\"srcs\":{\"http://a/1\":[\"http://s/1\",\"http://s/2\",\"http://s/3\",\"http://s/4\",\"http://s/5\",\"http://s/6\",\"http://s/7\",\"http://s/1\"]}}")
     val l = lib("华语音乐,#genre#\n台A,http://a/1")
     l.reload()
     val st = l.stations.first { it.n == "台A" }
     assertEquals("http://a/1", st.u0)
-    assertEquals(listOf("http://a/1", "http://s/1", "http://s/2", "http://s/3", "http://s/4", "http://s/5", "http://s/6"), st.u) // 封顶 6 + 去重
+    assertEquals(listOf("http://a/1", "http://s/1", "http://s/2", "http://s/3", "http://s/4", "http://s/5"), st.u) // 合计封顶 6 + 去重，主源首位
   }
 
   @Test fun manualHideTotallyGone() { // 手动隐藏 = 彻底消失：无正在播例外（与死台隐藏口径不同），搜索/可见均不可见

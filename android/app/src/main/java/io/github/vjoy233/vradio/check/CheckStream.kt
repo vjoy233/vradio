@@ -58,11 +58,12 @@ class OkHttpRaw(private val base: OkHttpClient = OkHttpClient()) : RawHttp {
               val bos = ByteArrayOutputStream(minOf(maxBytes, 1L shl 20).toInt())
               val buf = ByteArray(65536)
               var n = 0L
-              while (true) {                       // 直播流攒够即收，不读完（JS res.on('data') 同款）
-                val r = src.read(buf)
+              while (true) {                       // 直播流攒够即收，不读完（JS res.on('data') 同款）；body 保留
+                val r = src.read(buf)              // 流头——跨上限的读按剩余截断（前缀完整供 isHtmlResp 嗅探用）
                 if (r < 0) break
+                val room = (maxBytes - bos.size()).toInt()
+                if (room > 0) bos.write(buf, 0, minOf(r, room))
                 n += r
-                if (n <= maxBytes) bos.write(buf, 0, r)
                 if (n >= maxBytes) break
               }
               RawHttp.Resp(resp.code, resp.header("Content-Type") ?: "", n, bos.toByteArray(), lat)
@@ -76,7 +77,8 @@ class OkHttpRaw(private val base: OkHttpClient = OkHttpClient()) : RawHttp {
 
 class CheckStream(private val http: RawHttp) {
   /** 结构化探活结论（B1，contracts/source-diagnostic.json 契约面）。code 判定次序（双端须一致）：
-   *  直流/分片 = HTML（类型错且字节够）> SHORT_BODY（窗内字节不足，fixture 336B 假流口径）> OK；
+   *  直流/分片 = SHORT_BODY（窗内字节不足，fixture 336B 假流口径——先于 HTML 判，判序冻结）> HTML
+   *  （isHtmlResp：CT 头或正文前缀，字节达标后仍执行内容判定——≥8000B HTML 错误页谎报 CT 也拒，review P2）> OK；
    *  REDIRECT_REJECTED/INVALID_URL 安卓侧不可达值——okhttp 默认跟重定向不逐跳复查（G P3 留档的
    *  已知差异），INVALID_URL 仅在入口 http(s) 形态预检时触发；两值保留是为枚举与 Web/契约对齐。 */
   data class Verdict(val ok: Boolean, val bytes: Long, val hls: Boolean, val why: String, val code: Code,
@@ -101,12 +103,13 @@ class CheckStream(private val http: RawHttp) {
   private fun v(ok: Boolean, bytes: Long, hls: Boolean, why: String, code: Verdict.Code, st: Int, ct: String, lat: Long) =
     Verdict(ok, bytes, hls, why, code, st, ct, lat, System.currentTimeMillis())
 
-  /** 非 HLS：窗内累计 ≥8000B 且非 HTML 认活（不看状态码）。 */
+  /** 非 HLS：窗内累计 ≥8000B 且非 HTML 认活（不看状态码）。HTML 判定 = CT 头或正文前缀嗅探（isHtmlResp，
+      与 Web htmlLike 双端同款，review P2）——字节达标后仍执行，谎报 Content-Type 的大 HTML 错误页也拒。 */
   private suspend fun checkDirect(url: String, win: Long): Verdict {
     val r = http.get(url, win, MAX_DIRECT) ?: return v(false, 0, false, "网络失败", Verdict.Code.NETWORK, 0, "", 0)
     val code = when {
-      isHtml(r.ct) && r.bytes >= C.CHECK_MIN_BYTES -> Verdict.Code.HTML  // 整页 HTML 错误页（字节够类型错）
-      r.bytes < C.CHECK_MIN_BYTES -> Verdict.Code.SHORT_BODY             // 窗内字节不足（336B 假流类，fixture 口径）
+      r.bytes < C.CHECK_MIN_BYTES -> Verdict.Code.SHORT_BODY             // 窗内字节不足（336B 假流类，fixture 口径；先于 HTML 判——判序冻结）
+      isHtmlResp(r.ct, r.body) -> Verdict.Code.HTML                      // 整页 HTML 错误页（CT 头或内容前缀）
       else -> Verdict.Code.OK
     }
     val why = when (code) {
@@ -144,6 +147,16 @@ class CheckStream(private val http: RawHttp) {
   }
 
   private fun isHtml(ct: String) = ct.contains("text/html", ignoreCase = true)
+
+  /** HTML 错误页判定（review P2，Web htmlLike 双端同款）：CT 头 text/html **或** 正文前缀嗅探（BOM/空白后
+      以 <!doctype html / <html+空白或> 开头）。音频/TS 流首字节是 ID3/0xFF/0x47 等帧头，前缀嗅探不会误伤。 */
+  private fun isHtmlResp(ct: String, body: ByteArray): Boolean {
+    if (isHtml(ct)) return true
+    val head = String(body.copyOfRange(0, minOf(256, body.size)), Charsets.UTF_8)
+      .trimStart('\uFEFF').trimStart().lowercase()
+    if (head.startsWith("<!doctype html")) return true
+    return head.startsWith("<html") && head.length > 5 && (head[5] == '>' || head[5].isWhitespace())
+  }
 
   /** 相对分片拼回远端 base（JS new URL(seg, url)）；URI 对未转义中文等非法字符会抛——绝对地址直收，相对解析失败即拒。 */
   private fun resolve(seg: String, base: String): String? {

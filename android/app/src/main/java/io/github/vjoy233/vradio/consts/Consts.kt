@@ -44,6 +44,7 @@ object C {
   const val WATCHDOG_MS = 12000L         // stalled/watching 看门狗：12s 无进展按断流
   const val MEM_FIFO = 300               // volperst/srcmem2 各自 FIFO 封顶
   const val SRC_APPEND_CAP = 6           // 追加备选源每台封顶（对齐 mystation 护栏）
+  const val SRC_TOTAL_CAP = SRC_APPEND_CAP // 每台最终源集合封顶（原生+追加，plan §5.4「每台最多 6 条」；装配层统一收口，review P1——Web app.js SRC_CAP 镜像）
   const val DEFAULT_VOL = 90             // 无记忆时全局默认音量（%）
 
   // —— 歌曲历史（app.js pushSongHist）——

@@ -114,9 +114,15 @@ function request(url, { timeout = 10000, headers = {}, maxBytes = 1 << 20, maxRe
         if (!next) return reject(new Error('重定向目标非公网'));
         return request(next, { timeout, headers, maxBytes, maxRedirect }, depth + 1, hook).then(resolve, reject);
       }
-      const chunks = []; let n = 0, settled = false;
+      const chunks = []; let n = 0, kept = 0, settled = false;
       const finish = () => { if (settled) return; settled = true; clearTimeout(deadline); resolve({ status: res.statusCode, ct: res.headers['content-type'] || '', bytes: n, latencyMs: lat, body: Buffer.concat(chunks) }); };
-      res.on('data', c => { n += c.length; if (n <= maxBytes) chunks.push(c); if (n >= maxBytes) { req.destroy(); finish(); } }); // 直播流攒够即返回
+      // 直播流攒够即返回；body 保留流头——跨上限的单块按剩余截断（不再整块丢弃），前缀完整供 checkDetail 的
+      // 直流 HTML 内容嗅探用（单块 >maxBytes 的响应原先 body 为空，review P2 顺手堵住）
+      res.on('data', c => {
+        n += c.length;
+        if (kept < maxBytes) { const room = maxBytes - kept; chunks.push(room >= c.length ? c : c.slice(0, room)); kept += Math.min(room, c.length); }
+        if (n >= maxBytes) { req.destroy(); finish(); }
+      });
       res.on('end', finish);
       res.on('error', () => { if (!settled) { settled = true; clearTimeout(deadline); reject(new Error('stream error')); } });
     });
@@ -127,9 +133,17 @@ function request(url, { timeout = 10000, headers = {}, maxBytes = 1 << 20, maxRe
   });
 }
 
+/* HTML 错误页判定（review P2，与 Android CheckStream 双端同款）：CT 头 text/html **或** 正文前缀嗅探（BOM/空白后
+   以 <!doctype html / <html 开头）二合一。判序冻结不动（SHORT_BODY→HTML→OK）：字节达标后仍执行内容判定——
+   ≥8000B 的 HTML 错误页即使服务器谎报 Content-Type（octet-stream/空）也判 HTML 不判 OK（AGENTS 已知坑：不能信 CT）；
+   音频/TS 流首字节是 ID3/0xFF/0x47 等帧头，前缀嗅探不会误伤 */
+const htmlLike = (ct, body) => /text\/html/i.test(ct || '')
+  || /^\s*(?:<!doctype\s+html|<html[\s>])/i.test((body || Buffer.alloc(0)).slice(0, 256).toString('utf8'));
+
 /* 结构化探活（B1，契约 contracts/source-diagnostic.json）：ok 语义与旧 checkStream 完全一致，code 固定枚举是
    程序分支唯一依据——UI 不得根据 why 文案反推状态。所有分支（正常/失败/重定向/HLS 分片/字节阈值）都返回完整结构。
-   判序（直流，字节法）：SHORT_BODY（低于 8000B，336B 假流类——与黄金样本同型，先于 HTML 判）→ HTML → OK；
+   判序（直流，字节法）：SHORT_BODY（低于 8000B，336B 假流类——与黄金样本同型，先于 HTML 判）→ HTML（htmlLike：
+   CT 头或正文前缀）→ OK；
    **直流不看状态码**（AGENTS 已知坑明文：流地址漂移年代不能信状态码/Content-Type，按持续吐数据 ≥ 阈值字节验收；
    非 2xx 的 httpStatus 照常上报供诊断展示，但不参与 ok 判定——与 Android CheckStream 双端冻结口径）。
    判序（HLS）：清单非 200 → HTTP → EMPTY_PLAYLIST → 分片拉不到/不吐字节（NO_SEGMENT，分片阶段字段）→ OK（分片 ≥6000B）。
@@ -153,7 +167,7 @@ async function checkDetail(url, depth = 0, opts = {}) {
     catch (e) { return fail(catchCode(String(e.message || e)), String(e.message || e).slice(0, 60)); }
     const f = { httpStatus: r.status, contentType: r.ct, bytes: r.bytes, latencyMs: r.latencyMs };
     if (r.bytes < 8000) return fail('SHORT_BODY', `窗内仅 ${r.bytes}B（低于阈值，假流常见）`, f);
-    if (/text\/html/i.test(r.ct)) return fail('HTML', `HTML 错误页（${r.ct} ${r.bytes}B）`, f);
+    if (htmlLike(r.ct, r.body)) return fail('HTML', `HTML 错误页（${r.ct || '内容判定'} ${r.bytes}B）`, f); // 字节达标后仍执行 HTML 判定（review P2）
     return fin(base(Object.assign({ ok: true, code: 'OK', why: `${r.ct || '未知类型'} ${r.bytes}B` }, f)));
   }
   // HLS：先取清单再验分片（master playlist 递归解一层，参数透传；i：.M3U8 变形同判）

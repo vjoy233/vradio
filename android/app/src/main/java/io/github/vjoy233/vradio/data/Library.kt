@@ -250,6 +250,8 @@ class Library(
       val add = ArrayList<String>()
       for (u in s.u) for (x in c.srcs[u] ?: emptyList()) if (x !in s.u && x !in add) add.add(x)
       if (add.isNotEmpty()) s.u.addAll(add)
+      if (s.u.size > C.SRC_TOTAL_CAP) s.u = s.u.take(C.SRC_TOTAL_CAP).toMutableList() // 每台最多 6 条（plan §5.4，review P1）：
+      // 合并追加后对最终源集合统一封顶——保主源 u[0] 首位只裁台尾（原生超编同理）；详情/诊断同口径不漂移
       c.renames[s.c]?.let { s.c = it }
       val manual = c.srcManualOrder[s.u0]
       if (!manual.isNullOrEmpty()) { // 人工序：manual 序在前（存在于 u 的才收），未列的按 u 原序追加——不物理重排 u

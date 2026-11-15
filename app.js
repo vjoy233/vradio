@@ -23,6 +23,8 @@ const STARTER = [
 const $ = id => document.getElementById(id);
 const keyOf = s => s.c + '|' + s.n;
 const DAY = 86400000; // 死台分档各时间阈值共用（TTL/升级跨度/复测间隔/孤儿清理）
+const SRC_CAP = 6; // 每台最终源集合统一封顶（plan §5.4「每台最多 6 条」，review P1：装配 applyCfg 收口、
+                   // 详情/批量诊断同口径；Android 侧 C.SRC_TOTAL_CAP 镜像，双端不漂移）
 
 const App = {
   /* 集中状态（docs/review.md 架构-风险 2）：stations 数据 + 渲染哨兵 + 行索引（体检增量更新用，去 O(n²)）
@@ -168,6 +170,9 @@ const App = {
       const add = [];
       for (const u of s.u) { const a = srcs[u]; if (a) for (const x of a) if (!s.u.includes(x) && !add.includes(x)) add.push(x); }
       if (add.length) s.u.push(...add);
+      // 每台最多 6 条（plan §5.4，review P1）：对合并追加后的最终源集合统一封顶——保主源 s.u[0] 首位、
+      // 只裁台尾（原生超编同理裁尾）；详情中心/批量诊断（diagIdx）同口径，双端与 Android SRC_TOTAL_CAP 不漂移
+      if (s.u.length > SRC_CAP) s.u = s.u.slice(0, SRC_CAP);
       if (renames[s.c]) s.c = renames[s.c];
       this.srcLife(s); // 源生命周期（B1）：追加合并后计算有效序/禁用集（见 srcLife 注释）
     }
@@ -961,31 +966,38 @@ const App = {
     const b = this.dOpener && this.dOpener.isConnected ? this.dOpener : null;
     if (b && b.focus) b.focus();
   },
-  /* 逐源诊断（B1）：>4 源分批（服务端单次放大面 4 封顶不变）；结果按 new URL 归一化回绑索引
-     （safeTarget 归一 = new URL().href，客户端同款归一可精确对上）；被护栏拒收的 URL 本地落 INVALID_URL 占位 */
+  /* 批量诊断名单（B1 review P1）：启用源有效序取前 SRC_CAP 条——手动禁用的源绝不进 /api/check?detail=1
+     的 URL 集合（§5.4「禁用源不发诊断请求」），全禁台返回空（零请求）。纯函数可测（test/source-lifecycle.js）；
+     Android checkDetailSources 同口径（effOrder 全量启用序，装配封顶后两侧集合一致） */
+  diagIdx(s) {
+    return (Array.isArray(s.mo) && s.mo.length ? s.mo : s.u.map((_, i) => i))
+      .filter(i => !(s.dis || []).includes(i)).slice(0, SRC_CAP);
+  },
+  /* 逐源诊断（B1）：>4 源分批（服务端单次放大面 4 封顶不变）；名单走 diagIdx（禁用源不发请求 + 每台 6 封顶，
+     review P1）；结果按 new URL 归一化回绑 u 空间索引（safeTarget 归一 = new URL().href，客户端同款归一可精确
+     对上）；被护栏拒收的 URL 本地落 INVALID_URL 占位 */
   async checkStationSources(s) {
     const k = keyOf(s);
     if (this.detail.stationKey !== k) return;
     if (!location.protocol.startsWith('http')) { this.detail.error = 'file:// 降级模式无后端，诊断不可用——npm start 后可用'; this.renderDetail(); return; }
-    const urls = s.u.slice(0, 8); // 与面板口径一致（原源+追加 ≤6，双保险 8）
-    const norm = x => { try { return new URL(x).href; } catch (_) { return null; } };
+    const idx = this.diagIdx(s), norm = x => { try { return new URL(x).href; } catch (_) { return null; } };
     this.detail.loading = true; this.detail.error = '';
-    this.detail.results = new Array(urls.length);
+    this.detail.results = new Array(s.u.length);
     this.renderDetail();
     try {
-      for (let i = 0; i < urls.length; i += 4) {
-        const batch = urls.slice(i, i + 4);
-        const qs = batch.map(u => 'url=' + encodeURIComponent(u)).join('&');
+      for (let b = 0; b < idx.length; b += 4) {
+        const batch = idx.slice(b, b + 4);
+        const qs = batch.map(i => 'url=' + encodeURIComponent(s.u[i])).join('&');
         const j = await fetch('/api/check?detail=1&' + qs).then(x => x.json());
         if (this.detail.stationKey !== k) return; // 诊断期间切了台/重开详情：丢弃过期结果
         for (const r of (j && Array.isArray(j.results) ? j.results : [])) {
-          const bi = batch.findIndex(u => norm(u) === r.url || u === r.url);
-          if (bi >= 0) this.detail.results[bi + i] = r;
+          const bi = batch.findIndex(i => norm(s.u[i]) === r.url || s.u[i] === r.url);
+          if (bi >= 0) this.detail.results[batch[bi]] = r;
         }
-        batch.forEach((u, bi) => { // 服务端 safeTarget 拒收（私网/非 http）→ 无结果：本地 INVALID_URL 占位
-          if (!this.detail.results[bi + i]) {
-            const h = /\.m3u8?(\?|$)/i.test(u);
-            this.detail.results[bi + i] = { url: u, ok: false, code: 'INVALID_URL', hls: h, mode: h ? 'hls' : 'direct',
+        batch.forEach(i => { // 服务端 safeTarget 拒收（私网/非 http）→ 无结果：本地 INVALID_URL 占位
+          if (!this.detail.results[i]) {
+            const h = /\.m3u8?(\?|$)/i.test(s.u[i]);
+            this.detail.results[i] = { url: s.u[i], ok: false, code: 'INVALID_URL', hls: h, mode: h ? 'hls' : 'direct',
               httpStatus: 0, contentType: '', bytes: 0, latencyMs: 0, why: '地址被服务端安全护栏拒收（仅公网 http(s)）', checkedAt: Date.now() };
           }
         });
@@ -1033,7 +1045,7 @@ const App = {
     let songs; try { songs = JSON.parse(Store.get('radio.songs') || '{}')[s.u[0]] || []; } catch (_) { songs = []; }
     const dis = s.dis || [];
     const CODE_TXT = { OK: '可用', NETWORK: '网络失败', HTML: 'HTML 假流', HTTP: 'HTTP 错误', EMPTY_PLAYLIST: '空清单', NO_SEGMENT: '无可用分片', SHORT_BODY: '字节不足', REDIRECT_REJECTED: '重定向被拒', INVALID_URL: '地址不合法' };
-    const rows = this.srcOrderView(s).slice(0, 8).map(i => {
+    const rows = this.srcOrderView(s).slice(0, SRC_CAP).map(i => { // 每台 6 封顶（与装配/批量诊断同口径，review P1）
       const u = s.u[i], r = this.detail.results[i], d = dis.includes(i);
       const lb = this.cfg.srcLabels[u] ? `<span class="badge acc" title="源标签">${this.esc(this.cfg.srcLabels[u])}</span>` : '';
       const tag = (i === 0 ? '<span class="badge" title="主源（身份键，不可替换/不可删）">主源</span>' : (s.dU.includes(u) ? '' : '<span class="badge">追加</span>')) + lb

@@ -155,6 +155,12 @@
   #list.grid .empty { grid-column:1 / -1; } /* 空态文案占满整行（UI 审计 P1-3：否则被压成 160px 网格窄条逐字折行） */
   /* 维护面板（⚙）：全屏遮罩 + 居中卡片，主题变量随行；file:// 降级模式同样可用（配置只落 localStorage） */
   #manage { position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; padding:16px; z-index:10; }
+  /* 详情中心（B1）/发现页（B3）遮罩（P3 基线遗留修复）：两容器此前无定位规则，hidden 揭开后按文档流渲染
+     会把页面内容向下推开——补 #manage 同款全屏遮罩 + 居中卡片（.mbox 的 max-height 滚动随行）；
+     紧凑/桌面通用（bug 修复非桌面增强，不做 ui-refresh 限定）；Esc/点遮罩/焦点归还既有逻辑不动。
+     z 层级：toast(11) ≥ manage/detail/discovery(10，同层按 DOM 序后者在上——⚙ 源管理里开详情时详情盖面板)
+     > songhist/keys(9) > sleepMenu/themeMenu/srcMenu/sideTools(6)；确认弹窗 #editorConfirm（P4 并行）另行最高 */
+  #detail, #discovery { position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; padding:16px; z-index:10; }
   .mbox { background:var(--panel); border:1px solid var(--line); border-radius:12px; width:min(680px,100%); max-height:min(82vh,760px); display:flex; flex-direction:column; }
   .mhead { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 14px; border-bottom:1px solid var(--line); }
   .mbox .seg { margin:10px 14px 0; }

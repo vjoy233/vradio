@@ -140,8 +140,8 @@ async function main() {
     await shot('p1-qall-keepword');
     (after.q === '新闻' && after.n > 0 && after.all) ? ok('E6c', '搜全部保词：#q 保留、范围解除、结果非空', JSON.stringify(after)) : bad('E6c', '搜全部保词', JSON.stringify(after));
     await page.click('[data-c="★收藏"]'); await sleep(300);
-    const catReset = await page.evaluate(() => !document.querySelector(`[data-c="${CSS.escape('${catChip}')}"][aria-current="true"]`));
-    catReset ? ok('E6d', '切范围重置分类（§3.2）', '') : bad('E6d', '切范围重置 cat', '分类 chip 仍高亮');
+    const catReset = await page.evaluate(c => !document.querySelector(`[data-c="${CSS.escape(c)}"][aria-current="true"]`), catChip); // catChip 须经 arg 传入（evaluate 不携带闭包）
+    catReset ? ok('E6d', `切范围重置分类（§3.2，原=${catChip}）`, '') : bad('E6d', '切范围重置 cat', '分类 chip 仍高亮');
 
     await browser.close();
   } finally { srv.kill(); }

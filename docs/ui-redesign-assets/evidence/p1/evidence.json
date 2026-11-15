@@ -1,7 +1,7 @@
 {
   "phase": "p1",
-  "head": "48c5d3e",
-  "started": "2026-11-15T09:19:37.484Z",
+  "head": "fcfa33f",
+  "started": "2026-11-15T09:24:13.428Z",
   "pass": 16,
   "fail": 0,
   "assertions": [
@@ -97,7 +97,7 @@
     },
     {
       "id": "E6d",
-      "name": "切范围重置分类（§3.2）",
+      "name": "切范围重置分类（§3.2，原=欧美音乐）",
       "pass": true,
       "detail": ""
     }

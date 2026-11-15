@@ -98,21 +98,31 @@ function guardLookup(host, opts, cb) {
 }
 
 /* ---------- 基础网络 ---------- */
-function request(url, { timeout = 10000, headers = {}, maxBytes = 1 << 20, maxRedirect = 5 } = {}, depth = 0) {
+// hook 仅测试用（test/diagnostic.js 的 testHook 顶替 safeTarget/guardLookup 判定，放行回环 fixture）；生产路径绝不传
+function request(url, { timeout = 10000, headers = {}, maxBytes = 1 << 20, maxRedirect = 5 } = {}, depth = 0, hook) {
   return new Promise((resolve, reject) => {
     if (depth > maxRedirect) return reject(new Error('too many redirects ' + url.slice(0, 50))); // P3-7：重定向深度上限
-    if (!safeTarget(url)) return reject(new Error('目标非公网 http(s): ' + url.slice(0, 50)));    // P2-6：目标逐次校验
+    const safe = (hook && hook.safe) || safeTarget, lookup = (hook && hook.lookup) || guardLookup;
+    const t0 = Date.now();
+    if (!safe(url)) return reject(new Error('目标非公网 http(s): ' + url.slice(0, 50)));    // P2-6：目标逐次校验
     const mod = url.startsWith('https') ? https : http;
-    const req = mod.get(url, { timeout, lookup: guardLookup, headers: { 'User-Agent': 'vradio/0.1 (+local radio player)', ...headers } }, res => {
+    const req = mod.get(url, { timeout, lookup, headers: { 'User-Agent': 'vradio/0.1 (+local radio player)', ...headers } }, res => {
+      const lat = Date.now() - t0; // 首响应延迟（B1 结构化探活；重定向跨跳自起始累计）
       if ([301, 302, 303, 307].includes(res.statusCode) && res.headers.location) {
         res.resume();
-        const next = safeTarget(tryUrl(res.headers.location, url)); // 重定向逐跳复查（P2-6）；畸形头经 tryUrl 归 null 一并拒绝（audit-r2 P2-1）
+        const next = safe(tryUrl(res.headers.location, url)); // 重定向逐跳复查（P2-6）；畸形头经 tryUrl 归 null 一并拒绝（audit-r2 P2-1）
         if (!next) return reject(new Error('重定向目标非公网'));
-        return request(next, { timeout, headers, maxBytes, maxRedirect }, depth + 1).then(resolve, reject);
+        return request(next, { timeout, headers, maxBytes, maxRedirect }, depth + 1, hook).then(resolve, reject);
       }
-      const chunks = []; let n = 0, settled = false;
-      const finish = () => { if (settled) return; settled = true; clearTimeout(deadline); resolve({ status: res.statusCode, ct: res.headers['content-type'] || '', bytes: n, body: Buffer.concat(chunks) }); };
-      res.on('data', c => { n += c.length; if (n <= maxBytes) chunks.push(c); if (n >= maxBytes) { req.destroy(); finish(); } }); // 直播流攒够即返回
+      const chunks = []; let n = 0, kept = 0, settled = false;
+      const finish = () => { if (settled) return; settled = true; clearTimeout(deadline); resolve({ status: res.statusCode, ct: res.headers['content-type'] || '', bytes: n, latencyMs: lat, body: Buffer.concat(chunks) }); };
+      // 直播流攒够即返回；body 保留流头——跨上限的单块按剩余截断（不再整块丢弃），前缀完整供 checkDetail 的
+      // 直流 HTML 内容嗅探用（单块 >maxBytes 的响应原先 body 为空，review P2 顺手堵住）
+      res.on('data', c => {
+        n += c.length;
+        if (kept < maxBytes) { const room = maxBytes - kept; chunks.push(room >= c.length ? c : c.slice(0, room)); kept += Math.min(room, c.length); }
+        if (n >= maxBytes) { req.destroy(); finish(); }
+      });
       res.on('end', finish);
       res.on('error', () => { if (!settled) { settled = true; clearTimeout(deadline); reject(new Error('stream error')); } });
     });
@@ -123,27 +133,66 @@ function request(url, { timeout = 10000, headers = {}, maxBytes = 1 << 20, maxRe
   });
 }
 
-// 流可用性探测：按「持续吐数据 + 非HTML」判定活流（m3u8 先取清单再测分片，master playlist 递归解一层）
-async function checkStream(url, depth = 0, opts = {}) {
+/* HTML 错误页判定（review P2，与 Android CheckStream 双端同款）：CT 头 text/html **或** 正文前缀嗅探（BOM/空白后
+   以 <!doctype html / <html 开头）二合一。判序冻结不动（SHORT_BODY→HTML→OK）：字节达标后仍执行内容判定——
+   ≥8000B 的 HTML 错误页即使服务器谎报 Content-Type（octet-stream/空）也判 HTML 不判 OK（AGENTS 已知坑：不能信 CT）；
+   音频/TS 流首字节是 ID3/0xFF/0x47 等帧头，前缀嗅探不会误伤 */
+const htmlLike = (ct, body) => /text\/html/i.test(ct || '')
+  || /^\s*(?:<!doctype\s+html|<html[\s>])/i.test((body || Buffer.alloc(0)).slice(0, 256).toString('utf8'));
+
+/* 结构化探活（B1，契约 contracts/source-diagnostic.json）：ok 语义与旧 checkStream 完全一致，code 固定枚举是
+   程序分支唯一依据——UI 不得根据 why 文案反推状态。所有分支（正常/失败/重定向/HLS 分片/字节阈值）都返回完整结构。
+   判序（直流，字节法）：SHORT_BODY（低于 8000B，336B 假流类——与黄金样本同型，先于 HTML 判）→ HTML（htmlLike：
+   CT 头或正文前缀）→ OK；
+   **直流不看状态码**（AGENTS 已知坑明文：流地址漂移年代不能信状态码/Content-Type，按持续吐数据 ≥ 阈值字节验收；
+   非 2xx 的 httpStatus 照常上报供诊断展示，但不参与 ok 判定——与 Android CheckStream 双端冻结口径）。
+   判序（HLS）：清单非 200 → HTTP → EMPTY_PLAYLIST → 分片拉不到/不吐字节（NO_SEGMENT，分片阶段字段）→ OK（分片 ≥6000B）。
+   bytes = 最末观察阶段的窗内字节数（直流=本体、HLS=清单或分片；分片未建连时回落清单阶段）；latencyMs 无响应时为整次尝试耗时。
+   opt.testHook = { safe, lookup } 仅测试用：顶替 safeTarget/guardLookup 判定（打回环 fixture），生产路径绝不传 */
+async function checkDetail(url, depth = 0, opts = {}) {
   const T = opts.timeout || 4500; // 探活窗口：默认 4.5s；调用方可放宽（server.js /api/mystation 传 12s——蜻蜓系建流 5-10s 属正常，见 AGENTS.md 已知坑）
   const isHls = /\.m3u8?(\?|$)/i.test(url);
+  const base = over => Object.assign({ url, ok: false, code: 'NETWORK', hls: isHls, mode: isHls ? 'hls' : 'direct',
+    httpStatus: 0, contentType: '', bytes: 0, latencyMs: 0, why: '', checkedAt: Date.now() }, over);
+  const t0 = Date.now();
+  const fin = r => { if (!r.latencyMs) r.latencyMs = Date.now() - t0; r.checkedAt = Date.now(); return r; };
+  const fail = (code, why, over) => fin(base(Object.assign({ code, why }, over)));
+  const catchCode = m => m.includes('重定向目标非公网') || m.includes('too many redirects') ? 'REDIRECT_REJECTED'
+    : m.includes('目标非公网 http(s)') ? 'INVALID_URL' : 'NETWORK'; // guardLookup 拒绝（内网解析）/超时/断连归 NETWORK（契约）
+  const safe = (opts.testHook && opts.testHook.safe) || safeTarget;
+  if (!safe(url)) return fin(base({ code: 'INVALID_URL', why: '地址不合法（仅公网 http(s)）' }));
   if (!isHls) {
-    try {
-      const r = await request(url, { timeout: T, maxBytes: 24000 });
-      const ok = r.bytes >= 8000 && !/text\/html/i.test(r.ct); // 显式判定；HTML 错误页不算活流
-      return { ok, detail: `${r.ct || '未知类型'} ${r.bytes}B` };
-    } catch (e) { return { ok: false, detail: String(e.message || e).slice(0, 40) }; }
+    let r;
+    try { r = await request(url, { timeout: T, maxBytes: 24000 }, 0, opts.testHook); }
+    catch (e) { return fail(catchCode(String(e.message || e)), String(e.message || e).slice(0, 60)); }
+    const f = { httpStatus: r.status, contentType: r.ct, bytes: r.bytes, latencyMs: r.latencyMs };
+    if (r.bytes < 8000) return fail('SHORT_BODY', `窗内仅 ${r.bytes}B（低于阈值，假流常见）`, f);
+    if (htmlLike(r.ct, r.body)) return fail('HTML', `HTML 错误页（${r.ct || '内容判定'} ${r.bytes}B）`, f); // 字节达标后仍执行 HTML 判定（review P2）
+    return fin(base(Object.assign({ ok: true, code: 'OK', why: `${r.ct || '未知类型'} ${r.bytes}B` }, f)));
   }
-  try {
-    const pl = await request(url, { timeout: T, maxBytes: 8000 });
-    if (pl.status !== 200) return { ok: false, detail: `清单 HTTP ${pl.status}` };
-    const seg = pl.body.toString('utf8').split(/\r?\n/).map(l => l.trim()).find(l => l && !l.startsWith('#'));
-    if (!seg) return { ok: false, detail: '清单无分片' };
-    const segUrl = new URL(seg, url).href;
-    if (/\.m3u8?(\?|$)/i.test(segUrl) && depth < 2) return checkStream(segUrl, depth + 1, opts); // master → variant 再解一层（参数透传；i：.M3U8 变形同判）
-    const r2 = await request(segUrl, { timeout: T, maxBytes: 16000 });
-    return { ok: r2.bytes >= 6000 && !/text\/html/i.test(r2.ct), detail: `hls分片 ${r2.bytes}B` };
-  } catch (e) { return { ok: false, detail: String(e.message || e).slice(0, 40) }; }
+  // HLS：先取清单再验分片（master playlist 递归解一层，参数透传；i：.M3U8 变形同判）
+  let pl;
+  try { pl = await request(url, { timeout: T, maxBytes: 8000 }, 0, opts.testHook); }
+  catch (e) { return fail(catchCode(String(e.message || e)), String(e.message || e).slice(0, 60)); }
+  const pf = { httpStatus: pl.status, contentType: pl.ct, bytes: pl.bytes, latencyMs: pl.latencyMs };
+  if (pl.status !== 200) return fail('HTTP', `清单 HTTP ${pl.status}`, pf);
+  const seg = pl.body.toString('utf8').split(/\r?\n/).map(l => l.trim()).find(l => l && !l.startsWith('#'));
+  if (!seg) return fail('EMPTY_PLAYLIST', 'm3u8 无分片条目', pf);
+  let segUrl; // 分片地址解析失败（畸形相对/绝对 URL 会让 new URL 抛 TypeError）归 NO_SEGMENT，报清单侧观察值（双端冻结口径）
+  try { segUrl = new URL(seg, url).href; } catch (_) { return fail('NO_SEGMENT', `分片地址不可解析（${seg.slice(0, 40)}）`, pf); }
+  if (/\.m3u8?(\?|$)/i.test(segUrl) && depth < 2) { const sub = await checkDetail(segUrl, depth + 1, opts); sub.url = url; return sub; }
+  let r2;
+  try { r2 = await request(segUrl, { timeout: T, maxBytes: 16000 }, 0, opts.testHook); }
+  catch (e) { return fail('NO_SEGMENT', `分片不可达（${String(e.message || e).slice(0, 40)}）`, pf); }
+  const sf = { httpStatus: r2.status, contentType: r2.ct, bytes: r2.bytes, latencyMs: r2.latencyMs };
+  if (r2.bytes >= 6000 && !/text\/html/i.test(r2.ct)) return fin(base(Object.assign({ ok: true, code: 'OK', why: `hls分片 ${r2.bytes}B` }, sf)));
+  return fail('NO_SEGMENT', r2.bytes < 6000 ? `分片仅 ${r2.bytes}B（不吐字节）` : `分片返回 HTML（${r2.ct}）`, sf);
+}
+
+// 流可用性探测（旧签名消费口：server.js /api/check、/api/mystation、buildEuLines）：ok/detail 语义不变，内部走 checkDetail
+async function checkStream(url, depth = 0, opts = {}) {
+  const d = await checkDetail(url, depth, opts);
+  return { ok: d.ok, detail: d.why };
 }
 
 // 取 GitHub 文件内容（api.github.com 直连，失败异步回退 gh CLI，不阻塞事件循环）
@@ -426,4 +475,4 @@ if (require.main === module) {
       .catch(e => { console.error('同步失败:', e); process.exit(1); });
   }
 }
-module.exports = { syncSources, checkStream, safeTarget, guardLookup, tryUrl, buildLogoFile, classifyCn, splitSections, countEntries }; // splitSections/countEntries 供 test/smoke.js 复用（R1）；tryUrl 供 server.js/测试复用（audit-r2 P2-1）
+module.exports = { syncSources, checkStream, checkDetail, safeTarget, guardLookup, tryUrl, buildLogoFile, classifyCn, splitSections, countEntries }; // splitSections/countEntries 供 test/smoke.js 复用（R1）；tryUrl 供 server.js/测试复用（audit-r2 P2-1）；checkDetail 结构化探活（B1）

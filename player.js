@@ -123,19 +123,38 @@ const Player = {
     return vs;
   },
 
-  /* 默认源决策链（grill 拍板，单次点播内从高到低）：手动指定 prefer > 成功源记忆 srcmem > 静态启发式
-     > 级联自愈顺延。启发式零网络成本只看形态：首个 variant 是直流（mp3/aac 直达，或蜻蜓 m3u8 换算出的
-     64k mp3）优先——不经代理、低延迟、有曲讯；102 台「xmcdn 首源+蜻蜓次源」由此首播直接命中直流 */
+  /* 默认源决策链（grill 拍板 + B1 源生命周期，单次点播内从高到低）：手动指定 prefer > 成功源记忆 srcmem2
+     （须在启用序内）> 人工默认顺序（s.mo 头部，仅该台存在 cfg.srcManualOrder 时压过启发式）> 静态启发式
+     > 级联自愈顺延。s.mo/s.dis 由 app.applyCfg 经 SrcOrder.effective 挂上台对象（启用有效序/禁用索引），
+     本引擎绝不物理重排 s.u[]；未装配的老对象（file:// 早退路径）兜底全量启发式。
+     启发式零网络成本只看形态：首个 variant 是直流（mp3/aac 直达，或蜻蜓 m3u8 换算出的 64k mp3）优先——
+     不经代理、低延迟、有曲讯；102 台「xmcdn 首源+蜻蜓次源」由此首播直接命中直流 */
   srcRank(u) { return /\.m3u8(\?|$)/i.test(this.variants(u)[0]) ? 1 : 0; },
-  srcOrder(s) { return s.u.map((_, i) => i).sort((a, b) => this.srcRank(s.u[a]) - this.srcRank(s.u[b])); }, // sort 稳定（ES2019）：同级保持上游行序
+  srcOrder(s) { // 启用源有效序（B1）：人工序原样使用（用户意图压过启发式）；无人工序对启用集启发式稳定排序（同级保持行序）
+    if (Array.isArray(s.mo)) {
+      if (!s.mo.length) return []; // 全部源已禁用
+      return s.moManual ? s.mo.slice() : s.mo.slice().sort((a, b) => this.srcRank(s.u[a]) - this.srcRank(s.u[b]));
+    }
+    return s.u.map((_, i) => i).sort((a, b) => this.srcRank(s.u[a]) - this.srcRank(s.u[b]));
+  },
 
   play(s, prefer) {
     this.stopWatchdog();
     this.halt = this.heldNext = false; // 清上一轮的有意暂停/级联搁浅标记（AIbot P2-1）
-    const order = this.srcOrder(s); // 启发式基座（①）；记忆/手动在其上叠加，序号对齐原始 s.u
+    const order = this.srcOrder(s); // 有效序基座（禁用源已剔除，序号对齐原始 s.u）
+    if (!order.length) { // 全部源已手动禁用（B1 拍板）：不创建 audio/HLS/代理连接、不写 radio.health、不触发自动
+      // 复活/不换身份键；停掉在播旧台（有意停播，非级联失败）+ onstatus 提示 + 可区分返回值
+      this.token++; this.stopHls(); this.stopWatchdog();
+      this.audio.removeAttribute('src'); this.audio.load();
+      this.station = this.connecting = null;
+      this.curSi = -1; this.curPlay = this.curUrl = '';
+      this.emit(true);
+      this.say('该台所有源都已手动禁用，请先启用一个源');
+      return 'NO_ENABLED_SOURCE';
+    }
     const mem = this.srcMem[s.u[0]];
-    if (mem && Number.isInteger(mem.i) && mem.i >= 0 && mem.i < s.u.length) { order.splice(order.indexOf(mem.i), 1); order.unshift(mem.i); } // 上次试通的源先行（流地址天然漂移，省一轮必败等待）
-    if (Number.isInteger(prefer) && prefer >= 0 && prefer < s.u.length) { order.splice(order.indexOf(prefer), 1); order.unshift(prefer); } // 手动选源（②）：当次点播最高优先
+    if (mem && Number.isInteger(mem.i) && mem.i >= 0 && mem.i < s.u.length && order.includes(mem.i)) { order.splice(order.indexOf(mem.i), 1); order.unshift(mem.i); } // 上次试通的源先行（流地址天然漂移，省一轮必败等待）；记忆指向禁用源则忽略顺延
+    if (Number.isInteger(prefer) && prefer >= 0 && prefer < s.u.length && order.includes(prefer)) { order.splice(order.indexOf(prefer), 1); order.unshift(prefer); } // 手动选源（②）：当次点播最高优先；禁用源不可 prefer
     const urls = [];
     for (const si of order) for (const v of this.variants(s.u[si])) urls.push({ u: v, si });
     this.pctx = { urls, i: 0, my: ++this.token }; // 世代令牌：快速连续点播时旧链路回调全部失效，防串台
@@ -258,12 +277,20 @@ const Player = {
     while (ks.length > 300) delete this.srcMem[ks.shift()];
     Store.set('radio.srcmem2', JSON.stringify(this.srcMem));
   },
-  forgetSrc() { // 「恢复默认源」（②c）：清当前台成功源记忆并落盘，重播由调用方（app）发起——无 prefer 且记忆已空 = 纯启发式序
-    const s = this.station;
+  forgetSrc(s0) { // 「恢复默认源」（②c + B1 两动作之一）：清指定台（缺省=当前台）成功源记忆并落盘；重播由调用方（app）发起——无 prefer 且记忆已空 = 默认序
+    const s = s0 || this.station;
     if (!s || this.srcMem[s.u[0]] == null) return false;
     delete this.srcMem[s.u[0]];
     Store.set('radio.srcmem2', JSON.stringify(this.srcMem));
     return true;
+  },
+  getSourceState() { // 只读快照（B1 详情中心）：app 不直接读 audio/HLS/token；mode 按 variant URL 形态判（/proxy 包裹的 m3u8 亦判 hls）
+    const s = this.station, m = s ? this.srcMem[s.u[0]] : null;
+    return {
+      station: s, sourceIndex: this.curSi, variantUrl: this.curPlay, connecting: !!this.connecting,
+      mode: this.curPlay ? (/\.m3u8(\?|$)/i.test(this.curPlay) ? 'hls' : 'direct') : '',
+      srcMemIndex: m && Number.isInteger(m.i) ? m.i : -1,
+    };
   },
   refresh() { // 手动刷新回直播头（docs/plan-refresh-live.md §2）：当前赢家源整链重开——play 自带 token 作废在飞链/
     // 清 halt/heldNext/prefer 提首/台记忆音量/MediaSession/连接中指示；暂停态直接起播（刷新=要听最新的，

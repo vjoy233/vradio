@@ -1,7 +1,9 @@
 package io.github.vjoy233.vradio.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -41,9 +43,11 @@ import kotlinx.coroutines.delay
 import io.github.vjoy233.vradio.player.PlayerHolder
 import io.github.vjoy233.vradio.ui.theme.LocalVrPalette
 
-/* 底部常驻播放条（index.html footer 平移）：台名（点击回到正在播）/曲名行「♪ 歌名 · Nkbps」（点击看本台歌史）/
-   播放/暂停（≥48dp 命中区，连接中出 spinner）/睡眠定时菜单（15/30/60，进行中再点取消）/选源入口（多源台）/
-   音量滑杆（联动每台音量记忆）。status 行 = 用户主动操作反馈（vm.status）优先、引擎状态文案兜底。 */
+/* 底部常驻播放条（index.html footer 平移）：台名（点击回到正在播；长按开源详情，B1）/曲名行
+   「♪ 歌名 · Nkbps」（点击看本台歌史）/播放/暂停（≥48dp 命中区，连接中出 spinner）/睡眠定时菜单
+   （15/30/60，进行中再点取消）/选源入口（多源台）/音量滑杆（联动每台音量记忆）。
+   status 行 = 用户主动操作反馈（vm.status）优先、引擎状态文案兜底。 */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PlayerBar(vm: AppVm, ui: PlayerUiState) {
   val pal = LocalVrPalette.current
@@ -71,10 +75,14 @@ fun PlayerBar(vm: AppVm, ui: PlayerUiState) {
           else -> PlayIcon(pal.acc, Modifier.size(24.dp))
         }
       }
-      // 台名 + 曲名/状态（台名可点定位列表行，N5）
+      // 台名 + 曲名/状态（台名可点定位列表行，N5；长按开源详情——B1 入口之一）
       Column(
         Modifier.weight(1f).padding(horizontal = 6.dp)
-          .clickable(enabled = ui.station != null) { vm.locatePlaying() },
+          .combinedClickable(
+            enabled = ui.station != null,
+            onClick = { vm.locatePlaying() },
+            onLongClick = { vm.openDetailOf(ui.station?.key) },
+          ),
       ) {
         Text(
           ui.station?.n ?: vm.lastLine(),

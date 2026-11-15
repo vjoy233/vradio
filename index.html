@@ -166,6 +166,31 @@
   .msrc-add { display:flex; gap:6px; margin-top:6px; }
   .msrc-add input { flex:1; min-width:150px; background:var(--panel); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:5px 8px; outline:none; font:inherit; font-size:12px; }
   .msrc-add input:focus { border-color:var(--acc); }
+  /* 源生命周期（B1）：⚙ 面板源行按有效序展示（启用在前/禁用殿后）；禁用行划线淡出，排序按钮边界置灰 */
+  .srcline { flex-wrap:wrap; }
+  .srcline.off .u { text-decoration:line-through; opacity:.5; }
+  .msrc-acts { display:inline-flex; gap:4px; margin-left:6px; flex-wrap:wrap; }
+  .badge.okb { color:var(--acc); border-color:var(--acc); }  /* 详情诊断徽标（B1）：可用/失败两态 */
+  .badge.badb { color:var(--warn); border-color:var(--warn); }
+  /* 详情中心（B1）：#manage 同范式（全屏遮罩 + 居中卡片，.mbox/.mhead 复用）；源行 = 序号 + URL/徽标/诊断行 + 动作组 */
+  #detailBody { flex:1; overflow-y:auto; padding:10px 14px; margin:0; scrollbar-width:thin; scrollbar-color:var(--line) transparent; }
+  .dheadinfo { display:flex; gap:10px; align-items:center; }
+  .dheadinfo .dstats { flex:1; min-width:0; }
+  .dheadinfo .dstats b { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; }
+  .dcur { font-size:12px; color:var(--acc); padding:2px 0 6px; }
+  .dsec { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; color:var(--dim); border-top:1px solid var(--line); margin-top:8px; padding-top:8px; }
+  .dsec b { color:var(--tx); font-weight:500; }
+  .derr { color:var(--warn); font-size:12px; padding:2px 0; word-break:break-all; }
+  .dsrc { display:flex; gap:8px; align-items:flex-start; padding:7px 0; border-bottom:1px solid var(--line); font-size:12px; }
+  .dsrc .idx { font-style:normal; color:var(--dim); font-variant-numeric:tabular-nums; }
+  .dsrc-m { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+  .dsrc-u { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; word-break:break-all; }
+  .dsrc-i { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .dsrc-a { display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-end; }
+  .dsrc.off .dsrc-u { text-decoration:line-through; opacity:.55; }
+  .dsrc.cur .idx, .dsrc.cur .dsrc-u { color:var(--acc); }
+  .dacts { display:flex; gap:8px; flex-wrap:wrap; padding:4px 0; }
+  .dmore { font-size:15px; } /* 行/卡「详情」图标钮：.fav 同款无边框图标钮 */
   #mq { width:100%; margin:10px 0 4px; background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:8px; padding:7px 12px; outline:none; font:inherit; }
   #mq:focus { border-color:var(--acc); }
   .mrow select { background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:4px 6px; font:inherit; font-size:12px; max-width:9em; }
@@ -191,6 +216,8 @@
   #srcMenu .srcrow { width:100%; font-size:12px; gap:6px; }
   #srcMenu .srcrow .u { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left; }
   #srcMenu .srcrow.cur { color:var(--acc); }
+  #srcMenu .srcrow.off { color:var(--dim); padding:4px 6px; font-size:12px; display:flex; gap:6px; align-items:center; cursor:default; } /* 禁用源行（B1）：非交互 div，点播级联本就跳过 */
+  #srcMenu .srcrow.off .u { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .badge.acc { color:var(--acc); border-color:var(--acc); } /* 「正在用」徽标（⚙ 面板与浮层共用） */
   .srcline.cur .u { color:var(--acc); opacity:1; }
   .badge.permb { color:var(--warn); border-color:var(--warn); } /* 「已停运」徽标（R1 拍板分档区分，排查场景一眼分清没救的） */
@@ -241,6 +268,9 @@
 <symbol id="i-vol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 8a5 5 0 0 1 0 8" /><path d="M17.7 5a9 9 0 0 1 0 14" /><path d="M6 15h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2l3.5 -4.5a.8 .8 0 0 1 1.5 .5v14a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5" /></symbol>
 <symbol id="i-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 8a5 5 0 0 1 1.912 4.934m-1.377 2.602a5 5 0 0 1 -.535 .464" /><path d="M17.7 5a9 9 0 0 1 2.362 11.086m-1.676 2.299a9 9 0 0 1 -.686 .615" /><path d="M9.069 5.054l.431 -.554a.8 .8 0 0 1 1.5 .5v2m0 4v8a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2l1.294 -1.664" /><path d="M3 3l18 18" /></symbol>
 <symbol id="i-star-filled" viewBox="0 0 24 24" fill="currentColor"><path d="M8.243 7.34l-6.38 .925l-.113 .023a1 1 0 0 0 -.44 1.684l4.622 4.499l-1.09 6.355l-.013 .11a1 1 0 0 0 1.464 .944l5.706 -3l5.693 3l.1 .046a1 1 0 0 0 1.352 -1.1l-1.091 -6.355l4.624 -4.5l.078 -.085a1 1 0 0 0 -.633 -1.62l-6.38 -.926l-2.852 -5.78a1 1 0 0 0 -1.794 0l-2.853 5.78z" /></symbol>
+<symbol id="i-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14" /><path d="M5 11l7 -7l7 7" /></symbol>
+<symbol id="i-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14" /><path d="M5 13l7 7l7 -7" /></symbol>
+<symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12v4" /><path d="M12 8h.01" /><path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" /></symbol>
 </svg>
 
 <header>
@@ -286,6 +316,7 @@
     <!-- 选源浮层（②a）：正在听的多源台一键切源；点行 = 用此源播放，底部 ↺ 恢复默认源 -->
     <span id="srcMenu" hidden></span>
   </span>
+  <button class="btn" id="detailBtn" hidden title="电台详情：逐源诊断 / 源启停与排序 / 歌曲历史" aria-label="电台详情"><svg class="ic"><use href="#i-info"/></svg></button> <!-- 详情中心入口（B1）：正在播的台；台名行保留「回到正在播」语义不抢点 -->
   <button class="btn" id="muteBtn" aria-label="静音" title="静音 / 取消静音"><svg class="ic"><use href="#i-vol"/></svg></button>
   <span id="status" role="status" aria-live="polite"></span>
   <input type="range" id="vol" min="0" max="100" value="90" aria-label="音量">
@@ -339,16 +370,27 @@
     </div>
   </div>
 </div>
+<!-- 详情中心（B1，plan-expansion-r4 §5.3）：台信息/逐源诊断/源生命周期动作/歌曲历史；
+     入口 = 列表行与网格卡 ⓘ 按钮、footer ⓘ（正在播的台）、⚙ 面板源管理「详情」；逻辑在 app.js -->
+<div id="detail" hidden>
+  <div class="mbox" role="dialog" aria-modal="true" aria-label="电台详情">
+    <div class="mhead"><b><svg class="ic"><use href="#i-info"/></svg> 电台详情</b><button class="btn" id="dClose" title="关闭（Esc）"><svg class="ic"><use href="#i-x"/></svg><span>关闭</span></button></div>
+    <div id="detailBody"></div>
+  </div>
+</div>
 <!-- 结构壳：样式与结构在此，逻辑按模块契约分置；
      顺序 = store（存储收敛层，方案二）→ player（引擎）→ logos（台标数据）→ radio-data（同步生成的全库数据，
-     file:// 降级直读，文件缺失仅控制台 404 不影响）→ features（发布开关，B3 独立单元）→ app（数据/渲染）→ sync（同步/体检编排）；
-     store 最底层（player/app 的读写出口）、logos 先于 app 装载（boot 渲染行内入口时即引用）；经典 script 是 file:// 硬约束 -->
+     file:// 降级直读，文件缺失仅控制台 404 不影响）→ features（发布开关，B3 独立单元）→ srcorder（源顺序/禁用
+     纯函数，B1 双端同语义）→ app（数据/渲染）→ sync（同步/体检编排）；
+     store 最底层（player/app 的读写出口）、logos 先于 app 装载（boot 渲染行内入口时即引用）、srcorder 先于
+     app（applyCfg 即消费 SrcOrder.effective）；经典 script 是 file:// 硬约束 -->
 <script src="hls.min.js"></script>
 <script src="store.js"></script>
 <script src="player.js"></script>
 <script src="logos.js"></script>
 <script src="radio-data.js"></script>
 <script src="features.js"></script>
+<script src="srcorder.js"></script>
 <script src="app.js"></script>
 <script src="sync.js"></script>
 </body>

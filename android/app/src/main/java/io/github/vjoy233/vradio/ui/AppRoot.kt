@@ -36,6 +36,9 @@ fun AppRoot() {
     val nav by vm.nav.collectAsState()
     val showSrc by vm.showSrc.collectAsState()
     val showSongs by vm.showSongs.collectAsState()
+    val showDetail by vm.showDetail.collectAsState()
+    val detailDiag by vm.detailDiag.collectAsState()
+    val detailBusy by vm.detailBusy.collectAsState()
     val ui by PlayerHolder.ui.collectAsState()
     val snack = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { vm.toasts.collect { snack.showSnackbar(it) } }
@@ -55,6 +58,22 @@ fun AppRoot() {
     }
     if (showSrc) SrcSheet(vm, ui)
     if (showSongs) SongsSheet(vm, ui)
+    // B1 源详情浮层：台消失（同步/导入重建）即自动收起；fav/logo 经 vm 注入（浮层本身不持 vm）
+    if (showDetail) {
+      val ds = vm.detailStation()
+      if (ds == null) LaunchedEffect(Unit) { vm.closeDetail() }
+      else SourceDetailSheet(
+        station = ds, player = ui, diagnostics = detailDiag,
+        onCheck = { vm.checkDetailSources(ds) },
+        onPlay = { i -> vm.startPlay(ds, i) },
+        onEdit = { vm.srcEdit(ds, it) },
+        fav = vm.favKeys.value.contains(ds.key),
+        checking = detailBusy,
+        onSongs = { vm.closeDetail(); vm.showSongs.value = true },
+        logo = vm.logoOf(ds),
+        onDismiss = { vm.closeDetail() },
+      )
+    }
     BackHandler(enabled = nav != Nav.LIST) { vm.nav.value = Nav.LIST }
   }
 }

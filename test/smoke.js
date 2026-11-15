@@ -129,6 +129,23 @@ const boot = () => new Promise(async (resolve, reject) => { // 起服 + 就绪�
       assert.strictEqual((await req('GET', '/api/store', { Origin: 'http://evil.com' })).status, 403));
     await ok('/api/check 拒私网目标', async () =>
       assert.strictEqual((await req('GET', '/api/check?url=' + encodeURIComponent('http://127.0.0.1/'))).status, 400));
+    // /api/check?detail=1（B1 结构化探活，契约 contracts/source-diagnostic.json）：安全边界与旧口径一致
+    await ok('/api/check?detail=1 方法校验：POST → 405', async () =>
+      assert.strictEqual((await req('POST', '/api/check?detail=1&url=x')).status, 405));
+    await ok('/api/check?detail=1 拒跨源 Origin → 403', async () =>
+      assert.strictEqual((await req('GET', '/api/check?detail=1&url=x', { Origin: 'http://evil.com' })).status, 403));
+    await ok('/api/check?detail=1 拒私网目标 → 400', async () =>
+      assert.strictEqual((await req('GET', '/api/check?detail=1&url=' + encodeURIComponent('http://127.0.0.1/'))).status, 400));
+    await ok('/api/check?detail=1 结果只含结构化字段、不返回响应体（.invalid 域离线快速失败；code 不断言——公网环境差异）', async () => {
+      const r = await req('GET', '/api/check?detail=1&url=' + encodeURIComponent('http://vradio-smoke.invalid/live.mp3'));
+      assert.strictEqual(r.status, 200);
+      const j = JSON.parse(r.body);
+      assert.ok(Array.isArray(j.results) && j.results.length === 1);
+      assert.strictEqual(typeof j.ok, 'boolean');
+      assert.deepStrictEqual(Object.keys(j.results[0]).sort(),
+        ['bytes', 'checkedAt', 'code', 'contentType', 'hls', 'httpStatus', 'latencyMs', 'mode', 'ok', 'url', 'why'].sort());
+      assert.ok(!('body' in j.results[0]) && !r.body.slice(0, 200).includes('<'), '不得带响应体');
+    });
     await ok('/api/sync 拒跨站 POST', async () =>
       assert.strictEqual((await req('POST', '/api/sync', { 'Sec-Fetch-Site': 'cross-site' })).status, 403));
     await ok('/api/nowplaying 对 .M3U8 大小写变形短路返回空（不建旁路连接）', async () => {

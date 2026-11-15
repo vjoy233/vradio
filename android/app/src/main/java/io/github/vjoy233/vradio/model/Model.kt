@@ -16,8 +16,20 @@ data class Station(
   var dName: String = n,
   var dU: List<String> = emptyList(),
 ) {
+  /* B1 源生命周期运行时字段（Library.applyCfg 在 u 定稿后计算；不持久化、不参与 equals/copy）：
+     mo = 人工有效顺序（manual 序在前、未列按 u 原序追加；null = 无人工序即默认 [0..n-1]）；
+     dis = 手动禁用索引集（播放与自动体检都跳过）；lbl = 源标签（键=源 URL）。
+     三者都绝不物理重排 u[]——u[0] 是 srcmem/收藏/健康标记的身份键。 */
+  var mo: List<Int>? = null
+  var moManual: Boolean = false   // mo 来自 cfg.srcManualOrder（B1 review P1-6）：播放决策保留用户序压过启发式（player.js moManual 同款）
+  var dis: Set<Int> = emptySet()
+  var lbl: Map<String, String> = emptyMap()
+
   val key: String get() = "$c|$n"   // keyOf 同款（显示/回绑用，URL 才是持久身份）
   val u0: String get() = u[0]
+
+  /** 播放顺序（B1）：人工序（无则默认序）剔除禁用索引；空 = 全部源已手动禁用（NO_ENABLED_SOURCE）。 */
+  fun effOrder(): List<Int> = (mo ?: u.indices.toList()).filter { it !in dis }
 }
 
 /** radio.cfg 清洗后的形态（normCfg 同语义：URL 键过滤 + 条数/长度封顶）。v2（B0）：新增源生命周期三字段
@@ -58,6 +70,23 @@ data class SongRec(val t: String, val at: Long)
 /** radio.srcmem2 值：{i:源序号, t:时间}。 */
 data class SrcMem(val i: Int, val t: Long)
 
+/** 一次源探活的结构化结果（B1，contracts/source-diagnostic.json 双端契约形态）：code 是程序分支唯一依据
+ *  （枚举名与契约 codes 数组一致），why 仅供人读——UI 不得按 why 文案反推状态；mode = direct|hls
+ *  （安卓无 /proxy 级）。未建连时 httpStatus=0、contentType=空串。 */
+data class DiagnosticResult(
+  val url: String,
+  val ok: Boolean,
+  val code: String,
+  val hls: Boolean,
+  val mode: String,
+  val httpStatus: Int,
+  val contentType: String,
+  val bytes: Long,
+  val latencyMs: Long,
+  val why: String,
+  val checkedAt: Long,
+)
+
 /** 播放 UI 状态（PlayerHolder 唯一所有者，UI 只读）。 */
 enum class PState { IDLE, CONNECTING, PLAYING, PAUSED }
 
@@ -68,6 +97,8 @@ data class PlayerUiState(
   val song: String = "",            // ICY 当前曲名（空 = 无曲讯；国内 m3u8 台协议限制显示为空不是 bug）
   val kbps: Int = 0,                // icy-br 码率（>0 才显示 "· Nkbps"）
   val srcIdx: Int = -1,             // 正在用的源序号（s.u 下标；-1 = 未建流）
+  val mode: String = "",            // 正在用源的播放模式 direct/hls（空 = 未建流；源详情面板展示）
+  val noSrc: Boolean = false,       // NO_ENABLED_SOURCE（B1）：该台所有源都已手动禁用——保持停播的可区分状态
   val sleepLeftMs: Long = 0L,       // 睡眠定时剩余（0 = 未设定）
   val volPct: Int = 90,             // 当前应用音量 0-100（滑杆 UI 联动）
 )

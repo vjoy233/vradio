@@ -20,7 +20,7 @@
     "OK": "验收通过（直流字节阈值 / HLS 分片字节阈值）",
     "NETWORK": "建连/解析/超时失败（guardLookup 拒绝也在内）",
     "HTML": "响应是 HTML 错误页（假流常见形态）",
-    "HTTP": "HTTP 状态码非 2xx/3xx 可用形态",
+    "HTTP": "HLS 清单拉取非 200（直流按字节验收不看状态码——AGENTS 已知坑：不能信状态码/Content-Type；非 2xx 的 httpStatus 照常上报但不参与 ok 判定）",
     "EMPTY_PLAYLIST": "m3u8 可解析但无分片条目",
     "NO_SEGMENT": "m3u8 有条目但首个分片拉不到/不吐字节",
     "SHORT_BODY": "有响应但窗内字节数低于阈值（336B 假流类）",

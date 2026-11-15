@@ -319,3 +319,49 @@ class LightUpdate(private val gh: Gh, private val filesDir: File) {
 ## 收尾报告（每个 agent 的最终输出）
 
 列出：已写文件清单、与 CONTRACTS.md 偏差点及原因、单测清单与自测情况（语法自查，无法编译）、遗留 TODO。
+
+---
+
+## B1 API 面（r4 扩展契约·Android 侧，2026-11-15，plan-expansion-r4 §5）
+
+> B1 批次落地后的冻结接口；语义与 Web 侧（srcorder.js / app.js 详情面板）必须镜像，冲突以 plan-expansion-r4 §5 为准。
+
+- **`CheckStream.Verdict` 结构化（§5.1）**：
+  `Verdict(ok, bytes, hls, why, code, httpStatus, contentType, latencyMs, checkedAt)`，
+  `Code = { OK, NETWORK, HTML, HTTP, EMPTY_PLAYLIST, NO_SEGMENT, SHORT_BODY, REDIRECT_REJECTED, INVALID_URL }`。
+  code 是程序分支唯一依据、why 仅人读。判定次序（双端须一致）：直流/分片 = `HTML`（Content-Type text/html
+  且字节 ≥ 阈值）> `SHORT_BODY`（窗内字节不足，fixture 336B 假流口径）> `OK`；HLS 清单非 200 → `HTTP`、
+  清单无分片 → `EMPTY_PLAYLIST`、分片拉不到/地址解析失败 → `NO_SEGMENT`（bytes/ct 报清单侧观察值）。
+  安卓侧 `REDIRECT_REJECTED` 恒不产生（okhttp 跟重定向不逐跳复查，G P3 留档）、`INVALID_URL` 仅入口
+  http(s) 预检触发；两值保留为枚举/契约对齐。`RawHttp.Resp` 增 `latencyMs`（TTFB 近似）。
+- **`DiagnosticResult`（model/）+ `DiagnosticCodec`（check/）**：字段 = contracts/source-diagnostic.json
+  result 形态；`Verdict.toDiagnostic(url)` 产 mode=direct|hls；fixture 对齐测试在 `DiagnosticModelTest`。
+- **`Station.mo/dis/lbl`（运行时字段，不持久化、不参与 equals）**：`mo` = 人工有效顺序
+  （manual 中存在于 u 的按 manual 序排前 + 未列按 u 原序追加；null = 无人工序即默认 [0..n-1]，**含禁用位**）；
+  `dis` = 禁用索引集；`lbl` = 源 URL→标签。`Station.effOrder()` = mo 剔除 dis（播放维度）。**绝不物理重排
+  `u[]`**——cfg 三字段键一律 = 身份 URL `u[0]`（与 srcs 的「任一源命中」口径不同）。
+- **Library B1 编辑口**：`srcMove(s, i, up)`（材料化当前完整序相邻交换，>6 源台由 urlArrMap take(6) 截断——
+  两侧同款护栏）、`srcOrderReset(s)`（撤销人工源排序，只删该台 srcManualOrder）、`srcDisabledToggle(s, i)`
+  （启用/禁用切换，主源可禁不换身份键）；全部整表写 cfg + reapplyCfg 即时生效。
+- **PlayerHolder 决策链（B1 扩展）**：`srcOrder(s)` 基座 = effOrder 按直流优先稳定排序；链 =
+  手动 `prefer`（须在有效序内，禁用不播）> `srcmem2.i`（须在有效序内，指向禁用源忽略）> `mo` 首位（人工默认序）
+  > 启发式对 mo 序遍历；级联自愈只走有效序。
+- **`NO_ENABLED_SOURCE`**：`effOrder()` 为空时 `play()` 不建流不建 pctx——`PlayerUiState.noSrc=true` +
+  status「该台所有源都已手动禁用，请先启用一个源」，保持停播；不写 radio.health、不自动复活、不换
+  identityUrl；`resume()` 重进提示路径。自动体检（boot 静默/手动全量）跳过禁用源（`probe` 只测 effOrder，
+  全禁台无判据不落标）。
+- **恢复默认两动作（彼此独立）**：「恢复默认播放源」`PlayerHolder.forgetSrcOf(s)` 只清 srcmem2（人工序/禁用
+  保留；`forgetSrc()` 旧入口=当前台）；「撤销人工源排序」`Library.srcOrderReset(s)` 只删 srcManualOrder
+  （禁用/追加源保留）。
+- **`SourceDetailSheet`（ui/SrcSheet.kt）**：
+  ```kotlin
+  @Composable fun SourceDetailSheet(station: Station, player: PlayerUiState, diagnostics: List<DiagnosticResult>,
+    onCheck: () -> Unit, onPlay: (Int) -> Unit, onEdit: (SourceAction) -> Unit,
+    fav: Boolean = false, checking: Boolean = false, onSongs: (() -> Unit)? = null,
+    logo: String = "", onDismiss: () -> Unit = {})
+  sealed class SourceAction { data class Move(index, up); data class ToggleDisable(index);
+    object RestoreDefault; object ResetOrder }
+  ```
+  三个必选回调按 §5.5 签名；带默认值的可选参数（fav/checking/onSongs/logo/onDismiss）由 AppRoot 注入，
+  浮层本身不持 vm。手动禁用的源点诊断**不发请求**，显示「该源已被手动禁用，不能诊断」+「取消禁用」。
+  入口：SrcSheet 尾行「ⓘ 源详情」+ PlayerBar 台名长按（单击仍=回到正在播 N5；列表行长按保留 N7 收藏语义）。

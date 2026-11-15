@@ -160,14 +160,15 @@ object PlayerHolder {
 
   /* ---------- 播放决策链 ---------- */
 
-  fun play(s: Station, prefer: Int = -1) { // 总入口（player.js:128-150）
+  fun play(s: Station, prefer: Int = -1) { // 总入口（player.js:128-150 的 B1 扩展：基座换人工序+禁用剔除）
     if (!inited) return
     markProgress()
     halt = false; heldNext = false // 清上一轮守卫标记（player.js:130）
-    val order = srcOrder(s).toMutableList() // ④ 启发式基座：直流形态优先（player.js:131）
+    val order = srcOrder(s).toMutableList() // ④ 启发式对 mo 序遍历：直流形态优先（player.js:131；禁用已剔除）
+    if (order.isEmpty()) { noEnabledSrc(s); return } // B1：全部源已手动禁用——不建流不建 pctx
     val mem = srcMem[s.u0]
-    if (mem != null && mem.i in s.u.indices) { order.remove(mem.i); order.add(0, mem.i) } // ③ 记忆先行（player.js:133）
-    if (prefer in s.u.indices) { order.remove(prefer); order.add(0, prefer) }             // ② 手动当次最高（player.js:134）
+    if (mem != null && mem.i in order) { order.remove(mem.i); order.add(0, mem.i) } // ③ 记忆须在有效序内；禁用源忽略（player.js:133）
+    if (prefer in order) { order.remove(prefer); order.add(0, prefer) }             // ② 手动当次最高（禁用源不播，player.js:134）
     val urls = ArrayList<Variant>(order.size * 2)
     for (si in order) for (v in variants(s.u[si])) urls.add(Variant(v, si)) // 三级展开序（player.js:135-136）
     pctx = Pctx(urls, ++token)
@@ -177,9 +178,22 @@ object PlayerHolder {
     val want = if (pv != null) pv / 100f else gvol // 有记忆用记忆、无记忆用全局（player.js:141-142）
     if (vol > 0f) { vol = want; exo.volume = want } // 静音态切台保持静音（player.js:143-144）
     pushMeta(s.n) // 锁屏台名（player.js:145-147）
-    uiMut.update { it.copy(st = PState.CONNECTING, station = s, song = "", kbps = 0, srcIdx = -1,
+    uiMut.update { it.copy(st = PState.CONNECTING, station = s, song = "", kbps = 0, srcIdx = -1, mode = "", noSrc = false,
       volPct = (vol * 100).roundToInt()) }
     next()
+  }
+
+  /** NO_ENABLED_SOURCE（B1，plan-expansion-r4 §5.4）：该台所有源都已手动禁用——不建流不建 pctx、
+   *  保持停播；不写 radio.health、不自动复活、不换 identityUrl；UI 经 ui.noSrc + status 文案可区分。 */
+  private fun noEnabledSrc(s: Station) {
+    token++ // 作废在飞链（切换意图生效：原台停播，本台保持停播）
+    halt = false; heldNext = false
+    exo.stop(); exo.clearMediaItems()
+    station = s; connecting = null
+    curSi = -1; curPlay = ""; retried = false; lastSong = ""
+    markProgress()
+    uiMut.update { it.copy(st = PState.IDLE, station = s, song = "", kbps = 0, srcIdx = -1, mode = "", noSrc = true,
+      status = "该台所有源都已手动禁用，请先启用一个源") }
   }
 
   fun pause() { // 有意暂停（player.js:272-277）
@@ -192,6 +206,7 @@ object PlayerHolder {
   fun resume() { // player.js:264-271
     if (!inited) return
     val s = station ?: return // 无台可续：媒体键路径已转 onPlayLast（player.js:265）
+    if (s.effOrder().isEmpty()) { play(s); return } // B1：全禁台恢复 = 仍 NO_ENABLED_SOURCE（重进提示路径，不复活）
     halt = false
     connecting = s; say("连接中…"); syncState()
     if (heldNext) { heldNext = false; retryOrNext(); return } // 暂停期级联搁浅接回（player.js:269）
@@ -222,7 +237,7 @@ object PlayerHolder {
     cancelSleep()
     curSi = -1; curPlay = ""
     markProgress()
-    uiMut.update { it.copy(st = PState.IDLE, station = null, song = "", kbps = 0, srcIdx = -1,
+    uiMut.update { it.copy(st = PState.IDLE, station = null, song = "", kbps = 0, srcIdx = -1, mode = "", noSrc = false,
       status = "") } // 清引擎文案：无台时 PlayerBar 第二行会永久残留「已暂停」等旧状态（G P3）
   }
 
@@ -257,8 +272,11 @@ object PlayerHolder {
 
   /* ---------- 成功源记忆 srcmem2 ---------- */
 
-  fun forgetSrc(): Boolean { // 「恢复默认源」（player.js:255-261）：true=真清了，重播由调用方发起
-    val s = station ?: return false
+  fun forgetSrc(): Boolean = station?.let { forgetSrcOf(it) } ?: false // 「恢复默认源」旧入口：当前台（选源浮层）
+
+  /** 「恢复默认播放源」（B1 恢复两动作之一，player.js:255-261）：清指定台 srcmem2；人工顺序/禁用表
+   *  保留（与「撤销人工源排序」独立）。true=真清了，重播由调用方发起。 */
+  fun forgetSrcOf(s: Station): Boolean {
     if (srcMem[s.u0] == null) return false
     srcMem.remove(s.u0)
     persistSrcmem()
@@ -267,7 +285,10 @@ object PlayerHolder {
 
   fun srcmemOf(s: Station): Int = srcMem[s.u0]?.i?.takeIf { it in s.u.indices } ?: -1 // 选源浮层「记忆」徽标
 
-  fun srcOrder(s: Station): List<Int> = s.u.indices.sortedBy { srcRank(s.u[it]) } // 稳定排序保行序（player.js:126）；UI「默认」徽标共用
+  /** 决策链基座（B1 扩展 + review P1-6）：有人工序（moManual，mo 来自 cfg.srcManualOrder）保留用户原序
+     压过启发式（player.js:131「moManual ? mo : mo.sort(srcRank)」同款）；仅无人工序时按直流优先稳定排序；
+     UI「默认」徽标共用——人工序/禁用后徽标随决策链同步，不会漂移。 */
+  fun srcOrder(s: Station): List<Int> = playSourceOrder(s.effOrder(), s.u, s.moManual) { srcRank(it) } // player.js:126
 
   /* ---------- 睡眠定时 ---------- */
 
@@ -314,7 +335,7 @@ object PlayerHolder {
       station = null; connecting = null
       markProgress()
       exo.stop(); exo.clearMediaItems()
-      uiMut.update { it.copy(st = PState.IDLE, station = null, srcIdx = -1, song = "", kbps = 0,
+      uiMut.update { it.copy(st = PState.IDLE, station = null, srcIdx = -1, mode = "", noSrc = false, song = "", kbps = 0,
         status = "⚠ 全部源失败，建议点「体检」或「同步源」") }
       return
     }
@@ -322,7 +343,9 @@ object PlayerHolder {
     val cur = p.urls[p.i++]
     curSi = cur.si; curPlay = cur.u; retried = false
     connecting = station // 换源重试期间保持连接中指示（player.js:167）
-    uiMut.update { it.copy(st = PState.CONNECTING, srcIdx = cur.si, kbps = 0, status = "连接中… 源" + p.i + "/" + p.urls.size) } // AIbot P3：换源清旧码率（无 ICY 的源残留上一源 kbps）
+    uiMut.update { it.copy(st = PState.CONNECTING, srcIdx = cur.si, noSrc = false,
+      mode = if (m3u8Re.containsMatchIn(cur.u)) "hls" else "direct", // B1：源详情面板的播放模式展示
+      kbps = 0, status = "连接中… 源" + p.i + "/" + p.urls.size) } // AIbot P3：换源清旧码率（无 ICY 的源残留上一源 kbps）
     markProgress() // 看门狗计时起点：建流期连接挂死同覆盖（player.js:224-225 口径）
     loadVariant(cur.u)
   }
@@ -622,3 +645,8 @@ object PlayerHolder {
   private class Variant(val u: String, val si: Int)
   private class Pctx(val urls: List<Variant>, val my: Int) { var i = 0 } // player.js:14
 }
+
+/** 播放源顺序决策（B1 review P1-6，player.js srcOrder 纯逻辑镜像）：manual=true 保留用户序（启发式让位，
+    同级保持行序）；manual=false 按直流优先稳定排序。Top-level 纯函数 JVM 直测；PlayerHolder.srcOrder 委派至此。 */
+fun playSourceOrder(eff: List<Int>, u: List<String>, manual: Boolean, rank: (String) -> Int): List<Int> =
+  if (manual) eff.toList() else eff.sortedBy { rank(u[it]) }

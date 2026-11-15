@@ -1,8 +1,8 @@
 {
   "phase": "p2",
-  "head": "924a59b",
+  "head": "727d806",
   "headNote": "head = 采证时的代码提交；承载本文件的产物提交不改代码，git log 验证：产物提交父 == head 且 diff 仅 evidence/**",
-  "started": "2026-11-15T11:10:54.071Z",
+  "started": "2026-11-15T11:45:07.206Z",
   "pass": 13,
   "fail": 0,
   "assertions": [
@@ -64,7 +64,7 @@
       "id": "F8a",
       "name": "--dock-h 写入 + footer fixed + scroll-padding 联动",
       "pass": true,
-      "detail": "{\"dock\":\"54px\",\"spb\":\"78px\",\"foot\":\"fixed\"}"
+      "detail": "{\"dock\":\"69px\",\"spb\":\"93px\",\"foot\":\"fixed\"}"
     },
     {
       "id": "F8b",

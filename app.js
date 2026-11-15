@@ -1431,8 +1431,8 @@ const App = {
       http,
       storeSnap: () => { const s = {}; for (const k of Store.KEYS) s[k] = localStorage.getItem(k); return s; },
       storeApply: d => { for (const k of Store.KEYS) { if (d[k] != null) localStorage.setItem(k, d[k]); else localStorage.removeItem(k); } },
-      storeFlush: () => Store.flush(),
-      getMy: () => fetch('my-radio.txt?t=' + Date.now()).then(r => r.ok ? r.text() : '').catch(() => null),
+      storeFlush: async () => { await Store.flush(); return !Store.dirty; }, // 可等待可判定成功（AIbot 三轮 P1-1）：flush 后 dirty=false 才算落盘成功（file:// 恒成功）
+      getMy: () => fetch('my-radio.txt?t=' + Date.now()).then(r => r.status === 404 ? '' : r.ok ? r.text() : null).catch(() => null), // 404=空列表合法；其余失败 null 中止（三轮 P2-1，不再误当空文件清掉 my-radio）
       postMy: lines => this.postMyRadio(lines),
       getQuality: () => fetch('/api/quality').then(r => r.json()).then(j => j && j.data && typeof j.data === 'object' && !Array.isArray(j.data) ? j.data : null).catch(() => null),
       postQuality: data => fetch('/api/quality', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ replace: true, data }) })
@@ -1809,14 +1809,14 @@ const App = {
     };
     $('mExport').onclick = () => this.exportCfg();
     $('mImport').onclick = () => $('mfile').click();
-    $('mfile').onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => this.importCfg(String(r.result)); r.readAsText(f, 'utf-8'); e.target.value = ''; };
+    $('mfile').onchange = e => { const f = e.target.files[0]; if (!f) return; if (f.size > 2 * 1024 * 1024) { $('status').textContent = '导入失败：文件超过 2MB 上限'; e.target.value = ''; return; } const r = new FileReader(); r.onload = () => this.importCfg(String(r.result)); r.readAsText(f, 'utf-8'); e.target.value = ''; };
     $('mReset').onclick = () => this.resetCfg();
     $('mBackup').onclick = () => this.exportAll();
     $('mRestore').onclick = () => $('mfile2').click();
-    $('mfile2').onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => this.importAll(String(r.result)); r.readAsText(f, 'utf-8'); e.target.value = ''; };
+    $('mfile2').onchange = e => { const f = e.target.files[0]; if (!f) return; if (f.size > 2 * 1024 * 1024) { $('status').textContent = '导入失败：备份文件超过 2MB 上限'; e.target.value = ''; return; } const r = new FileReader(); r.onload = () => this.importAll(String(r.result)); r.readAsText(f, 'utf-8'); e.target.value = ''; };
     // 歌单多格式导入（r4/B4）：文件（m3u/pls/xspf/asx/txt）+ 纯 URL 文本粘贴两入口，四桶预览后合并入 my-radio
     $('mPlaylist').onclick = () => $('mfile3').click();
-    $('mfile3').onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => this.importPlaylist(String(r.result), f.name); r.readAsText(f, 'utf-8'); e.target.value = ''; };
+    $('mfile3').onchange = e => { const f = e.target.files[0]; if (!f) return; if (f.size > 2 * 1024 * 1024) { $('status').textContent = '导入失败：文件超过 2MB 上限'; e.target.value = ''; return; } const r = new FileReader(); r.onload = () => this.importPlaylist(String(r.result), f.name); r.readAsText(f, 'utf-8'); e.target.value = ''; };
     $('mPaste').onclick = () => {
       let v = null; try { v = prompt('粘贴流地址（每行一个 http(s) 链接，最多 500 条）：'); } catch (_) { return; }
       if (v == null) return;
@@ -1888,6 +1888,7 @@ const App = {
     $('exportBtn').onclick = () => this.exportFavs();
     $('file').onchange = e => {
       const f = e.target.files[0]; if (!f) return;
+      if (f.size > 2 * 1024 * 1024) { $('status').textContent = '导入失败：文件超过 2MB 上限'; e.target.value = ''; return; } // AIbot 三轮 P2-2：读取前按 file.size 拒（对齐 Android readUri 2MB）
       const r = new FileReader();
       r.onload = async () => {
         const text = String(r.result);

@@ -26,7 +26,7 @@ object Backup {
     val quality: JSONObject? = null,     // {v:1, data:{…迁移字段}}
   )
 
-  fun exportAll(lib: Library, myText: String, at: Long): String {
+  fun exportAll(lib: Library, myText: String, at: Long, qualityExt: JSONObject? = null): String {
     val o = JSONObject()
     o.put("format", "vradio-backup")
     o.put("version", 3)
@@ -36,7 +36,9 @@ object Backup {
     for ((k, v) in lib.store.snapshot()) d.put(k, v)
     o.put("data", d)
     o.put("myRadio", JSONArray(myLines(myText)))
-    o.put("extensions", JSONObject()) // 质量侧 Android 生产方在 B2（QualityStore）——落地前恒空，listenStats B3 同理
+    // 「包含本机 sidecar」勾选（AIbot 三轮 P1-3）：qualityExt = {v:1, data:qualityTrim(捕获数据)}，
+    // 由调用方在勾选时构建；默认 null = extensions 恒空（与 Web mSidecar 复选同口径）
+    o.put("extensions", if (qualityExt != null) JSONObject().put("sidecars", JSONObject().put("quality", qualityExt)) else JSONObject())
     return o.toString(2)
   }
 
@@ -124,8 +126,8 @@ object Backup {
      真实现；JVM 测试传 fake（断言 sidecar 实际写入 / 失败触发三件回滚 / 回滚顺序）。返回 null = 成功，
      否则失败原因（调用方 toast 拼前缀「导入失败：…已回滚到导入前状态」）。快照三件由调用方在提交前自持。 */
   class ImportIO(
-    val applyStore: () -> Unit,          // Store.applyAll(导入 data)
-    val rollbackStore: () -> Unit,       // Store.applyAll(快照)
+    val applyStore: () -> Boolean,       // Store.applyAllChecked(导入 data)——落盘失败可感知（AIbot 三轮 P1-2）
+    val rollbackStore: () -> Boolean,    // Store.applyAllChecked(快照)；false = 回滚仅内存（重启可能残留导入数据，须如实报告）
     val applyMy: () -> Boolean,          // my 全量替换（my==null 时调用方给 { true } 不动文件）
     val rollbackMy: () -> Unit,          // my-radio 旧文本回写
     val applyQuality: () -> Boolean,     // QualityStore.replaceImport（quality==null 时给 { true }）
@@ -133,14 +135,19 @@ object Backup {
   )
 
   fun commitImport(data: Map<String, String>, my: List<String>?, qualityData: JSONObject?, io: ImportIO): String? {
-    io.applyStore()
+    if (!io.applyStore()) { // Store 落盘失败必须中止（否则 Store 旧值 + my/quality 新值 = 跨层半导入）
+      val rb = io.rollbackStore()
+      return "主数据持久化失败（store.json 写入失败）" + if (rb) "" else "；回滚也仅写入内存，重启后请重新导入"
+    }
     if (!io.applyMy()) {
-      io.rollbackStore(); io.rollbackMy()
-      return "个人电台恢复超限（500 行/64KB）"
+      val rb = io.rollbackStore()
+      io.rollbackMy()
+      return "个人电台恢复超限（500 行/64KB）" + if (rb) "" else "；Store 回滚写失败，重启后请重新导入"
     }
     if (!io.applyQuality()) {
-      io.rollbackStore(); io.rollbackMy(); io.rollbackQuality()
-      return "质量 sidecar 恢复失败"
+      val rb = io.rollbackStore()
+      io.rollbackMy(); io.rollbackQuality()
+      return "质量 sidecar 恢复失败" + if (rb) "" else "；Store 回滚写失败，重启后请重新导入"
     }
     return null
   }

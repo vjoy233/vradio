@@ -121,6 +121,9 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   val syncBusy = MutableStateFlow(false); val syncMsg = MutableStateFlow("")
   val addBusy = MutableStateFlow(false); val addMsg = MutableStateFlow("")
   val confirmReq = MutableStateFlow<String?>(null)           // 导入覆盖确认门槛
+  val impHasQuality = MutableStateFlow(false)                // 待确认备份含质量 sidecar（确认框显隐复选，AIbot 三轮 P1-3）
+  val impSidecar = MutableStateFlow(false)                   // 用户勾选「恢复质量 sidecar」（默认不勾 = 保留本机，与 Web 同语义）
+  val backupWithSidecar = MutableStateFlow(false)            // 导出「包含本机 sidecar」复选（默认关，与 Web mSidecar 同口径）
   val manualRun = MutableStateFlow(false)                     // 手动体检在跑（静默版让位标志；StateFlow 供设置页「取消体检」按钮态，B3）
   private val healthAbort = AtomicBoolean(false)              // 手动体检取消（Web sync.js this.abort 同款：已确认的标记保留）
   private var pendingImp: Pair<Imp, Any?>? = null
@@ -1042,7 +1045,15 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     viewModelScope.launch(Dispatchers.IO) {
       try {
         val content = when (kind) {
-          Exp.BACKUP -> Backup.exportAll(lib, myRadio.readText(), System.currentTimeMillis())
+          // 「包含本机 sidecar」勾选（AIbot 三轮 P1-3）：qualityExt = 捕获数据经 qualityTrim 白名单裁剪（与 Web exportAll 同构）
+          Exp.BACKUP -> {
+            val qExt = if (backupWithSidecar.value) runCatching {
+              val cap = JSONObject(quality.capture())
+              val trimmed = Backup.qualityTrim(cap.optJSONObject("stations") ?: JSONObject())
+              if (trimmed.length() > 0) JSONObject().put("v", 1).put("data", trimmed) else null
+            }.getOrNull() else null
+            Backup.exportAll(lib, myRadio.readText(), System.currentTimeMillis(), qExt)
+          }
           Exp.M3U -> Backup.m3uFavs(lib)                                  // 空串 = 无可解析收藏台（收藏全休眠同判）
           Exp.SONGS -> Backup.songsTxt(lib) { System.currentTimeMillis() }
           Exp.CFG -> Backup.cfgJson(lib.cfg)
@@ -1077,10 +1088,13 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
           val n = C.KEYS.count { p.data[it] != null }
           if (n == 0) { toast("导入失败：备份中无有效数据"); return@launch }
           pendingImp = Imp.BACKUP to p
-          // sidecar 确认语义与 Web 同口径（AIbot P2-1）：「含 N 台质量数据、将覆盖本机质量数据」
+          // sidecar 选择语义与 Web 对齐（AIbot 三轮 P1-3）：备份含质量数据时确认框出复选（默认不勾=保留本机），
+          // 勾选才经事务恢复（下方 applyConfirmed 按 impSidecar 传参）
           val qn = p.quality?.optJSONObject("data")?.length() ?: 0
+          impHasQuality.value = qn > 0
+          impSidecar.value = false
           confirmReq.value = "导入将覆盖本地全部数据（备份含 $n 个数据项：收藏/维护配置/健康标记/歌曲历史全部替换" +
-            (if (qn > 0) "；含 $qn 台质量数据，将覆盖本机质量数据" else "") + "）。继续？"
+            (if (qn > 0) "；备份含 $qn 台质量数据，勾选下方复选框才会覆盖本机质量数据" else "") + "）。继续？"
         }
         Imp.M3U -> {                                                      // B4 歌单导入：m3u/pls/xspf/asx/纯 URL 统一解析（PlaylistParser，
                                                                           // 纯本地不联网探活）→ 四桶预览（新增/已知/重复/非法）→ 确认后已知台恢复收藏（N2 语义）+ 新台入 my-radio
@@ -1127,11 +1141,13 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     }
   }.getOrNull()
 
-  fun cancelConfirm() { confirmReq.value = null; pendingImp = null }
+  fun cancelConfirm() { confirmReq.value = null; pendingImp = null; impHasQuality.value = false; impSidecar.value = false }
 
   fun applyConfirmed() {
     val p = pendingImp ?: return
+    val sidecarChoice = impSidecar.value // 同步捕获（下方立即复位，协程内只用局部值）
     confirmReq.value = null; pendingImp = null
+    impHasQuality.value = false; impSidecar.value = false
     viewModelScope.launch {
       try {
         when (p.first) {
@@ -1139,14 +1155,17 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
             val pay = p.second as Backup.ImportPayload
             // 三阶段纪律（B4，§13.2）：提交前快照三件（Store + my-radio + 旧质量 sidecar），任一步失败整体回滚
             // ——AIbot P1-1：v3 sidecar 经 QualityStore 事务式覆盖真正落盘（replaceImport 原地换内存即缓存重载）
+            // AIbot 三轮 P1-3：sidecar 恢复是明确可选项——仅当用户在确认框勾选（impSidecar）才传 qualityData，
+            // 未勾选 = 保留本机质量数据（快照也不必留）；applyStore/rollbackStore 升级为可感知落盘失败（三轮 P1-2）
+            val restoreQ = pay.quality != null && sidecarChoice
             val snap = Store.snapshot()
             val myOld = myRadio.readText()
-            val qSnap = if (pay.quality != null) quality.capture() else null
-            val qData = pay.quality?.optJSONObject("data")
+            val qSnap = if (restoreQ) quality.capture() else null
+            val qData = if (restoreQ) pay.quality!!.optJSONObject("data") else null
             val err = withContext(Dispatchers.IO) {
               val e = Backup.commitImport(pay.data, pay.my, qData, Backup.ImportIO(
-                { Store.applyAll(pay.data) },                             // 白名单键写入/缺键 remove
-                { Store.applyAll(snap) },
+                { Store.applyAllChecked(pay.data) },                     // 白名单键写入/缺键 remove；落盘失败可感知（三轮 P1-2）
+                { Store.applyAllChecked(snap) },
                 { pay.my == null || runCatching { myRadio.replace(pay.my!!.joinToString("\n")) }.getOrDefault(false) },   // v1 无 my 不动；v2 读 my；v3 读 myRadio
                 { runCatching { myRadio.replace(myOld) } },
                 { qData == null || quality.replaceImport(qData) },        // sidecar 最后提交（覆盖语义，§13.2-6）
@@ -1165,7 +1184,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
             refreshUi3()
             stamp.value++; primeAll()
             updateShortcuts()                                             // E3：收藏已整体替换，快捷方式重建
-            toast("已恢复完整备份（v${pay.ver}）" + (if (pay.quality != null) "，含质量 sidecar（已覆盖本机质量数据）" else ""))
+            toast("已恢复完整备份（v${pay.ver}）" + (if (restoreQ) "，含质量 sidecar（已覆盖本机质量数据）" else if (pay.quality != null) "，本机质量数据保持不变" else ""))
           }
           Imp.M3U -> {                                                    // B4 四桶确认后执行：已知台恢复收藏（N2 语义）+ 新台批量入 my-radio
             val p2 = p.second as PlaylistImp                              // （append 自带查重/清洗/SafeTarget/封顶）

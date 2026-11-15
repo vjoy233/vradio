@@ -196,5 +196,37 @@ class BackupV3Test {
       assertEquals("质量 sidecar 恢复失败", Backup.commitImport(data, null, q, io(c, true, false)))
       assertEquals(listOf("store", "my", "q", "store-rb", "my-rb", "q-rb"), c)
     }
+    run {                                                   // Store 落盘失败（AIbot 三轮 P1-2）：中止 + 回滚 Store，my/quality 根本不动
+      val c = mutableListOf<String>()
+      assertEquals("主数据持久化失败（store.json 写入失败）", Backup.commitImport(data, listOf("台,http://x/1"), q,
+        Backup.ImportIO({ c.add("store"); false }, { c.add("store-rb"); true }, { c.add("my"); true }, {}, { c.add("q"); true }, { true })))
+      assertEquals(listOf("store", "store-rb"), c)
+    }
+    run {                                                   // 回滚也失败：文案如实点名（重启后请重新导入）
+      val c = mutableListOf<String>()
+      val err = Backup.commitImport(data, null, q,
+        Backup.ImportIO({ false }, { false }, { true }, {}, { true }, { true }))
+      assertEquals("主数据持久化失败（store.json 写入失败）；回滚也仅写入内存，重启后请重新导入", err)
+      assertEquals(0, c.size)
+    }
+  }
+
+  @Test fun storeApplyAllCheckedRealWriteFailure() { // 真实写失败（AIbot 三轮 P1-2）：init 到不可建目录 → 落盘必败且可感知
+    val blocker = File.createTempFile("vradio-blocker", ".tmp"); blocker.deleteOnExit()
+    Store.init(File(blocker, "sub"))                       // 父路径是文件：mkdirs 失败 → 写入必失败
+    Store.set(C.K_VOL, "30")                               // set 吞失败路径不受影响（内存态仍在）
+    assertFalse(Store.applyAllChecked(mapOf(C.K_VOL to "90")))
+    assertEquals("90", Store.get(C.K_VOL))                 // 内存已应用（内存态 = 全部）——false 只是把磁盘写失败上报给事务
+    Store.init(dir)                                        // 恢复正常目录（不污染其它用例）
+    assertTrue(Store.applyAllChecked(mapOf(C.K_VOL to "90")))
+  }
+
+  @Test fun exportAllOptionalSidecar() { // 「包含本机 sidecar」（AIbot 三轮 P1-3）：勾选写 extensions.sidecars.quality，默认恒空
+    val plain = JSONObject(Backup.exportAll(lib, "我的,#genre#", 1L))
+    assertEquals(0, plain.getJSONObject("extensions").length())
+    val qd = Backup.qualityTrim(qData("https://main.example/live", 7))
+    val withQ = JSONObject(Backup.exportAll(lib, "我的,#genre#", 1L, JSONObject().put("v", 1).put("data", qd)))
+    assertEquals(qd.length(), withQ.getJSONObject("extensions").getJSONObject("sidecars").getJSONObject("quality").getJSONObject("data").length())
+    assertEquals("android", withQ.getString("app")); assertEquals(3, withQ.getInt("version"))
   }
 }

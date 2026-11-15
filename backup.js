@@ -20,6 +20,7 @@
      测试传 contracts/radio-keys.json；缺省时按 radio.* 前缀宽收——生产路径恒传白名单）。返回：
      { ver:1|2|3, app, data:白名单键值, my:个人电台行|null（null=不动 my-radio.txt）, quality:{v:1,data}|null, n } */
   function readBackup(text, keys) {
+    if (typeof text !== 'string' || text.length > 2 * 1024 * 1024) return null; // 字符数封顶（AIbot 三轮 P2-2 兜底：app.js 入口按 file.size 字节先行拒，此处防程序化调用）
     let j;
     try { j = JSON.parse(text); } catch (_) { return null; }
     if (!j || typeof j !== 'object' || Array.isArray(j)) return null;
@@ -95,8 +96,8 @@
      回滚时把旧快照经同一 replace 通道尽力回写（服务端可能「写成功响应丢」，不回写则 quality.json 停在导入态），
      二次失败在文案里如实点名。DOM/confirm 留在 app.js；存储与网络经 io 注入（生产 = localStorage/fetch，
      测试 = fake 复现「replace 写成功响应丢」）。io 形状：
-     { http, storeSnap(), storeApply(d)（应用与回滚同一入口：有值写/缺键删）, storeFlush(),
-       getMy():Promise<文本|null>, postMy(lines):Promise<bool>,
+     { http, storeSnap(), storeApply(d)（应用与回滚同一入口：有值写/缺键删）, storeFlush():Promise<bool>（可等待可判定成功，AIbot 三轮 P1-1）,
+       getMy():Promise<文本|null>（404=空串、其余失败 null 中止，三轮 P2-1）, postMy(lines):Promise<bool>,
        getQuality():Promise<旧data|null>, postQuality(data):Promise<bool>（replace:true 通道）, refreshQuality() }
      返回 { ok, msg }——msg 即 #status 文案（失败文案含回滚结果）。 */
   async function commitImport(info, sc, io) {
@@ -112,17 +113,19 @@
     }
     let qTried = false; // 质量已提交过（回滚才回写旧快照；失败发生在提交前 = sidecar 未动无需回写）
     const rollback = async why => {
-      io.storeApply(snap); io.storeFlush();
+      io.storeApply(snap);
+      const sOK = await io.storeFlush(); // 回滚也要等待并如实报告（AIbot 三轮 P1-1）：失败只回本地镜像，服务端下次启动重推
       if (myOld != null) await io.postMy(myOld.split(/\r?\n/).filter(l => l.trim()));
-      let note = '';
+      let note = sOK ? '' : '；主数据回滚仅写入本地镜像（服务端可能仍为导入状态，下次启动自动重推）';
       if (qTried) { // 响应丢/超时也走到这：旧快照回写是唯一兜底（服务端侧数据可能已是导入态）
         const ok = await io.postQuality(qOld);
-        note = ok ? '' : '；质量数据可能停留在导入状态，可重试导入';
+        note += ok ? '' : '；质量数据可能停留在导入状态，可重试导入';
         io.refreshQuality(); // 回写后客户端质量缓存对齐服务端真态
       }
       return { ok: false, msg: '导入失败：' + why + '，已回滚到导入前状态' + note };
     };
-    io.storeApply(info.data); io.storeFlush();
+    io.storeApply(info.data);
+    if (!await io.storeFlush()) return rollback('主数据写入失败'); // Store 落盘失败必须进三件回滚（AIbot 三轮 P1-1），防跨层半导入
     if (info.my != null && io.http) { // v2/v3：个人电台行全量替换（v1 到不了这；file:// 无通道不替换）
       if (!await io.postMy(info.my)) return rollback('个人电台恢复失败');
     }

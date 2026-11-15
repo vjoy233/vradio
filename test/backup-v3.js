@@ -102,7 +102,7 @@ const impInfo = () => ({ ver: 3, app: 'web', data: { 'radio.vol': '30' }, my: ['
 const ioFake = over => Object.assign({
   http: true,
   storeSnap: () => ({ 'radio.vol': '90' }),
-  storeApply: () => {}, storeFlush: () => {},
+  storeApply: () => {}, storeFlush: async () => true,   // 可等待可判定成功（AIbot 三轮 P1-1 契约）
   getMy: async () => '我的,#genre#\r\n台C,http://c/1',
   postMy: async () => true,
   getQuality: async () => oldQ,
@@ -156,6 +156,38 @@ ok('commitImport my 失败：回滚 Store/my，sidecar 未提交（无 quality �
   assert.strictEqual(r.ok, false);
   assert.ok(r.msg.includes('个人电台恢复失败') && r.msg.includes('已回滚到导入前状态'));
   assert.deepStrictEqual(qPosts, []);                  // 失败发生在质量提交前：sidecar 未动，无需回写
+});
+ok('commitImport storeFlush 拒绝（AIbot 三轮 P1-1）：三件回滚 + my/quality 未动，不再无声跨层半导入', async () => {
+  const applied = [], myPosts = [], qPosts = [];
+  const r = await B.commitImport(impInfo(), true, ioFake({
+    storeApply: d => applied.push(d['radio.vol']),
+    storeFlush: async () => false,                       // Store 落盘失败（真实现 = flush 后 dirty 仍 true）
+    postMy: async l => { myPosts.push(l); return true; },
+    postQuality: async d => { qPosts.push(d); return true; },
+  }));
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.msg.includes('主数据写入失败') && r.msg.includes('已回滚到导入前状态'));
+  assert.deepStrictEqual(applied, ['30', '90']);        // 应用导入 data 失败 → 回滚恢复快照
+  assert.strictEqual(myPosts.length, 1);                 // 回滚把旧 my 行原样写回（已捕获的快照）
+  assert.deepStrictEqual(myPosts[0].join('|'), '我的,#genre#|台C,http://c/1');
+  assert.deepStrictEqual(qPosts, []);                    // quality 从未提交（qTried=false），无需回写
+});
+ok('commitImport 回滚 storeFlush 也失败：文案如实点名「仅写入本地镜像」', async () => {
+  let n = 0;
+  const r = await B.commitImport(impInfo(), true, ioFake({
+    storeFlush: async () => ++n > 1,                     // 首次（提交）失败、第二次（回滚）成功
+  }));
+  assert.strictEqual(r.ok, false); assert.ok(!r.msg.includes('仅写入本地镜像'));
+  n = 0;
+  const r2 = await B.commitImport(impInfo(), true, ioFake({
+    storeFlush: async () => false,                       // 提交与回滚都失败
+  }));
+  assert.strictEqual(r2.ok, false);
+  assert.ok(r2.msg.includes('主数据写入失败') && r2.msg.includes('主数据回滚仅写入本地镜像（服务端可能仍为导入状态，下次启动自动重推）'));
+});
+ok('readBackup 超大输入（>2M 字符）→ 直接 null（AIbot 三轮 P2-2 兜底）', async () => {
+  const huge = '{"v":3,"data":{"radio.vol":"1"}}' + ' '.repeat(2 * 1024 * 1024);
+  assert.strictEqual(B.read(huge, null), null);
 });
 ok('commitImport file://（http=false）：零网络调用，文案注明个人列表不恢复', async () => {
   const calls = [];

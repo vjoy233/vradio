@@ -112,6 +112,17 @@ ok('唯一命中返回该台；零命中/多重匹配 throw（绝不猜同名台
   const one = [SA];
   assert.strictEqual(uiResolveUnique(one, 'http://a/2').n, '台A'); // 任一源 URL 命中即可锚定
 });
+ok('共享流 URL 台：hintKey（begin 时刻 keyOf）→ 唯一锚定（App.resolve 键优先同语义）；键漂移仍拒绝', () => {
+  // 精选层与主列表共享蜻蜓流 URL 的真实场景（同名合并不适用——两台名字不同）
+  const sts = [mkSt('台A', '新闻', ['http://a/1']), mkSt('台B', '新闻', ['http://b/1', 'http://a/1'])];
+  assert.strictEqual(uiResolveUnique(sts, 'http://a/1', '新闻|台A').n, '台A'); // 键优先唯一锚定
+  assert.strictEqual(uiResolveUnique(sts, 'http://a/1', '新闻|台B').n, '台B');
+  assert.throws(() => uiResolveUnique(sts, 'http://a/1', '新闻|幽灵'), /多个/); // 键不命中仍拒绝（不猜）
+  const renamed = [mkSt('台A新名', '新闻', ['http://a/1']), mkSt('台B', '新闻', ['http://b/1', 'http://a/1'])];
+  assert.throws(() => uiResolveUnique(renamed, 'http://a/1', '新闻|台A'), /多个/); // 他页改名后键失配 → 不猜
+  const drift = [mkSt('台A', '新闻', ['http://new/9']), mkSt('台B', '新闻', ['http://b/1'])];
+  assert.strictEqual(uiResolveUnique(drift, 'http://a/1', '新闻|台A').n, '台A'); // URL 全漂移但键仍在 → 救回
+});
 ok('uiValidName：空名/分隔符/超 24 字报错；24 字与常规名通过（不裁切由调用方内联报错）', () => {
   assert.match(uiValidName(''), /不能为空/);
   assert.match(uiValidName('  '), /不能为空/);

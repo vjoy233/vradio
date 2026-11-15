@@ -166,10 +166,16 @@ function uiNewDraft(identityUrl, projection) {
     dirty: false, conflict: false, pendingAction: null, submitting: false };
 }
 function uiSameProj(a, b) { return JSON.stringify(a) === JSON.stringify(b); } // 完整投影比较（JSON 序差异最多保守误报冲突，§6.4）
-function uiResolveUnique(stations, url) { // URL 锚点 → 唯一台（失配/多重匹配 throw，绝不猜同名台——§5.3）
+function uiResolveUnique(stations, url, hintKey) { // 锚点 → 唯一台（失配/多重匹配 throw，绝不按名字猜台——§5.3）。
+  // hintKey = begin 时刻的 keyOf（App.resolve 同款身份语义：键优先、URL 兜底）——精选层与主列表
+  // 共享流 URL 的台（同蜻蜓 id 不同名）凭 URL 会多重匹配，凭会话内稳定键可唯一锚定；都不唯一仍拒绝
   const matches = stations.filter(s => s.u.includes(url));
-  if (matches.length !== 1) throw new Error(matches.length ? '源 URL 匹配到多个电台，请重新选择' : '电台已失配（源地址漂移），请重新加载');
-  return matches[0];
+  if (matches.length === 1) return matches[0];
+  if (hintKey) {
+    const byKey = stations.filter(s => keyOf(s) === hintKey);
+    if (byKey.length === 1 && (matches.length > 1 || matches.length === 0)) return byKey[0];
+  }
+  throw new Error(matches.length ? '源 URL 匹配到多个电台，请重新选择' : '电台已失配（源地址漂移），请重新加载');
 }
 function uiValidName(name) { // 现.askName 校验语义等价，但**不静默裁切**：内联报错由用户修正（§6.8）
   const v = String(name == null ? '' : name).trim();
@@ -299,9 +305,9 @@ function uiBuildCatNext(latest, orig, patch, base, force, catExists) { // 分类
 function uiCreateEditor(io) {
   let draft = null, saving = false;
   const paint = () => io.render(draft ? uiClone(draft) : null, saving);
-  const fresh = (identity, kind) => {
-    const d = uiNewDraft(identity, io.project(io.readCfg(), io.resolve(identity, kind), kind));
-    d.kind = kind; d.error = ''; d.patch = io.newPatch ? io.newPatch(kind) : {};
+  const fresh = (identity, kind, hintKey) => {
+    const d = uiNewDraft(identity, io.project(io.readCfg(), io.resolve(identity, kind, hintKey), kind));
+    d.kind = kind; d.hintKey = hintKey || ''; d.error = ''; d.patch = io.newPatch ? io.newPatch(kind) : {};
     return d;
   };
   async function save() {
@@ -309,26 +315,30 @@ function uiCreateEditor(io) {
     saving = true; draft.submitting = true; paint();
     try {
       for (let attempt = 0; attempt < 4; attempt++) {
-        const subj = io.resolve(draft.identityUrl, draft.kind), latest = io.readCfg();
+        const subj = io.resolve(draft.identityUrl, draft.kind, draft.hintKey), latest = io.readCfg();
         const proj = io.project(latest, subj, draft.kind);
         const error = io.validate(subj, draft.patch, latest, draft.kind);
         if (error) { draft.error = error; paint(); return false; } // 校验失败：留在编辑，pendingAction 不执行
         if (!uiSameProj(proj, draft.base)) { // M02 同对象外部变化：留草稿标 conflict，三选（不默认覆盖）
           draft.conflict = true; paint();
           const choice = await io.confirmConflict(uiClone(draft), uiClone(proj));
-          if (choice === 'reload') { draft = fresh(draft.identityUrl, draft.kind); paint(); return false; }
+          if (choice === 'reload') { draft = fresh(draft.identityUrl, draft.kind, draft.hintKey); paint(); return false; }
           if (choice !== 'overwrite') return false; // 继续编辑：草稿原样保留
-          const cur = io.resolve(draft.identityUrl, draft.kind), freshCfg = io.readCfg();
+          const cur = io.resolve(draft.identityUrl, draft.kind, draft.hintKey), freshCfg = io.readCfg();
           if (!uiSameProj(io.project(freshCfg, cur, draft.kind), proj)) continue; // 弹窗期间又变：重校验
           const go = io.beforeCommit ? await io.beforeCommit(cur, draft, freshCfg) : 'go';
           if (go !== 'go') { paint(); return false; }
-          io.commit(io.buildNext(freshCfg, cur, draft.patch, draft.base, true, draft.kind), draft); // 覆盖也只写本对象
+          io.commit(io.buildNext(freshCfg, cur, draft.patch, draft.base, true, draft.kind), draft, cur); // 覆盖也只写本对象
         } else {
           const go = io.beforeCommit ? await io.beforeCommit(subj, draft, latest) : 'go';
           if (go !== 'go') { paint(); return false; }
-          io.commit(io.buildNext(latest, subj, draft.patch, draft.base, false, draft.kind), draft);
+          io.commit(io.buildNext(latest, subj, draft.patch, draft.base, false, draft.kind), draft, subj);
         }
-        draft = fresh(draft.identityUrl, draft.kind); // 保存成功：基线推进到最新、草稿清空（留编辑态）
+        // 保存成功：基线推进到最新、草稿清空（留编辑态）。hint 由刚提交的对象重算（io.hint——改名后
+        // keyOf 已变，旧 hint 会失配）；重挂基线自身失配（对象此刻消失，理论罕见）不回头否定已成功的提交
+        const hint2 = io.hint ? io.hint(subj) : (draft.hintKey || '');
+        try { draft = fresh(draft.identityUrl, draft.kind, hint2); }
+        catch (_) { draft = null; paint(); return true; }
         paint(); return true;
       }
       draft.error = '对象持续变化，请重新加载后再保存'; paint(); return false;
@@ -338,7 +348,7 @@ function uiCreateEditor(io) {
   return {
     getDraft: () => draft ? uiClone(draft) : null,
     get saving() { return saving; },
-    begin(url, kind) { draft = fresh(url, kind || 'st'); paint(); },
+    begin(url, kind, hintKey) { draft = fresh(url, kind || 'st', hintKey); paint(); },
     end() { if (!draft) return; draft = null; paint(); },
     change(field, value) { // 白名单字段编辑：值回到基线即撤补丁（不偷偷写 Store，§6.8）
       if (!draft || saving) return;
@@ -353,7 +363,7 @@ function uiCreateEditor(io) {
     },
     externalChanged() { // Store 对账/同步重建后的复核挂点：不替换原 render/同步链，只复核当前草稿 conflict 态
       if (!draft) return;
-      try { draft.conflict = !uiSameProj(io.project(io.readCfg(), io.resolve(draft.identityUrl, draft.kind), draft.kind), draft.base); }
+      try { draft.conflict = !uiSameProj(io.project(io.readCfg(), io.resolve(draft.identityUrl, draft.kind, draft.hintKey), draft.kind), draft.base); }
       catch (e) { draft.conflict = true; draft.error = e.message; }
       paint();
     },
@@ -1306,10 +1316,10 @@ const App = {
     if (!this.mEditor) { next(); return Promise.resolve(true); }
     return this.mEditor.depart(next);
   },
-  mBeginEditor(kind, identity) { // 换对象：先 depart（dirty 三选）再 begin；锚点失配就地报错、留旧态
+  mBeginEditor(kind, identity, hintKey) { // 换对象：先 depart（dirty 三选）再 begin；锚点失配就地报错、留旧态
     let began = false;
     return this.mDepart(() => {
-      try { this.mEditor.begin(identity, kind); began = true; }
+      try { this.mEditor.begin(identity, kind, hintKey); began = true; }
       catch (e) { $('status').textContent = e.message || '对象已失配，无法编辑'; }
     }).then(ok => ok && began);
   },
@@ -1319,7 +1329,7 @@ const App = {
     return { orig, name };
   },
   mEditorSubject(draft) { // 草稿锚点 → 当前对象（渲染/显示名用）；失配 throw 由调用方兜
-    return draft.kind === 'cat' ? this.mCatResolve(draft.identityUrl) : uiResolveUnique(this.state.stations, draft.identityUrl);
+    return draft.kind === 'cat' ? this.mCatResolve(draft.identityUrl) : uiResolveUnique(this.state.stations, draft.identityUrl, draft.hintKey);
   },
   mEditorDisplayName(draft) {
     try { const x = this.mEditorSubject(draft); return typeof x === 'string' ? x : x.name || x.n; } catch (_) { return draft.identityUrl; }
@@ -1348,7 +1358,7 @@ const App = {
       `目标分类已存在：合并后按一个分类处理，不易拆分（想拆只能逐台移动）。\n影响：该分类下 ${nSt} 个电台并入「${neu}」${nMv ? `，${nMv} 条移动目标级联改写` : ''}，隐藏标记随行转移。`,
       [{ value: 'go', label: '确认合并并保存', primary: true }, { value: 'stop', label: '取消' }], { safe: 'stop' });
   },
-  mCommit(next, draft) { // 编辑器提交边界（§5.2）：normCfg → saveCfg → reapplyCfg；
+  mCommit(next, draft, subj) { // 编辑器提交边界（§5.2）：normCfg → saveCfg → reapplyCfg；
     // 新隐藏生效 → toast≈8s 带「撤销」（§5.4），其余保存反馈走 #status（只说本地生效，不宣称多端已同步）
     const patch = draft.patch || {}, base = draft.base || {};
     const newlyHidden = Object.prototype.hasOwnProperty.call(patch, 'hidden') && patch.hidden === true && !base.hidden;
@@ -1357,13 +1367,15 @@ const App = {
     this.reapplyCfg();
     this._hideUndo = null;
     if (newlyHidden && draft.kind === 'st') {
-      try {
-        const st = uiResolveUnique(this.state.stations, draft.identityUrl);
+      // 撤销目标台：优先用刚提交的对象本体（reapplyCfg 原地改写，改名后引用仍有效），失配再按锚点解析
+      const st = (subj && subj.u && this.state.stations.includes(subj)) ? subj
+        : (() => { try { return uiResolveUnique(this.state.stations, draft.identityUrl, draft.hintKey); } catch (_) { return null; } })();
+      if (st) {
         this._hideUndo = st.u.map(u => ({ map: 'hideS', key: u, before: { exists: true, value: 1 }, after: { exists: false } }));
         const playing = Player.station && keyOf(Player.station) === keyOf(st);
         this.toast(`已隐藏「${st.n}」${playing ? '，当前播放继续' : ''}`, { ms: 8000, action: { label: '撤销', fn: () => this.mUndoHide() } });
         return;
-      } catch (_) {}
+      }
     }
     if (newlyHidden && draft.kind === 'cat') {
       const name = Object.prototype.hasOwnProperty.call(patch, 'name') ? String(patch.name).trim() : (this.cfg.renames[draft.identityUrl] || draft.identityUrl);
@@ -1484,7 +1496,7 @@ const App = {
      原生源可禁不提供删除、只移除追加源；展示序按 SrcOrder.effective 语义（不复制引擎选源）；
      保存前核对最新源集合（重复/条数/URL 合法/他台占用 → 停止自动归属）。详情中心的启停/排序/标签
      动作共用同一编辑器草稿（不保留绕过草稿的即时保存分支）。 ---------- */
-  mEditorStation() { const d = this.mEditor && this.mEditor.getDraft(); if (!d || d.kind !== 'src') return null; try { return uiResolveUnique(this.state.stations, d.identityUrl); } catch (_) { return null; } },
+  mEditorStation() { const d = this.mEditor && this.mEditor.getDraft(); if (!d || d.kind !== 'src') return null; try { return uiResolveUnique(this.state.stations, d.identityUrl, d.hintKey); } catch (_) { return null; } },
   mEditorRepaint() { if (this.mEditor) this.renderEditor(this.mEditor.getDraft(), this.mEditor.saving); },
   mSrcEffective(s, patch) { // 草稿感知的有效序（patch 键为 null = 未改用 cfg 现值；[] = 草稿撤销人工排序）
     const manual = patch.manual !== null ? (patch.manual.length ? patch.manual : null) : (this.cfg.srcManualOrder[s.u[0]] || null);
@@ -1717,7 +1729,7 @@ const App = {
   async mSrcDetailOp(s, i, op) { // 详情配置动作 → 本台源草稿（§6.9：共用同一编辑器，不保留绕过草稿的即时保存分支）
     const d = this.mEditor && this.mEditor.getDraft();
     const same = d && d.kind === 'src' && d.identityUrl === s.u[0];
-    if (!same && !(await this.mBeginEditor('src', s.u[0]))) return; // 换对象：dirty 三选；失配：报错留旧态
+    if (!same && !(await this.mBeginEditor('src', s.u[0], keyOf(s)))) return; // 换对象：dirty 三选；失配：报错留旧态（hintKey=会话内稳定键）
     if (op === 'up' || op === 'down') this.mSrcMove(s, i, op === 'up' ? -1 : 1);
     else if (op === 'dis' || op === 'undis') this.mSrcToggleDis(s, i);
     else if (op === 'label') { const el = this.mEditHost().querySelector(`[data-fa="lb:${i}"]`); if (el) el.focus(); }
@@ -2419,7 +2431,7 @@ const App = {
     for (const s of this.state.stations) { if (s.dCat === undefined) { s.dCat = s.c; s.dName = s.n; s.dU = s.u.slice(); this.srcLife(s); } }
     // 逐对象编辑器（P4 §6.8 接线）：io 全显式注入；render 适配器 = renderEditor；草稿只在内存不持久化
     this.mEditor = uiCreateEditor({
-      resolve: (id, kind) => kind === 'cat' ? this.mCatResolve(id) : uiResolveUnique(this.state.stations, id),
+      resolve: (id, kind, hintKey) => kind === 'cat' ? this.mCatResolve(id) : uiResolveUnique(this.state.stations, id, hintKey),
       readCfg: () => this.cfg,
       project: (cfg, subj, kind) => kind === 'cat' ? uiCatProjection(cfg, subj) : kind === 'src' ? uiSrcProjection(cfg, subj) : uiStationProjection(cfg, subj),
       newPatch: kind => kind === 'src' ? { manual: null, disabled: null, labels: {}, appends: [], removes: [] } : {},
@@ -2432,7 +2444,8 @@ const App = {
         : kind === 'src' ? uiBuildSrcNext(latest, subj, patch, base, force)
         : uiBuildStationNext(latest, subj, patch, base, force),
       beforeCommit: (subj, draft, latest) => this.mBeforeCommit(subj, draft, latest),
-      commit: (next, draft) => this.mCommit(next, draft),
+      commit: (next, draft, subj) => this.mCommit(next, draft, subj),
+      hint: subj => (subj && subj.u && subj.n && subj.c !== undefined) ? keyOf(subj) : '', // 保存后重算锚点（改名跟随）
       render: (d, saving) => this.renderEditor(d, saving),
       confirmLeave: draft => this.mDialogLeave(draft),
       confirmConflict: draft => this.mDialogConflict(draft),
@@ -2464,11 +2477,11 @@ const App = {
           const a = eb.dataset.eact;
           if (a === 'save') this.mEditor.save();
           else if (a === 'cancel') this.mEditorEnd(); // 取消 = 丢弃本对象草稿回浏览（§5.3，显式取消不再确认）
-          else if (a === 'reload') { const d = this.mEditor.getDraft(); try { this.mEditor.begin(d.identityUrl, d.kind); } catch (err) { $('status').textContent = err.message; } }
+          else if (a === 'reload') { const d = this.mEditor.getDraft(); try { this.mEditor.begin(d.identityUrl, d.kind, d.hintKey); } catch (err) { $('status').textContent = err.message; } }
           else if (a === 'srcmemclr') { const s = this.mEditorStation(); if (s) this.resetSrcDefaults(s); } // 立即动作（只清源记忆，不入草稿）
           else if (a === 'strestore') { // §5.4「恢复名称与分类」：独立恢复动作，先过草稿门（当前草稿可能同名冲突）
             const d = this.mEditor.getDraft();
-            try { const st = uiResolveUnique(this.state.stations, d.identityUrl); this.mDepart(() => this.mRestoreNameCat(st)); }
+            try { const st = uiResolveUnique(this.state.stations, d.identityUrl, d.hintKey); this.mDepart(() => this.mRestoreNameCat(st)); }
             catch (err) { $('status').textContent = err.message; }
           }
           return;
@@ -2539,16 +2552,16 @@ const App = {
       const b = e.target.closest('[data-act]'); if (!b) return;
       if (b.dataset.act === 'new') return this.mDepart(() => this.catNew()); // 独立操作先处理现有草稿（§5.2）
       const c = b.dataset.cat || (b.closest('.mrow') || {}).dataset.cat; if (!c) return;
-      if (b.dataset.act === 'edit') this.mBeginEditor('cat', c); // 分类对象编辑（草稿化，§5.2）
+      if (b.dataset.act === 'edit') this.mBeginEditor('cat', c); // 分类对象编辑（草稿化，§5.2；解析走 mCatResolve，锚点=原名）
       else if (b.dataset.act === 'del') this.mDepart(() => this.catDel(c)); // 独立提交语义不变
     };
     $('mlist').onclick = e => {
       const b = e.target.closest('button[data-act]'); if (!b) return;
       const s = this.state.stations.find(x => keyOf(x) === b.closest('.mrow').dataset.k); if (!s) return;
       const act = b.dataset.act;
-      if (act === 'edit') this.mBeginEditor('st', s.u[0]); // 电台对象编辑：名称/分类/隐藏草稿（替代 prompt 即时保存）
+      if (act === 'edit') this.mBeginEditor('st', s.u[0], keyOf(s)); // 电台对象编辑：名称/分类/隐藏草稿（hintKey=键优先回绑）
       else if (act === 'reset') this.mDepart(() => this.confirmResetStation(s)); // ↺ 撤回全部个人调整：预览清单确认后提交（§5.4）
-      else if (act === 'srcs') this.mBeginEditor('src', s.u[0]); // 备选源管理 = 本台源草稿（§6.9：排序/禁用/标签/追加保存才提交）
+      else if (act === 'srcs') this.mBeginEditor('src', s.u[0], keyOf(s)); // 备选源管理 = 本台源草稿（§6.9）
     };
     $('mMiss').onclick = e => {
       if (!e.target.closest('[data-act="missclear"]')) return;

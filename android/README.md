@@ -84,6 +84,27 @@ app/src/main/java/io/github/vjoy233/vradio/
   会话级流量估算按已知码率（无 ICY 码率时按 128kbps 并标注「估算」）30 秒采样累计，非精确计费。
   策略设置存私有键 `net.*`（同样不进契约/备份）。
 
+## instrumented smoke 与本地 fixture 协议（P2，docs/testing-strategy-2026-11.md §3 L4）
+
+instrumented smoke（`app/src/androidTest/`：启动/资产 + 播放控制 + 备份导入）走「本地固定流 fixture」协议，禁止依赖公网：
+
+- **fixture**：仓库根 `node test/harness/android-fixture.js`（零依赖 Node 内置 http，监听 0.0.0.0 随机端口）。
+  启动即打印 `FIXTURE_URL=http://127.0.0.1:<port>` 与 `FIXTURE_VERSION`；`--list` 打印路由清单（与测试断言对账）；
+  测试编排可 `require()` 其 `start()`。场景：直流 MP3×2（点播/切台）、ICY（icy-metaint=32 + icy-br + StreamTitle 换歌两帧）、
+  HLS master→variant→相对分片（真帧可解）、延迟建流 1.5s、断流 destroy、336B 假流、HTML 错误页、`__health` 自检。
+- **fixtureBaseUrl 注入**：模拟器访问宿主回环的固定映射是 `10.0.2.2`——workflow/本机把 127.0.0.1 换算后
+  `./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.fixtureBaseUrl=http://10.0.2.2:<port>`
+  （AGP 官方 instrumentation 参数机制）；真机在同一局域网时直接填宿主机地址，并在报告记录实际 URL。
+- **缺省 skip 语义**：测试读 `InstrumentationRegistry.getArguments().getString("fixtureBaseUrl")`；
+  未传参或等于哨兵值 `http://10.0.2.2:0`（端口 0 不存在）时，播放类用例经 JUnit4 `Assume` 跳过——
+  没接 fixture 的手动 dispatch 上骨架仍绿（启动/资产/备份导入离线用例照跑）。
+- **版本记录要求**：fixture 版本常量与 androidTest `AndroidSmokeTest.FIXTURE_VERSION` 两处同步改；
+  每个测试类 `@Before` 把 fixture 版本/URL、设备 API、APK 版本写进 instrumentation 日志（logcat tag `VRadioSmoke`）；
+  失败报告按 L4 要求逐项在案（报告 + logcat + fixture 日志，见 workflow artifact）。
+- **执行分层**：稳定模拟器（GitHub Actions `android-instrumented-draft.yml`，当前 workflow_dispatch/夜间草案，
+  首次 dispatch 只验镜像/协议可用性）为 PR/夜间候选；实体设备只做发布前验收——音频焦点让位/恢复、
+  Widget 播放/⏮⏭、后台/进程回收恢复快照属发布前设备层用例，不进模拟器门。
+
 ## 发布（M5）
 
 - 直装 APK + GitHub Releases（附 hash 置顶、先验后装；D4）。release APK 哨兵 <5MB（R8 忘开/资源误打包会爆线，事故哨兵而非功能预算）。

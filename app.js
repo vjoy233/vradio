@@ -1104,16 +1104,18 @@ const App = {
     if (t) t.textContent = (names[this.state.scope] || '全部电台') + (this.state.cat !== '全部' ? ' · ' + this.state.cat : '');
   },
   /* 续听卡（§3.3/§6.3）：候选 = 当前播放/暂停 → 最近前 20 → STARTER 精选（uiChooseResume 纯函数）；
-     eligible 走 uiStationShown（all=false：手动隐藏永不复活、自动死台遵守 showDead——正在播的隐藏台
-     不豁免，首页改用下一候选）。显示条件 = ui-refresh 开 + scope=all + cat=全部 + 无关键词（<1024px
+     eligible 走 uiStationShown（all=false：手动隐藏永不复活——正在播也不豁免、首页改用下一候选；自动
+     死台遵守 showDead，正在播/连接中的死台例外保留，与主列表 visible 同口径，AIbot P1 修复）。显示条件 =
+     ui-refresh 开 + scope=all + cat=全部 + 无关键词（<1024px
      由 CSS display:none 拦截）。渲染用维护后现名 + Logos.visual 现有链（同步读缓存，绝不发新请求）；
-     只更新自身节点不整表重渲，签名未变直接返回（防无谓重建与焦点丢失）；唱片为静态装饰（旋转 P3） */
+     只更新自身节点不整表重渲，签名未变直接返回（防无谓重建与焦点丢失；隐藏时清签名——否则同候选
+     回显时签名早退抢在 hidden=false 复位前，hero 会保持隐藏，AIbot P1 修复）；唱片为静态装饰（旋转 P3） */
   heroK: '', // 候选 URL 锚点（u[0]）：点击时重新解析最新对象，防渲染后台名/装配变化错台（§6.3）
   renderHero() {
     const hero = $('resumeHero');
     const on = document.documentElement.classList.contains('ui-refresh')
       && this.state.scope === 'all' && this.state.cat === '全部' && !this.state.keyword.trim();
-    if (!on) { hero.hidden = true; this.heroK = ''; return; }
+    if (!on) { hero.hidden = true; this.heroK = ''; delete hero.dataset.sig; return; }
     const self = this;
     const pick = uiChooseResume({
       current: Player.station || Player.connecting || null,
@@ -1126,7 +1128,9 @@ const App = {
       recents: this.recents, resolveRecent: r => this.resolve(r),
       starters: this.state.stations.filter(s => s.om),
       eligible: s => uiStationShown(s, { hiddenCategories: this.cfg.hideC, key: keyOf, all: false,
-        showDead: this.state.showDead, playingKey: null, connectingKey: null }),
+        showDead: this.state.showDead,
+        playingKey: Player.station ? keyOf(Player.station) : null,   // 在播/连接中的自动死台例外（同主列表口径）
+        connectingKey: Player.connecting ? keyOf(Player.connecting) : null }),
     });
     const conn = pick && Player.connecting && keyOf(Player.connecting) === keyOf(pick.station);
     const cur = pick && Player.station && keyOf(Player.station) === keyOf(pick.station);
@@ -1713,6 +1717,10 @@ const App = {
      动作共用同一编辑器草稿（不保留绕过草稿的即时保存分支）。 ---------- */
   mEditorStation() { const d = this.mEditor && this.mEditor.getDraft(); if (!d || d.kind !== 'src') return null; try { return uiResolveUnique(this.state.stations, d.identityUrl, d.hintKey); } catch (_) { return null; } },
   mEditorRepaint() { if (this.mEditor) this.renderEditor(this.mEditor.getDraft(), this.mEditor.saving); },
+  mEditorPaint(d, saving) { // 编辑器重绘出口（boot io.render 接线，AIbot P2）：编辑器区照常重绘 + #detail 开着时
+    // 源行随草稿实时重算（详情行动作/编辑器行动作/标签逐键/保存/取消全走这里，data-i 与新有效序一致）
+    this.renderEditor(d, saving); if (!$('detail').hidden) this.renderDetail();
+  },
   mSrcEffective(s, patch) { // 草稿感知的有效序（patch 键为 null = 未改用 cfg 现值；[] = 草稿撤销人工排序）
     const manual = patch.manual !== null ? (patch.manual.length ? patch.manual : null) : (this.cfg.srcManualOrder[s.u[0]] || null);
     const dis = patch.disabled !== null ? patch.disabled : (this.cfg.srcDisabled[s.u[0]] || null);
@@ -1909,6 +1917,15 @@ const App = {
   srcOrderView(s) { // 源展示序（footer 浮层/详情共用，B1）：启用源按有效序在前、禁用源殿后（原序）
     return [...(Array.isArray(s.mo) && s.mo.length ? s.mo : s.u.map((_, i) => i)), ...(s.dis || [])];
   },
+  dSrcRows(s) { // 详情源行的序/禁用/标签（AIbot P2）：本台源草稿在编 → 按草稿实时（mSrcEffective + 草稿标签），
+    // 行序与 data-i 随草稿重算；无草稿回装配态（= srcOrderView 拆解）。labels 只含草稿已改键，未改键回落 cfg
+    const d = this.mEditor && this.mEditor.getDraft();
+    if (d && d.kind === 'src' && d.identityUrl === s.u[0]) {
+      const eff = this.mSrcEffective(s, d.patch);
+      return { order: eff.order, dis: eff.dis, labels: d.patch.labels || {} };
+    }
+    return { order: Array.isArray(s.mo) && s.mo.length ? s.mo : s.u.map((_, i) => i), dis: s.dis || [], labels: {} };
+  },
   /* 旧即时源生命周期入口（srcRowHtml/srcAppend/srcRemove/toggleSrcDisabled/moveSrc/editSrcLabel/clearSrcOrder）
      已由源草稿编辑器取代（P4 §6.9）：排序/禁用/标签/追加/移除只改草稿，保存经 uiBuildSrcNext/uiApplyCells
      提交；探活口径（t=12000、判满前置、6 条封顶）与恢复动作语义（resetSrcDefaults 只清记忆）原样保留 */
@@ -1926,7 +1943,8 @@ const App = {
   detailStation() { return this.state.stations.find(x => keyOf(x) === this.detail.stationKey); },
   openDetail(s) {
     const d = this.mEditor && this.mEditor.getDraft();
-    if (d && !(d.kind === 'src' && d.identityUrl === s.u[0])) this.mEditorEnd(); // 开别的台详情：不匹配的草稿不跟过去
+    if (d && !(d.kind === 'src' && d.identityUrl === s.u[0])) // 开别的台详情：他台草稿先过三选门（§5.3，AIbot P1）
+      return this.mDepart(() => { this.mEditorEnd(); this.openDetail(s); }); // stay=中止不打开；保存/放弃后才关旧草稿换台
     this.detail = { stationKey: keyOf(s), results: [], loading: false, error: '', openedAt: Date.now() };
     this.dOpener = document.activeElement;
     $('detail').hidden = false;
@@ -1947,7 +1965,7 @@ const App = {
     if (!same && !(await this.mBeginEditor('src', s.u[0], keyOf(s)))) return; // 换对象：dirty 三选；失配：报错留旧态（hintKey=会话内稳定键）
     if (op === 'up' || op === 'down') this.mSrcMove(s, i, op === 'up' ? -1 : 1);
     else if (op === 'dis' || op === 'undis') this.mSrcToggleDis(s, i);
-    else if (op === 'label') { const el = this.mEditHost().querySelector(`[data-fa="lb:${i}"]`); if (el) el.focus(); }
+    else if (op === 'label') { const el = this.mEditHost().querySelector(`[data-fa="lb:${i}"]`); if (el) el.focus(); return; } // 只聚焦编辑器标签输入，草稿未变不重绘
     else if (op === 'clrorder') { // 草稿化裁量（§6.9）：撤销人工排序与面板同语义，写进草稿、保存后生效（不清禁用与源记忆）
       if (!this.cfg.srcManualOrder[s.u[0]] && !(this.mEditor.getDraft().patch.manual !== null)) { $('status').textContent = '本无人工源排序'; return; }
       this.mEditor.mutate(patch => { patch.manual = []; });
@@ -2050,11 +2068,12 @@ const App = {
     const st = Player.getSourceState();
     const on = !!(st.station && keyOf(st.station) === k);
     let songs; try { songs = JSON.parse(Store.get('radio.songs') || '{}')[s.u[0]] || []; } catch (_) { songs = []; }
-    const dis = s.dis || [];
+    const dv = this.dSrcRows(s), dis = dv.dis; // 源行序/禁用/标签：本台源草稿在编时随草稿实时（AIbot P2）
     const CODE_TXT = { OK: '可用', NETWORK: '网络失败', HTML: 'HTML 假流', HTTP: 'HTTP 错误', EMPTY_PLAYLIST: '空清单', NO_SEGMENT: '无可用分片', SHORT_BODY: '字节不足', REDIRECT_REJECTED: '重定向被拒', INVALID_URL: '地址不合法' };
-    const rows = this.srcOrderView(s).slice(0, SRC_CAP).map(i => { // 每台 6 封顶（与装配/批量诊断同口径，review P1）
+    const rows = [...dv.order, ...dv.dis].slice(0, SRC_CAP).map(i => { // 每台 6 封顶（与装配/批量诊断同口径，review P1）
       const u = s.u[i], r = this.detail.results[i], d = dis.includes(i);
-      const lb = this.cfg.srcLabels[u] ? `<span class="badge acc" title="源标签">${this.esc(this.cfg.srcLabels[u])}</span>` : '';
+      const lbv = Object.prototype.hasOwnProperty.call(dv.labels, u) ? dv.labels[u] : this.cfg.srcLabels[u];
+      const lb = lbv ? `<span class="badge acc" title="源标签">${this.esc(lbv)}</span>` : '';
       const tag = (i === 0 ? '<span class="badge" title="主源（身份键，不可替换/不可删）">主源</span>' : (s.dU.includes(u) ? '' : '<span class="badge">追加</span>')) + lb
         + (on && st.sourceIndex === i ? '<span class="badge acc">正在用</span>' : '')
         + (on && st.srcMemIndex === i && st.sourceIndex !== i ? '<span class="badge">源记忆</span>' : '');
@@ -2229,6 +2248,10 @@ const App = {
   renderMiss() {
     const bad = this.missList();
     $('mMiss').innerHTML = !bad.length ? '' : `<div class="miss"><b><svg class="ic"><use href="#i-warn"/></svg> ${bad.length} 条个人调整已失配</b>（上游同步后源地址漂移，多为欧美台重建）：${bad.map(b => `${this.esc(b.name)}（${b.kind}）`).join('、')}。在「电台」页搜台名可重新指定，<button type="button" class="btn mbtn" data-act="missclear">或清理这些失配项</button></div>`;
+  },
+  missClear() { // 清失配项 = cfg 变更，走与正常提交相同的 saveCfg→reapplyCfg 链（AIbot P1：主列表随行重套/重渲，不再只刷面板）
+    for (const b of this.missList()) { delete this.cfg.moves[b.u]; delete this.cfg.names[b.u]; delete this.cfg.hideS[b.u]; delete this.cfg.srcs[b.u]; delete this.cfg.srcLabels[b.u]; delete this.cfg.srcManualOrder[b.u]; delete this.cfg.srcDisabled[b.u]; delete this.cfg.tag[b.u]; }
+    this.saveCfg(); this.reapplyCfg();
   },
 
   /* —— 配置导入导出（owner 拍板：只含维护层；收藏另有 m3u 导出）—— */
@@ -2785,7 +2808,7 @@ const App = {
       beforeCommit: (subj, draft, latest) => this.mBeforeCommit(subj, draft, latest),
       commit: (next, draft, subj) => this.mCommit(next, draft, subj),
       hint: subj => (subj && subj.u && subj.n && subj.c !== undefined) ? keyOf(subj) : '', // 保存后重算锚点（改名跟随）
-      render: (d, saving) => this.renderEditor(d, saving),
+      render: (d, saving) => this.mEditorPaint(d, saving), // 重绘出口统一走 mEditorPaint（AIbot P2：详情源行随草稿实时重绘）
       confirmLeave: draft => this.mDialogLeave(draft),
       confirmConflict: draft => this.mDialogConflict(draft),
     });
@@ -2952,10 +2975,7 @@ const App = {
     };
     $('mMiss').onclick = e => {
       if (!e.target.closest('[data-act="missclear"]')) return;
-      this.mDepart(() => { // 清失配项是 cfg 独立操作：先处理现有草稿（§5.2）；键集随 missList 扩容（含生命周期三字段）
-        for (const b of this.missList()) { delete this.cfg.moves[b.u]; delete this.cfg.names[b.u]; delete this.cfg.hideS[b.u]; delete this.cfg.srcs[b.u]; delete this.cfg.srcLabels[b.u]; delete this.cfg.srcManualOrder[b.u]; delete this.cfg.srcDisabled[b.u]; delete this.cfg.tag[b.u]; }
-        this.saveCfg(); this.renderManage();
-      });
+      this.mDepart(() => this.missClear()); // 清失配项是 cfg 独立操作：先处理现有草稿（§5.2）；键集随 missList 扩容（含生命周期三字段）
     };
     // 数据分区（§5.5 P4 骨架）：导入/重置/恢复/歌单是 cfg 独立操作先过草稿门；导出/备份只读不拦
     $('mExport').onclick = () => this.exportCfg();

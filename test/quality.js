@@ -241,13 +241,21 @@ const op = (id, ok, at, extra = {}) => Object.assign({
     PORT = await freePort();
     srv = await boot({ VR_TEST_Q_MAX: '1024' });
     await ok('qCommit 2MB 超限 → HTTP 409 + code:too-large（真 HTTP 链）', async () => {
-      let hit = null;
-      for (let i = 1; i <= 80 && !hit; i++) {
+      // AIbot PR#34 P2 排查结论（非本 PR 回归——diff 不含 quality 三件套，双 worktree 23/23 绿）：本用例是
+      // 全文件唯一高频写盘点（空态起步 ~70 次连续 writeFile+rename 同一 tmp 路径），共享 data 目录的并发
+      // 写者（遗留 dev 服务页面 flush/并行实例）或杀毒扫描瞬时锁 rename 会令服务端回 200 ok:false
+      // 「写入失败」——临时错误通道、非协议拒（内存态不推进）。旧循环把任何 !ok 记为容量拒绝，撞上一
+      // 次写失败断言 409 即炸（故障注入实锤：外部持锁 quality.json 即复现）。加固：只认协议级拒绝
+      // （409/带 code）作 hit，写失败计数旁路继续——每条成功提交才推进不可裁 ops 日志，容量拒绝必然
+      // 到达；上限 80→200 给瞬时失败留余量。
+      let hit = null, wfail = 0;
+      for (let i = 1; i <= 200 && !hit; i++) {
         const r = await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ baseRev: 0, ops: [op('cap' + i, true, 20000 + i)] }));
         const j = JSON.parse(r.body);
-        if (!j.ok) { hit = { status: r.status, j }; } // 首次非 ok 响应即拒（容量被顶满）
+        if (!j.ok && (r.status === 409 || j.code)) hit = { status: r.status, j }; // 首次协议级拒绝（容量被顶满）
+        else if (!j.ok) wfail++; // 200 ok:false 写入失败：不阻断，继续灌 op 直至容量拒绝
       }
-      assert.ok(hit, '80 条内应触发容量拒绝（oplog 不可裁部分 > 1024B）');
+      assert.ok(hit, `200 条内应触发容量拒绝（oplog 不可裁部分 > 1024B；写入失败旁路 ${wfail} 次）`);
       assert.strictEqual(hit.status, 409); // 路由按 code 映射 409（AIbot 三轮所指 200 缺口已被 23e1df6 修复，此处实证钉死）
       assert.strictEqual(hit.j.code, 'too-large');
     });

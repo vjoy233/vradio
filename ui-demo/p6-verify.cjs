@@ -1,12 +1,16 @@
 /* P6 验收矩阵驱动（ui-redesign §9.2 浏览器手动验收的可复现子集）：驱动**正式业务页面**（非隔离 demo）。
    仅开发工具，需要本机已有 Playwright（不是项目运行依赖，同 ui-demo/capture.cjs 先例）：
    PowerShell: $env:VRADIO_PLAYWRIGHT='C:/Users/Administrator/AppData/Roaming/npm/node_modules/playwright'
-   先 npm start（默认 8137，或 VRADIO_URL 指定）；产物：docs/ui-redesign-assets/p6/*.png + validation.json。
+   自举隔离（AIbot PR#34 P0）：默认自行 spawn `node server.js`（82xx 随机高位端口、cwd=本 worktree、
+   就绪探活后开跑、结束 kill）——脚本 clr() 会 POST /api/store {data:{}} 清空 radio.* 持久键，只准打在
+   自举隔离实例上（data/ 落 worktree 自身，gitignored）。VRADIO_URL 指向外部实例时必须显式
+   VRADIO_ALLOW_EXTERNAL=1（醒目警告后继续），否则拒绝退出——防清空普通 npm start 实例的用户数据。
+   断言失败 exitCode=1（AIbot PR#34 P2）。产物：docs/ui-redesign-assets/p6/*.png + validation.json。
    真实音频不可保证（沙箱网络），播放仅验证 connecting 阶段与记住最近，随后 Player.stop() 收尾。 */
-const fs = require('fs'), path = require('path'), assert = require('assert');
+const fs = require('fs'), path = require('path'), assert = require('assert'), http = require('http'), net = require('net');
+const { spawn } = require('child_process');
 const { chromium } = require(process.env.VRADIO_PLAYWRIGHT || 'playwright');
 const output = path.resolve(__dirname, '../docs/ui-redesign-assets/p6');
-const base = process.env.VRADIO_URL || 'http://127.0.0.1:8137/';
 const fixdir = path.join(__dirname, 'p6-fixtures');
 fs.mkdirSync(output, { recursive: true });
 fs.mkdirSync(fixdir, { recursive: true });
@@ -14,11 +18,40 @@ fs.mkdirSync(fixdir, { recursive: true });
 fs.writeFileSync(path.join(fixdir, 'cfg-in.json'), JSON.stringify({
   v: 1, cfg: { names: { 'http://example.invalid/a.mp3': '验收改名' }, cats: ['验收分类'], hideS: { 'http://example.invalid/b.mp3': 1 } },
 }));
+const httpGet = u => new Promise((resolve, reject) => { const r = http.get(u, res => { res.resume(); resolve(res.statusCode); }); r.on('error', reject); r.setTimeout(2000, () => { r.destroy(); reject(new Error('timeout')); }); });
+const pickPort = () => new Promise((resolve, reject) => { // 82xx 段随机起始顺序探空闲（高位固定段，避开默认 8137 与常用 dev 端口）
+  let p = 8200 + Math.floor(Math.random() * 80), tried = 0;
+  const tryOne = () => { if (++tried > 100) return reject(new Error('82xx 端口段全忙')); const s = net.createServer();
+    s.once('error', () => tryOne(p >= 8299 ? (p = 8200) : ++p)); s.listen(p, '127.0.0.1', () => s.close(() => resolve(p))); };
+  tryOne();
+});
 (async () => {
-  const browser = await chromium.launch({ headless: true });
+  // —— 自举隔离（AIbot PR#34 P0）：默认 spawn 隔离实例；VRADIO_URL 外部目标须 VRADIO_ALLOW_EXTERNAL=1 显式确认 ——
+  let srv = null, base = process.env.VRADIO_URL || '';
+  if (base) {
+    if (process.env.VRADIO_ALLOW_EXTERNAL !== '1') {
+      console.error(`拒绝运行：VRADIO_URL=${base} 指向非本脚本自举的实例，而本脚本会清空目标实例全部 radio.* 持久数据（不可恢复）。\n确属有意为之，请加 VRADIO_ALLOW_EXTERNAL=1 后重跑。`);
+      process.exit(1);
+    }
+    console.warn(`\n⚠⚠⚠ 警告：即将对外部实例 ${base} 运行验收——将清空该实例全部 radio.* 持久数据（不可恢复）⚠⚠⚠\n`);
+  } else {
+    const port = await pickPort();
+    base = `http://127.0.0.1:${port}/`;
+    const env = { ...process.env, PORT: String(port), HOST: '127.0.0.1' };
+    delete env.VR_TEST_Q_MAX; // 防外部测试注入缝串进验收实例（容量被压小会令页面质量 flush 频繁 409）
+    srv = spawn(process.execPath, ['server.js'], { cwd: path.resolve(__dirname, '..'), env, stdio: 'ignore' });
+    let ready = false;
+    for (let i = 0; i < 120 && !ready; i++) { await new Promise(r => setTimeout(r, 100)); if (srv.exitCode !== null) break; try { ready = (await httpGet(base)) === 200; } catch (_) {} }
+    if (!ready) { srv.kill(); console.error(`自举隔离服务未就绪（127.0.0.1:${port}）`); process.exit(1); }
+    console.log(`自举隔离实例 ${base}（data/ 落本 worktree，结束即 kill）`);
+  }
+  let browser = null;
+  const report = { capturedAt: new Date().toISOString(), url: base, assertions: [], screenshots: [], perf: {}, errors: [], notes: [] };
+  try {
+  browser = await chromium.launch({ headless: true }); // launch/newPage 一并进 try：启动失败也走 catch/finally（写 FAIL 报告 + kill 隔离服务）
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1, colorScheme: 'dark' });
   const page = await ctx.newPage();
-  const report = { capturedAt: new Date().toISOString(), browser: browser.version(), url: base, assertions: [], screenshots: [], perf: {}, errors: [], notes: [] };
+  report.browser = browser.version();
   page.on('pageerror', e => report.errors.push('pageerror:' + e.message));
   page.on('console', m => { if (m.type() === 'error') report.errors.push('console:' + m.text()); });
   const check = (name, ok) => { assert(ok, name); report.assertions.push(name); console.log('  ✓', name); };
@@ -38,7 +71,6 @@ fs.writeFileSync(path.join(fixdir, 'cfg-in.json'), JSON.stringify({
     await page.waitForTimeout(400);
   };
   const vis = sel => page.locator(sel).evaluate(el => !!el.offsetParent);
-  try {
 
   console.log('[A] 开关关（默认）零回归');
   await boot();
@@ -166,10 +198,32 @@ fs.writeFileSync(path.join(fixdir, 'cfg-in.json'), JSON.stringify({
     await page.waitForTimeout(200);
     check('F5 取消丢弃草稿退出编辑', await page.evaluate(() => !document.querySelector('#mEdit') || document.getElementById('mEdit').hidden || !document.querySelector('#mEdit input, #dEdit input')));
   }
-  // 隐藏 + 撤销（§5.4）：直接经编辑器路径成本高，走既有真实动作链（P4 编辑器 checkbox），此处验证 toast 链
-  const hid = await page.evaluate(() => { const s = App.state.stations.find(x => !x.hidden && !App.favKeys().has(keyOf(x))); App.stHideDirect ? null : null; return s ? keyOf(s) : null; });
-  await page.evaluate(k => { const s = App.state.stations.find(x => keyOf(x) === k); App.hideStationForVerify ? null : null; }, hid);
-  note('隐藏撤销链路由 P4 实机验证（保存→8s toast→还原）；此处不再重复造隐藏入口');
+  // 隐藏 + 撤销（§5.4，AIbot PR#34 P2：真实 UI 动作链替代 note——勾选隐藏→保存→点 8s toast 的撤销→状态恢复）
+  const hid = await page.evaluate(() => { // 台名全库唯一的非隐藏非收藏台（#mq 定位唯一行，避免重名串台）
+    const cnt = {}; for (const s of App.state.stations) cnt[s.n] = (cnt[s.n] || 0) + 1;
+    const s = App.state.stations.find(x => !x.hidden && !App.favKeys().has(keyOf(x)) && cnt[x.n] === 1);
+    return s ? { n: s.n, k: keyOf(s) } : null;
+  });
+  assert(hid, 'F5b 前置：存在台名唯一的可隐藏台');
+  await page.fill('#mq', hid.n);
+  await page.waitForTimeout(300);
+  await page.locator('#mlist [data-act="edit"]').first().click(); // 进该台编辑器
+  await page.waitForTimeout(300);
+  await page.check('#mEdit [data-f="hidden"]'); // 勾选「隐藏电台」走真实 change 链（草稿 dirty）
+  await page.click('#mEdit [data-eact="save"]');
+  await page.waitForTimeout(400);
+  const t5b = await page.evaluate(() => ({ vis: !document.getElementById('toast').hidden, txt: document.getElementById('toast').textContent,
+    undo: !![...document.querySelectorAll('#toast button')].find(b => b.textContent === '撤销') }));
+  check(`F5b1 保存隐藏出 8s 撤销 toast（${(t5b.txt || '').trim().slice(0, 30)}）`, t5b.vis && t5b.undo && /已隐藏/.test(t5b.txt));
+  const hidOn = await page.evaluate(k => { const s = App.state.stations.find(x => keyOf(x) === k);
+    return { hidden: !!s.hidden, inVisible: App.visible().some(x => keyOf(x) === k), cfgKey: s.u.some(u => !!App.cfg.hideS[u]) }; }, hid.k);
+  check('F5b2 隐藏生效（hidden=true、visible() 除名、cfg.hideS 落键）', hidOn.hidden && !hidOn.inVisible && hidOn.cfgKey);
+  await page.locator('#toast button', { hasText: '撤销' }).click(); // 真实点击撤销
+  await page.waitForTimeout(400);
+  const hidOff = await page.evaluate(k => { const s = App.state.stations.find(x => keyOf(x) === k);
+    return { hidden: !!s.hidden, inVisible: App.visible().some(x => keyOf(x) === k), cfgKey: s.u.some(u => !!App.cfg.hideS[u]) }; }, hid.k);
+  check('F5b3 点击撤销后状态恢复（hidden=false、回 visible()、hideS 键清除）', !hidOff.hidden && hidOff.inVisible && !hidOff.cfgKey);
+  await page.fill('#mq', '');
   await page.click('#mTabD');
   await page.waitForTimeout(200);
   check('F6 数据分区三组卡', await page.evaluate(() => document.querySelectorAll('#mData .dcard, #mData .dacts2').length >= 3));
@@ -181,6 +235,8 @@ fs.writeFileSync(path.join(fixdir, 'cfg-in.json'), JSON.stringify({
   await page.keyboard.press('Escape'); // 取消：零改动
   await page.waitForTimeout(200);
   check('F8 取消零改动（radio.cfg 不变）', await page.evaluate(() => { const c = JSON.parse(Store.get('radio.cfg') || '{}'); return !c.cats || !c.cats.includes('验收分类'); }));
+  const snapStore = () => page.evaluate(() => ({ favs: Store.get('radio.favs'), recents: Store.get('radio.recents'), cfg: Store.get('radio.cfg'), view: Store.get('radio.view'), theme: Store.get('radio.theme') })); // AIbot PR#34 P2：旧 F10 是 length>=0 恒真式，改前后快照深比较
+  const before10 = await snapStore();
   await page.setInputFiles('#mfile2', path.resolve(__dirname, '../contracts/fixtures/backup-v3.json'));
   await page.waitForTimeout(500);
   const bprev = await page.evaluate(() => document.getElementById('editorConfirm').textContent);
@@ -188,7 +244,9 @@ fs.writeFileSync(path.join(fixdir, 'cfg-in.json'), JSON.stringify({
   await shot('11-desktop-backup-preview.png');
   await page.keyboard.press('Escape');
   await page.waitForTimeout(200);
-  check('F10 恢复取消零副作用（favs 不变）', await page.evaluate(() => Store.get('radio.favs') === null || JSON.parse(Store.get('radio.favs')).length >= 0));
+  const after10 = await snapStore();
+  let f10 = true; try { assert.deepStrictEqual(after10, before10); } catch (e) { f10 = false; note('F10 快照差异：' + String(e.message).split('\n').slice(0, 4).join(' / ')); }
+  check('F10 恢复取消零副作用（favs/recents/cfg/view/theme 快照前后深比较一致）', f10);
   await page.keyboard.press('Escape'); // 关维护面板
   await page.waitForTimeout(300);
 
@@ -198,10 +256,18 @@ fs.writeFileSync(path.join(fixdir, 'cfg-in.json'), JSON.stringify({
   check('G1 390 侧栏/hero 隐藏（紧凑）', !(await vis('.desktop-sidebar')) && await page.locator('#resumeHero').isHidden());
   check('G2 跨断点筛选状态不丢（scope=all 保留）', await page.evaluate(() => App.state.scope === 'all'));
   check('G3 themeWrap 在 lowfreq（≤640）', await page.evaluate(() => document.getElementById('lowfreq').contains(document.getElementById('themeWrap'))));
-  check('G4 窄屏维护面板可用且单列', await page.evaluate(() => { const m = document.getElementById('manage'); m.hidden = false; const box = m.querySelector('.mbox'); const col = getComputedStyle(box).gridTemplateColumns || getComputedStyle(box).gridTemplateAreas || ''; const w = box.getBoundingClientRect().width; const single = w <= 390; m.hidden = true; return single && (!col.includes(' ')); }));
-  await page.click('#sideManage', { force: true }).catch(() => {});
+  await page.evaluate(() => App.manageOpen()); // 真开面板（替代旧 DOM 强制 unhide——AIbot PR#34 P2：只读 grid 字符串证明不了单列）
+  await page.click('#mTabD'); // 数据分区：桌面 ≥1024 的 .dsec2 是 1fr 1fr 双列卡，≤768 应回退单列——以子项实测布局为准
+  await page.waitForTimeout(300);
+  const g4 = await page.evaluate(() => {
+    const box = document.querySelector('#manage .mbox'), br = box.getBoundingClientRect();
+    const cards = [...document.querySelectorAll('#mData .dsec2 .dcard, #mData > .dcard')].map(el => { const r = el.getBoundingClientRect(); return { x: Math.round(r.x), w: Math.round(r.width) }; });
+    return { bw: Math.round(br.width), bh: Math.round(br.height), cards };
+  });
+  const xs = [...new Set(g4.cards.map(c => c.x))];
+  check(`G4 窄屏维护单列（mbox ${g4.bw}x${g4.bh} 满屏；${g4.cards.length} 张卡同左缘 x=${xs.join('/')}、各宽 ≥ mbox-40）`,
+    g4.bw >= 388 && g4.bh >= 840 && g4.cards.length >= 3 && xs.length === 1 && g4.cards.every(c => c.w >= g4.bw - 40));
   await page.evaluate(() => { App.state.theme = 'light'; Store.set('radio.theme', 'light'); App.syncThemeUI(); }); // 图12 仿参考图11 为浅色窄屏维护
-  await page.evaluate(() => App.manageOpen());
   await page.waitForTimeout(300);
   await shot('12-narrow-390-maintenance-light.png');
   await page.keyboard.press('Escape');
@@ -218,10 +284,12 @@ fs.writeFileSync(path.join(fixdir, 'cfg-in.json'), JSON.stringify({
   report.result = 'PASS';
   console.log('PASS');
 }catch (e) {
-  report.result = 'FAIL'; report.failure = String(e && e.stack || e); console.error('FAIL:', e.message);
+  report.result = 'FAIL'; report.failure = String(e && e.stack || e); process.exitCode = 1; // AIbot PR#34 P2：断言失败必须非零退出——validation.json 之外，退出码是 CI/编排脚本的成败信号
+  console.error('FAIL:', e.message);
 } finally {
   fs.writeFileSync(path.join(output, 'validation.json'), JSON.stringify(report, null, 2) + '\n');
-  await browser.close();
+  if (browser) await browser.close();
+  if (srv) srv.kill();
   console.log(JSON.stringify({ result: report.result, assertions: report.assertions.length, screenshots: report.screenshots.length, errors: report.errors }, null, 1));
 }
-})();
+})().catch(e => { console.error('p6-verify 异常：', e); process.exitCode = 1; });

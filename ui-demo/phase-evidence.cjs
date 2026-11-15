@@ -181,7 +181,11 @@ async function main() {
   } finally {
     const cleanupErr = []; let srvGone = !srv, wtGone = !wtAlive; // 清理失败门（AIbot 三次复核 P2）：任何未回收都置失败
     try { if (browser) await browser.close(); } catch (e) { cleanupErr.push('browser:' + String(e.message || e).split('\n')[0]); }
-    try { if (srv) { srv.kill(); await new Promise(r => { const t = setTimeout(() => { srvGone = false; r(); }, 3000); srv.once('exit', () => { clearTimeout(t); r(); }); }); } } catch (e) { srvGone = false; cleanupErr.push('server:' + String(e.message || e).split('\n')[0]); }
+    try { if (srv) {
+      const waitExit = ms => new Promise(r => { const t = setTimeout(r, ms); srv.once('exit', () => { clearTimeout(t); r(); }); });
+      srv.kill(); await waitExit(3000);
+      if (srv.exitCode === null && !srv.signalCode) { srv.kill('SIGKILL'); await waitExit(2000); } // 高负载下 exit 事件偶发迟到：超时补杀再等，仍无信号才算未退出
+      if (srv.exitCode === null && !srv.signalCode) { srvGone = false; cleanupErr.push('server: kill 后 5s 无退出信号'); } } } catch (e) { srvGone = false; cleanupErr.push('server:' + String(e.message || e).split('\n')[0]); }
     if (wtAlive) { try { git(`worktree remove --force "${wt}"`); wtGone = true; }
       catch (_) { await sleep(800); try { git(`worktree remove --force "${wt}"`); wtGone = true; }
         catch (e2) { cleanupErr.push('worktree remove 两连败:' + String(e2.message || e2).split('\n')[0]); } } }

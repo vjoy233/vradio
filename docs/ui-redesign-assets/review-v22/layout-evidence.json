@@ -1,0 +1,208 @@
+{
+  "checkedAt": "2026-11-15T04:35:45.427Z",
+  "head": "32cc887",
+  "note": "fresh browser context; /api/** mocked 503; view/list and current station DOM projection only, no real playback, no production file edits",
+  "before": {
+    "viewport": 390,
+    "list": {
+      "x": 26.265625,
+      "y": 151.578125,
+      "width": 337.46875,
+      "height": 692.421875
+    },
+    "row": {
+      "x": 40.265625,
+      "y": 157.578125,
+      "width": 309.46875,
+      "height": 58.984375
+    },
+    "header": {
+      "x": 0,
+      "y": 0,
+      "width": 390,
+      "height": 101.78125
+    },
+    "headerRows": [
+      14,
+      8,
+      54,
+      59
+    ],
+    "themeParent": "HEADER",
+    "detailParent": "FOOTER",
+    "theme": {
+      "x": 291,
+      "y": 58.578125,
+      "width": 40,
+      "height": 30
+    },
+    "detail": {
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0
+    }
+  },
+  "after": {
+    "viewport": 390,
+    "list": {
+      "x": 0,
+      "y": 151.578125,
+      "width": 390,
+      "height": 692.421875
+    },
+    "row": {
+      "x": 14,
+      "y": 157.578125,
+      "width": 362,
+      "height": 58.984375
+    },
+    "header": {
+      "x": 0,
+      "y": 0,
+      "width": 390,
+      "height": 101.78125
+    },
+    "headerRows": [
+      14,
+      8,
+      54,
+      59
+    ],
+    "themeParent": "HEADER",
+    "detailParent": "FOOTER",
+    "theme": {
+      "x": 291,
+      "y": 58.578125,
+      "width": 40,
+      "height": 30
+    },
+    "detail": {
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0
+    }
+  },
+  "stationSelected": {
+    "viewport": 390,
+    "list": {
+      "x": 0,
+      "y": 151.578125,
+      "width": 390,
+      "height": 692.421875
+    },
+    "row": {
+      "x": 14,
+      "y": 157.578125,
+      "width": 362,
+      "height": 58.984375
+    },
+    "header": {
+      "x": 0,
+      "y": 0,
+      "width": 390,
+      "height": 101.78125
+    },
+    "headerRows": [
+      14,
+      8,
+      54,
+      59
+    ],
+    "themeParent": "HEADER",
+    "detailParent": "FOOTER",
+    "theme": {
+      "x": 291,
+      "y": 58.578125,
+      "width": 40,
+      "height": 30
+    },
+    "detail": {
+      "x": 14,
+      "y": 804,
+      "width": 40,
+      "height": 30
+    }
+  },
+  "deadVisibleHeader": {
+    "baseline": {
+      "headerHeight": 140,
+      "themeTop": 101,
+      "controls": [
+        {
+          "id": "H1",
+          "top": 14,
+          "height": 26
+        },
+        {
+          "id": "q",
+          "top": 8,
+          "height": 38
+        },
+        {
+          "id": "SPAN",
+          "top": 54,
+          "height": 38
+        },
+        {
+          "id": "moreBtn",
+          "top": 54,
+          "height": 38
+        },
+        {
+          "id": "deadBtn",
+          "top": 54,
+          "height": 38
+        },
+        {
+          "id": "manageBtn",
+          "top": 54,
+          "height": 38
+        },
+        {
+          "id": "themeBtn",
+          "top": 101,
+          "height": 30
+        }
+      ]
+    },
+    "themeMovedInjection": {
+      "headerHeight": 102,
+      "themeTop": 0,
+      "controls": [
+        {
+          "id": "H1",
+          "top": 14,
+          "height": 26
+        },
+        {
+          "id": "q",
+          "top": 8,
+          "height": 38
+        },
+        {
+          "id": "SPAN",
+          "top": 54,
+          "height": 38
+        },
+        {
+          "id": "moreBtn",
+          "top": 54,
+          "height": 38
+        },
+        {
+          "id": "deadBtn",
+          "top": 54,
+          "height": 38
+        },
+        {
+          "id": "manageBtn",
+          "top": 54,
+          "height": 38
+        }
+      ]
+    },
+    "note": "DOM-only实验：themeBtn移入lowfreq，detailBtn始终留在footer；未改源码/行为"
+  }
+}

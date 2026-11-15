@@ -1,0 +1,144 @@
+{
+  "capturedAt": "2026-11-15T04:16:23.421Z",
+  "browser": "151.0.7922.34",
+  "url": "http://127.0.0.1:8137/ui-demo.html",
+  "assertions": [
+    "默认16个可见样例",
+    "首页大幅续听可见",
+    "1280四列",
+    "收藏页大幅区隐藏",
+    "收藏加分类组合",
+    "分类参与搜索",
+    "搜索全部保留关键词",
+    "搜索全部解除范围",
+    "浅色主题切换成功",
+    "主题三个选项",
+    "草稿未改库",
+    "离开触发三选确认",
+    "继续编辑保留草稿",
+    "单台保存同步底栏",
+    "冲突保留输入",
+    "重载得到外部值",
+    "隐藏不删除收藏",
+    "隐藏当前台底栏仍保留",
+    "撤销恢复收藏可见数量",
+    "下一台仅切当前可见收藏",
+    "旋转跟随模拟连接成功",
+    "暂停唱片停止",
+    "320无横向溢出",
+    "320字牌无内部越界",
+    "375无横向溢出",
+    "375字牌无内部越界",
+    "390无横向溢出",
+    "390字牌无内部越界",
+    "414无横向溢出",
+    "414字牌无内部越界",
+    "768无横向溢出",
+    "768字牌无内部越界",
+    "1023无横向溢出",
+    "1023字牌无内部越界",
+    "1024无横向溢出",
+    "1024字牌无内部越界",
+    "1024最多五列",
+    "1280无横向溢出",
+    "1280字牌无内部越界",
+    "1280最多五列",
+    "1440无横向溢出",
+    "1440字牌无内部越界",
+    "1440最多五列",
+    "1920无横向溢出",
+    "1920字牌无内部越界",
+    "1920最多五列",
+    "窄屏刷新和音量可达",
+    "窄屏维护保留草稿",
+    "跨断点草稿不丢",
+    "空态有恢复入口",
+    "键盘聚焦显示完整台名",
+    "Esc关闭名称提示",
+    "末行可完整滚到播放器上方",
+    "无页面脚本异常",
+    "无业务API请求"
+  ],
+  "screenshots": [
+    "01-home-dark-1440.png",
+    "02-home-dark-1280.png",
+    "03-favorites-search-dark.png",
+    "04-list-light.png",
+    "05-theme-light.png",
+    "06-maintenance-draft-dark.png",
+    "07-unsaved-confirm-dark.png",
+    "08-conflict-dark.png",
+    "09-maintenance-data-dark.png",
+    "10-backup-preview-dark.png",
+    "11-maintenance-narrow-light.png",
+    "12-home-playing-dark.png",
+    "13-empty-dark.png",
+    "14-long-names-grid-dark.png",
+    "15-home-grid-light.png"
+  ],
+  "responsive": [
+    {
+      "viewport": 320,
+      "scroll": 320,
+      "columns": 2,
+      "logoOverflow": false
+    },
+    {
+      "viewport": 375,
+      "scroll": 375,
+      "columns": 2,
+      "logoOverflow": false
+    },
+    {
+      "viewport": 390,
+      "scroll": 390,
+      "columns": 2,
+      "logoOverflow": false
+    },
+    {
+      "viewport": 414,
+      "scroll": 414,
+      "columns": 2,
+      "logoOverflow": false
+    },
+    {
+      "viewport": 768,
+      "scroll": 768,
+      "columns": 3,
+      "logoOverflow": false
+    },
+    {
+      "viewport": 1023,
+      "scroll": 1023,
+      "columns": 4,
+      "logoOverflow": false
+    },
+    {
+      "viewport": 1024,
+      "scroll": 1024,
+      "columns": 3,
+      "logoOverflow": false
+    },
+    {
+      "viewport": 1280,
+      "scroll": 1280,
+      "columns": 4,
+      "logoOverflow": false
+    },
+    {
+      "viewport": 1440,
+      "scroll": 1440,
+      "columns": 5,
+      "logoOverflow": false
+    },
+    {
+      "viewport": 1920,
+      "scroll": 1920,
+      "columns": 5,
+      "logoOverflow": false
+    }
+  ],
+  "errors": [],
+  "businessRequests": [],
+  "result": "PASS"
+}

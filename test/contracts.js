@@ -112,4 +112,23 @@ for (const f of ['backup-v2.json', 'backup-v3.json']) {
     assert.ok(k in fx.expected, `quality-aggregate expected 缺聚合字段 ${k}`);
 }
 
+// 收听统计 sidecar 契约形状冻结（B3，AIbot 复核 P1/P2：rev 条件获取 + 409 机器可读 code + 落盘确认模型；
+// 行为驱动在 test/listen-stats.js 与 Android ListenStatsTest/ContractTest 双端点名——此处只验契约描述在位）
+{
+  const lc = JSON.parse(fs.readFileSync('contracts/listen-stats-summary.json', 'utf8'));
+  assert.ok(lc.files.web.includes('{ v:1, rev') && lc.files.android.includes('{ v:1, days'),
+    'listen-stats-summary 缺 files 双包装形态描述（Web {v,rev,ops,days} vs Android {v,days}）');
+  assert.ok(lc.files.shared.includes('YYYY-MM-DD'), 'listen-stats-summary 缺 days 共享形态/日期键规则描述');
+  assert.ok(lc.files.writeFailure.includes('下次 flush'), 'listen-stats-summary 缺写失败保留增量重试语义');
+  for (const k of ['id', 'day', 'ms', 'sess'])
+    assert.ok(k in lc.opEvent, `listen-stats-summary opEvent 缺 ${k}`);
+  assert.ok(lc.api['GET /api/listenstats?rev=<optional>'].includes('notModified'),
+    'listen-stats-summary 缺 GET ?rev= 条件获取语义（AIbot 复核 P2）');
+  const post = lc.api['POST /api/listenstats'];
+  assert.ok(post.includes("'schema'") && post.includes("'batch-limit'"),
+    'listen-stats-summary 缺 409 机器可读 code 分类语义（AIbot 复核 P1）');
+  assert.ok(lc.tests.web.includes('test/listen-stats.js') && lc.tests.android.includes('ListenStatsTest')
+    && lc.tests.contract.includes('ContractTest'), 'listen-stats-summary 缺双端测试点名');
+}
+
 console.log(`contract keys OK: ${expected.length}（web/server/android 三侧一致；excluded ${spec.excluded.length}）`);

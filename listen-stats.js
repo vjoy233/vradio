@@ -8,9 +8,12 @@
    日期键严格校验（AIbot P1-1）：自然日桶键必须是历法有效的 YYYY-MM-DD（02-31、13-01、非闰年 02-29 一律
    拒绝）——lsDayKeyOk 双端同规则；lsMerge/lsTrim/装载侧全部过滤，损坏数据只影响统计自身。
    存储双形态：HTTP = /api/listenstats 服务端 ops+op.id 幂等增量合并（AIbot P1-3，对齐 /api/quality 模式：
-   {baseRev, ops:[{id,day,u0,cat,ms,sess}]}——服务端 rev 唯一发号、同 op.id 去重、日桶累加；多标签同 base
-   各自 POST 不同增量不互相覆盖）；file:// 或后端不可用降级 localStorage 'listenstats.local'（非 radio.* 键，
-   快照覆盖语义）。客户端未确认 ops 失败保留、同 id 重试（服务端幂等兜底，响应丢失重放不双计）。
+   {baseRev,ops:[{id,day,u0,cat,ms,sess}]}——服务端 rev 唯一发号、同 op.id 去重、日桶累加；多标签同 base
+   各自 POST 不同增量不互相覆盖）；GET ?rev=<n> 条件获取（AIbot 复核 P2，对齐 /api/quality：命中当前版本回
+   {v,rev,notModified:true}——多标签 BC 重拉零全量传输，pull 带 baseRev）；file:// 或后端不可用降级 localStorage
+   'listenstats.local'（非 radio.* 键，快照覆盖语义）。客户端未确认 ops 失败保留、同 id 重试（服务端幂等兜底，
+   响应丢失重放不双计）；409 按机器可读 code 分类处置（AIbot 复核 P1）：schema 丢批留痕（不可恢复）、
+   batch-limit 收窄批宽分批重试、无 code/网络/写失败保留 pending 重试——绝不静默丢合法增量。
    90 天裁剪 + 512KB 先删最早日；30s 或页面隐藏/关页 flush；写失败保内存增量下次重试，绝不阻塞播放。
    开关纪律（features.listenStats）：关 = 不消费事件、不 init 不 flush；不清已有数据。
    经典 script + CommonJS 双兼容：lsCreate 工厂（clock/save/load/idFn 可注入）供 test/listen-stats.js require；
@@ -140,23 +143,33 @@ function lsCreate(opt = {}) {
     async flush(keepalive) { // 增量上送（AIbot P1-3）：分批 POST {baseRev, ops}，成功才出队；失败保 pend 同 id 重试。
       this.tick(); // 服务端单批 64 条上限（契约）：积压分批送，送完即止
       if (!this.enabled || !this.pend.length || !this.save) return;
+      let batchMax = LSCAPS.opsMax, transient = false; // batchMax 动态收窄：服务端上限漂移（batch-limit 409）时分批自愈
       try {
         while (this.pend.length) {
-          const batch = this.pend.slice(0, LSCAPS.opsMax);
+          const batch = this.pend.slice(0, batchMax);
           const r = await this.save(batch, this.baseRev, !!keepalive) || {};
-          if (r.reject) { this.pend = this.pend.slice(batch.length); continue; } // 本批被服务端拒（schema/超限）：丢批防无限重试（quality 409 同款）
+          if (r.reject) { // 409 按 code 分类处置（AIbot 复核 P1，对齐 quality 409 分类方案）：
+            if (r.code === 'batch-limit' && batch.length > 1) { batchMax = Math.max(1, Math.ceil(batch.length / 2)); continue; } // 超批：收窄批宽重试（增量不丢）
+            if (r.code === 'schema' || r.code === 'batch-limit') {
+              console.warn('[vradio] listenstats 批次被服务端拒（' + r.code + '），丢弃 ' + batch.length + ' 条增量'); // 不可恢复（schema/单条仍超限）：丢批留痕防无限重试
+              this.pend = this.pend.slice(batch.length); this.dirty = this.pend.length > 0; continue;
+            }
+            transient = true; break; // 无 code（旧服务端/未知 409）：视为暂时失败，pend 原样保留下次 flush 重试
+          }
           this.base = { v: 1, days: lsMerge(this.base.days, lsOpsToDays(batch)).days }; // 确认入账（base 只增不减）
           if (Number.isFinite(r.rev)) this.baseRev = r.rev;
           this.pend = this.pend.slice(batch.length);
           this.dirty = this.pend.length > 0;
         }
-        if (this.bc) { try { this.bc.postMessage('rev'); } catch (_) {} } // 他页重拉（pend 各自保留，重放其上）
-      } catch (_) {} // 写失败：未确认 ops 原样保留（op.id 幂等，重试/重放不双计）
+        if (!transient && this.bc) { try { this.bc.postMessage('rev'); } catch (_) {} } // 他页重拉（pend 各自保留，重放其上）
+      } catch (_) {} // 网络/写失败：未确认 ops 原样保留（op.id 幂等，重试/重放不双计）
     },
-    async pull() { // 多标签通知重拉 / init 装载：只换 base+rev（pend 是本页未确认增量，重放其上）
+    async pull() { // 多标签通知重拉 / init 装载：条件获取（带已见 rev，命中 notModified 跳过全量替换——AIbot 复核 P2）；
+      // 只换 base+rev（pend 是本页未确认增量，重放其上）
       if (!this.load) return;
       try {
-        const s = await this.load();
+        const s = await this.load(this.baseRev);
+        if (s && s.notModified) return; // 服务端态与本地同 rev：免全量传输（BC 重拉零放大）
         if (s && s.days && typeof s.days === 'object') {
           this.base = { v: 1, days: lsMerge(s.days, null).days }; // lsMerge 顺带过滤非法日期键（AIbot P1-1）
           if (Number.isFinite(s.rev)) this.baseRev = s.rev;
@@ -182,9 +195,11 @@ function lsCreate(opt = {}) {
 
 /* ---------- 浏览器单例：默认时钟 + /api/listenstats 传输层（file:// 降级 localStorage） ---------- */
 const ListenStats = lsCreate({
-  load() { // 服务端 {v,rev,days}；file:// 或后端不可用 → localStorage 降级（返回 null 即空库）
+  load(baseRev) { // 条件获取（AIbot 复核 P2）：带已见 rev，命中回 {v,rev,notModified}；否则服务端 {v,rev,days}；
+    // file:// 或后端不可用 → localStorage 降级（返回 null 即空库；旧服务端无 ?rev= 语义时忽略参数返回全量，兼容）
     if (location.protocol.startsWith('http'))
-      return fetch('/api/listenstats').then(r => r.json()).then(j => (j && j.v === 1 && j.days && typeof j.days === 'object' ? j : null))
+      return fetch('/api/listenstats' + (Number.isFinite(baseRev) ? '?rev=' + baseRev : '')).then(r => r.json()).then(j =>
+        (j && j.v === 1 && (j.notModified || (j.days && typeof j.days === 'object'))) ? j : null)
         .catch(() => null).then(j => j || lsLocalLoad());
     return Promise.resolve(lsLocalLoad());
   },
@@ -192,7 +207,10 @@ const ListenStats = lsCreate({
     if (location.protocol.startsWith('http'))
       return fetch('/api/listenstats', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ baseRev, ops: batch }), keepalive }).then(async r => {
-        if (r.status === 409) return { reject: true }; // 本批 schema 违规/超批量：丢批（quality 同款口径）
+        if (r.status === 409) { // 409 分类透传（AIbot 复核 P1）：code=schema|batch-limit（无 code 视为暂时失败保留 pending）
+          const j = await r.json().catch(() => null);
+          return { reject: true, code: (j && j.code) || '' };
+        }
         const j = await r.json().catch(() => null);
         if (!j || !j.ok) throw new Error(j && j.error || '写失败');
         return j;

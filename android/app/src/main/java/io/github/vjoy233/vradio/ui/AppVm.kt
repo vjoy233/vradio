@@ -388,11 +388,11 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     listenTracker?.onState(u.st, u.station, src)
   }
 
-  /** flush（30s tick / 页面隐藏 / 手动）：收账 + trim(90 天·512KB) + 快照覆盖写（幂等）；写失败保内存重试。 */
+  /** flush（30s tick / 页面隐藏 / 手动）：收账 + trim(90 天·512KB) + 快照覆盖写（幂等）；写成功才推进
+   *  确认快照——失败增量保留内存下次 flush/启动重试（AIbot 复核 P1，ListenTracker.flush 单元把守）。 */
   fun flushStats() {
     val t = listenTracker ?: return
-    t.settle()
-    viewModelScope.launch(Dispatchers.IO) { runCatching { listenSidecar.save(ListenStats.trim(t.state)) } }
+    viewModelScope.launch(Dispatchers.IO) { runCatching { t.flush(listenSidecar) } }
   }
 
   /** 页面隐藏（MainActivity.onStop）：收听统计 flush（Web visibilitychange 同款时机）。 */

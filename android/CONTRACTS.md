@@ -27,8 +27,10 @@
 
 - **仓库根 `contracts/` 是 Web/Android 双端共同契约面**：`radio-keys.json`（13 键白名单单一来源，三侧
   store.js KEYS / server.js STORE_KEYS / C.KEYS 漂移由 Web `test/contracts.js` 与 Android `ContractTest.kt`
-  双端拦截）、`source-diagnostic.json`、`quality-summary.json`、`metadata-event.json`、`backup-v3.schema.json`
-  及 `fixtures/` 黄金样本（backup-v2/v3、metadata-golden、playlist-pls/xspf/asx、diagnostic-results）。
+  双端拦截）、`source-diagnostic.json`、`quality-summary.json`、`metadata-event.json`、`backup-v3.schema.json`、
+  `listen-stats-summary.json`（B3 收听统计：days 双端同构/写失败落盘确认模型/GET ?rev= 条件获取/409 机器可读
+  code，AIbot 复核 P1/P2）及 `fixtures/` 黄金样本（backup-v2/v3、metadata-golden、playlist-pls/xspf/asx、
+  diagnostic-results）。
   Android 经 `app/build.gradle.kts` 的 test resources 接线读取（`getResource("radio-keys.json")` /
   `getResource("fixtures/…")`），改契约文件两侧行为都会被测试点名。
 - **`radio.cfg` v2**：新增 `v`（无 v 视为 v1，迁移 = 补版本语义不动字段）与源生命周期三字段
@@ -504,8 +506,9 @@ class LightUpdate(private val gh: Gh, private val filesDir: File) {
     fun summary(state, days = 7): StatsSummary
   }
   class ListenTracker(mono, wall, initial)                   // 状态机（fake clock 双注入）：onState(PState/台/源URL)、
-                                                             // settle() 收账（≥1s 才入账，Web tickMin 同款）
-  class ListenSidecar(dir, writeFn 注入) { load()/save() }    // 坏文件空库恢复；写失败静默保内存重试
+                                                             // settle() 收账（≥1s 才入账，Web tickMin 同款）、
+                                                             // pending（未确认增量在账）/flush(sidecar)（AIbot 复核 P1）
+  class ListenSidecar(dir, writeFn 注入) { load()/save(): Boolean }   // 坏文件空库恢复；写失败回执 false（增量保内存重试）
   ```
   会话语义（双端冻结；AIbot P2-6 起 plan §7.2 已同步同文）：**只在「新建流到达 PLAYING」建立 session**
   （play/切台/切源/重连首达，sessions+1）——精确定义：session = 从非 PLAYING 进入 PLAYING 且不属于
@@ -516,9 +519,14 @@ class LightUpdate(private val gh: Gh, private val filesDir: File) {
   /api/listenstats schema 校验同源）。Android 无「他页复测对账」路径（单进程），
   复活记录只走体检通道。sidecar `filesDir/listen-stats.json`：`{v:1, days:{yyyy-MM-dd:{ms, stations{u0:ms},
   categories{cat:ms}, sessions}}}`（days 部分与 Web 同构；Web HTTP 侧 AIbot P1-3 起 /api/listenstats 升级
-  ops+op.id 幂等增量合并——多标签同 base 各自 POST 不同增量不互相覆盖，Android 单进程 filesDir 不受影响）
+  ops+op.id 幂等增量合并——多标签同 base 各自 POST 不同增量不互相覆盖；AIbot 复核 P2 起 GET ?rev= 条件获取
+  （命中回 notModified，BC 重拉零全量传输）、P1 起 409 响应带机器可读 code（schema 丢批留痕/batch-limit 收窄
+  批宽重试），契约描述 `contracts/listen-stats-summary.json`——Android 单进程 filesDir 不受影响）
   ——不进 radio.* 主 Store/2MB 配额/
-  备份 v3 默认导出；flush = 30s tick + MainActivity.onStop（快照覆盖幂等）；开关关不消费不 flush 不清数据。
+  备份 v3 默认导出；flush = 30s tick + MainActivity.onStop；**落盘确认模型（AIbot 复核 P1，§7.2「写失败只保留
+  内存增量并在下次 flush/启动重试」）**：tracker 持确认快照（最近一次成功落盘），flush 只在有未确认增量时写、
+  写成功才推进确认——失败增量保留内存，下次 flush 快照覆盖一次写入全部（不重放不双计，幂等）；开关关不消费
+  不 flush 不清数据。
 - **`discovery/Discovery.kt`（纯 JVM）**：`build(DiscoveryInput): Groups` 六分组（精选/稳定直连/最近新增/
   最近恢复/有曲讯/未听过）+ `noQualityData` 名单（不进质量分组的无记录台，UI 在「稳定直连」组头显示
   「另有 N 台暂无质量数据」提示行，不单列分组）；规则：过滤 hidden/隐藏分类（无例外）/dead（正在播·
@@ -537,5 +545,6 @@ class LightUpdate(private val gh: Gh, private val filesDir: File) {
 - **测试面**：`MetadataNormalizerTest`（黄金样本逐字段 + 连接号/空白/前缀/去重边界）、
   `MetadataEventTest`（事件形态 + 管线固定序：空曲讯/迟到/串台/去重/入史/reset/v2 入史窗去重）、
   `ListenStatsTest`（fake clock 全矩阵：播放/暂停/续播重锚/连接中/失败/切源/切台/跨午夜/双回拨/
-  1s 阈值/90 天/512KB/幂等/写失败/坏件/summary）、`DiscoveryTest`（六分组矩阵 + originMask
-  装配打点（同名/URL 命中）+ starter 位不参与 equals）。全量 229 用例离线秒级。
+  1s 阈值/90 天/512KB/幂等/写失败/连续写失败→成功增量完整不重复计数（AIbot 复核 P1 确认快照模型）/
+  坏件/summary）、`DiscoveryTest`（六分组矩阵 + originMask
+  装配打点（同名/URL 命中）+ starter 位不参与 equals）。全量 244 用例离线秒级。

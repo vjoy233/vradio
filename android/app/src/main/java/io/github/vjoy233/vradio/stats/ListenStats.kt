@@ -17,7 +17,9 @@ import java.util.Locale
    暂停恢复（play/切台/切源/断流重连首达 PLAYING 均计一次；resume 重锚不开新 session、暂停时长不计）；
    日期键历法严格校验（AIbot P1-1：validDay，坏键编解码入口丢弃）；flush 幂等（快照覆盖语义）。
    sidecar = filesDir/listen-stats.json（不进 radio.* 主 Store、不占配额、不进备份；坏文件按空库恢复，
-   写失败只保留内存增量下次 flush/启动重试——绝不暂停或中断播放）。
+   写失败只保留内存增量下次 flush/启动重试——绝不暂停或中断播放）。落盘确认模型（AIbot 复核 P1）：
+   ListenTracker 持已确认快照 saved（最近一次成功落盘），flush 只在有未确认增量时写、写成功才推进 saved
+   （失败增量保留内存，下次 flush 快照覆盖一次写入全部、不重放不双计）。
    状态机映射（AppVm 接线）：IDLE/CONNECTING/PLAYING/PAUSED 直接对应 PState；FAILED = 全部源失败善后
    （IDLE + 台清空的形态）——四者一律不累加（只收口当前会话）。 */
 
@@ -163,8 +165,8 @@ object ListenStatsCodec {
   }
 }
 
-/** sidecar IO：filesDir/listen-stats.json（tmp+rename；坏文件按空库恢复；写失败静默——内存增量下次重试）。
- *  writeFn 注入供测试模拟写盘失败。 */
+/** sidecar IO：filesDir/listen-stats.json（tmp+rename；坏文件按空库恢复；写失败返回 false 不抛——增量留在
+ *  ListenTracker 未确认账上下次 flush/启动重试）。writeFn 注入供测试模拟写盘失败。 */
 class ListenSidecar(
   private val dir: File,
   private val writeFn: (String) -> Unit = { t -> writeTextAtomic(File(dir, FILE), t) },
@@ -174,15 +176,26 @@ class ListenSidecar(
   @Synchronized fun load(): StatsState =
     ListenStatsCodec.parse(runCatching { File(dir, FILE).takeIf { it.isFile }?.readText() }.getOrNull())
 
-  @Synchronized fun save(state: StatsState) {
+  /** 落盘回执（AIbot 复核 P1）：成功 true / 失败 false（不抛）——调用方只在 true 时推进确认快照。 */
+  @Synchronized fun save(state: StatsState): Boolean =
     runCatching { writeFn(ListenStatsCodec.toJson(state)) }
       .onFailure { println("[vradio] listen-stats.json 落盘失败（保留内存增量，下次 flush/启动重试）: $it") }
-  }
+      .isSuccess
+}
+
+/** 深拷贝（确认快照持独立副本——写失败重试期间内存账继续变动互不干扰）。 */
+private fun StatsState.deepcopy(): StatsState {
+  val out = StatsState(v)
+  for ((k, d) in days) out.days[k] = StatsDay(d.ms, LinkedHashMap(d.stations), LinkedHashMap(d.categories), d.sessions)
+  return out
 }
 
 /** 会话状态机（AppVm 从 PlayerUiState 流映射驱动；只 PLAYING 开会话，其余状态收口）。
  *  语义镜像 Web listen-stats.js（§7.2 拍板）：新建流到达 PLAYING（play/切台/切源/重连首达）才计 sessions；
- *  暂停关账但保留「resume 重锚资格」——续播同台同源不开新 session（暂停时长不计）；连接中/失败/停机彻底关。 */
+ *  暂停关账但保留「resume 重锚资格」——续播同台同源不开新 session（暂停时长不计）；连接中/失败/停机彻底关。
+ *  落盘确认模型（AIbot 复核 P1，§7.2「写失败只保留内存增量并在下次 flush/启动重试」）：saved = 已确认快照
+ *  （最近一次成功落盘；boot 装载态即基线）；flush 只在有未确认增量时写、写成功才推进 saved——失败增量保留
+ *  内存，下次 flush 快照覆盖一次写入失败期间全部增量（不重放不双计，天然幂等）。 */
 class ListenTracker(
   private val mono: () -> Long,
   private val wall: () -> Long,
@@ -194,9 +207,24 @@ class ListenTracker(
     private set
   private var cur: ListeningSession? = null
   private var pendingResume: Pair<String, String>? = null   // PAUSED 时保留的 (u0, src)：续播重锚资格
+  private var saved: StatsState = initial.deepcopy()        // 已确认快照（最近一次成功落盘；≠ state 即有未确认增量）
+
+  /** 未确认增量在账（state ≠ 已确认快照）：写失败保留，下次 flush 重放（AIbot 复核 P1）。 */
+  @get:Synchronized val pending: Boolean get() = state != saved
+
+  /** flush（30s tick / 页面隐藏 / 测试注入失败写入器）：收账 + trim → 有未确认增量才写、写成功才推进确认
+   *  快照；失败 false（增量保留内存重试）。@Synchronized：IO 线程 flush 与主线程 onState 互斥（快照深拷贝
+   *  不与内存账变动竞态）。 */
+  @Synchronized fun flush(sidecar: ListenSidecar): Boolean {
+    settle()
+    ListenStats.trim(state)
+    if (state == saved) return true                      // 无未确认增量：跳过写（幂等，不重复落盘）
+    val snap = state.deepcopy()
+    return if (sidecar.save(snap)) { saved = snap; true } else false
+  }
 
   /** PState 流入口。FAILED 映射 = 全部源失败善后（IDLE+清台），与 IDLE 同路（关会话）。 */
-  fun onState(st: PState, station: Station?, sourceUrl: String?) {
+  @Synchronized fun onState(st: PState, station: Station?, sourceUrl: String?) {
     if (st == PState.PLAYING && station != null && station.u.isNotEmpty()) {
       val src = sourceUrl ?: station.u0
       val c = cur
@@ -224,7 +252,7 @@ class ListenTracker(
   }
 
   /** 收账：进行中会话增量入账（≥1s 才入，锚点随入账/回拨前移）；30s tick/flush 前调。 */
-  fun settle(): Boolean {
+  @Synchronized fun settle(): Boolean {
     val c = cur ?: return false
     val m = mono(); val w = wall()
     if (m - c.monoAt >= TICK_MIN_MS) {

@@ -24,7 +24,8 @@ import org.junit.Before
 import org.junit.Test
 
 /* 收听统计（B3-B，plan-expansion-r4 §7.2）：fake clock 全矩阵——播放/暂停/连接中/失败/切源/切台/
-   跨午夜/回拨（mono/wall 各自）/90 天裁剪/512KB 超限/幂等 flush/写失败不影响/坏件恢复/编解码往返/summary。 */
+   跨午夜/回拨（mono/wall 各自）/90 天裁剪/512KB 超限/幂等 flush/写失败不影响/连续写失败→成功增量完整
+   不重复计数（AIbot 复核 P1：成功写入才推进确认快照）/坏件恢复/编解码往返/summary。 */
 class ListenStatsTest {
 
   private class Fake(var mono: Long = 0L, var wall: Long = WALL0)
@@ -278,11 +279,36 @@ class ListenStatsTest {
     }
     val st = StatsState()
     st.days["2026-11-14"] = StatsDay(60000L, linkedMapOf("http://a/1" to 60000L), linkedMapOf("华语音乐" to 60000L), 1)
-    sc.save(st)   // 不抛
+    assertEquals(false, sc.save(st))                        // 失败回执 false（不抛）
     assertEquals(StatsState(), ListenSidecar(dir).load())   // 盘上没有
     fail = false
-    sc.save(st)   // 重试成功（恢复正常写路径）
+    assertEquals(true, sc.save(st))                         // 重试成功（恢复正常写路径）
     assertEquals(st, ListenSidecar(dir).load())
+  }
+
+  @Test fun 连续写失败到成功增量完整且不重复计数() {   // AIbot 复核 P1：成功写入才推进确认快照（saved≠state 即重试）
+    var fail = 0   // 前两次写失败、第三次起成功
+    val writes = mutableListOf<String>()
+    val sc = ListenSidecar(dir) { t ->
+      if (fail < 2) { fail++; throw java.io.IOException("disk full") }
+      writes.add(t)
+      io.github.vjoy233.vradio.data.writeTextAtomic(File(dir, ListenSidecar.FILE), t)
+    }
+    val c = Fake(); val t = tracker(c)
+    assertFalse(t.pending)                                  // boot 装载态 = 已确认基线
+    t.onState(PState.PLAYING, s1, "http://a/1"); c.mono += 60_000; c.wall += 60_000
+    assertEquals(false, t.flush(sc)); assertTrue(t.pending) // 第 1 次失败：60s 增量保留内存
+    c.mono += 30_000; c.wall += 30_000
+    assertEquals(false, t.flush(sc)); assertTrue(t.pending) // 第 2 次失败：新增 30s 随行保留
+    c.mono += 30_000; c.wall += 30_000
+    assertEquals(true, t.flush(sc)); assertFalse(t.pending) // 第 3 次成功：失败期间全部增量一次落盘
+    val disk = ListenSidecar(dir).load()                    // 盘上 = 内存态全量（60+30+30 不丢、不双计）
+    assertEquals(120_000L, disk.days.values.single().ms)
+    assertEquals(120_000L, disk.days.values.single().stations["http://a/1"])
+    assertEquals(1, disk.days.values.single().sessions)
+    assertEquals(true, t.flush(sc)); assertEquals(1, writes.size)   // 无新增量：幂等跳过不再写
+    c.mono += 30_000; c.wall += 30_000; t.settle()          // 成功后再有增量：照常进入未确认账
+    assertTrue(t.pending)
   }
 
   /* ---------- summary ---------- */

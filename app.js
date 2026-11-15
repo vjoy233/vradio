@@ -113,6 +113,11 @@ function uiChooseResume(opt) { // 续听候选（§6.3，本批次先立纯函�
   }
   return null;
 }
+/* 唱片旋转判定（ui-redesign §6.10 纯逻辑，P3 立函数供测试）：仅「真实 playing + 页面可见 + 未开启减动效」
+   才转（§4.4：连接/缓冲/暂停/失败/ended/后台/系统减动效一律静止；不得以 play 事件或 paused=false 提前宣称） */
+function uiPhaseRunning(phase, hidden, reduce) {
+  return phase === 'playing' && !hidden && !reduce;
+}
 /* 主题入口窄屏收纳（§6.11，boot 装配一次并留销毁函数）：同一节点（#themeWrap 含三选菜单）搬家——≤640px 收进
    #lowfreq（「⋯ 更多」内，文字 span 由 CSS 放出）、更宽回顶栏原锚点（#file 之前）；监听/radio.theme 随节点走，
    不复制 id。跨断点焦点：焦点在将隐藏的菜单内先关菜单（归还触发器）；DOM 搬家必脱焦——焦点还给随行 themeBtn，
@@ -133,6 +138,7 @@ function uiPlaceTheme(wrap, desktopHost, before, compactHost) {
 }
 
 /* ---------- 维护草稿引擎（ui-redesign §5/§6.4/§6.8/§6.9，P4 批次；语义内联自 docs/ui-redesign-assets/
+
    handoff-helpers.js——该文件是文档参考实现，不是生产代码） ----------
    草稿只在 App 内存（身份/基线不持久化，无新增 radio.* 键）；URL 是持久身份——草稿锚定稳定源 URL，
    绝不物理改 s.u[]。字段清除区分「删除属性」与空字符串（uiReadCell/uiSameCell 的 exists 语义）。
@@ -425,6 +431,43 @@ function uiChooseDialog(title, message, choices, opt = {}) {
     (safeBtn || acts.querySelector('button')).focus(); // 初始焦点落安全项（继续编辑/取消）
   });
 }
+/* 底栏高度观察器（ui-redesign §6.5 原样抄入）：启动一次、页面卸载清理；--dock-h = 实测 footer 高度，
+   桌面壳用作 dashboard-main 的 padding-bottom 占位与 scroll-padding-bottom（紧凑态不消费、90px 规则不动）。
+   参数传实际 footer 节点而非猜 id */
+function uiWatchDock(dock) {
+  const root = document.documentElement;
+  const update = () => root.style.setProperty('--dock-h', Math.ceil(dock.getBoundingClientRect().height) + 'px');
+  const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(update) : null;
+  if (ro) ro.observe(dock);
+  window.addEventListener('resize', update);
+  update();
+  return () => { if (ro) ro.disconnect(); window.removeEventListener('resize', update); };
+}
+
+/* 更多工具桌面收纳（ui-redesign P2/§6.6，uiPlaceTheme 同款搬家范式）：ui-refresh 且 ≥1024px 时把 #lowfreq
+   整体搬进侧栏 #sideTools（节点唯一、监听随节点走，同步/体检/导入/导出/发现行为不变）；更窄搬回 header
+   原锚点（#moreBtn 之前）。跨断点焦点在搬移节点内 → 先收 popover 再归还可见触发器（桌面 #sideMore /
+   紧凑 #lowfreq 内首个可见按钮，都不见则 #moreBtn），不让焦点落到隐藏节点 */
+function uiPlaceTools(low, desktopBox, headerAnchor) {
+  const mq = matchMedia('(min-width:1024px)');
+  const place = () => {
+    if (!document.documentElement.classList.contains('ui-refresh')) return; // 开关关：不搬家，紧凑布局原位
+    if (mq.matches === (low.parentNode === desktopBox)) return; // 已在正确宿主：幂等早退（resize 兜底轮询零搬动/零脱焦）
+    const ae = document.activeElement, take = !!(ae && low.contains(ae));
+    App.sideToolsClose(); // 跨断点先收 popover（aria-expanded 同步复位）
+    if (mq.matches) desktopBox.appendChild(low);
+    else headerAnchor.parentNode.insertBefore(low, headerAnchor);
+    if (take) {
+      const t = mq.matches ? $('sideMore') : [...low.querySelectorAll('button')].find(b => b.offsetParent);
+      (t || $('moreBtn')).focus({ preventScroll: true });
+    }
+  };
+  if (mq.addEventListener) mq.addEventListener('change', place);
+  else mq.addListener(place);
+  addEventListener('resize', place); // 兜底：个别环境（如部分仿真/分屏）断点事件不发出时，随窗口尺寸变化对齐宿主
+  place();
+  return () => { if (mq.removeEventListener) mq.removeEventListener('change', place); else mq.removeListener(place); removeEventListener('resize', place); };
+}
 
 const App = {
   /* 集中状态（docs/review.md 架构-风险 2）：stations 数据 + 渲染哨兵 + 行索引（体检增量更新用，去 O(n²)）
@@ -440,6 +483,8 @@ const App = {
   cfg: null,   // 个人维护层（radio.cfg，owner 三批拍板）：分类重命名/隐藏/自建 + 电台移动/重命名/隐藏 + 追加备选源（P1-a/r2 ⑨）。
                // 键 = 源 URL（身份公理），同步重建后自动复用；tag = URL→原始台名快照，仅供失配清单显示
   songFor: '',   // 曲讯归属台（B-6/B-7）：切台/刷新即清零重取（当前曲名本体在 B3 管线 metaPipe.last）
+  phase: '',     // 瞬时播放阶段（P3/§6.10，Player.onphase 只读投影）：'connecting'|'playing'|'buffering'|'paused'|'idle'
+                 // 固定枚举；仅驱动唱片旋转与续听卡按钮，不新增持久键、不覆盖 onstate 任何副作用
   metaPipe: null,  // 曲讯事件管线（B3-A）：boot 创建（Metadata.mpCreate）——世代校验/清洗/同曲去重/入史决策的唯一所在
   metaV2: false,   // sink 选择（boot 按 FEATURES.metadataV2 定格）：false=Legacy（现状行为）/true=V2（归一化字段消费），绝不双写
   metaLast: null,  // V2 sink 记的最近一次归一化事件（artist/track/program 供统计/发现派生；Legacy 不写）
@@ -922,6 +967,7 @@ const App = {
   },
   render() {
     this.buildCats(); // 角标与列表同源刷新（AIbot PR#9 review P2-a）：render 内统一调，调用方无需再单独调 buildCats
+    this.syncSidebar(); // 侧栏高亮/计数/范围标题（P2 壳）：紧凑态元素不显示，更新无副作用
     const restore = this.keepFocus($('list'), 'k', 'fav', 'u0'); // 焦点在行/卡片或按钮上都找回；data-u0 兜底（改名后 data-k 失配仍可按 URL 锚点找回，§6.7）
     const list = this.visible();
     $('deadBtn').hidden = !this.state.stations.some(s => s.health === 'dead'); // 出现过死台才亮「无效源」开关
@@ -938,7 +984,8 @@ const App = {
       const base = `${playing ? ' playing' : ''}${k === ck ? ' connecting' : ''}${s.health === 'dead' ? ' dead' : ''}`;
       // title=全名（UI 审计 P3-9）：截断长名（最长 84 字）此前无处可看全名；死台按档位叠加提示（R1 拍板分文案）
       // data-u0 = 身份 URL 锚点（§6.7）：维护改名后 data-k 失配，keepFocus 按它兜底找回焦点
-      const attrs = `data-k="${this.esc(k)}" data-u0="${this.esc(s.u[0])}" data-i="${i}" role="listitem" tabindex="${i === ri ? 0 : -1}" aria-label="${this.esc(s.n)}${playing ? '（播放中）' : ''}"${playing ? ' aria-current="true"' : ''} title="${this.esc(s.n)}${s.health === 'dead' ? (s.perm ? '（长期确认停运）' : '（疑似不可达，点击仍可尝试播放）') : ''}"`;
+      // data-fn = 全名快照（P3/§4.2）：单例 tooltip 聚焦可见的填充源——截断提示不能只依赖浏览器 title（键盘聚焦不出原生提示）
+      const attrs = `data-k="${this.esc(k)}" data-u0="${this.esc(s.u[0])}" data-fn="${this.esc(s.n)}" data-i="${i}" role="listitem" tabindex="${i === ri ? 0 : -1}" aria-label="${this.esc(s.n)}${playing ? '（播放中）' : ''}"${playing ? ' aria-current="true"' : ''} title="${this.esc(s.n)}${s.health === 'dead' ? (s.perm ? '（长期确认停运）' : '（疑似不可达，点击仍可尝试播放）') : ''}"`;
       const hp = s.health ? `<span class="health ${s.health === 'ok' ? 'ok' : 'bad'}" title="体检${s.health === 'ok' ? '可用' : (s.perm ? '长期确认停运' : '疑似不可用')}">${s.health === 'ok' ? '<svg class="ic"><use href="#i-check"/></svg>' : '<svg class="ic"><use href="#i-x"/></svg>'}</span>` : '';
       // 信息降噪（UI 审计 P2-1/P2-2，owner 拍板）：① 台名剥离「[国别]」后缀进 meta（搜索/aria/身份仍用全名，
       // 数据层不动）；② meta 行按视图降级——分类 badge 只在 cat=全部（含 scope 态）显示（分类视图下 100% 冗余），
@@ -948,9 +995,9 @@ const App = {
       const parts = `${s.perm ? '<span class="badge permb" title="长期确认停运（复测可达会自动回归）">已停运</span>' : ''}${!inCat ? `<span class="badge">${this.esc(s.c)}</span>` : ''}${cn ? `<span class="srcs" title="国家/地区">${this.esc(cn)}</span>` : ''}${s.u.length > 1 ? `<span class="srcs" title="备选源数量">${s.u.length}源</span>` : ''}`;
       const cfoot = (parts || hp) ? `<div class="cfoot">${parts}${hp}</div>` : '';
       const more = `<button type="button" class="fav dmore" data-more="${this.esc(k)}" aria-label="电台详情：${this.esc(s.n)}" title="详情与逐源诊断（B1）"><svg class="ic"><use href="#i-info"/></svg></button>`;
-      if (grid) return `<div class="card${base}" ${attrs}><div class="chead">${Logos.visual(s)}<span class="cname">${this.esc(dn)}</span>${this.favBtn(k, on, s)}${more}</div>${cfoot}</div>`;
+      if (grid) return `<div class="card${base}" ${attrs}><div class="chead">${Logos.visual(s)}<span class="cname station-title">${this.esc(dn)}</span>${this.favBtn(k, on, s)}${more}</div>${cfoot}</div>`;
       const meta = parts ? `<div class="meta">${parts}</div>` : '';
-      return `<div class="row${base}" ${attrs}>${this.favBtn(k, on, s)}<div class="col"><div class="l1">${Logos.visual(s)}<span class="name">${this.esc(dn)}</span>${hp}</div>${meta}</div>${more}</div>`;
+      return `<div class="row${base}" ${attrs}>${this.favBtn(k, on, s)}<div class="col"><div class="l1">${Logos.visual(s)}<span class="name station-title">${this.esc(dn)}</span>${hp}</div>${meta}</div>${more}</div>`;
     }).join('') || this.emptyHtml();
     restore();
     const ae = document.activeElement; // 重渲后焦点行找回（keepFocus）：同步 roving 落点，防 Tab 跳回别行
@@ -960,6 +1007,7 @@ const App = {
       const fr = $('list').querySelector(`[data-k="${CSS.escape(this._flashK)}"]`);
       if (fr) { fr.classList.add('flash'); fr.scrollIntoView({ block: 'center' }); }
     }
+    this.renderHero(); // 续听卡（P2/§3.3）：只更新自身节点，不整表重渲（紧凑态 CSS 拦截不显示）
   },
   /* 方向键导航落点（UI 审计 P2-5）：焦点搬家 + 滚动跟随；搜索框 ↓ 也落到列表首行 */
   focusRow(i) {
@@ -977,6 +1025,106 @@ const App = {
     this.render();
     clearTimeout(this._swapT);
     this._swapT = setTimeout(() => l.classList.remove('swap'), 160);
+  },
+
+  /* ---------- 桌面新版壳接线（ui-redesign P2，FEATURES.uiRefresh 开关）：侧栏同步 / 续听卡 / 更多工具
+     popover。紧凑布局（开关关或 <1024px）下全部无副作用：侧栏元素 display:none、hero CSS 拦截、popover
+     宿主随 #lowfreq 留在 header。 ---------- */
+  /* 侧栏同步（render 内调用）：范围按钮高亮（aria-current）+ 计数角标（catCounts 现成口径）+ 顶栏范围标题 */
+  syncSidebar() {
+    const cc = this.catCounts(), names = { all: '全部电台', favorites: '我的收藏', recent: '最近收听' };
+    const set = (id, sc, n) => {
+      const b = $(id); if (!b) return;
+      const on = this.state.scope === sc;
+      b.classList.toggle('on', on);
+      if (on) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
+      const i = b.querySelector('.n'); if (i) i.textContent = n;
+    };
+    set('sideAll', 'all', cc.all); set('sideFav', 'favorites', cc.favN); set('sideRec', 'recent', cc.recN);
+    const t = $('scopeTitle');
+    if (t) t.textContent = (names[this.state.scope] || '全部电台') + (this.state.cat !== '全部' ? ' · ' + this.state.cat : '');
+  },
+  /* 续听卡（§3.3/§6.3）：候选 = 当前播放/暂停 → 最近前 20 → STARTER 精选（uiChooseResume 纯函数）；
+     eligible 走 uiStationShown（all=false：手动隐藏永不复活、自动死台遵守 showDead——正在播的隐藏台
+     不豁免，首页改用下一候选）。显示条件 = ui-refresh 开 + scope=all + cat=全部 + 无关键词（<1024px
+     由 CSS display:none 拦截）。渲染用维护后现名 + Logos.visual 现有链（同步读缓存，绝不发新请求）；
+     只更新自身节点不整表重渲，签名未变直接返回（防无谓重建与焦点丢失）；唱片为静态装饰（旋转 P3） */
+  heroK: '', // 候选 URL 锚点（u[0]）：点击时重新解析最新对象，防渲染后台名/装配变化错台（§6.3）
+  renderHero() {
+    const hero = $('resumeHero');
+    const on = document.documentElement.classList.contains('ui-refresh')
+      && this.state.scope === 'all' && this.state.cat === '全部' && !this.state.keyword.trim();
+    if (!on) { hero.hidden = true; this.heroK = ''; return; }
+    const self = this;
+    const pick = uiChooseResume({
+      current: Player.station || Player.connecting || null,
+      resolveCurrent: s => { // 按当前台身份 URL 对照最新 stations 回绑：恰 1 个命中才认，0/多重匹配不猜（§6.3）
+        const u0 = s && s.u && s.u[0];
+        if (!u0) return null;
+        const hits = self.state.stations.filter(x => x.u.includes(u0));
+        return hits.length === 1 ? hits[0] : null;
+      },
+      recents: this.recents, resolveRecent: r => this.resolve(r),
+      starters: this.state.stations.filter(s => s.om),
+      eligible: s => uiStationShown(s, { hiddenCategories: this.cfg.hideC, key: keyOf, all: false,
+        showDead: this.state.showDead, playingKey: null, connectingKey: null }),
+    });
+    const conn = pick && Player.connecting && keyOf(Player.connecting) === keyOf(pick.station);
+    const cur = pick && Player.station && keyOf(Player.station) === keyOf(pick.station);
+    // 按钮四态（P3 收敛 P2 的 isPaused 代理，§6.10）：以真实 phase 为准——buffering 是「播着但短暂缺数据」，
+    // 按钮语义仍为「暂停」（点了确实是暂停）；仅 playing/buffering 算「在播」，连接期不提前宣称（§4.4）
+    const act = this.phase === 'playing' || this.phase === 'buffering';
+    const label = !pick ? '' : conn ? '正在连接' : cur && act ? '暂停' : cur ? '继续收听' : '开始收听';
+    const kick = !pick ? '' : pick.origin === 'current' ? '当前电台' : pick.origin === 'recent' ? '接着上次收听' : '今日精选';
+    const sig = pick ? [pick.station.u[0], kick, label, conn].join('|') : 'empty';
+    if (hero.dataset.sig === sig) return;
+    hero.dataset.sig = sig;
+    if (!pick) {
+      this.heroK = '';
+      hero.innerHTML = `<span class="vinyl" aria-hidden="true"></span><div class="hero-info">
+        <span class="hero-kicker">暂无可收听电台</span>
+        <span class="hero-meta">收藏或播放一些电台后，这里会接着上次继续</span>
+        <span class="hero-actions"><button type="button" class="btn" data-act="herolib">打开电台库</button></span></div>`;
+    } else {
+      const s = pick.station;
+      this.heroK = s.u[0];
+      hero.innerHTML = `<span class="vinyl" aria-hidden="true">${Logos.visual(s)}</span><div class="hero-info">
+        <span class="hero-kicker">${kick}</span>
+        <b class="hero-name" title="${this.esc(s.n)}">${this.esc(s.n)}</b>
+        <span class="hero-meta">${this.esc(s.c)}${s.u.length > 1 ? ' · ' + s.u.length + ' 个源' : ''}</span>
+        <span class="hero-actions"><button type="button" class="btn" id="heroPlay" data-act="heroplay"${conn ? ' disabled' : ''} aria-label="${label}：${this.esc(s.n)}"><svg class="ic"><use href="#i-${label === '暂停' ? 'pause' : 'play'}"/></svg><span>${label}</span></button></span></div>`;
+    }
+    hero.hidden = false;
+    this.syncVinyl(); // 重建即重挂旋转类（innerHTML 清掉了 .running；判定走 uiPhaseRunning 纯函数，P3/§6.10）
+  },
+  /* 真实播放阶段投影（P3/§6.10，Player.onphase 消费方）：只存瞬时 phase + 局部更新——唱片旋转类与续听卡
+     按钮（renderHero 自带签名短路，无变化零开销），绝不整表重渲、不新增 radio.*、不覆盖 onstate 副作用 */
+  onPhase(ph, s) {
+    this.phase = ph;
+    this.syncVinyl();
+    if (s && Player.station === s) this.renderHero(); // 仅当前台的事件才可能改按钮四态
+  },
+  syncVinyl() { // 唱片 running 类 = uiPhaseRunning(phase, 页面可见, 未减动效)；visibilitychange/reduced-motion 变化时由 boot 监听重算
+    const v = document.querySelector('#resumeHero .vinyl');
+    if (!v) return;
+    const rm = this.reduceMq || matchMedia('(prefers-reduced-motion: reduce)');
+    v.classList.toggle('running', uiPhaseRunning(this.phase, document.hidden, rm.matches));
+  },
+  /* 更多工具 popover（§6.6）：普通按钮 popover（不贴 role=menu），Esc/点外/点操作项收起，焦点归还触发器；
+     显隐只动 #sideTools 的 .open 类——绝不碰 display:contents 的 #lowfreq 容器 */
+  sideToolsToggle() {
+    const t = $('sideTools'), on = !t.classList.contains('open');
+    t.classList.toggle('open', on);
+    $('sideMore').setAttribute('aria-expanded', String(on));
+    if (on) [...t.querySelectorAll('button')].find(b => !b.hidden)?.focus(); // 开即移焦首个可见项（睡眠菜单同口径）
+  },
+  sideToolsClose() {
+    const t = $('sideTools');
+    if (!t || !t.classList.contains('open')) return;
+    const back = t.contains(document.activeElement);
+    t.classList.remove('open');
+    $('sideMore').setAttribute('aria-expanded', 'false');
+    if (back) $('sideMore').focus(); // 焦点原在弹层内则归还触发器（srcPopClose 同口径）
   },
   /* 体检增量落库（sync.js 调用）：stamp 未变时顺手更新该行 DOM，否则只落数据由结束时的兜底 render 收口（P3-13）。
      healthMarks 只改内存，落盘由 Sync 各收尾统一一次——全量体检标死几百台时逐台全量写 localStorage 会卡主线程；
@@ -1285,7 +1433,9 @@ const App = {
   },
   manageHide() { // 原始关闭（离开流程批准后调用）：焦点归还触发器；主列表滚动不受影响（面板只是遮罩层）
     $('manage').hidden = true;
-    const b = this.mOpener && this.mOpener.isConnected ? this.mOpener : $('manageBtn');
+    // 归还触发器：桌面壳（P2）下 header #manageBtn 已隐藏（侧栏接管维护入口），退到可见的 #sideManage
+    const b = this.mOpener && this.mOpener.isConnected ? this.mOpener
+      : ($('manageBtn').offsetParent ? $('manageBtn') : $('sideManage'));
     if (b && b.focus) b.focus();
   },
   renderManage() {
@@ -2173,6 +2323,9 @@ const App = {
   },
 
   boot() {
+    // 桌面新版壳总开关（ui-redesign P2/§6.6）：FEATURES.uiRefresh 默认关——类不挂，页面与旧版完全一致。
+    // 开启后 ≥1024px 走 dashboard 壳（样式全在 html.ui-refresh + @media 内），断点内随窗口宽度换排布不重建状态
+    document.documentElement.classList.toggle('ui-refresh', !!(window.FEATURES && window.FEATURES.uiRefresh));
     Store.init(); // 存储收敛层（方案二）：BC 监听 + 关页 flush 兜底，须在 Player.init 读记忆之前
     QualityStore.init(); // 质量侧车（B2）：BC('quality') 他页重拉 + 关页 flush；load() 异步随行
     // B3 曲讯管线（元数据事件唯一通路，sink 二选一）：metaV2 装载时定格——发布配置非用户数据，切页不重读。
@@ -2192,8 +2345,16 @@ const App = {
     $('vol').value = vol;
     Player.init($('audio'), vol / 100);
 
-    // Player 状态回调：full=true 需整表重渲（行高亮/连接中变化），否则只轻量更新底部
-    Player.onstate = full => { this.playerNow(); if (full) this.render(); if (FEATURES.listenStats) this.lsState(); };
+    // Player 状态回调：full=true 需整表重渲（行高亮/连接中变化），否则只轻量更新底部。
+    // renderHero 随行（P2）：pause 走 full=false 不整表重渲，续听卡按钮文案也要跟上（签名未变时零开销）
+    Player.onstate = full => { this.playerNow(); this.renderHero(); if (full) this.render(); if (FEATURES.listenStats) this.lsState(); };
+    // 真实播放阶段通知（P3/§6.10）：Player 只发布只读 phase（固定枚举），app 投影唱片旋转/续听卡按钮——
+    // 与 onstate/onqos 各走各的回调互不覆盖；页面可见性/系统减动效变化时旋转类就地重算（§6.10）
+    Player.onphase = (ph, s) => this.onPhase(ph, s);
+    document.addEventListener('visibilitychange', () => this.syncVinyl());
+    this.reduceMq = matchMedia('(prefers-reduced-motion: reduce)');
+    if (this.reduceMq.addEventListener) this.reduceMq.addEventListener('change', () => this.syncVinyl());
+    else if (this.reduceMq.addListener) this.reduceMq.addListener(() => this.syncVinyl()); // 旧实现兜底（uiPlaceTheme 同款）
     Player.onstatus = t => { $('status').textContent = t; };
     Player.onfail = () => { this.showLast(); if (FEATURES.listenStats) ListenStats.onState('FAILED'); }; // 全部源失败：曲讯/统计一并收口
     Player.onlogo = s => Logos.get(s); // 锁屏 artwork 台标（r2 ⑩）：同步窥探绝不发请求，无台标回空数组静默缺省
@@ -2517,6 +2678,8 @@ const App = {
         $('sleepMenu').hidden = true;
         this.themeMenuClose(); // 主题三选菜单（§6.11）：Esc 收起 + 焦点归还
         this.srcPopClose(); // 选源浮层（AIbot P2-1）：Esc 收起 + 焦点归还，与 ? 帮助的 Esc 自述一致
+        this.sideToolsClose(); // 更多工具 popover（P2 桌面壳）：Esc 收起 + 焦点归还
+        $('namett').hidden = true; // 长名提示单例（P3/§4.2）：Esc 可关
       }
       if (e.key === 'Tab' && (!$('editorConfirm').hidden || !$('manage').hidden || !$('detail').hidden || !$('discovery').hidden)) { // 焦点困在最上层弹窗内（UI 审计 P2-7）：确认弹窗优先（最上层只困确认层）
         const dlg = !$('editorConfirm').hidden ? $('editorConfirm') : !$('manage').hidden ? $('manage') : !$('detail').hidden ? $('detail') : $('discovery');
@@ -2540,6 +2703,52 @@ const App = {
     document.addEventListener('click', e => {
       if ($('lowfreq').classList.contains('open') && !e.target.closest('#lowfreq,#moreBtn')) { $('lowfreq').classList.remove('open'); $('moreBtn').setAttribute('aria-expanded', 'false'); }
     });
+
+    // —— 桌面壳接线（ui-redesign P2/§6.6，开关开才装配；全部绑定一次，render 不重复挂）——
+    // ≥1024px：#lowfreq 搬进侧栏 #sideTools popover（同步/体检/导入/导出/发现行为不变，只是宿主变了）、
+    // 侧栏接管范围导航与维护入口、--dock-h 实测 footer 占位。开关关：整块跳过，紧凑布局原样
+    if (document.documentElement.classList.contains('ui-refresh')) {
+      $('scopeTitle').hidden = false; // 显隐改由 CSS 断点接管（紧凑态 display:none，§6.5 骨架）
+      $('sideTools').hidden = false;  // popover 宿主此后由 .open 类控显隐（首屏 hidden 仅防未装配闪现）
+      this._placeToolsOff = uiPlaceTools($('lowfreq'), $('sideTools'), $('moreBtn')); // ≥1024 收纳 #lowfreq（节点唯一，监听随节点走）
+      this._dockOff = uiWatchDock(document.querySelector('footer')); // 实际 footer 高度 → --dock-h（main 占位/scroll-padding）
+      addEventListener('pagehide', () => { if (this._dockOff) this._dockOff(); if (this._placeToolsOff) this._placeToolsOff(); });
+      document.querySelector('.desktop-sidebar').addEventListener('click', e => { // 范围/维护入口（容器级委托，单绑）
+        const b = e.target.closest('[data-scope]');
+        if (b) { this.setScope(b.dataset.scope); return; }
+        if (e.target.closest('#sideManage')) this.manageOpen();
+      });
+      $('sideMore').onclick = () => this.sideToolsToggle();
+      $('sideTools').addEventListener('click', e => { if (e.target.closest('.btn')) this.sideToolsClose(); }); // 点操作项即收（动作照常执行）；themeWrap 断点收纳后不进 sideTools，无特例
+      document.addEventListener('click', e => { if (!e.target.closest('#sideTools,#sideMore')) this.sideToolsClose(); }); // 点外收起（compact 的 lowfreq closer 不覆盖侧栏态，补此条）
+      $('resumeHero').addEventListener('click', e => { // 续听卡委托（§3.3）：点击时按 URL 锚点重新解析最新对象
+        const b = e.target.closest('[data-act]');
+        if (!b) return;
+        if (b.dataset.act === 'herolib') { this.focusRow(0); return; } // 「打开电台库」：聚焦列表首行
+        if (b.dataset.act !== 'heroplay') return;
+        const s = this.state.stations.find(x => x.u[0] === this.heroK);
+        if (s) this.togglePlay(keyOf(s)); // 当前台 → 暂停/继续（不重记最近）；非当前 → startPlay 记最近（只有点播放才记）
+      });
+      // 长名完整提示（P3/§4.2/§9.3）：单例 #namett + focusin/focusout 委托填充——行/卡读 data-fn 全名快照，
+      // 底栏 #nowline/#song 读自身文本；定位在触发元素下方、左右夹回视口内。桌面限定（硬约束），悬停提示
+      // 仍由既有 title 承担不重复造；Esc 收起在全局 Esc 块、滚动即收（位置失效不飘）
+      const ttShow = el => {
+        const t = (el.dataset && el.dataset.fn) || (el.id === 'nowline' || el.id === 'song' ? el.textContent : '');
+        const tip = $('namett');
+        if (!t) { tip.hidden = true; return; }
+        tip.textContent = t; tip.hidden = false;
+        const r = el.getBoundingClientRect(), b = tip.getBoundingClientRect();
+        tip.style.left = Math.max(12, Math.min(r.left, innerWidth - b.width - 12)) + 'px';
+        tip.style.top = Math.min(r.bottom + 6, Math.max(12, innerHeight - b.height - 12)) + 'px';
+      };
+      document.addEventListener('focusin', e => { // 桌面断点内才出提示（增强面约束）；焦点挪走即收
+        const el = e.target && e.target.closest && e.target.closest('[data-fn],#nowline,#song');
+        if (el && document.documentElement.classList.contains('ui-refresh') && matchMedia('(min-width:1024px)').matches) ttShow(el);
+        else $('namett').hidden = true;
+      });
+      document.addEventListener('focusout', () => { $('namett').hidden = true; });
+      addEventListener('scroll', () => { $('namett').hidden = true; }, { passive: true, capture: true }); // 列表/文档滚动都收（capture 兜 #list 内滚）
+    }
     // 三分区切换（§5.1）：切分区 = 离开编辑上下文，先过草稿门再收编辑区
     const mTabGo = tab => () => this.mDepart(() => { this.mEditorEnd(); this.mTab = tab; this.renderManage(); });
     $('mTabC').onclick = mTabGo('cats');
@@ -2630,6 +2839,10 @@ const App = {
       if (!Player.station) return resumeLast();
       Player.isPaused() ? Player.resume() : Player.pause();
     };
+    // 上一/下一收藏台（P3/G19 双端语义，§4.3）：与 ←/→ 键、锁屏媒体键同走 stepFav（无收藏时其内部走状态栏提示）；
+    // boot 单次绑定，紧凑/桌面双端可见（布局只在 CSS 分叉）
+    $('prevFav').onclick = () => this.stepFav(-1);
+    $('nextFav').onclick = () => this.stepFav(1);
     $('refreshBtn').onclick = () => this.doRefresh(); // 手动刷新回直播头（plan-refresh-live §3.2）：当前源整链重开
     // 音量：静音键 + 拖动百分比反馈（UI 审计 P3-6）；每台音量记忆（A3/r2 ②语义①）——
     // 拖动经 rememberVol 分流（正在播写台记忆、台首调全局锚点随行、无台写全局），0 与静音同为瞬态不入记忆

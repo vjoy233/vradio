@@ -203,7 +203,8 @@
   #mAdd input { flex:1; min-width:110px; background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:6px 8px; outline:none; font:inherit; font-size:12px; }
   #mAdd input:focus { border-color:var(--acc); }
   #mAdd select { background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:6px; font:inherit; font-size:12px; max-width:9em; }
-  .mfoot { display:flex; gap:8px; justify-content:flex-end; padding:10px 14px; border-top:1px solid var(--line); flex-wrap:wrap; } /* wrap：五个动作按钮窄屏换行不溢出 */
+  .mfoot { display:flex; gap:8px; justify-content:flex-end; padding:10px 14px; border-top:1px solid var(--line); flex-wrap:wrap; align-items:center; } /* wrap：动作按钮窄屏换行不溢出 */
+  .mck { display:inline-flex; align-items:center; gap:5px; font-size:12px; color:var(--dim); margin-right:auto; white-space:nowrap; cursor:pointer; } /* 备份「含质量数据」复选（B4）：靠 margin-right:auto 推到行首，按钮组靠右 */
   /* 更多菜单（UI 审计 P2-6）：桌面 display:contents 按钮原样排布；≤640px 收进锚定 header 右下的浮层 */
   #lowfreq { display:contents; }
   #moreBtn { display:none; }
@@ -366,13 +367,17 @@
       <div id="mlist" role="list"></div>
     </div>
     <div class="mfoot">
-      <button class="btn" id="mBackup" title="导出全部本地数据（收藏/维护配置/健康标记/歌曲历史）为单 JSON 完整备份——换浏览器/换机的兜底通道">备份全部</button>
-      <button class="btn" id="mRestore" title="从完整备份恢复（覆盖本地全部数据，确认后执行）">恢复备份</button>
+      <label class="mck"><input type="checkbox" id="mSidecar" title="备份附带本机质量与收听统计数据（探活/播放的聚合统计 + 按日收听时长，跨机迁移用；不含任何响应正文；默认不含）">含统计数据</label>
+      <button class="btn" id="mBackup" title="导出全部本地数据为 v3 完整备份（收藏/维护配置/健康标记/歌曲历史 + 个人电台 my-radio；可勾选附带质量/收听统计数据）——换浏览器/换机的兜底通道">备份全部</button>
+      <button class="btn" id="mRestore" title="从完整备份恢复（v1/v2/v3 均可读；覆盖本地全部数据，预览确认后执行）">恢复备份</button>
+      <button class="btn" id="mPlaylist" title="导入歌单文件（m3u / pls / xspf / asx / txt）：先解析为纯本地条目（不联网探活），预览新增/已知/重复/非法四桶，确认后新台写入 my-radio.txt">导入歌单</button>
+      <button class="btn" id="mPaste" title="粘贴纯链接文本（每行一个 http(s) 流地址）导入个人列表">粘贴链接</button>
       <button class="btn" id="mExport" title="导出维护配置为 JSON（备份/换机；收藏另有 m3u 导出）">导出配置</button>
       <button class="btn" id="mImport" title="导入维护配置 JSON（覆盖本地全部维护配置，确认后执行）">导入配置</button>
       <button class="btn" id="mReset" title="清空全部维护配置，分类与电台回到同步默认">重置</button>
       <input type="file" id="mfile" accept=".json,application/json" hidden aria-label="导入维护配置文件">
       <input type="file" id="mfile2" accept=".json,application/json" hidden aria-label="导入完整备份文件">
+      <input type="file" id="mfile3" accept=".m3u,.pls,.xspf,.asx,.wax,.wmx,.txt,audio/x-mpegurl,audio/x-scpls,application/xml,text/plain" hidden aria-label="导入歌单文件">
     </div>
   </div>
 </div>
@@ -397,11 +402,10 @@
      file:// 降级直读，文件缺失仅控制台 404 不影响）→ features（发布开关，B3 独立单元）→ srcorder（源顺序/禁用
      纯函数，B1 双端同语义）→ quality-store（源质量 sidecar，B2：详情质量摘要 + playback/diagnostic 样本出口）→
      metadata（曲讯事件管线，B3：归一化 + 世代状态机）→ listen-stats（收听统计，B3：状态机 + 日桶 sidecar）→
-     app（数据/渲染）→ sync（同步/体检编排）；
+     playlist-import（歌单多格式解析，B4）→ backup（备份 v3 纯逻辑，B4）→ app（数据/渲染）→ sync（同步/体检编排）；
      store 最底层（player/app 的读写出口）、logos 先于 app 装载（boot 渲染行内入口时即引用）、srcorder/quality-store
      先于 app（applyCfg 消费 SrcOrder；详情中心与播放映射读 QualityStore）、metadata/listen-stats 在 features 后
-     app 前（app.boot 即建管线/按开关 init 统计）；经典 script 是 file:// 硬约束 -->
-<script src="hls.min.js"></script>
+     app 前（app.boot 即建管线/按开关 init 统计）；经典 script 是 file:// 硬约束 --><script src="hls.min.js"></script>
 <script src="store.js"></script>
 <script src="player.js"></script>
 <script src="logos.js"></script>
@@ -410,8 +414,8 @@
 <script src="srcorder.js"></script>
 <script src="quality-store.js"></script>
 <script src="metadata.js"></script>
-<script src="listen-stats.js"></script>
-<script src="app.js"></script>
+<script src="listen-stats.js"></script><script src="playlist-import.js"></script>
+<script src="backup.js"></script><script src="app.js"></script>
 <script src="sync.js"></script>
 </body>
 </html>

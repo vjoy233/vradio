@@ -402,6 +402,43 @@ try {
     assert.strictEqual(JSON.parse(r2.body).code, 'batch-limit', '批量超限来源带 code');
   });
 
+  // —— B4 v3 备份 sidecar 覆盖导入：POST {replace:true,days}（lsTrimImport 白名单 + 超限整体拒绝）——
+  await ok('replace 覆盖导入：days 全量替换 + rev 推进 + 坏字段静默裁剪（白名单纪律）', async () => {
+    const before = JSON.parse((await req('GET', '/api/listenstats')).body);
+    const r = await req('POST', '/api/listenstats', { 'Content-Type': 'application/json' }, JSON.stringify({ replace: true,
+      days: {
+        '2026-11-14': { ms: '1800000', sessions: 2.9, stations: { 'ftp://x': 5, 'https://new.example/live': '7000.9' }, categories: { ['长'.repeat(25)]: 1, '华语音乐': 3 } },
+        '2026-02-30': { ms: 999 },                                     // 非历法日：丢弃
+      } }));
+    assert.strictEqual(r.status, 200);
+    const g = JSON.parse((await req('GET', '/api/listenstats')).body);
+    assert.strictEqual(g.rev, before.rev + 1, 'replace 也走 rev 唯一发号');
+    assert.deepStrictEqual(g.days, { '2026-11-14': { ms: 1800000, sessions: 2, stations: { 'https://new.example/live': 7000 }, categories: { '华语音乐': 3 } } });
+  });
+  await ok('replace 后旧 op 重放不复活旧数据（op 去重日志跨 replace 保留）', async () => {
+    const pr = await req('POST', '/api/listenstats', { 'Content-Type': 'application/json' },
+      JSON.stringify({ baseRev: 0, ops: [op('pre-replace-1', 1000)] }));
+    const before = JSON.parse((await req('GET', '/api/listenstats')).body);
+    assert.strictEqual((await req('POST', '/api/listenstats', { 'Content-Type': 'application/json' },
+      JSON.stringify({ replace: true, days: {} }))).status, 200);   // 清空
+    const rp = await req('POST', '/api/listenstats', { 'Content-Type': 'application/json' },
+      JSON.stringify({ baseRev: 0, ops: [op('pre-replace-1', 1000)] })); // 重放 replace 前已入账的 op
+    assert.strictEqual(JSON.parse(rp.body).applied, 0, '去重日志保留：重放 applied=0');
+    const g = JSON.parse((await req('GET', '/api/listenstats')).body);
+    assert.deepStrictEqual(g.days, {}, 'replace 后旧增量不得复活');
+    assert.strictEqual(g.rev, before.rev + 1, '重放 applied=0 不发新号');
+  });
+  await ok('replace 超限/形态违规 → 409 整体拒绝（>90 日、非对象 days）', async () => {
+    const many = {}; for (let i = 0; i < 91; i++) many[lsDayKey(base + i * 86400000)] = { ms: 1, sessions: 1 }; // 历法合法的 91 个连续日
+    const r = await req('POST', '/api/listenstats', { 'Content-Type': 'application/json' }, JSON.stringify({ replace: true, days: many }));
+    assert.strictEqual(r.status, 409, '91 个合法日 > sidecar 保留期 90');
+    assert.ok(JSON.parse(r.body).error.includes('不合法或超限'));
+    for (const bad of [null, 'x', [1]]) {                              // 非对象 days 一律整体拒绝
+      const rb = await req('POST', '/api/listenstats', { 'Content-Type': 'application/json' }, JSON.stringify({ replace: true, days: bad }));
+      assert.strictEqual(rb.status, 409, 'days=' + JSON.stringify(bad));
+    }
+  });
+
   // 损坏恢复：写坏 listen-stats.json 后重启服务——按空库恢复且不碰磁盘外数据
   srv.kill(); srv = null;
   fs.mkdirSync(path.dirname(LSF), { recursive: true });

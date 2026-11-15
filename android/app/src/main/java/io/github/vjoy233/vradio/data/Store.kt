@@ -52,10 +52,23 @@ object Store {
     persist()
   }
 
-  private fun persist() { // 全量落盘：tmp+rename 原子写，进程写一半被杀不丢收藏（A3 纪律）。
-    val f = file ?: return // 未 init：仅内存（正常流程不会走到）
-    runCatching {           // 单进程低频写，不做 debounce（Web 的 300ms 攒批是音量条连写护栏，安卓侧同场景写入量毫秒级）
+  @Synchronized
+  fun applyAllChecked(data: Map<String, String>): Boolean { // 备份事务专用（AIbot 三轮 P1-2）：同 applyAll 但落盘失败可被调用方感知（false）——
+    for (k in C.KEYS) {                                      // 吞失败的 persist 只适合普通 set/remove（内存态仍在下次重试），
+      val v = data[k]                                        // 事务需要「任一步失败整体回滚」，不能不知情地继续替换 my-radio/quality
+      if (v != null) mem[k] = v else mem.remove(k)
+    }
+    return persist()
+  }
+
+  private fun persist(): Boolean { // 全量落盘：tmp+rename 原子写，进程写一半被杀不丢收藏（A3 纪律）。
+    val f = file ?: return true // 未 init：仅内存（正常流程不会走到；内存即全部，视为成功）
+    return runCatching {        // 单进程低频写，不做 debounce（Web 的 300ms 攒批是音量条连写护栏，安卓侧同场景写入量毫秒级）
       writeTextAtomic(f, JSONObject(mem).toString())          // AIbot P2-6：统一原子写实现（含 rename 拒绝降级）
-    }.onFailure { println("[vradio] store.json 落盘失败（内存态仍在，下次写入重试）: $it") }
+      true
+    }.getOrElse {
+      println("[vradio] store.json 落盘失败（内存态仍在，下次写入重试）: $it")
+      false
+    }
   }
 }

@@ -1386,36 +1386,139 @@ const App = {
     $('status').textContent = '已重置维护配置';
   },
 
-  /* —— 完整备份导出/导入（方案二/R4 拍板）：全部 radio.* 打包单 JSON——不走后端的迁移通道（换浏览器/换机兜底，
-     与既有三个单项导出并存：m3u 给外部播放器、songs 给音乐 App、config 给轻量迁移，本项给完整恢复） —— */
-  exportAll() {
+  /* —— 完整备份导出/导入（R4 拍板 → r4/B4 升 v3，BackupV3 纯逻辑内核）：全部 radio.* + 个人电台行
+     （+ 可选质量 sidecar）打包单 JSON——换浏览器/换机的兜底通道；与既有单项导出并存（m3u/songs/config）。
+     导入三阶段（§13.2）：parse → validate/preview（版本/键白名单/sidecar 明示「含 N 台质量数据、将覆盖
+     本机质量数据」）→ commit（BackupV3.commitImport：先快照 Store/my-radio/旧质量三件，任一步失败整体
+     回滚——质量旧快照经 replace 尽力回写，二次失败文案如实点名「可能停留在导入状态」） —— */
+  async exportAll() {
+    const http = location.protocol.startsWith('http');
+    let myRadio = [], myNote = '';
+    if (http) {
+      const t = await fetch('my-radio.txt?t=' + Date.now()).then(r => r.ok ? r.text() : null).catch(() => null);
+      if (t == null) myNote = '（个人电台列表拉取失败，本次备份未含）';
+      else myRadio = t.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    }
+    const ext = {};
+    if ($('mSidecar') && $('mSidecar').checked) { // 「包含本机 sidecar」复选（默认关）：只留迁移字段
+      ext.sidecars = {};
+      if (http) { // 质量 sidecar 仅 http 形态（服务端 quality.json）
+        const q = await fetch('/api/quality').then(r => r.json()).catch(() => null);
+        if (q && q.data && !q.notModified) {
+          const d = BackupV3.qualityTrim(q.data);
+          if (Object.keys(d).length) ext.sidecars.quality = { v: 1, data: d };
+        }
+      }
+      // 收听统计 sidecar 双形态（B4）：http 读服务端 /api/listenstats、file:// 读本地快照——裁剪后随行
+      const lsRaw = http
+        ? await fetch('/api/listenstats').then(r => r.json()).then(j => j && j.days && !j.notModified ? j.days : null).catch(() => null)
+        : (() => { try { const j = JSON.parse(localStorage.getItem('listenstats.local') || 'null'); return j && j.days ? j.days : null; } catch (_) { return null; } })();
+      if (lsRaw) {
+        const d = BackupV3.lsTrim(lsRaw);
+        if (Object.keys(d).length) ext.sidecars.listenStats = { v: 1, data: d };
+      }
+      if (!Object.keys(ext.sidecars).length) delete ext.sidecars;
+    }
+    const o = BackupV3.build({ at: Date.now(), app: 'web', data: Store.snapshot(), myRadio, extensions: ext });
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([JSON.stringify({ v: 1, at: Date.now(), data: Store.snapshot() }, null, 2)], { type: 'application/json' }));
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(o, null, 2)], { type: 'application/json' }));
     a.download = 'vradio-backup.json'; a.click(); URL.revokeObjectURL(a.href);
-    $('status').textContent = '已导出完整备份（vradio-backup.json：收藏/配置/健康标记/歌曲历史等持久数据；台标缓存可重建不包含）';
+    const sc = ext.sidecars
+      ? '，含' + [ext.sidecars.quality ? `质量 sidecar ${Object.keys(ext.sidecars.quality.data).length} 台` : '',
+          ext.sidecars.listenStats ? `收听统计 ${Object.keys(ext.sidecars.listenStats.data).length} 天` : ''].filter(Boolean).join('、')
+      : '';
+    $('status').textContent = `已导出完整备份 v3（收藏/配置/健康标记/歌曲历史${myRadio.length ? '/个人电台' : ''}${sc}${myNote}；台标缓存可重建不包含）`;
   },
-  importAll(text) {
-    let j; try { j = JSON.parse(text); } catch (_) { alert('导入失败：不是合法 JSON 文件'); return; }
-    const d = j && j.data && typeof j.data === 'object' ? j.data : null;
-    if (!d) { alert('导入失败：不是 vradio 完整备份文件'); return; }
-    const n = Store.KEYS.filter(k => typeof d[k] === 'string').length;
-    if (!n) { alert('导入失败：备份中无有效数据'); return; }
-    // 版本映射（B0 契约）：v1 无 my 不动 my-radio.txt；v2 读取 my 数组（含空数组 = 恢复为空）
-    const ver = j.v | 0 || 1;
-    const my = ver >= 2 && Array.isArray(j.my) ? j.my.filter(x => typeof x === 'string' && x.trim()) : null;
-    const myNote = my ? `、个人电台 ${my.filter(l => !l.endsWith('#genre#')).length} 台` : '';
-    if (!confirm(`导入将覆盖本地全部数据（备份 v${ver}，含 ${n} 个数据项${myNote}：收藏/维护配置/健康标记/歌曲历史全部替换）。继续？`)) return;
-    for (const k of Store.KEYS) { if (typeof d[k] === 'string') localStorage.setItem(k, d[k]); else localStorage.removeItem(k); } // 白名单键直接落镜像（原生写）
-    Store.flush(); // 推后端（http 形态）；file:// 下 no-op
-    if (my) this.restoreMyRadio(my); // v2 起带个人电台行（async 失败仅提示，不回滚 Store——预览/事务三阶段在 B4 v3 落地）
-    this.applyServerStore();
-    $('status').textContent = '已恢复完整备份';
+  async importAll(text) {
+    // 阶段一/二：parse + validate/preview（BackupV3.read：版本识别 + 键白名单过滤 + sidecar 判定）
+    const info = BackupV3.read(text, Store.KEYS);
+    if (!info) { alert('导入失败：不是 vradio 完整备份文件'); return; }
+    if (!info.n) { alert('导入失败：备份中无有效数据'); return; }
+    const http = location.protocol.startsWith('http');
+    // sidecar 选择（B4 起双 sidecar 一次确认整体覆盖；schema importRules 同口径）：质量仅 http、收听统计双形态
+    const scParts = [info.quality && http ? `质量数据 ${Object.keys(info.quality.data).length} 台` : '',
+      info.ls ? `收听统计 ${Object.keys(info.ls.data).length} 天` : ''].filter(Boolean);
+    let sc = false;
+    if (scParts.length) sc = confirm(`备份含 sidecar（${scParts.join('、')}）。是否一并恢复？\n（将覆盖本机对应数据；取消恢复则本机保持不变）`);
+    const myNote = info.my ? `、个人电台 ${info.my.filter(l => !l.endsWith('#genre#')).length} 台` : '';
+    if (!confirm(`导入将覆盖本地全部数据（备份 v${info.ver}${info.app ? '，来源 ' + info.app : ''}，含 ${info.n} 个数据项${myNote}${sc ? `、sidecar（${scParts.join('、')}，将覆盖本机对应数据）` : ''}：收藏/维护配置/健康标记/歌曲历史全部替换${info.ver === 1 ? '；v1 备份不动个人电台列表' : ''}）。继续？`)) return;
+    // 阶段三 commit（BackupV3.commitImport，AIbot P1-2 抽离可测）：先快照四件（Store + my-radio + 旧质量 +
+    // 旧收听统计 sidecar——确认恢复即先读留存，无快照不提交），任一步失败整体回滚（sidecar 旧快照经各自通道
+    // 尽力回写，二次失败文案如实点名）；取消在上一步 = 零副作用。io 注入真实现（fetch/localStorage/QualityStore/ListenStats）。
+    const lsLocalRead = () => { try { const j = JSON.parse(localStorage.getItem('listenstats.local') || 'null'); return j && j.days && typeof j.days === 'object' ? j.days : {}; } catch (_) { return null; } };
+    const r = await BackupV3.commitImport(info, sc, {
+      http,
+      storeSnap: () => { const s = {}; for (const k of Store.KEYS) s[k] = localStorage.getItem(k); return s; },
+      storeApply: d => { for (const k of Store.KEYS) { if (d[k] != null) localStorage.setItem(k, d[k]); else localStorage.removeItem(k); } },
+      storeFlush: async () => { await Store.flush(); return !Store.dirty; }, // 可等待可判定成功（AIbot 三轮 P1-1）：flush 后 dirty=false 才算落盘成功（file:// 恒成功）
+      getMy: () => fetch('my-radio.txt?t=' + Date.now()).then(r => r.status === 404 ? '' : r.ok ? r.text() : null).catch(() => null), // 404=空列表合法；其余失败 null 中止（三轮 P2-1，不再误当空文件清掉 my-radio）
+      postMy: lines => this.postMyRadio(lines),
+      getQuality: () => fetch('/api/quality').then(r => r.json()).then(j => j && j.data && typeof j.data === 'object' && !Array.isArray(j.data) ? j.data : null).catch(() => null),
+      postQuality: data => fetch('/api/quality', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ replace: true, data }) })
+        .then(x => x.json()).then(j => !!(j && j.ok)).catch(() => false),
+      refreshQuality: () => { QualityStore.pend.length = 0; QualityStore.pull(); }, // 覆盖后缓存对齐服务端：丢弃未确认旧样本（导入=明确覆盖）再重拉
+      getListenStats: () => http // 收听统计双形态：http 读服务端日桶、file:// 读本地快照（缺数据 = 空 days 合法快照；null 仅读失败）
+        ? fetch('/api/listenstats').then(r => r.json()).then(j => j && j.days && typeof j.days === 'object' && !Array.isArray(j.days) ? j.days : null).catch(() => null)
+        : Promise.resolve(lsLocalRead()),
+      postListenStats: days => http // replace 覆盖通道（server B4：{replace:true,days}，与 quality 同纪律）
+        ? fetch('/api/listenstats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ replace: true, days }) })
+            .then(x => x.json()).then(j => !!(j && j.ok)).catch(() => false)
+        : new Promise(res => { try { localStorage.setItem('listenstats.local', JSON.stringify({ v: 1, days })); res(true); } catch (_) { res(false); } }),
+      refreshListenStats: () => { ListenStats.pend.length = 0; ListenStats.dirty = false; ListenStats.pull(); }, // 同 refreshQuality 纪律：丢弃未确认旧增量（防重放复活旧账）再重拉
+    });
+    if (r.ok) this.applyServerStore();
+    $('status').textContent = r.msg;
   },
-  restoreMyRadio(lines) { // v2+ 备份的 my-radio.txt 恢复（B0 最小实现：http 形态经 /api/myradio 全量替换；file:// 无个人文件概念仅提示）
-    if (!location.protocol.startsWith('http')) { $('status').textContent = '已恢复完整备份（file:// 形态无法恢复个人电台列表）'; return; }
-    fetch('/api/myradio', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lines }) })
-      .then(r => r.json()).then(r => { if (!r.ok) $('status').textContent = `已恢复完整备份（个人电台恢复失败：${r.error || '写入失败'}）`; })
-      .catch(() => { $('status').textContent = '已恢复完整备份（个人电台恢复失败：网络错误）'; });
+  postMyRadio(lines) { // my-radio.txt 全量替换（备份恢复/歌单合并写共用）：返回是否成功；file:// 无后端恒 false
+    if (!location.protocol.startsWith('http')) return Promise.resolve(false);
+    return fetch('/api/myradio', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lines }) })
+      .then(r => r.json()).then(r => !!(r && r.ok)).catch(() => false);
+  },
+
+  /* —— 歌单多格式导入（r4/B4，PlaylistImport 解析 + 四桶预览 + my-radio 合并写）：新增/已知/重复/非法四桶；
+     已知台（库内或已在个人列表）不重复入库——收藏恢复走既有 header「导入列表」的 #VRADIO:FAV 通道；
+     新台按分类合并进 my-radio.txt（读-改-写：GET 文本 → 内存查重合并 → POST /api/myradio 全量替换）；
+     file:// 无后端时明确提示不可批量入库。取消 = 零副作用 —— */
+  async importPlaylist(text, fname) {
+    const list = PlaylistImport.parse(text, { format: fname });
+    const inv = list.invalid, dup = list.dups, fmt = list.format;
+    if (!list.length && !inv && !dup) { $('status').textContent = `导入失败：未解析到任何电台（识别为 ${fmt} 格式）`; return; }
+    const known = new Set();
+    for (const s of this.state.stations) for (const u of s.u) known.add(u);
+    const http = location.protocol.startsWith('http');
+    let myLines = [];
+    if (http) {
+      // 拉取失败必须中止（null ≠ 空文件）：合并写是全量替换，拿不到现有行就贸然 POST 会清掉既有个人电台
+      const t = await fetch('my-radio.txt?t=' + Date.now()).then(r => r.ok ? r.text() : '').catch(() => null);
+      if (t === null) { $('status').textContent = '导入失败：无法读取当前个人电台列表，请重试'; return; }
+      myLines = t.split(/\r?\n/).filter(l => l.trim());
+    }
+    for (const l of myLines) { const u = l.slice(l.lastIndexOf(',') + 1).trim(); if (/^https?:\/\//.test(u)) known.add(u); }
+    const fresh = list.filter(e => !known.has(e.url));
+    const knownN = list.length - fresh.length;
+    if (!fresh.length) { $('status').textContent = `导入完成：${list.length} 条均为已知电台（重复 ${dup}、地址不合法 ${inv}），未写入`; return; }
+    const cats = [...new Set(fresh.map(e => e.category))].slice(0, 3).join('/');
+    const sample = fresh.slice(0, 3).map(e => e.name).join('、') + (fresh.length > 3 ? ' 等' : '');
+    if (!confirm(`识别为 ${fmt} 格式，共解析 ${list.length} 条：\n新增 ${fresh.length}（${sample}）· 已知 ${knownN} · 文件内重复 ${dup} · 地址不合法 ${inv}\n\n新增电台将按「${cats}」分类写入个人列表 my-radio.txt（同步不覆盖），已知电台不重复入库；导入后建议跑一次「体检」验证可用性。继续？`)) return;
+    if (!http) { $('status').textContent = 'file:// 降级模式无后端，无法写入个人列表——npm start 后再导入'; return; }
+    const merged = this.mergeMyRadio(myLines, fresh);
+    if (!await this.postMyRadio(merged.lines)) { $('status').textContent = '导入失败：个人列表写入失败（my-radio.txt）'; return; }
+    await this.reloadMain(); // 重拉重并：新台入列表（个人层常驻）
+    $('status').textContent = `已导入 ${merged.added} 台到个人列表（${fmt}：新增 ${merged.added}、已知 ${knownN}、重复 ${dup}、不合法 ${inv}）——可跑「体检」验证可用性`;
+  },
+  mergeMyRadio(lines, entries) { // 内存合并（server.js myStationWrite 同款插入算法）：分类节内插入/尾部开节，URL 查重，500 行/64KB 封顶
+    const out = lines.slice();
+    let added = 0;
+    for (const e of entries) {
+      if (out.length >= 500 || out.join('\r\n').length >= 65536) break; // 封顶后剩余丢弃（与 /api/myradio 同护栏）
+      if (out.some(l => l.trim().endsWith(',' + e.url))) continue; // 同 URL 换名也不双开（装配按键合并会出两行）
+      const head = e.category + ',#genre#';
+      const at = out.findIndex(l => l.trim() === head);
+      if (at >= 0) out.splice(at + 1, 0, `${e.name},${e.url}`); // 已有该分类节：节内插入
+      else out.push('', head, `${e.name},${e.url}`); // 新分类：尾部开节（空行分隔）
+      added++;
+    }
+    return { lines: out, added };
   },
 
   boot() {
@@ -1733,11 +1836,19 @@ const App = {
     };
     $('mExport').onclick = () => this.exportCfg();
     $('mImport').onclick = () => $('mfile').click();
-    $('mfile').onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => this.importCfg(String(r.result)); r.readAsText(f, 'utf-8'); e.target.value = ''; };
+    $('mfile').onchange = e => { const f = e.target.files[0]; if (!f) return; if (f.size > 2 * 1024 * 1024) { $('status').textContent = '导入失败：文件超过 2MB 上限'; e.target.value = ''; return; } const r = new FileReader(); r.onload = () => this.importCfg(String(r.result)); r.readAsText(f, 'utf-8'); e.target.value = ''; };
     $('mReset').onclick = () => this.resetCfg();
     $('mBackup').onclick = () => this.exportAll();
     $('mRestore').onclick = () => $('mfile2').click();
-    $('mfile2').onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => this.importAll(String(r.result)); r.readAsText(f, 'utf-8'); e.target.value = ''; };
+    $('mfile2').onchange = e => { const f = e.target.files[0]; if (!f) return; if (f.size > 2 * 1024 * 1024) { $('status').textContent = '导入失败：备份文件超过 2MB 上限'; e.target.value = ''; return; } const r = new FileReader(); r.onload = () => this.importAll(String(r.result)); r.readAsText(f, 'utf-8'); e.target.value = ''; };
+    // 歌单多格式导入（r4/B4）：文件（m3u/pls/xspf/asx/txt）+ 纯 URL 文本粘贴两入口，四桶预览后合并入 my-radio
+    $('mPlaylist').onclick = () => $('mfile3').click();
+    $('mfile3').onchange = e => { const f = e.target.files[0]; if (!f) return; if (f.size > 2 * 1024 * 1024) { $('status').textContent = '导入失败：文件超过 2MB 上限'; e.target.value = ''; return; } const r = new FileReader(); r.onload = () => this.importPlaylist(String(r.result), f.name); r.readAsText(f, 'utf-8'); e.target.value = ''; };
+    $('mPaste').onclick = () => {
+      let v = null; try { v = prompt('粘贴流地址（每行一个 http(s) 链接，最多 500 条）：'); } catch (_) { return; }
+      if (v == null) return;
+      this.importPlaylist(v, '');
+    };
 
     // 添加自定义电台（A-2）：面板内表单 → /api/mystation（服务端先探活拒绝假流/死链，再原子写 my-radio.txt；
     // 与 cfg 的分工 = cfg 调整既有台的显示层（localStorage），这里新增列表里不存在的台（数据层文件，跨浏览器持久））
@@ -1804,6 +1915,7 @@ const App = {
     $('exportBtn').onclick = () => this.exportFavs();
     $('file').onchange = e => {
       const f = e.target.files[0]; if (!f) return;
+      if (f.size > 2 * 1024 * 1024) { $('status').textContent = '导入失败：文件超过 2MB 上限'; e.target.value = ''; return; } // AIbot 三轮 P2-2：读取前按 file.size 拒（对齐 Android readUri 2MB）
       const r = new FileReader();
       r.onload = async () => {
         const text = String(r.result);

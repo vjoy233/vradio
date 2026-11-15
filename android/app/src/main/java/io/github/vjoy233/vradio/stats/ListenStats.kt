@@ -16,7 +16,8 @@ import java.util.Locale
    sessions 口径（§7.2 双端冻结措辞）：session = 从非 PLAYING 进入 PLAYING 且不属于「同一台同一源」的
    暂停恢复（play/切台/切源/断流重连首达 PLAYING 均计一次；resume 重锚不开新 session、暂停时长不计）；
    日期键历法严格校验（AIbot P1-1：validDay，坏键编解码入口丢弃）；flush 幂等（快照覆盖语义）。
-   sidecar = filesDir/listen-stats.json（不进 radio.* 主 Store、不占配额、不进备份；坏文件按空库恢复，
+   sidecar = filesDir/listen-stats.json（不进 radio.* 主 Store、不占配额；B4 起经 Backup.lsTrim 白名单
+   随 v3 备份可选迁移——勾选「包含本机 sidecar」导出/确认恢复覆盖，四件事务与 Web 同序；坏文件按空库恢复，
    写失败只保留内存增量下次 flush/启动重试——绝不暂停或中断播放）。落盘确认模型（AIbot 复核 P1）：
    ListenTracker 持已确认快照 saved（最近一次成功落盘），flush 只在有未确认增量时写、写成功才推进 saved
    （失败增量保留内存，下次 flush 快照覆盖一次写入全部、不重放不双计）。启动重试（AIbot 三轮 P1）：写失败

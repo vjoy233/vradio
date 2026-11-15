@@ -15,7 +15,8 @@ import org.junit.Test
 import java.io.File
 import kotlin.io.path.createTempDirectory
 
-/* Backup：v2 导出→导入 round-trip；v1（无 my）兼容不炸；非法 JSON → null；my 不进 13 键白名单 */
+/* Backup：v3 导出→导入 round-trip（B4 起导出统一 v3）；v1（无 my）/v2 兼容不炸；非法 JSON → null；my 不进 13 键白名单。
+   v3 黄金样本/扩展字段/quality sidecar 专项见 BackupV3Test。 */
 class BackupTest {
   private lateinit var dir: File
   private lateinit var lib: Library
@@ -33,12 +34,12 @@ class BackupTest {
   }
   @After fun teardown() { dir.deleteRecursively() }
 
-  @Test fun v2RoundTrip() {
+  @Test fun v3RoundTrip() { // B4：导出统一 v3；round-trip 经 parseImport 兼容读回
     val out = Backup.exportAll(lib, myText, 123L)
     val p = Backup.parseImport(out)!!
     assertEquals(Store.snapshot(), p.data) // data = 13 键快照
-    assertEquals(listOf("我的,#genre#", "台C,http://c/1"), p.my) // my = 原始行（去尾部空行）
-    assertTrue(out.contains("\"v\"")) // 版本字段在
+    assertEquals(listOf("我的,#genre#", "台C,http://c/1"), p.my) // my 行 = 原始行（去尾部空行；v3 经 myRadio 字段读回）
+    assertTrue(out.contains("\"version\"")) // v3 版本字段在
   }
 
   @Test fun v1Compatible() { // v1 无 my 字段：my = null，不炸

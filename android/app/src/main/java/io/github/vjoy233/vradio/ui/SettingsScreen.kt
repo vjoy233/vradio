@@ -50,6 +50,9 @@ fun SettingsScreen(vm: AppVm) {
   val syncBusy by vm.syncBusy.collectAsState()
   val syncMsg by vm.syncMsg.collectAsState()
   val confirm by vm.confirmReq.collectAsState()
+  val impHasQ by vm.impHasQuality.collectAsState()     // 备份含质量 sidecar（确认框复选显隐，B4 三轮 P1-3）
+  val impSc by vm.impSidecar.collectAsState()          // 用户勾选「恢复质量 sidecar」
+  val expSc by vm.backupWithSidecar.collectAsState()   // 导出「包含本机 sidecar」
   val resume by vm.resumeOnStart.collectAsState()      // N4 启动续播（本地 pref，batch1）
   val offload by vm.audioOffload.collectAsState()      // E5 音频卸载（本地 pref，batch1）
 
@@ -63,7 +66,9 @@ fun SettingsScreen(vm: AppVm) {
   val impCfg = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { u -> if (u != null) vm.importFrom(u, AppVm.Imp.CFG) }
 
   confirm?.let { msg ->
-    ConfirmDialog("确认导入", msg, onOk = { vm.applyConfirmed() }, onDismiss = { vm.cancelConfirm() })
+    ConfirmDialog("确认导入", msg, onOk = { vm.applyConfirmed() }, onDismiss = { vm.cancelConfirm() },
+      checkLabel = if (impHasQ) "恢复备份内 sidecar（质量/收听统计，将覆盖本机对应数据）" else null,   // 默认不勾 = 保留本机（AIbot 三轮 P1-3；B4 双 sidecar 一勾整体覆盖）
+      checked = impSc, onCheckedChange = { vm.impSidecar.value = it })
   }
 
   Column(Modifier.fillMaxSize().background(pal.bg).statusBarsPadding()) {
@@ -140,13 +145,18 @@ fun SettingsScreen(vm: AppVm) {
       item {
         Section("导入导出")
         PairRow("备份全部", { expBackup.launch("vradio-backup.json") }, "恢复备份", { impBackup.launch(arrayOf("*/*")) })
-        PairRow("导出收藏 m3u", { expM3u.launch("vradio-favorites.m3u") }, "导入收藏 m3u", { impM3u.launch(arrayOf("*/*")) })
+        Row(Modifier.fillMaxWidth().padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+          Text("导出包含本机 sidecar（质量数据）", Modifier.weight(1f), fontSize = 13.sp, color = pal.dim)
+          Switch(checked = expSc, onCheckedChange = { vm.backupWithSidecar.value = it })   // 默认关（与 Web mSidecar 同口径，AIbot 三轮 P1-3）
+        }
+        PairRow("导出收藏 m3u", { expM3u.launch("vradio-favorites.m3u") }, "导入歌单", { impM3u.launch(arrayOf("*/*")) })
         PairRow("导出歌曲历史", { expSongs.launch("vradio-songs.txt") }, "导出维护配置", { expCfg.launch("vradio-config.json") })
         OutlinedButton(onClick = { impCfg.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
           Text("导入维护配置")
         }
-        Info("备份 = 全部个人数据 v2（收藏/配置/健康标记/歌曲历史/自定义电台，与 Web 版互通）；" +
-          "m3u 给外部播放器、导回恢复收藏；songs txt 拿去音乐 App 搜歌")
+        Info("备份 = 全部个人数据 v3（收藏/配置/健康标记/歌曲历史/自定义电台，与 Web 版互通，兼容读 v1/v2）；" +
+          "歌单导入支持 m3u / pls / xspf / asx / 纯链接 txt——本地解析不联网探活，预览新增/已知/重复/非法四桶后写入，" +
+          "已知台恢复收藏、新台入 my-radio；songs txt 拿去音乐 App 搜歌")
       }
       item {
         Section("疑难与反馈")

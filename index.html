@@ -352,9 +352,9 @@
   <div class="side-brand"><b>VRadio</b><span>把世界，听近一点。</span></div>
   <!-- 范围导航（§3.2 单一筛选状态）：data-scope 委托给 App.setScope；计数角标 render 内随 catCounts 刷新 -->
   <div class="side-group" role="group" aria-label="收听范围">
-    <button type="button" class="side-link on" data-scope="all" aria-current="true"><span>全部电台</span><i class="n">0</i></button>
-    <button type="button" class="side-link" data-scope="favorites"><span>我的收藏</span><i class="n">0</i></button>
-    <button type="button" class="side-link" data-scope="recent"><span>最近收听</span><i class="n">0</i></button>
+    <button type="button" class="side-link on" id="sideAll" data-scope="all" aria-current="true"><span>全部电台</span><i class="n">0</i></button>
+    <button type="button" class="side-link" id="sideFav" data-scope="favorites"><span>我的收藏</span><i class="n">0</i></button>
+    <button type="button" class="side-link" id="sideRec" data-scope="recent"><span>最近收听</span><i class="n">0</i></button>
   </div>
   <div class="side-group" role="group" aria-label="管理">
     <button type="button" class="side-link" id="sideManage"><span>维护</span></button>

@@ -16,7 +16,8 @@
 // /api/listenstats 本地收听统计 sidecar（B3）：GET ?rev= 条件获取（AIbot 复核 P2，对齐 /api/quality——BC 重拉
 //                  命中只回 notModified 不重复传输全量）/ POST {baseRev,ops} 增量合并（AIbot P1-3，对齐 /api/quality//                  模式）——op = {id,day,u0,cat,ms,sess} 日桶增量，op.id 幂等去重 + rev 唯一发号 + 90 天服务端裁剪；
 //                  多标签同 base 各自 POST 不同增量不互相覆盖；坏日期键（非历法 YYYY-MM-DD）schema 拒绝整批；
-//                  409 响应带机器可读 code（schema|batch-limit，AIbot 复核 P1）——客户端分类处置不静默丢统计
+//                  409 响应带机器可读 code（schema|batch-limit，AIbot 复核 P1）——客户端分类处置不静默丢统计；
+//                  POST {replace:true,days}（B4）= v3 备份 sidecar 覆盖导入（lsTrimImport 白名单 + 超 90 日/512KB 拒绝）
 // /api/myradio     my-radio.txt 全量替换（B0）：v2+ 备份恢复通道，行形态清洗 + 500 行/64KB 封顶 + tmp+rename
 // 安全：默认仅监听 127.0.0.1；proxy/check 仅允许公网 http(s) 目标 —— safeTarget 字符串校验 + guardLookup//       连接级 IP 校验（防 DNS rebinding/TOCTOU），重定向逐跳复查；/proxy 与全部 /api/* 校验
 //       Origin/Sec-Fetch-Site（防跨源 CSRF/探活驱动/把本机当流中继——媒体元素加载无需 CORS，audit A2）；
@@ -331,6 +332,51 @@ function lsCommit(ops) { // 串行：克隆当前态 → op.id 去重 + 日桶�
     });
   })).catch(() => ({ ok: false, error: '写入失败' }));
 }
+// ---------- v3 备份 sidecar 覆盖导入（B4，§13.2-6「导入语义=明确覆盖」）：POST {replace:true,days} ----------
+// 与前端 backup.js lsTrim / Android Backup.lsTrim 同语义白名单，服务端严格把关（超限整体拒绝 → 409）：
+// 日键历法有效、台键 http(s)≤512、分类 ≤24、数值非负封顶、日 90 封顶（sidecar 本体同款保留期）、
+// 每日台/分类 ≤64、总量 512KB 封顶（对齐 sidecar fileCap——构造面防护）
+function lsTrimImport(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+  const num = x => { const n = Math.floor(+x); return Number.isFinite(n) && n >= 0 ? Math.min(n, 1e9) : null; };
+  const out = {};
+  const dayKeys = Object.keys(data).filter(lsDayKeyOk).sort();
+  if (dayKeys.length > LS_KEEP_DAYS) return null; // 合法导出恒 ≤90 日（sidecar 保留期），超限视为构造面攻击
+  for (const k of dayKeys) {
+    const d = data[k];
+    if (!d || typeof d !== 'object' || Array.isArray(d)) continue;
+    const map = (o, keyOk) => {
+      const e = {};
+      for (const kk of Object.keys(o || {}).slice(0, LS_MAP_MAX)) {
+        if (!keyOk(kk)) continue;
+        const v = num(o[kk]); if (v != null && v > 0) e[kk] = v;
+      }
+      return e;
+    };
+    const e = { ms: num(d.ms) || 0, sessions: Math.min(num(d.sessions) || 0, 1e6) };
+    e.stations = map(d.stations, kk => /^https?:\/\//.test(kk) && kk.length <= 512);
+    e.categories = map(d.categories, kk => kk.length > 0 && kk.length <= 24);
+    if (e.ms > 0 || e.sessions > 0 || Object.keys(e.stations).length || Object.keys(e.categories).length) out[k] = e;
+  }
+  if (Buffer.byteLength(JSON.stringify(out)) > 512 * 1024) return null;
+  return out;
+}
+function lsReplace(clean) { // 覆盖写 days（op 去重日志保留：旧 op 重放不复活旧数据）；写盘/发号纪律与 lsCommit 同款
+  return lsQ = lsQ.then(() => new Promise(done => {
+    const st = JSON.parse(JSON.stringify(lsRead()));
+    st.days = clean;
+    const rev = st.rev + 1, out = JSON.stringify(st), tmp = LS_FILE + '.tmp';
+    if (Buffer.byteLength(out) > LS_MAX) return done({ ok: false, error: 'listen-stats sidecar 超过 2MB 硬上限' });
+    fs.mkdir(DATA_DIR, { recursive: true }, e => {
+      if (e) return done({ ok: false, error: '写入失败' });
+      fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
+        : fs.rename(tmp, LS_FILE, e3 => {
+          if (e3) return done({ ok: false, error: '写入失败' });
+          lsCache = st; lsCache.rev = rev; done({ ok: true, rev });
+        }));
+    });
+  })).catch(() => ({ ok: false, error: '写入失败' }));
+}
 
 // ---------- 曲讯旁路会话（B-6）：ICY meta 只存在于 Icecast/Shoutcast 形态的 mp3/AAC 直流 ----------
 // 模型：keep-open 持续读（ICY 帧随音频内联到达，换歌近实时，优于周期重连只能拿连接时刻曲名）；
@@ -567,6 +613,11 @@ http.createServer((req, res) => {
       req.on('end', () => {
         if (big) return;
         let j; try { j = JSON.parse(body); } catch (_) { return json(400, { ok: false, error: 'bad request' }); }
+        if (j && j.replace === true) { // v3 备份 sidecar 覆盖导入（B4）：同款跨源/方法/封顶边界，仅收完整 days
+          const clean = lsTrimImport(j.days);
+          if (clean == null) return json(409, { ok: false, error: '收听统计数据不合法或超限（日 90/512KB 封顶，字段白名单见 contracts/backup-v3.schema.json）' });
+          return lsReplace(clean).then(r => json(200, r));
+        }
         const ops = j && j.ops;
         if (!Array.isArray(ops) || !ops.length || !ops.every(lsValidOp))
           return json(409, { ok: false, code: 'schema', error: '统计操作事件不合法（op={id,day,u0?,cat?,ms?,sess?}，day 须历法有效 YYYY-MM-DD）' }); // 契约：仅 schema 错误/批量超限 → 409，带机器可读 code（AIbot 复核 P1）；baseRev 落后不拒（增量合流）

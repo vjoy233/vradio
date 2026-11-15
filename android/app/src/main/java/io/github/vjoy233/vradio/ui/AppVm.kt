@@ -51,6 +51,7 @@ import io.github.vjoy233.vradio.model.SongRec
 import io.github.vjoy233.vradio.player.PlayerHolder
 import io.github.vjoy233.vradio.stats.ListenSidecar
 import io.github.vjoy233.vradio.stats.ListenStats
+import io.github.vjoy233.vradio.stats.ListenStatsCodec
 import io.github.vjoy233.vradio.stats.ListenTracker
 import io.github.vjoy233.vradio.sync.Gh
 import io.github.vjoy233.vradio.sync.LightUpdate
@@ -1045,14 +1046,22 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     viewModelScope.launch(Dispatchers.IO) {
       try {
         val content = when (kind) {
-          // 「包含本机 sidecar」勾选（AIbot 三轮 P1-3）：qualityExt = 捕获数据经 qualityTrim 白名单裁剪（与 Web exportAll 同构）
+          // 「包含本机 sidecar」勾选（AIbot 三轮 P1-3）：捕获数据经 qualityTrim/lsTrim 白名单裁剪（与 Web exportAll 同构）。
+          // 收听统计取内存账（settle 收账后 ⊇ 磁盘快照——未确认增量也随备份走），经 ListenStatsCodec 白名单解码
           Exp.BACKUP -> {
             val qExt = if (backupWithSidecar.value) runCatching {
               val cap = JSONObject(quality.capture())
               val trimmed = Backup.qualityTrim(cap.optJSONObject("stations") ?: JSONObject())
               if (trimmed.length() > 0) JSONObject().put("v", 1).put("data", trimmed) else null
             }.getOrNull() else null
-            Backup.exportAll(lib, myRadio.readText(), System.currentTimeMillis(), qExt)
+            val lExt = if (backupWithSidecar.value) runCatching {
+              listenTracker?.settle()
+              val st = listenTracker?.state ?: listenSidecar.load()
+              val days = JSONObject(ListenStatsCodec.toJson(ListenStats.trim(st))).optJSONObject("days") ?: JSONObject()
+              val trimmed = Backup.lsTrim(days)
+              if (trimmed.length() > 0) JSONObject().put("v", 1).put("data", trimmed) else null
+            }.getOrNull() else null
+            Backup.exportAll(lib, myRadio.readText(), System.currentTimeMillis(), qExt, lExt)
           }
           Exp.M3U -> Backup.m3uFavs(lib)                                  // 空串 = 无可解析收藏台（收藏全休眠同判）
           Exp.SONGS -> Backup.songsTxt(lib) { System.currentTimeMillis() }
@@ -1088,13 +1097,18 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
           val n = C.KEYS.count { p.data[it] != null }
           if (n == 0) { toast("导入失败：备份中无有效数据"); return@launch }
           pendingImp = Imp.BACKUP to p
-          // sidecar 选择语义与 Web 对齐（AIbot 三轮 P1-3）：备份含质量数据时确认框出复选（默认不勾=保留本机），
-          // 勾选才经事务恢复（下方 applyConfirmed 按 impSidecar 传参）
+          // sidecar 选择语义与 Web 对齐（AIbot 三轮 P1-3，B4 起双 sidecar 一个复选整体覆盖）：备份含质量/收听
+          // 统计数据时确认框出复选（默认不勾=保留本机），勾选才经事务恢复（下方 applyConfirmed 按 impSidecar 传参）
           val qn = p.quality?.optJSONObject("data")?.length() ?: 0
-          impHasQuality.value = qn > 0
+          val ln = p.listenStats?.optJSONObject("data")?.length() ?: 0
+          impHasQuality.value = qn > 0 || ln > 0
           impSidecar.value = false
+          val scNote = listOfNotNull(
+            if (qn > 0) "$qn 台质量数据" else null,
+            if (ln > 0) "$ln 天收听统计" else null,
+          ).takeIf { it.isNotEmpty() }?.joinToString("、")
           confirmReq.value = "导入将覆盖本地全部数据（备份含 $n 个数据项：收藏/维护配置/健康标记/歌曲历史全部替换" +
-            (if (qn > 0) "；备份含 $qn 台质量数据，勾选下方复选框才会覆盖本机质量数据" else "") + "）。继续？"
+            (if (scNote != null) "；备份含 $scNote，勾选下方复选框才会覆盖本机对应数据" else "") + "）。继续？"
         }
         Imp.M3U -> {                                                      // B4 歌单导入：m3u/pls/xspf/asx/纯 URL 统一解析（PlaylistParser，
                                                                           // 纯本地不联网探活）→ 四桶预览（新增/已知/重复/非法）→ 确认后已知台恢复收藏（N2 语义）+ 新台入 my-radio
@@ -1153,16 +1167,23 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         when (p.first) {
           Imp.BACKUP -> {
             val pay = p.second as Backup.ImportPayload
-            // 三阶段纪律（B4，§13.2）：提交前快照三件（Store + my-radio + 旧质量 sidecar），任一步失败整体回滚
-            // ——AIbot P1-1：v3 sidecar 经 QualityStore 事务式覆盖真正落盘（replaceImport 原地换内存即缓存重载）
-            // AIbot 三轮 P1-3：sidecar 恢复是明确可选项——仅当用户在确认框勾选（impSidecar）才传 qualityData，
-            // 未勾选 = 保留本机质量数据（快照也不必留）；applyStore/rollbackStore 升级为可感知落盘失败（三轮 P1-2）
+            // 三阶段纪律（B4，§13.2）：提交前快照四件（Store + my-radio + 旧质量 + 旧收听统计 sidecar），任一步
+            // 失败整体回滚——AIbot P1-1：v3 sidecar 经 QualityStore/ListenSidecar 事务式覆盖真正落盘
+            // AIbot 三轮 P1-3：sidecar 恢复是明确可选项——仅当用户在确认框勾选（impSidecar）才传 sidecar 数据，
+            // 未勾选 = 保留本机 sidecar（快照也不必留）；applyStore/rollbackStore 升级为可感知落盘失败（三轮 P1-2）
             val restoreQ = pay.quality != null && sidecarChoice
+            val restoreL = pay.listenStats != null && sidecarChoice
             val snap = Store.snapshot()
             val myOld = myRadio.readText()
             val qSnap = if (restoreQ) quality.capture() else null
             val qData = if (restoreQ) pay.quality!!.optJSONObject("data") else null
+            val lsSnap = if (restoreL) listenSidecar.load() else null   // 旧收听统计快照（磁盘态；回滚经同通道回写）
+            val lsData = if (restoreL) pay.listenStats!!.optJSONObject("data") else null
             val err = withContext(Dispatchers.IO) {
+              fun lsApply(): Boolean {                                   // days → 白名单解码 + trim → 快照覆盖落盘（save 回执可判定）
+                val st = ListenStatsCodec.parse(JSONObject().put("v", 1).put("days", lsData).toString())
+                return listenSidecar.save(ListenStats.trim(st))
+              }
               val e = Backup.commitImport(pay.data, pay.my, qData, Backup.ImportIO(
                 { Store.applyAllChecked(pay.data) },                     // 白名单键写入/缺键 remove；落盘失败可感知（三轮 P1-2）
                 { Store.applyAllChecked(snap) },
@@ -1170,7 +1191,9 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
                 { runCatching { myRadio.replace(myOld) } },
                 { qData == null || quality.replaceImport(qData) },        // sidecar 最后提交（覆盖语义，§13.2-6）
                 { qSnap == null || quality.restore(qSnap) },             // 失败恢复旧 quality 快照（replaceImport 内部已自恢复，此处兜底盘面）
-              ))
+                { lsData == null || lsApply() },                         // 收听统计四件事务收官（B4）
+                { lsSnap == null || listenSidecar.save(lsSnap) },        // 失败恢复旧统计快照（save 回执失败仅内存不留）
+              ), lsData)
               lib.myText = myRadio.readText()
               e
             }
@@ -1181,10 +1204,15 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
             lib.reload()                                                  // 主列表/my 层重装配 + 回绑
             quality.keepHint = runCatching { qualityKeepSnapshot() }.getOrDefault(quality.keepHint)   // B2：收藏整体替换后保护集重算
             PlayerHolder.reloadMems()                                     // volperst/srcmem2/vol 重载（public 化入口）
+            if (restoreL && FeatureFlags.LISTEN_STATS) runCatching {     // 统计内存账对齐导入态：从磁盘重建 tracker（否则旧账
+              listenTracker = ListenTracker.restore(SystemClock::elapsedRealtime, System::currentTimeMillis, listenSidecar)
+            }                                                             // 下次 flush 会整体回写冲掉导入数据；开关关=不建不消费）
             refreshUi3()
             stamp.value++; primeAll()
             updateShortcuts()                                             // E3：收藏已整体替换，快捷方式重建
-            toast("已恢复完整备份（v${pay.ver}）" + (if (restoreQ) "，含质量 sidecar（已覆盖本机质量数据）" else if (pay.quality != null) "，本机质量数据保持不变" else ""))
+            toast("已恢复完整备份（v${pay.ver}）"
+              + (if (restoreQ) "，含质量 sidecar（已覆盖本机质量数据）" else if (pay.quality != null) "，本机质量数据保持不变" else "")
+              + (if (restoreL) "，含收听统计（已覆盖本机收听统计）" else if (pay.listenStats != null) "，本机收听统计保持不变" else ""))
           }
           Imp.M3U -> {                                                    // B4 四桶确认后执行：已知台恢复收藏（N2 语义）+ 新台批量入 my-radio
             val p2 = p.second as PlaylistImp                              // （append 自带查重/清洗/SafeTarget/封顶）

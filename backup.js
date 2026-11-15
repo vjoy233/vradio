@@ -13,6 +13,10 @@
   // 迁移白名单只收存储字段：summary 派生值（stability/avgLatency 等）不落 sidecar，导入时重算
   const Q_SRC_NUM = ['okCount', 'failCount', 'lastOkAt', 'lastFailAt', 'lastPlaybackAt', 'latSum', 'latN', 'disconnects'];
   const Q_KEYS_MAX = 2000; // 条目封顶（对齐 health FIFO 2000 量级，防构造巨量键）
+  // 收听统计 sidecar 迁移裁剪口径（listen-stats.js LSCAPS / server LS_* 同源）：只收日桶形态的
+  // ms/sessions/stations/categories——天然不含响应正文/DNS/IP/token；键须历法有效日 + 台 URL http(s)≤512、
+  // 分类 ≤24 字符；日 90 条封顶（sidecar 本体同款保留期）、每日台/分类 ≤64、总量 512KB 封顶
+  const LS_DAYS_MAX = 90, LS_MAP_MAX = 64, LS_CAP = 512 * 1024;
 
   function int0(v) { const n = Math.floor(+v); return Number.isFinite(n) && n >= 0 ? Math.min(n, 1e9) : null; }
 
@@ -43,8 +47,14 @@
       const q = j.extensions && j.extensions.sidecars && j.extensions.sidecars.quality;
       const qd = q && typeof q === 'object' && !Array.isArray(q) && q.data && typeof q.data === 'object' && !Array.isArray(q.data) ? q.data : null;
       if (qd) quality = { v: 1, data: qualityTrim(qd) };
-    } // listenStats（B3 未落地）与其余未知扩展：忽略不失败
-    return { ver, app: typeof j.app === 'string' ? j.app : '', data, my, quality, n: Object.keys(data).length };
+    }
+    let ls = null; // 收听统计 sidecar（B4 补齐，schema 已声明；裁空视为无——「含 0 天」无确认意义）
+    if (ver === 3) {
+      const l = j.extensions && j.extensions.sidecars && j.extensions.sidecars.listenStats;
+      const ld = l && typeof l === 'object' && !Array.isArray(l) && l.data && typeof l.data === 'object' && !Array.isArray(l.data) ? l.data : null;
+      if (ld) { const d = lsTrim(ld); if (Object.keys(d).length) ls = { v: 1, data: d }; }
+    } // 其余未知扩展：忽略不失败
+    return { ver, app: typeof j.app === 'string' ? j.app : '', data, my, quality, ls, n: Object.keys(data).length };
   }
 
   /* 导出 v3 组装：{format,version,createdAt,app,data,myRadio,extensions}（对照 schema shape 五字段） */
@@ -91,14 +101,56 @@
     return out;
   }
 
-  /* v3 导入提交段（AIbot review P1-2 抽离可测）：三步覆盖（Store → my-radio → 质量 sidecar）+ 任一步失败
-     整体回滚。质量快照纪律：确认恢复 sidecar（sc）即先 GET 旧值留存——无快照不提交（与 my-radio 同纪律）；
-     回滚时把旧快照经同一 replace 通道尽力回写（服务端可能「写成功响应丢」，不回写则 quality.json 停在导入态），
-     二次失败在文案里如实点名。DOM/confirm 留在 app.js；存储与网络经 io 注入（生产 = localStorage/fetch，
-     测试 = fake 复现「replace 写成功响应丢」）。io 形状：
+  /* 收听统计迁移裁剪（导出与导入共用，§13.2-3，与 Android Backup.lsTrim / server lsTrimImport 同语义）：
+     日键须历法有效（复用 listen-stats.js 同规则校验；本文件零依赖故内联同款实现）——坏键丢弃只影响统计自身；
+     ms/sessions/台/分类数值非负取整封顶 1e9、台键 http(s)≤512、分类 ≤24 字符、每日台/分类 ≤64 条；
+     保留最近 90 个自然日（超限裁最旧——客户端宽松裁剪，服务端 replace 通道整体拒绝把关）；
+     空日（全零）丢弃；总量 512KB 封顶（超限先删最早日） */
+  function lsDayOk(k) {
+    if (typeof k !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(k)) return false;
+    const y = +k.slice(0, 4), m = +k.slice(5, 7), d = +k.slice(8, 10);
+    if (m < 1 || m > 12 || d < 1) return false;
+    const dim = [31, (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0 ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    return d <= dim[m - 1];
+  }
+  function lsTrim(data) {
+    const num = x => { const n = Math.floor(+x); return Number.isFinite(n) && n >= 0 ? Math.min(n, 1e9) : null; };
+    const mapTrim = (o, keyOk) => { // 值清洗 + 键校验 + 条目封顶（超限裁插入序最前）
+      const out = {};
+      for (const k of Object.keys(o || {})) {
+        if (Object.keys(out).length >= LS_MAP_MAX) break;
+        if (!keyOk(k)) continue;
+        const v = num(o[k]); if (v != null && v > 0) out[k] = v;
+      }
+      return out;
+    };
+    let days = {};
+    for (const k of Object.keys(data)) {
+      if (!lsDayOk(k)) continue;
+      const d = data[k];
+      if (!d || typeof d !== 'object' || Array.isArray(d)) continue;
+      const e = { ms: num(d.ms) || 0, stations: mapTrim(d.stations, k => /^https?:\/\//.test(k) && k.length <= 512),
+        categories: mapTrim(d.categories, k => typeof k === 'string' && k.length > 0 && k.length <= 24) };
+      e.sessions = Math.min(num(d.sessions) || 0, 1e6);
+      if (e.ms > 0 || e.sessions > 0 || Object.keys(e.stations).length || Object.keys(e.categories).length) days[k] = e;
+    }
+    const ks = Object.keys(days).sort(); // ISO 日键字典序 = 时间序
+    for (const k of ks.slice(0, Math.max(0, ks.length - LS_DAYS_MAX))) delete days[k];
+    while (Object.keys(days).length && JSON.stringify({ v: 1, days }).length > LS_CAP) delete days[Object.keys(days).sort().shift()];
+    return days;
+  }
+
+  /* v3 导入提交段（AIbot review P1-2 抽离可测）：四步覆盖（Store → my-radio → 质量 sidecar → 收听统计
+     sidecar）+ 任一步失败整体回滚。sidecar 快照纪律：确认恢复（sc = 覆盖备份所含全部 sidecar，B4 起含
+     listenStats）即先读旧值留存——无快照不提交（与 my-radio 同纪律）；回滚时把旧快照经同一通道尽力回写
+     （服务端可能「写成功响应丢」，不回写则 sidecar 停在导入态），二次失败在文案里如实点名。DOM/confirm 留在
+     app.js；存储与网络经 io 注入（生产 = localStorage/fetch，测试 = fake 复现「replace 写成功响应丢」）。
+     listenStats 双形态：http 走 /api/listenstats replace 通道、file:// 走 localStorage 快照（quality 仅 http，
+     file:// 下 sc 对 quality 无操作）。io 形状：
      { http, storeSnap(), storeApply(d)（应用与回滚同一入口：有值写/缺键删）, storeFlush():Promise<bool>（可等待可判定成功，AIbot 三轮 P1-1）,
        getMy():Promise<文本|null>（404=空串、其余失败 null 中止，三轮 P2-1）, postMy(lines):Promise<bool>,
-       getQuality():Promise<旧data|null>, postQuality(data):Promise<bool>（replace:true 通道）, refreshQuality() }
+       getQuality():Promise<旧data|null>, postQuality(data):Promise<bool>（replace:true 通道）, refreshQuality(),
+       getListenStats():Promise<旧days|null>, postListenStats(days):Promise<bool>（replace 通道/本地写）, refreshListenStats() }
      返回 { ok, msg }——msg 即 #status 文案（失败文案含回滚结果）。 */
   async function commitImport(info, sc, io) {
     const snap = io.storeSnap();
@@ -106,12 +158,17 @@
     if (io.http && info.my != null) myOld = await io.getMy();
     if (info.my != null && io.http && myOld == null)
       return { ok: false, msg: '导入失败：无法读取当前个人电台列表（无回滚快照不提交），请重试' };
-    let qOld = null; // 旧质量快照：确认恢复 sidecar 才留（file:// 无服务端 sidecar，sc 恒 false 不适用）
-    if (sc) {
+    let qOld = null; // 旧质量快照：确认恢复且备份含质量 sidecar 才留（file:// 无服务端 sidecar不适用）
+    if (sc && info.quality && io.http) {
       qOld = await io.getQuality();
       if (qOld == null) return { ok: false, msg: '导入失败：无法读取当前质量数据（无回滚快照不提交），请重试' };
     }
-    let qTried = false; // 质量已提交过（回滚才回写旧快照；失败发生在提交前 = sidecar 未动无需回写）
+    let lsOld = null; // 旧收听统计快照：同纪律（file:// = localStorage 读，缺数据按空 days 合法快照）
+    if (sc && info.ls) {
+      lsOld = await io.getListenStats();
+      if (lsOld == null) return { ok: false, msg: '导入失败：无法读取当前收听统计（无回滚快照不提交），请重试' };
+    }
+    let qTried = false, lsTried = false; // 已提交过的 sidecar（回滚才回写旧快照；提交前失败 = 未动无需回写）
     const rollback = async why => {
       io.storeApply(snap);
       const sOK = await io.storeFlush(); // 回滚也要等待并如实报告（AIbot 三轮 P1-1）：失败只回本地镜像，服务端下次启动重推
@@ -122,22 +179,34 @@
         note += ok ? '' : '；质量数据可能停留在导入状态，可重试导入';
         io.refreshQuality(); // 回写后客户端质量缓存对齐服务端真态
       }
+      if (lsTried) {
+        const ok = await io.postListenStats(lsOld);
+        note += ok ? '' : '；收听统计可能停留在导入状态，可重试导入';
+        io.refreshListenStats();
+      }
       return { ok: false, msg: '导入失败：' + why + '，已回滚到导入前状态' + note };
     };
     io.storeApply(info.data);
-    if (!await io.storeFlush()) return rollback('主数据写入失败'); // Store 落盘失败必须进三件回滚（AIbot 三轮 P1-1），防跨层半导入
+    if (!await io.storeFlush()) return rollback('主数据写入失败'); // Store 落盘失败必须进四件回滚（AIbot 三轮 P1-1），防跨层半导入
     if (info.my != null && io.http) { // v2/v3：个人电台行全量替换（v1 到不了这；file:// 无通道不替换）
       if (!await io.postMy(info.my)) return rollback('个人电台恢复失败');
     }
-    if (sc) { // sidecar 最后提交（§13.2-5：不允许 Store 已恢复而 sidecar 半恢复）
+    if (qOld != null) { // sidecar 最后提交（§13.2-5：不允许 Store 已恢复而 sidecar 半恢复）
       qTried = true;
       if (!await io.postQuality(info.quality.data)) return rollback('质量 sidecar 恢复失败');
       io.refreshQuality(); // 成功：覆盖后重载质量缓存（丢弃未确认旧样本——导入语义=明确覆盖）
     }
-    return { ok: true, msg: '已恢复完整备份' + (info.my != null && !io.http ? '（file:// 形态无法恢复个人电台列表）' : '') + (sc ? '（含质量 sidecar，已覆盖本机质量数据）' : '') };
+    if (lsOld != null) { // 收听统计最后一级（四件事务收官）
+      lsTried = true;
+      if (!await io.postListenStats(info.ls.data)) return rollback('收听统计 sidecar 恢复失败');
+      io.refreshListenStats(); // 成功：丢弃未确认旧增量并重拉（导入=明确覆盖，防旧 pend 重放复活旧账）
+    }
+    const qNote = qOld != null ? '（含质量 sidecar，已覆盖本机质量数据）' : '';
+    const lNote = lsOld != null ? `（含收听统计 ${Object.keys(info.ls.data).length} 天，已覆盖本机收听统计）` : '';
+    return { ok: true, msg: '已恢复完整备份' + (info.my != null && !io.http ? '（file:// 形态无法恢复个人电台列表）' : '') + qNote + lNote };
   }
 
-  const B = { read: readBackup, build: buildV3, commitImport, qualityTrim, Q_SRC_NUM };
+  const B = { read: readBackup, build: buildV3, commitImport, qualityTrim, lsTrim, Q_SRC_NUM };
   root.BackupV3 = B;
   if (typeof module !== 'undefined' && module.exports) module.exports = B;
 })(typeof window !== 'undefined' ? window : globalThis);

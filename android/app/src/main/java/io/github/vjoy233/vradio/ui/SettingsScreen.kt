@@ -67,7 +67,7 @@ fun SettingsScreen(vm: AppVm) {
 
   confirm?.let { msg ->
     ConfirmDialog("确认导入", msg, onOk = { vm.applyConfirmed() }, onDismiss = { vm.cancelConfirm() },
-      checkLabel = if (impHasQ) "恢复质量 sidecar（将覆盖本机质量数据）" else null,   // 默认不勾 = 保留本机（AIbot 三轮 P1-3）
+      checkLabel = if (impHasQ) "恢复备份内 sidecar（质量/收听统计，将覆盖本机对应数据）" else null,   // 默认不勾 = 保留本机（AIbot 三轮 P1-3；B4 双 sidecar 一勾整体覆盖）
       checked = impSc, onCheckedChange = { vm.impSidecar.value = it })
   }
 

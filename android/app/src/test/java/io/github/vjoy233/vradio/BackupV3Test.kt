@@ -6,6 +6,11 @@ import io.github.vjoy233.vradio.data.Library
 import io.github.vjoy233.vradio.data.MyRadio
 import io.github.vjoy233.vradio.data.QualityStore
 import io.github.vjoy233.vradio.data.Store
+import io.github.vjoy233.vradio.stats.ListenSidecar
+import io.github.vjoy233.vradio.stats.ListenStats
+import io.github.vjoy233.vradio.stats.ListenStatsCodec
+import io.github.vjoy233.vradio.stats.StatsDay
+import io.github.vjoy233.vradio.stats.StatsState
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -18,11 +23,12 @@ import org.junit.Test
 import java.io.File
 import kotlin.io.path.createTempDirectory
 
-/* 备份 v3（B4，plan-expansion-r4 §8.3/§8.4）：v3 黄金样本互读（contracts/fixtures/backup-v3.json）、
+/* 备份 v3（B4，plan-expansion-r4 §8.3/§8.4）：v3 黄金样本互读（contracts/fixtures/backup-v3.json 双 sidecar）、
  * v1/v2/v3 三版本读取、导出形状（对照 contracts/backup-v3.schema.json）、未知扩展忽略、坏 JSON 回退、
- * 质量聚合迁移字段裁剪、导入失败回滚原语（Store 快照恢复 + MyRadio 拒收不动原文件）；AIbot review
- * P1-1/P2-2：质量 sidecar 经 QualityStore.replaceImport 实际落盘 + 落盘失败恢复旧快照（saver 缝注入失败）+
- * commitImport 提交段回滚序（fake 协作方断言三件回滚）。
+ * 质量/收听统计迁移字段裁剪（qualityTrim/lsTrim）、导入失败回滚原语（Store 快照恢复 + MyRadio 拒收不动原文件）；
+ * AIbot review P1-1/P2-2：质量 sidecar 经 QualityStore.replaceImport 实际落盘 + 落盘失败恢复旧快照（saver 缝注入失败）+
+ * commitImport 提交段回滚序（fake 协作方断言四件回滚：Store → my-radio → quality → listenStats）+
+ * LS 经 ListenSidecar 真落盘 round-trip（AppVm.applyConfirmed 同款凭据）。
  * 与 Web test/backup-v3.js 消费同一批 fixtures 断言同款期望（Web↔Android 双端一致）。 */
 class BackupV3Test {
 
@@ -40,14 +46,18 @@ class BackupV3Test {
   }
   @After fun teardown() { dir.deleteRecursively() }
 
-  @Test fun v3FixtureReadable() { // 黄金样本：ver=3、myRadio→my、extensions 空 → 无 sidecar
+  @Test fun v3FixtureReadable() { // 黄金样本：ver=3、myRadio→my、双 sidecar（quality+listenStats）读回（B4 补齐）
     val p = Backup.parseImport(res("fixtures/backup-v3.json"))
     assertNotNull(p)
     assertEquals(3, p!!.ver)
     assertEquals(13, p.data.size)
     for (k in p.data.keys) assertTrue("非白名单键 $k", C.KEYS.contains(k))
     assertEquals(listOf("自建,#genre#", "我的电台,https://example.test/live"), p.my)
-    assertNull(p.quality)
+    assertNotNull(p.quality)                                        // 质量 sidecar：嵌套聚合形态
+    assertEquals(2, p.quality!!.getJSONObject("data").getJSONObject("https://main.example/live").getInt("cf"))
+    assertNotNull(p.listenStats)                                    // 收听统计 sidecar：日桶形态（与 Web 同款期望）
+    assertEquals(1800000L, p.listenStats!!.getJSONObject("data").getJSONObject("2026-11-14").getLong("ms"))
+    assertEquals(2, p.listenStats!!.getJSONObject("data").getJSONObject("2026-11-13").getInt("sessions"))
   }
 
   @Test fun v2FixtureReadable() { // v2 黄金样本：ver=2、读 my 数组
@@ -103,14 +113,17 @@ class BackupV3Test {
     assertTrue(!p.quality!!.getJSONObject("data").has("ftp://bad.example/x")) // 非 http(s) 键丢弃
   }
 
-  @Test fun unknownExtensionsIgnored() { // extensions.foo / sidecars.listenStats / 顶层杂字段：忽略不失败
+  @Test fun unknownExtensionsIgnored() { // extensions.foo / sidecars.timewarp / 顶层杂字段：忽略不失败；listenStats 裁空=无
     val j = JSONObject(res("fixtures/backup-v3.json"))
     j.put("extensions", JSONObject().put("foo", JSONObject().put("bar", 1))
-      .put("sidecars", JSONObject().put("listenStats", JSONObject().put("v", 1))))
+      .put("sidecars", JSONObject()
+        .put("timewarp", JSONObject().put("v", 1).put("data", JSONObject().put("x", 1)))
+        .put("listenStats", JSONObject().put("v", 1).put("data", JSONObject().put("bad-day", JSONObject().put("ms", 5))))))
     j.put("futureField", 42)
     val p = Backup.parseImport(j.toString())
     assertNotNull(p)
-    assertNull(p!!.quality) // listenStats（B3 未落地）忽略
+    assertNull(p!!.quality)                                     // 黄金样本 extensions 被覆写：无 quality
+    assertNull(p.listenStats)                                   // 坏日键全裁 → 空 days 视为无 sidecar（含 0 天无确认意义）
   }
 
   @Test fun invalidReturnsNull() {
@@ -174,27 +187,39 @@ class BackupV3Test {
     assertNull(qs.summary("https://new.example/live"))    // 导入数据不残留
   }
 
-  @Test fun commitImportTxOrderAndRollback() { // applyConfirmed 提交段（协作方 fake）：成功序 / my 失败双回滚 / quality 失败三件回滚
-    fun io(calls: MutableList<String>, myOk: Boolean, qOk: Boolean) = Backup.ImportIO(
+  @Test fun commitImportTxOrderAndRollback() { // applyConfirmed 提交段（协作方 fake）：成功序 / my 失败双回滚 / quality 失败三件回滚 / LS 失败四件回滚
+    fun io(calls: MutableList<String>, myOk: Boolean, qOk: Boolean, lsOk: Boolean = true) = Backup.ImportIO(
       { calls.add("store") }, { calls.add("store-rb") },
       { calls.add("my"); myOk }, { calls.add("my-rb") },
-      { calls.add("q"); qOk }, { calls.add("q-rb"); true })
+      { calls.add("q"); qOk }, { calls.add("q-rb"); true },
+      { calls.add("ls"); lsOk }, { calls.add("ls-rb"); true })
     val q = JSONObject().put("v", 1).put("data", qData("https://main.example/live", 1))
+    val ls = JSONObject().put("v", 1).put("data", JSONObject().put("2026-11-14", JSONObject().put("ms", 1000).put("sessions", 1)))
     val data = mapOf(C.K_VOL to "30")
-    run {                                                   // 成功：三步顺序、零回滚
+    run {                                                   // 成功：三步顺序、零回滚（无 LS 数据 = 三件）
       val c = mutableListOf<String>()
       assertNull(Backup.commitImport(data, listOf("我的,#genre#"), q, io(c, true, true)))
       assertEquals(listOf("store", "my", "q"), c)
+    }
+    run {                                                   // 双 sidecar 成功：四步顺序（B4 收官级）
+      val c = mutableListOf<String>()
+      assertNull(Backup.commitImport(data, listOf("我的,#genre#"), q, io(c, true, true), ls))
+      assertEquals(listOf("store", "my", "q", "ls"), c)
     }
     run {                                                   // my 失败：Store+my 回滚，质量未提交未动（失败在提交前）
       val c = mutableListOf<String>()
       assertEquals("个人电台恢复超限（500 行/64KB）", Backup.commitImport(data, listOf("台,http://x/1"), q, io(c, false, true)))
       assertEquals(listOf("store", "my", "store-rb", "my-rb"), c)
     }
-    run {                                                   // quality 失败：三件整体回滚（§13.2-5 不允许半恢复）
+    run {                                                   // quality 失败：三件整体回滚（§13.2-5 不允许半恢复；LS 未提交不动）
       val c = mutableListOf<String>()
-      assertEquals("质量 sidecar 恢复失败", Backup.commitImport(data, null, q, io(c, true, false)))
+      assertEquals("质量 sidecar 恢复失败", Backup.commitImport(data, null, q, io(c, true, false), ls))
       assertEquals(listOf("store", "my", "q", "store-rb", "my-rb", "q-rb"), c)
+    }
+    run {                                                   // listenStats 失败：四件整体回滚（B4 四件事务收官位）
+      val c = mutableListOf<String>()
+      assertEquals("收听统计 sidecar 恢复失败", Backup.commitImport(data, null, q, io(c, true, true, false), ls))
+      assertEquals(listOf("store", "my", "q", "ls", "store-rb", "my-rb", "q-rb", "ls-rb"), c)
     }
     run {                                                   // Store 落盘失败（AIbot 三轮 P1-2）：中止 + 回滚 Store，my/quality 根本不动
       val c = mutableListOf<String>()
@@ -221,12 +246,75 @@ class BackupV3Test {
     assertTrue(Store.applyAllChecked(mapOf(C.K_VOL to "90")))
   }
 
-  @Test fun exportAllOptionalSidecar() { // 「包含本机 sidecar」（AIbot 三轮 P1-3）：勾选写 extensions.sidecars.quality，默认恒空
+  @Test fun exportAllOptionalSidecar() { // 「包含本机 sidecar」（AIbot 三轮 P1-3；B4 双 sidecar）：勾选写 extensions.sidecars.*，默认恒空
     val plain = JSONObject(Backup.exportAll(lib, "我的,#genre#", 1L))
     assertEquals(0, plain.getJSONObject("extensions").length())
     val qd = Backup.qualityTrim(qData("https://main.example/live", 7))
     val withQ = JSONObject(Backup.exportAll(lib, "我的,#genre#", 1L, JSONObject().put("v", 1).put("data", qd)))
     assertEquals(qd.length(), withQ.getJSONObject("extensions").getJSONObject("sidecars").getJSONObject("quality").getJSONObject("data").length())
     assertEquals("android", withQ.getString("app")); assertEquals(3, withQ.getInt("version"))
+    val ld = Backup.lsTrim(JSONObject().put("2026-11-14", JSONObject().put("ms", 1000).put("sessions", 1)))
+    val withBoth = JSONObject(Backup.exportAll(lib, "我的,#genre#", 1L,
+      JSONObject().put("v", 1).put("data", qd), JSONObject().put("v", 1).put("data", ld)))
+    val sc = withBoth.getJSONObject("extensions").getJSONObject("sidecars")
+    assertEquals(2, sc.length())                                    // 双 sidecar 并存
+    assertEquals(1, sc.getJSONObject("listenStats").getJSONObject("data").length())
+  }
+
+  // —— B4 listenStats sidecar：lsTrim 白名单裁剪 + ListenSidecar 真落盘 round-trip（AppVm.applyConfirmed 同款凭据） ——
+
+  @Test fun lsTrimValidationAndCaps() { // 坏日期键/非法键剔除、数值归一、空日丢弃、90 日与 64 条封顶
+    val data = JSONObject()
+      .put("2026-02-30", JSONObject().put("ms", 999))               // 非历法日：丢弃
+      .put("2026-02-29", JSONObject().put("ms", 999))               // 2026 非闰年：丢弃
+      .put("2024-02-29", JSONObject().put("ms", 888))               // 闰年：保留
+      .put("2026-01-01", JSONObject().put("ms", -5))                // 全空日：丢弃
+      .put("2026-01-02", JSONObject().put("ms", "3600").put("sessions", 2.9)
+        .put("stations", JSONObject().put("ftp://x", 5).put("https://a/live", "7000.9").put("https://b/live", -1))
+        .put("categories", JSONObject().put("长".repeat(25), 1).put("华语音乐", 3)))
+    val t = Backup.lsTrim(data)
+    assertEquals(2, t.length())
+    assertEquals(888L, t.getJSONObject("2024-02-29").getLong("ms"))
+    val d2 = t.getJSONObject("2026-01-02")
+    assertEquals(3600L, d2.getLong("ms")); assertEquals(2, d2.getInt("sessions")) // 字符串数字收敛、小数取整
+    assertEquals(1, d2.getJSONObject("stations").length())          // 非台键/负值剔除（只留 https://a/live=7000）
+    assertEquals(7000L, d2.getJSONObject("stations").getLong("https://a/live"))
+    assertEquals(1, d2.getJSONObject("categories").length())        // 超 24 字符分类剔除
+    // 90 日封顶：91 个连续合法日 → 保留最新 90
+    val many = JSONObject()
+    val cal = java.util.Calendar.getInstance()
+    for (i in 0 until 91) {
+      cal.clear(); cal.set(2025, java.util.Calendar.JANUARY, 1 + i)
+      many.put(ListenStats.dayKey(cal.timeInMillis), JSONObject().put("ms", 1).put("sessions", 1))
+    }
+    val t2 = Backup.lsTrim(many)
+    assertEquals(90, t2.length())
+    // 每日台/分类 64 条封顶
+    val big = JSONObject()
+    for (i in 0 until 80) big.put("https://s$i.example/live", 100)
+    val t3 = Backup.lsTrim(JSONObject().put("2026-01-01", JSONObject().put("ms", 1).put("sessions", 1).put("stations", big)))
+    assertEquals(64, t3.getJSONObject("2026-01-01").getJSONObject("stations").length())
+  }
+
+  @Test fun listenStatsReplaceImportViaSidecar() { // 四件事务收官位真落盘：days → 白名单解码 + trim → ListenSidecar 覆盖写 + 回滚恢复旧快照
+    val sidecar = ListenSidecar(dir)
+    val old = StatsState(v = 1)
+    old.days["2026-10-01"] = StatsDay(ms = 60000, sessions = 1)
+    assertTrue(sidecar.save(old))                                   // 导入前旧快照（AppVm.applyConfirmed 同款凭据）
+    val lsData = Backup.lsTrim(JSONObject().put("2026-11-14",
+      JSONObject().put("ms", 1800000).put("sessions", 2)
+        .put("stations", JSONObject().put("https://new.example/live", 1800000))
+        .put("categories", JSONObject().put("华语音乐", 1800000))))
+    fun lsApply(): Boolean {                                        // AppVm.applyConfirmed 注入的同款 apply
+      val st = ListenStatsCodec.parse(JSONObject().put("v", 1).put("days", lsData).toString())
+      return sidecar.save(ListenStats.trim(st))
+    }
+    assertTrue(lsApply())                                           // 提交：覆盖写成功
+    val cur = sidecar.load()
+    assertEquals(1800000L, cur.days["2026-11-14"]!!.ms)             // 盘上是导入数据
+    assertEquals(1, cur.days.size)                                  // 旧日被覆盖语义清除
+    assertTrue(sidecar.save(old))                                   // 回滚：旧快照回写（失败位兜底）
+    assertEquals(60000L, sidecar.load().days["2026-10-01"]!!.ms)
+    assertNull(sidecar.load().days["2026-11-14"])
   }
 }

@@ -19,5 +19,45 @@
     "radio.baselineProg": "[]"
   },
   "myRadio": ["自建,#genre#", "我的电台,https://example.test/live"],
-  "extensions": {}
+  "extensions": {
+    "sidecars": {
+      "quality": {
+        "v": 1,
+        "data": {
+          "https://main.example/live": {
+            "cf": 2,
+            "sources": {
+              "https://main.example/live": {
+                "okCount": 5,
+                "failCount": 1,
+                "lastOkAt": 1731490000000,
+                "lastPlaybackAt": 1731499000000,
+                "latSum": 8200,
+                "latN": 5,
+                "modes": ["direct"],
+                "lastDiag": { "t": "manual", "ok": true, "at": 1731490000000, "lat": 1600 }
+              }
+            }
+          }
+        }
+      },
+      "listenStats": {
+        "v": 1,
+        "data": {
+          "2026-11-13": {
+            "ms": 3600000,
+            "sessions": 2,
+            "stations": { "https://main.example/live": 3600000 },
+            "categories": { "华语音乐": 3600000 }
+          },
+          "2026-11-14": {
+            "ms": 1800000,
+            "sessions": 1,
+            "stations": { "https://main.example/live": 1800000 },
+            "categories": { "华语音乐": 1800000 }
+          }
+        }
+      }
+    }
+  }
 }

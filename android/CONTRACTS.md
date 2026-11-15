@@ -50,22 +50,26 @@
     URL 去重；XmlPullParser 显式关 DOCTYPE 处理（外部实体/外部 DTD 不解析，未声明实体引用不展开）、XML 文本
     2MB 先钳；ENTRYREF 不递归；**纯 JVM 零网络、不 import android.***（单测挂 kxml2 真实现——android.jar 的
     XmlPullParserFactory 是抛异常桩，同 org.json 先例，仅 testImplementation 不进 APK）。
-  - `data/Backup.kt` v3：`exportAll(lib, myText, at)` → `{format:"vradio-backup",version:3,createdAt,app:"android",
-    data,myRadio,extensions:{}}`（extensions 恒空——质量 sidecar 生产方在 B2/listenStats 在 B3）；`parseImport`
-    兼容 v1/v2/v3，`ImportPayload` 增 `ver` 与 `quality: JSONObject?`（v3 extensions.sidecars.quality 经
-    `qualityTrim` 白名单裁剪后交提交段落盘——AIbot review P1-1：确认即真提交）；`qualityTrim` 与 Web
-    backup.js 同款白名单（contracts/quality-summary.json aggregate 面，条目 2000 封顶）。新增
-    `commitImport(data, my, qualityData, ImportIO)`：applyConfirmed 提交段抽离（三步覆盖 Store→my→quality，
-    任一步失败整体回滚），协作方函数注入可 JVM 测试（fake 断言写入/回滚序）。
+  - `data/Backup.kt` v3：`exportAll(lib, myText, at, qualityExt?, listenExt?)` → `{format:"vradio-backup",
+    version:3,createdAt,app:"android",data,myRadio,extensions:{sidecars:{quality,listenStats}}}`（双 sidecar
+    各自可选，双 null = extensions 空）；`parseImport` 兼容 v1/v2/v3，`ImportPayload` 持 `quality`/
+    `listenStats`（v3 extensions.sidecars.* 经 `qualityTrim`/`lsTrim` 白名单裁剪后交提交段落盘——AIbot
+    review P1-1：确认即真提交；listenStats 裁空 = null 与 Web「含 0 天无确认意义」同判）；`qualityTrim`/
+    `lsTrim` 与 Web backup.js 同款白名单（quality：contracts/quality-summary.json aggregate 面 2000 封顶；
+    ls：日 90/每日台分类 64/512KB、台键 http(s)≤512、分类 ≤24）。`commitImport(data, my, qualityData,
+    ImportIO, listenData?)`：applyConfirmed 提交段抽离（四步覆盖 Store→my→quality→listenStats，任一步失败
+    整体回滚），协作方函数注入可 JVM 测试（fake 断言写入/回滚序）。
   - 导入 UI（SettingsScreen「导入歌单」/AppVm `Imp.M3U`）：PlaylistParser 解析 → `Library.partitionImport`
     分流（纯决策不变异，取消=零副作用）→ 四桶计数 confirm（新增/已知/重复/非法）→ 确认后已知台恢复收藏
     （N2 语义）+ 新台批量 `MyRadio.append`（自带查重/清洗/SafeTarget/封顶）。注意 SafeTarget 非对称：Web
     合并写只验 http(s)，内网地址在 Android 侧会被 append 拒（文案计入「跳过」）。
-  - 备份导入三阶段回滚（AppVm `Imp.BACKUP`，AIbot review P1-1/P2-1）：提交前快照三件 `Store.snapshot()` +
-    `myRadio.readText()` + `QualityStore.capture()`（含 sidecar 才留），经 `Backup.commitImport` 三步覆盖
-    （Store → my → 质量 sidecar），任一步失败整体回滚；sidecar 经 `QualityStore.replaceImport` 事务式覆盖
-    真正落盘（失败 `restore` 旧快照，内存原地换 = 缓存即时重载）。确认弹层与 Web 同口径：
-    「含 N 台质量数据，将覆盖本机质量数据」。
+  - 备份导入三阶段回滚（AppVm `Imp.BACKUP`，AIbot review P1-1/P2-1；B4 起四件事务）：提交前快照四件
+    `Store.snapshot()` + `myRadio.readText()` + `QualityStore.capture()` + `ListenSidecar.load()`（含对应
+    sidecar 才留），经 `Backup.commitImport` 四步覆盖（Store → my → 质量 sidecar → 收听统计 sidecar），任一步
+    失败整体回滚；quality 经 `replaceImport` 事务式覆盖（内存原地换 = 缓存即时重载），listenStats 经
+    `ListenSidecar.save(ListenStats.trim(Codec.parse(days)))` 覆盖写（回滚 = 旧快照同通道回写）；导入成功且
+    开关开时 tracker 从磁盘重建（防旧内存账下次 flush 整体回写冲掉导入数据），开关关不建不消费。确认弹层与
+    Web 同口径：双 sidecar 一个复选整体覆盖（「恢复备份内 sidecar（质量/收听统计）」）。
 
 ---
 
@@ -401,8 +405,9 @@ class LightUpdate(private val gh: Gh, private val filesDir: File) {
 > `quality-store.js` / `update-sources.js` 候选管线必须镜像，冲突以 plan-expansion-r4 §6 为准。
 
 - **`filesDir/quality.json` sidecar 声明**：源质量数据落本机 `filesDir/quality.json`（Web HTTP 走
-  `/api/quality` → `data/quality.json`）。**不进 `radio.*` 主 Store、不占 /api/store 2MB 配额、不进
-  备份**（B4 sidecar 勾选导出另议）；与 `radio.health`（死台/停运）永不合并、聚合结果不得直接改写
+  `/api/quality` → `data/quality.json`）。**不进 `radio.*` 主 Store、不占 /api/store 2MB 配额**；备份 v3
+  默认不含、勾选「包含本机 sidecar」经 `qualityTrim` 白名单可选迁移（B4 已落地，见上方 B4 API 面）；与
+  `radio.health`（死台/停运）永不合并、聚合结果不得直接改写
   死台隐藏条件。坏文件按空库恢复。文件硬上限 2MB（`C.QUALITY_MAX_BYTES`），每台源聚合封顶 6。
   **包装层分层（AIbot P1-2，契约 quality-summary.json `files` 节冻结）**：两侧文件包装不同——本文件
   `{v:1,stations:…}`（纯本机）vs Web 服务端 `data/quality.json` `{v:1,rev,ops,data:…}`（rev/ops 是
@@ -552,8 +557,10 @@ class LightUpdate(private val gh: Gh, private val filesDir: File) {
   ops+op.id 幂等增量合并——多标签同 base 各自 POST 不同增量不互相覆盖；AIbot 复核 P2 起 GET ?rev= 条件获取
   （命中回 notModified，BC 重拉零全量传输）、P1 起 409 响应带机器可读 code（schema 丢批留痕/batch-limit 收窄
   批宽重试），契约描述 `contracts/listen-stats-summary.json`——Android 单进程 filesDir 不受影响）
-  ——不进 radio.* 主 Store/2MB 配额/
-  备份 v3 默认导出；flush = 30s tick + MainActivity.onStop；**落盘确认模型（AIbot 复核 P1，§7.2「写失败只保留
+  ——不进 radio.* 主 Store/2MB 配额；备份 v3
+  默认不含、勾选「包含本机 sidecar」经 `Backup.lsTrim` 白名单可选迁移（B4：导出取内存账 settle 后 ⊇ 磁盘、
+  导入四件事务收官位 + tracker 重建；Web 侧 http 走 `POST /api/listenstats {replace:true,days}` 覆盖通道、
+  file:// 走 localStorage 快照）；flush = 30s tick + MainActivity.onStop；**落盘确认模型（AIbot 复核 P1，§7.2「写失败只保留
   内存增量并在下次 flush/启动重试」）**：tracker 持确认快照（最近一次成功落盘），flush 只在有未确认增量时写、
   写成功才推进确认——失败增量保留内存，下次 flush 快照覆盖一次写入全部（不重放不双计，幂等）；**启动重试
   （AIbot 三轮 P1）**：写失败同时把含未确认增量的快照落独立临时文件 `filesDir/listen-stats.pending.json`

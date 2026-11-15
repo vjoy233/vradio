@@ -1400,18 +1400,33 @@ const App = {
       else myRadio = t.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     }
     const ext = {};
-    if (http && $('mSidecar') && $('mSidecar').checked) { // 「包含本机 sidecar」复选（默认关）：只留迁移字段
-      const q = await fetch('/api/quality').then(r => r.json()).catch(() => null);
-      if (q && q.data && !q.notModified) {
-        const d = BackupV3.qualityTrim(q.data);
-        if (Object.keys(d).length) ext.sidecars = { quality: { v: 1, data: d } };
+    if ($('mSidecar') && $('mSidecar').checked) { // 「包含本机 sidecar」复选（默认关）：只留迁移字段
+      ext.sidecars = {};
+      if (http) { // 质量 sidecar 仅 http 形态（服务端 quality.json）
+        const q = await fetch('/api/quality').then(r => r.json()).catch(() => null);
+        if (q && q.data && !q.notModified) {
+          const d = BackupV3.qualityTrim(q.data);
+          if (Object.keys(d).length) ext.sidecars.quality = { v: 1, data: d };
+        }
       }
+      // 收听统计 sidecar 双形态（B4）：http 读服务端 /api/listenstats、file:// 读本地快照——裁剪后随行
+      const lsRaw = http
+        ? await fetch('/api/listenstats').then(r => r.json()).then(j => j && j.days && !j.notModified ? j.days : null).catch(() => null)
+        : (() => { try { const j = JSON.parse(localStorage.getItem('listenstats.local') || 'null'); return j && j.days ? j.days : null; } catch (_) { return null; } })();
+      if (lsRaw) {
+        const d = BackupV3.lsTrim(lsRaw);
+        if (Object.keys(d).length) ext.sidecars.listenStats = { v: 1, data: d };
+      }
+      if (!Object.keys(ext.sidecars).length) delete ext.sidecars;
     }
     const o = BackupV3.build({ at: Date.now(), app: 'web', data: Store.snapshot(), myRadio, extensions: ext });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify(o, null, 2)], { type: 'application/json' }));
     a.download = 'vradio-backup.json'; a.click(); URL.revokeObjectURL(a.href);
-    const sc = ext.sidecars ? `，含质量 sidecar ${Object.keys(ext.sidecars.quality.data).length} 台` : '';
+    const sc = ext.sidecars
+      ? '，含' + [ext.sidecars.quality ? `质量 sidecar ${Object.keys(ext.sidecars.quality.data).length} 台` : '',
+          ext.sidecars.listenStats ? `收听统计 ${Object.keys(ext.sidecars.listenStats.data).length} 天` : ''].filter(Boolean).join('、')
+      : '';
     $('status').textContent = `已导出完整备份 v3（收藏/配置/健康标记/歌曲历史${myRadio.length ? '/个人电台' : ''}${sc}${myNote}；台标缓存可重建不包含）`;
   },
   async importAll(text) {
@@ -1420,13 +1435,17 @@ const App = {
     if (!info) { alert('导入失败：不是 vradio 完整备份文件'); return; }
     if (!info.n) { alert('导入失败：备份中无有效数据'); return; }
     const http = location.protocol.startsWith('http');
+    // sidecar 选择（B4 起双 sidecar 一次确认整体覆盖；schema importRules 同口径）：质量仅 http、收听统计双形态
+    const scParts = [info.quality && http ? `质量数据 ${Object.keys(info.quality.data).length} 台` : '',
+      info.ls ? `收听统计 ${Object.keys(info.ls.data).length} 天` : ''].filter(Boolean);
     let sc = false;
-    if (info.quality && http) sc = confirm(`备份含质量 sidecar（${Object.keys(info.quality.data).length} 台质量数据）。是否一并恢复？\n（将覆盖本机质量数据；取消恢复则本机质量数据保持不变）`);
+    if (scParts.length) sc = confirm(`备份含 sidecar（${scParts.join('、')}）。是否一并恢复？\n（将覆盖本机对应数据；取消恢复则本机保持不变）`);
     const myNote = info.my ? `、个人电台 ${info.my.filter(l => !l.endsWith('#genre#')).length} 台` : '';
-    if (!confirm(`导入将覆盖本地全部数据（备份 v${info.ver}${info.app ? '，来源 ' + info.app : ''}，含 ${info.n} 个数据项${myNote}${sc ? '、质量 sidecar（将覆盖本机质量数据）' : ''}：收藏/维护配置/健康标记/歌曲历史全部替换${info.ver === 1 ? '；v1 备份不动个人电台列表' : ''}）。继续？`)) return;
-    // 阶段三 commit（BackupV3.commitImport，AIbot P1-2 抽离可测）：先快照三件（Store + my-radio + 旧质量
-    // sidecar——确认恢复即先 GET 留存，无快照不提交），任一步失败整体回滚（质量旧快照经 replace 尽力回写，
-    // 二次失败文案如实点名）；取消在上一步 = 零副作用。io 注入真实现（fetch/localStorage/QualityStore）。
+    if (!confirm(`导入将覆盖本地全部数据（备份 v${info.ver}${info.app ? '，来源 ' + info.app : ''}，含 ${info.n} 个数据项${myNote}${sc ? `、sidecar（${scParts.join('、')}，将覆盖本机对应数据）` : ''}：收藏/维护配置/健康标记/歌曲历史全部替换${info.ver === 1 ? '；v1 备份不动个人电台列表' : ''}）。继续？`)) return;
+    // 阶段三 commit（BackupV3.commitImport，AIbot P1-2 抽离可测）：先快照四件（Store + my-radio + 旧质量 +
+    // 旧收听统计 sidecar——确认恢复即先读留存，无快照不提交），任一步失败整体回滚（sidecar 旧快照经各自通道
+    // 尽力回写，二次失败文案如实点名）；取消在上一步 = 零副作用。io 注入真实现（fetch/localStorage/QualityStore/ListenStats）。
+    const lsLocalRead = () => { try { const j = JSON.parse(localStorage.getItem('listenstats.local') || 'null'); return j && j.days && typeof j.days === 'object' ? j.days : {}; } catch (_) { return null; } };
     const r = await BackupV3.commitImport(info, sc, {
       http,
       storeSnap: () => { const s = {}; for (const k of Store.KEYS) s[k] = localStorage.getItem(k); return s; },
@@ -1438,6 +1457,14 @@ const App = {
       postQuality: data => fetch('/api/quality', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ replace: true, data }) })
         .then(x => x.json()).then(j => !!(j && j.ok)).catch(() => false),
       refreshQuality: () => { QualityStore.pend.length = 0; QualityStore.pull(); }, // 覆盖后缓存对齐服务端：丢弃未确认旧样本（导入=明确覆盖）再重拉
+      getListenStats: () => http // 收听统计双形态：http 读服务端日桶、file:// 读本地快照（缺数据 = 空 days 合法快照；null 仅读失败）
+        ? fetch('/api/listenstats').then(r => r.json()).then(j => j && j.days && typeof j.days === 'object' && !Array.isArray(j.days) ? j.days : null).catch(() => null)
+        : Promise.resolve(lsLocalRead()),
+      postListenStats: days => http // replace 覆盖通道（server B4：{replace:true,days}，与 quality 同纪律）
+        ? fetch('/api/listenstats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ replace: true, days }) })
+            .then(x => x.json()).then(j => !!(j && j.ok)).catch(() => false)
+        : new Promise(res => { try { localStorage.setItem('listenstats.local', JSON.stringify({ v: 1, days })); res(true); } catch (_) { res(false); } }),
+      refreshListenStats: () => { ListenStats.pend.length = 0; ListenStats.dirty = false; ListenStats.pull(); }, // 同 refreshQuality 纪律：丢弃未确认旧增量（防重放复活旧账）再重拉
     });
     if (r.ok) this.applyServerStore();
     $('status').textContent = r.msg;

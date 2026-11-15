@@ -26,13 +26,18 @@ ok('build：v3 导出形状对照 schema shape 五字段', () => {
   assert.deepStrictEqual(o.extensions, {});
   assert.strictEqual(typeof o.data['radio.vol'], 'string'); // data 值一律字符串
 });
-ok('v3 黄金样本：ver=3、myRadio→my、extensions 空则无 sidecar', () => {
+ok('v3 黄金样本：ver=3、myRadio→my、双 sidecar（quality+listenStats）判定与读回', () => {
   const r = B.read(FIX('backup-v3.json'), KEYS);
   assert.strictEqual(r.ver, 3);
   assert.strictEqual(r.app, 'web');
   assert.strictEqual(r.n, 13);
   assert.deepStrictEqual(r.my, ['自建,#genre#', '我的电台,https://example.test/live']);
-  assert.strictEqual(r.quality, null);
+  assert.ok(r.quality && r.quality.data['https://main.example/live']); // 质量 sidecar：嵌套聚合形态
+  assert.strictEqual(r.quality.data['https://main.example/live'].cf, 2);
+  assert.ok(r.ls && r.ls.data['2026-11-14']);                          // 收听统计 sidecar：日桶形态
+  assert.strictEqual(r.ls.data['2026-11-14'].ms, 1800000);
+  assert.strictEqual(r.ls.data['2026-11-14'].stations['https://main.example/live'], 1800000);
+  assert.strictEqual(r.ls.data['2026-11-13'].sessions, 2);
 });
 ok('v2 黄金样本：ver=2、读 my 数组、键全在白名单', () => {
   const r = B.read(FIX('backup-v2.json'), KEYS);
@@ -60,12 +65,38 @@ ok('v3 含质量 sidecar：判定 + 迁移字段裁剪（嵌套形态、未知�
   assert.ok(!('rawResponse' in q) && !('dns' in q)); // 响应正文/DNS 类字段绝不迁移
   assert.ok(!('ftp://bad.example/x' in r.quality.data)); // 非 http(s) 键丢弃
 });
-ok('未知扩展字段忽略不失败（extensions.foo / sidecars.listenStats / 顶层杂字段）', () => {
+ok('未知扩展字段忽略不失败（extensions.foo / sidecars.timewarp / 顶层杂字段；listenStats 裁空=无）', () => {
   const j = JSON.parse(FIX('backup-v3.json'));
-  j.extensions = { foo: { bar: 1 }, sidecars: { listenStats: { v: 1, data: { x: 1 } } } };
+  j.extensions = { foo: { bar: 1 }, sidecars: { timewarp: { v: 1, data: { x: 1 } }, listenStats: { v: 1, data: { 'bad-day': { ms: 5 } } } } };
   j.futureField = { anything: true };
   const r = B.read(JSON.stringify(j), KEYS);
-  assert.strictEqual(r.ver, 3); assert.strictEqual(r.quality, null); // listenStats（B3 未落地）忽略
+  assert.strictEqual(r.ver, 3); assert.strictEqual(r.quality, null);
+  assert.strictEqual(r.ls, null); // 坏日键全裁 → 空 days 视为无 sidecar（「含 0 天」无确认意义）
+});
+ok('lsTrim：坏日期键丢弃、台/分类键校验、数值归一、空日丢弃', () => {
+  const days = {};
+  days['2026-02-30'] = { ms: 999 };                      // 非历法日：丢弃
+  days['2026-02-29'] = { ms: 999 };                      // 2026 非闰年：丢弃
+  days['2024-02-29'] = { ms: 888 };                      // 闰年：保留
+  days['2026-01-01'] = { ms: -5, sessions: 0, stations: {}, categories: {} }; // 全空 → 丢弃
+  days['2026-01-02'] = { ms: '3600', sessions: 2.9, stations: { 'ftp://x': 5, 'https://a/live': '7000.9', 'https://b/live': -1 }, categories: { ['长'.repeat(25)]: 1, '华语音乐': 3 } };
+  const t = B.lsTrim(days);
+  assert.ok(!('2026-02-30' in t) && !('2026-02-29' in t) && t['2024-02-29'].ms === 888);
+  assert.ok(!('2026-01-01' in t));
+  assert.deepStrictEqual(t['2026-01-02'], { ms: 3600, sessions: 2, stations: { 'https://a/live': 7000 }, categories: { '华语音乐': 3 } }); // 非法键/负值剔除、字符串数字收敛、超长分类（>24）剔除
+});
+ok('lsTrim：日 90 封顶（保留最新 90 日）+ 每日台/分类 64 条封顶', () => {
+  const days = {};
+  for (let i = 1; i <= 120; i++) days['2025-' + String(Math.floor((i - 1) / 30) + 1).padStart(2, '0') + '-' + String((i - 1) % 30 + 1).padStart(2, '0')] = { ms: 1, sessions: 1 };
+  days['2025-05-01'] = { ms: 1 };                          // 121→122 键补位（05-01 已在循环内，覆盖为无映射形态）
+  const t = B.lsTrim(days);
+  assert.strictEqual(Object.keys(t).length, 90);
+  assert.ok(!('2025-01-01' in t) && '2025-05-01' in t);    // 最旧被裁、最新保留
+  const big = {};
+  for (let i = 0; i < 80; i++) big['https://s' + i + '.example/live'] = 100;
+  const t2 = B.lsTrim({ '2026-01-01': { ms: 1, sessions: 1, stations: big, categories: big } });
+  assert.strictEqual(Object.keys(t2['2026-01-01'].stations).length, 64); // 每日台封顶
+  assert.strictEqual(Object.keys(t2['2026-01-01'].categories).length, 64);
 });
 ok('键白名单过滤：白名单外键/非字符串值丢弃；无有效键 → n=0（调用方提示）', () => {
   const r = B.read('{"v":3,"version":3,"data":{"radio.vol":"90","radio.junk":"x","my":"nope","radio.favs":123}}', KEYS);
@@ -108,6 +139,9 @@ const ioFake = over => Object.assign({
   getQuality: async () => oldQ,
   postQuality: async () => true,
   refreshQuality: () => {},
+  getListenStats: async () => null,                       // B4：默认惰性（info.ls 缺省不触发；LS 用例各自覆写）
+  postListenStats: async () => true,
+  refreshListenStats: () => {},
 }, over);
 ok('commitImport 成功路径：Store→my→quality 顺序提交 + 缓存刷新 + 成功文案', async () => {
   const seq = [];
@@ -201,6 +235,80 @@ ok('commitImport file://（http=false）：零网络调用，文案注明个人�
   assert.strictEqual(r.ok, true);
   assert.ok(r.msg.includes('file:// 形态无法恢复个人电台列表'));
   assert.deepStrictEqual(calls, []);                   // file:// 无后端通道：my/质量零触碰
+});
+
+// —— B4 收听统计 sidecar：四件事务（Store → my → quality → listenStats）——
+const oldLs = { '2026-10-01': { ms: 60000, sessions: 1, stations: { 'https://old.example/live': 60000 }, categories: {} } };
+const impInfoLs = () => Object.assign(impInfo(), {
+  ls: { v: 1, data: { '2026-11-14': { ms: 1800000, sessions: 1, stations: { 'https://new.example/live': 1800000 }, categories: { '华语音乐': 1800000 } } } },
+});
+ok('commitImport 双 sidecar 成功：Store→my→quality→listenStats 顺序 + 双缓存刷新 + 文案点名天数', async () => {
+  const seq = [];
+  const r = await B.commitImport(impInfoLs(), true, ioFake({
+    storeApply: d => seq.push('store:' + d['radio.vol']),
+    postMy: async l => { seq.push('my:' + l.length); return true; },
+    postQuality: async d => { seq.push('q:' + Object.keys(d).length); return true; },
+    postListenStats: async d => { seq.push('ls:' + Object.keys(d).length); return true; },
+    refreshQuality: () => seq.push('rq'),
+    refreshListenStats: () => seq.push('rls'),
+    getListenStats: async () => oldLs,
+  }));
+  assert.strictEqual(r.ok, true);
+  assert.ok(r.msg.includes('含质量 sidecar') && r.msg.includes('含收听统计 1 天'));
+  assert.deepStrictEqual(seq, ['store:30', 'my:2', 'q:1', 'rq', 'ls:1', 'rls']);
+});
+ok('commitImport 无收听统计快照不提交：getListenStats 失败 → 零写入（含 quality 也未动）', async () => {
+  const applied = [], qPosts = [];
+  const r = await B.commitImport(impInfoLs(), true, ioFake({
+    storeApply: d => applied.push(d),
+    postQuality: async d => { qPosts.push(d); return true; },
+    getListenStats: async () => null,
+  }));
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.msg.includes('无法读取当前收听统计'));
+  assert.deepStrictEqual(applied, []);                 // 无快照不提交纪律对第四件同样成立
+  assert.deepStrictEqual(qPosts, []);
+});
+ok('commitImport listenStats 提交失败：四件回滚 + 旧统计快照回写，文案如实点名', async () => {
+  const lsPosts = [];
+  const r = await B.commitImport(impInfoLs(), true, ioFake({
+    getListenStats: async () => oldLs,
+    postListenStats: async d => { lsPosts.push(d); return lsPosts.length > 1; }, // 导入数据写成功响应丢；旧快照回写成功
+  }));
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.msg.includes('收听统计 sidecar 恢复失败') && r.msg.includes('已回滚到导入前状态'));
+  assert.strictEqual(lsPosts.length, 2);
+  assert.deepStrictEqual(lsPosts[0], impInfoLs().ls.data); // 第一次提交导入数据
+  assert.deepStrictEqual(lsPosts[1], oldLs);               // 回滚回写旧快照
+  const r2 = await B.commitImport(impInfoLs(), true, ioFake({
+    getListenStats: async () => oldLs,
+    postListenStats: async () => false,                    // 回写也失败
+  }));
+  assert.ok(r2.msg.includes('收听统计可能停留在导入状态，可重试导入'));
+});
+ok('commitImport sc=false：备份含双 sidecar 但未确认恢复 → 两者零触碰', async () => {
+  const calls = [];
+  const r = await B.commitImport(impInfoLs(), false, ioFake({
+    getQuality: async () => { calls.push('gq'); return oldQ; },
+    postQuality: async () => { calls.push('pq'); return true; },
+    getListenStats: async () => { calls.push('gls'); return oldLs; },
+    postListenStats: async () => { calls.push('pls'); return true; },
+  }));
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(calls, []);                   // 未选恢复 = 本机 sidecar 保持不变（schema importRules）
+  assert.ok(!r.msg.includes('sidecar') && !r.msg.includes('收听统计'));
+});
+ok('commitImport file:// 收听统计：走本地快照通道（get/post/refresh 全到、my/quality 零网络）', async () => {
+  const seq = [];
+  const r = await B.commitImport(impInfoLs(), true, ioFake({
+    http: false,
+    getListenStats: async () => { seq.push('gls'); return {}; },
+    postListenStats: async d => { seq.push('pls:' + Object.keys(d).length); return true; },
+    refreshListenStats: () => seq.push('rls'),
+  }));
+  assert.strictEqual(r.ok, true);
+  assert.ok(r.msg.includes('含收听统计 1 天') && r.msg.includes('file:// 形态无法恢复个人电台列表'));
+  assert.deepStrictEqual(seq, ['gls', 'pls:1', 'rls']); // LS 双形态：file:// 经 localStorage 注入（生产 io）
 });
 
 Promise.all(pend).then(() => {

@@ -52,14 +52,17 @@ class ContractTest {
     assertTrue(p.my!!.any { it.endsWith("#genre#") })
   }
 
-  @Test fun backupV3FixtureShape() { // v3 结构（B4 落完整读取；此处先冻结形态与键面）
+  @Test fun backupV3FixtureShape() { // v3 结构（B4 落完整读取；双 sidecar 黄金样本 B4 补齐 listenStats）
     val j = JSONObject(res("fixtures/backup-v3.json"))
     assertEquals("vradio-backup", j.getString("format"))
     assertEquals(3, j.getInt("version"))
     val d = j.getJSONObject("data")
     for (k in d.keys()) assertTrue("非白名单键 $k", C.KEYS.contains(k))
     assertTrue(j.has("myRadio"))
-    assertTrue(j.getJSONObject("extensions").length() == 0) // 默认空 extensions
+    val sc = j.getJSONObject("extensions").getJSONObject("sidecars") // 黄金样本带双 sidecar（quality + listenStats）
+    assertTrue(sc.getJSONObject("quality").getInt("v") == 1)
+    val lsDays = sc.getJSONObject("listenStats").getJSONObject("data")
+    assertEquals(1800000L, lsDays.getJSONObject("2026-11-14").getLong("ms")) // 与 Web test/backup-v3.js 同款期望
   }
 
   @Test fun cfgV2RoundTrip() { // v1（无 v）迁移 + 三新字段清洗/回写 round-trip

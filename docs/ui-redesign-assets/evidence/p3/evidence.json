@@ -1,8 +1,8 @@
 {
   "phase": "p3",
-  "head": "775453d",
-  "started": "2026-11-15T09:35:48.938Z",
-  "pass": 10,
+  "head": "8f6e0d7",
+  "started": "2026-11-15T10:09:42.932Z",
+  "pass": 11,
   "fail": 0,
   "assertions": [
     {
@@ -64,6 +64,12 @@
       "name": "行/卡名称 .station-title[data-fn] + #namett 单例 tooltip 就位",
       "pass": true,
       "detail": "{\"has\":true,\"fn\":true,\"tt\":true}"
+    },
+    {
+      "id": "Z1",
+      "name": "宿主 data/store.json + my-radio.txt 运行前后哈希不变（真隔离终检）",
+      "pass": true,
+      "detail": ""
     }
   ]
 }

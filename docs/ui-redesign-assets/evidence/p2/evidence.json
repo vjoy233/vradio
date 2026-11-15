@@ -1,8 +1,8 @@
 {
   "phase": "p2",
-  "head": "d36137d",
-  "started": "2026-11-15T09:29:27.610Z",
-  "pass": 11,
+  "head": "66aa1b2",
+  "started": "2026-11-15T10:08:07.605Z",
+  "pass": 12,
   "fail": 0,
   "assertions": [
     {
@@ -68,6 +68,12 @@
     {
       "id": "F8b",
       "name": "键盘 Tab 可达底栏控件（列表末行 → footer）",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "id": "Z1",
+      "name": "宿主 data/store.json + my-radio.txt 运行前后哈希不变（真隔离终检）",
       "pass": true,
       "detail": ""
     }

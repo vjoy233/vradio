@@ -196,4 +196,72 @@ okA('file:// 形态：reloadMain 协议门恒 false——不发请求不抛（�
   assert.ok(done);
 });
 
+/* ============================================================ [5] reloadMain 个人层三态（AIbot PR#33 P1） */
+console.log('[5] reloadMain 个人层三态：404=合法空 / 5xx·网络错=保留当前显示+toast / 恢复后兜底缓存');
+// 节内共用环境：radio.txt 恒成功、my 桩由 myFn 每轮可变；toast 计数桩 + 全 DOM/存储出口桩（同 [4] 法）
+const envIn = myFn => {
+  const orig = { location: sandbox.location, fetch: sandbox.fetch, Store: sandbox.Store, QualityStore: sandbox.QualityStore, Player: sandbox.Player };
+  const origApp = { state: App.state, cfg: App.cfg, favs: App.favs, recents: App.recents, healthMarks: App.healthMarks,
+    render: App.render, showLast: App.showLast, applyServerStore: App.applyServerStore, toast: App.toast, _myKeep: App._myKeep };
+  sandbox.location = { protocol: 'http:' };
+  sandbox.fetch = u => u.startsWith('radio.txt') // 主库恒成功（本节只测 my 层分叉）
+    ? Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve('华语音乐,#genre#\r\n主库台,http://m/1\r\n') })
+    : myFn();
+  sandbox.Store = { get: () => null, set: () => {} }; // rebind → save* 三落的存储出口
+  sandbox.QualityStore = {}; sandbox.Player = { station: null }; // qualityKeep / applySources 的全局引用
+  App.state = { stations: [] }; App.cfg = App.normCfg(null); App.favs = []; App.recents = []; App.healthMarks = {};
+  App.render = () => {}; App.showLast = () => {}; App.applyServerStore = () => {}; App._myKeep = undefined;
+  const toasts = []; App.toast = m => toasts.push(m);
+  const restore = () => {
+    for (const k of Object.keys(orig)) { if (orig[k] === undefined) delete sandbox[k]; else sandbox[k] = orig[k]; }
+    for (const k of Object.keys(origApp)) { if (origApp[k] === undefined) delete App[k]; else App[k] = origApp[k]; }
+  };
+  return { restore, toasts };
+};
+const MY_A = () => Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve('个人,#genre#\r\n个人台A,http://a/1\r\n') });
+okA('my 层 500/网络错：既有个人台保留在列（不按空列表 replace）+ 每轮恰一条 toast', async () => {
+  let myFn = MY_A;
+  const { restore, toasts } = envIn(() => myFn());
+  try {
+    await App.reloadMain();
+    assert.ok(App.state.stations.some(s => s.n === '个人台A'), '前置：成功轮个人台 A 入列');
+    myFn = () => Promise.resolve({ ok: false, status: 500 });
+    await App.reloadMain();
+    assert.ok(App.state.stations.some(s => s.n === '个人台A'), '500 后 A 仍在列（保留当前显示，非静默清空）');
+    assert.ok(App.state.stations.some(s => s.n === '主库台'), '主 radio.txt 成功部分照常应用');
+    assert.strictEqual(toasts.length, 1, '单轮单条 toast');
+    assert.ok(toasts[0].includes('个人电台列表刷新失败'), '文案如实点名');
+    myFn = () => Promise.reject(new Error('net down'));
+    await App.reloadMain();
+    assert.ok(App.state.stations.some(s => s.n === '个人台A'), '网络错（reject）同口径：A 仍在列');
+    assert.strictEqual(toasts.length, 2, '第二轮也只加一条（无风暴）');
+  } finally { restore(); }
+});
+okA('my 层 404：合法空个人层正常应用（旧个人台消失、无失败 toast）', async () => {
+  let mode = 'ok';
+  const { restore, toasts } = envIn(() => mode === 'ok' ? MY_A() : Promise.resolve({ ok: false, status: 404 }));
+  try {
+    await App.reloadMain();
+    assert.ok(App.state.stations.some(s => s.n === '个人台A'), '前置：A 入列');
+    mode = '404';
+    await App.reloadMain();
+    assert.ok(!App.state.stations.some(s => s.n === '个人台A'), '404 = 合法空：个人层为空正常应用（语义不变）');
+    assert.ok(App.state.stations.some(s => s.n === '主库台'));
+    assert.strictEqual(toasts.length, 0, '404 不提示失败');
+    assert.deepStrictEqual(snap(App._myKeep), [], '空列表也刷新缓存（空也是磁盘真态）');
+  } finally { restore(); }
+});
+okA('恢复成功后 my 层瞬态失败：备份个人台仍即时入列（afterRestore 预写缓存兜底）', async () => {
+  const { restore, toasts } = envIn(() => Promise.resolve({ ok: false, status: 500 })); // my 恒 500（commitImport 落盘后的瞬态读失败）
+  try {
+    App._myKeep = App.parse('个人,#genre#\r\n个人台A,http://a/1\r\n'); // 前置：恢复前的内存个人层（旧台 A）
+    await App.afterRestore(['个人,#genre#', '个人台B,http://b/1']); // == importAll r.ok 分支（info.my = 备份行）
+    const names = App.state.stations.map(s => s.n);
+    assert.ok(names.includes('个人台B'), '刚恢复的备份个人台 B 即时入列（fetch 失败不丢）');
+    assert.ok(!names.includes('个人台A'), 'my-radio 已被备份全量替换，旧台 A 不复活');
+    assert.ok(names.includes('主库台'), '主列表照常重拉');
+    assert.strictEqual(toasts.length, 1, '单轮单条 toast');
+  } finally { restore(); }
+});
+
 (async () => { for (const t of pending) await t(); console.log(`\n${pass} 通过，${fail} 失败`); process.exit(fail ? 1 : 0); })();

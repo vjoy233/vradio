@@ -50,6 +50,7 @@ async function main() {
       listW = () => page.evaluate(() => Math.round(document.querySelector('#list').getBoundingClientRect().width));
     }
 
+    if (PHASE === 'p1') { /* PR#29 验收证据组：窄屏全宽/宽口 900 封顶/640 主题搬家/三选双主题/Esc 焦点归还/组合筛选保词 */
     console.log(`[P1-E1/E2] 窄屏列表全宽（§6.11，commit 3237228 修复项）`);
     const widthPair = async () => ({ l: await listW(), v: await vw() });
     await page.setViewportSize({ width: 390, height: 844 }); await sleep(250);
@@ -149,6 +150,7 @@ async function main() {
     await page.click('[data-c="★收藏"]'); await sleep(300);
     const catReset = await page.evaluate(c => !document.querySelector(`[data-c="${CSS.escape(c)}"][aria-current="true"]`), catChip); // catChip 须经 arg 传入（evaluate 不携带闭包）
     catReset ? ok('E6d', `切范围重置分类（§3.2，原=${catChip}）`, '') : bad('E6d', '切范围重置 cat', '分类 chip 仍高亮');
+    } // —— P1 断言组结束 ——
 
     if (PHASE === 'p2') { /* PR#30 验收证据：uiRefresh 开关关零回归 / 开关开桌面壳与 1023/1024 断点 / 双主题 / dock 焦点 */
       const snap = p => p.evaluate(() => ({ shell: document.documentElement.classList.contains('ui-refresh'),
@@ -210,9 +212,9 @@ async function main() {
         spb: getComputedStyle(document.documentElement).scrollPaddingBottom, foot: getComputedStyle(document.querySelector('footer')).position }));
       (parseFloat(dock.dock) > 0 && dock.foot === 'fixed' && parseFloat(dock.spb || '0') > 0)
         ? ok('F8a', '--dock-h 写入 + footer fixed + scroll-padding 联动', JSON.stringify(dock)) : bad('F8a', 'dock', JSON.stringify(dock));
-      await on.evaluate(() => document.querySelector('#q').focus());
-      let inFoot = false; for (let i = 0; i < 25 && !inFoot; i++) { await on.keyboard.press('Tab'); inFoot = await on.evaluate(() => !!(document.activeElement && document.activeElement.closest('footer'))); }
-      inFoot ? ok('F8b', '键盘 Tab 可达底栏控件', '') : bad('F8b', 'Tab 到 footer', '25 次 Tab 未达');
+      await on.evaluate(() => { const rs = document.querySelectorAll('#list [data-k]'); rs[rs.length - 1].focus(); }); // 从列表末行出发：DOM 序 footer 紧随其后
+      let inFoot = false; for (let i = 0; i < 6 && !inFoot; i++) { await on.keyboard.press('Tab'); inFoot = await on.evaluate(() => !!(document.activeElement && document.activeElement.closest('footer'))); }
+      inFoot ? ok('F8b', '键盘 Tab 可达底栏控件（列表末行 → footer）', '') : bad('F8b', 'Tab 到 footer', '6 次 Tab 未达');
     }
 
     await browser.close();

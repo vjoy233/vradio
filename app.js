@@ -793,7 +793,19 @@ const App = {
     }
     t.hidden = false;
     clearTimeout(this._toastT);
-    if (opt.ms !== 0) this._toastT = setTimeout(() => { t.hidden = true; }, opt.ms || 4000);
+    this._toastRemain = 0;
+    if (opt.ms !== 0) { const ms = opt.ms || 4000; this._toastEnd = Date.now() + ms; this._toastT = setTimeout(() => { t.hidden = true; this._toastT = 0; }, ms); } // 隐藏撤销等 toast≈8s（§5.4）
+  },
+  toastPause() { // 焦点/悬停在撤销区域时延长时限（§5.4）：暂停倒计时、记剩余
+    if (!this._toastT) return;
+    clearTimeout(this._toastT); this._toastT = 0;
+    this._toastRemain = Math.max(0, (this._toastEnd || 0) - Date.now());
+  },
+  toastResume() { // 离开撤销区域：按剩余时限恢复倒计时
+    if (!this._toastRemain || $('toast').hidden) { this._toastRemain = 0; return; }
+    this._toastEnd = Date.now() + this._toastRemain;
+    this._toastT = setTimeout(() => { $('toast').hidden = true; this._toastT = 0; this._toastRemain = 0; }, this._toastRemain);
+    this._toastRemain = 0;
   },
   showLast() {
     const s = this.recents[0] && this.resolve(this.recents[0]);
@@ -1339,11 +1351,42 @@ const App = {
       `目标分类已存在：合并后按一个分类处理，不易拆分（想拆只能逐台移动）。\n影响：该分类下 ${nSt} 个电台并入「${neu}」${nMv ? `，${nMv} 条移动目标级联改写` : ''}，隐藏标记随行转移。`,
       [{ value: 'go', label: '确认合并并保存', primary: true }, { value: 'stop', label: '取消' }], { safe: 'stop' });
   },
-  mCommit(next, draft) { // 编辑器提交边界（§5.2）：normCfg → saveCfg → reapplyCfg；反馈只说本地生效
+  mCommit(next, draft) { // 编辑器提交边界（§5.2）：normCfg → saveCfg → reapplyCfg；
+    // 新隐藏生效 → toast≈8s 带「撤销」（§5.4），其余保存反馈走 #status（只说本地生效，不宣称多端已同步）
+    const patch = draft.patch || {}, base = draft.base || {};
+    const newlyHidden = Object.prototype.hasOwnProperty.call(patch, 'hidden') && patch.hidden === true && !base.hidden;
     this.cfg = this.normCfg(next);
     this.saveCfg();
     this.reapplyCfg();
+    this._hideUndo = null;
+    if (newlyHidden && draft.kind === 'st') {
+      try {
+        const st = uiResolveUnique(this.state.stations, draft.identityUrl);
+        this._hideUndo = st.u.map(u => ({ map: 'hideS', key: u, before: { exists: true, value: 1 }, after: { exists: false } }));
+        const playing = Player.station && keyOf(Player.station) === keyOf(st);
+        this.toast(`已隐藏「${st.n}」${playing ? '，当前播放继续' : ''}`, { ms: 8000, action: { label: '撤销', fn: () => this.mUndoHide() } });
+        return;
+      } catch (_) {}
+    }
+    if (newlyHidden && draft.kind === 'cat') {
+      const name = Object.prototype.hasOwnProperty.call(patch, 'name') ? String(patch.name).trim() : (this.cfg.renames[draft.identityUrl] || draft.identityUrl);
+      this._hideUndo = [{ map: 'hideC', key: name, before: { exists: true, value: 1 }, after: { exists: false } }];
+      this.toast(`已隐藏分类「${name}」`, { ms: 8000, action: { label: '撤销', fn: () => this.mUndoHide() } });
+      return;
+    }
     $('status').textContent = '已保存调整';
+  },
+  mUndoHide() { // 撤销只还原本次 hideS/hideC 的确切键值：before/after 反转补丁 force=false 应用最新 cfg
+    // （§6.4/M03：对应隐藏键已被他页改动 → 拒绝盲撤提示，不覆盖；不解除同次保存的改名等其他字段）
+    const cells = this._hideUndo;
+    this._hideUndo = null;
+    if (!cells) return;
+    const r = uiApplyCells(this.cfg, cells, false);
+    if (!r.ok) { $('status').textContent = '无法撤销：该隐藏项已被其他页面修改（可在维护面板重新恢复显示）'; return; }
+    this.cfg = this.normCfg(r.cfg);
+    this.saveCfg();
+    this.reapplyCfg();
+    $('status').textContent = '已撤销隐藏';
   },
   mDialogLeave(draft) { // 离开三选（§5.3）：保存并继续 / 放弃修改 / 继续编辑；Esc=继续编辑
     return uiChooseDialog('有尚未保存的修改',
@@ -1391,8 +1434,10 @@ const App = {
   renderEditorSt(host, draft, s, saving, build) {
     const patch = draft.patch, has = k => Object.prototype.hasOwnProperty.call(patch, k);
     if (build) {
+      const canRestoreNameCat = s.u.some(u => this.cfg.names[u] || this.cfg.moves[u]);
       host.innerHTML = `<div class="medit" data-kind="st">
-        <div class="medit-h"><b>编辑电台</b><span class="srcs" title="${this.esc(s.n)}">默认名：${this.esc(s.dName || s.n)} · 默认分类：${this.esc(this.cfg.renames[s.dCat] || s.dCat || s.c)}</span><span class="srcs">（仅显示层；收藏/最近按源 URL 回绑不受影响）</span></div>
+        <div class="medit-h"><b>编辑电台</b><span class="srcs" title="${this.esc(s.n)}">默认名：${this.esc(s.dName || s.n)} · 默认分类：${this.esc(this.cfg.renames[s.dCat] || s.dCat || s.c)}</span><span class="srcs">（仅显示层；收藏/最近按源 URL 回绑不受影响）</span>
+        ${canRestoreNameCat ? '<button type="button" class="btn mbtn" data-eact="strestore" title="只撤本台名称与分类调整（追加源/隐藏/源调整保留；立即生效）">恢复名称与分类</button>' : ''}</div>
         <div class="medit-f">
           <label>名称 <input type="text" data-f="name" data-fa="name" maxlength="80" aria-label="电台名称"></label>
           <label>分类 <select data-f="category" data-fa="category" aria-label="所属分类"></select></label>
@@ -1892,19 +1937,69 @@ const App = {
 
   /* 电台改名/移动/隐藏的即时保存入口（.stMove/.stRename/.stHide）已由逐对象草稿编辑器取代（P4 §5.2）：
      「编辑」进草稿 → 保存经 uiBuildStationNext/uiApplyCells 写 cfg（选默认 = 撤键，与旧 stMove ↺ 语义一致） */
-  cfgResetStation(s) {
+  cfgResetStation(s, alsoMem) { // 撤回此台全部个人调整（§5.4 表：全字段口径，含 B1 生命周期三字段）；
+    // radio.srcmem2 按任务裁量 = 预览勾选「同时清除播放源记忆」才清（默认不清，既有现状保持）
     for (const u of s.u) { delete this.cfg.moves[u]; delete this.cfg.names[u]; delete this.cfg.hideS[u]; delete this.cfg.tag[u]; delete this.cfg.srcLabels[u]; } // tag 只在失配清单用，恢复默认即清（防只增不减）；标签属展示层调整一并撤（B1）
     for (const k of Object.keys(this.cfg.srcs)) if (s.u.includes(k)) delete this.cfg.srcs[k]; // 追加源一并撤（键=任一源 URL，均在此台 s.u 内）
     for (const k of ['srcManualOrder', 'srcDisabled']) delete this.cfg[k][s.u[0]]; // 源生命周期一并撤（B1，键=身份 URL 严格命中）
+    if (alsoMem) Player.forgetSrc(s); // 裁量项：仅在预览明确勾选时清源记忆
     this.saveCfg(); this.reapplyCfg();
+    $('status').textContent = '已撤回此台全部个人调整' + (alsoMem ? '（含播放源记忆）' : '');
+  },
+  async confirmResetStation(s) { // §5.4「撤回此台全部个人调整」：先预览影响清单再确认提交（执行体 = cfgResetStation）
+    const items = [];
+    for (const u of s.u) if (this.cfg.names[u]) { items.push('改名：' + this.cfg.names[u] + (s.dName && s.dName !== this.cfg.names[u] ? '（默认名：' + s.dName + '）' : '')); break; }
+    for (const u of s.u) if (this.cfg.moves[u]) { items.push('分类移动：→ ' + this.cfg.moves[u]); break; }
+    if (s.u.some(u => this.cfg.hideS[u])) items.push('隐藏电台');
+    const srcsN = new Set();
+    for (const k of Object.keys(this.cfg.srcs)) if (s.u.includes(k)) for (const x of this.cfg.srcs[k]) srcsN.add(x);
+    if (srcsN.size) items.push('追加备选源 ' + srcsN.size + ' 条');
+    if (this.cfg.srcManualOrder[s.u[0]]) items.push('人工源排序');
+    if (this.cfg.srcDisabled[s.u[0]]) items.push('禁用源 ' + this.cfg.srcDisabled[s.u[0]].length + ' 个');
+    const lbN = s.u.filter(u => this.cfg.srcLabels[u]).length;
+    if (lbN) items.push('源标签 ' + lbN + ' 个');
+    if (!items.length) { $('status').textContent = '此台没有个人调整可撤回'; return; }
+    let memCb = null;
+    const v = await uiChooseDialog(`撤回「${s.n}」的全部个人调整`,
+      '将移除以下调整，确认后立即生效（电台数据与收藏不受影响）：',
+      [{ value: 'ok', label: '确认撤回', primary: true }, { value: 'stay', label: '取消' }],
+      { safe: 'stay', build: body => {
+        const pre = document.createElement('div'); pre.className = 'ecpreview';
+        pre.textContent = items.map(x => '· ' + x).join('\n');
+        body.appendChild(pre);
+        const lab = document.createElement('label'); lab.className = 'ecck';
+        const cb = document.createElement('input'); cb.type = 'checkbox';
+        lab.appendChild(cb);
+        lab.appendChild(document.createTextNode(' 同时清除播放源记忆（下次点播按默认源序）'));
+        body.appendChild(lab);
+        memCb = cb;
+      } });
+    if (v !== 'ok') return;
+    this.cfgResetStation(s, memCb && memCb.checked);
+  },
+  mRestoreNameCat(s) { // §5.4「恢复名称与分类」：只撤本台 names/moves——追加源/隐藏/源调整严格保留（与恢复默认源策略分开）
+    let any = false;
+    for (const u of s.u) {
+      if (this.cfg.names[u]) { delete this.cfg.names[u]; any = true; }
+      if (this.cfg.moves[u]) { delete this.cfg.moves[u]; any = true; }
+    }
+    if (!any) { $('status').textContent = '本台无名称/分类调整'; return; }
+    if (!uiHasAdj(this.cfg, s)) for (const u of s.u) delete this.cfg.tag[u]; // 已无任何调整 → tag 快照一并清
+    this.saveCfg(); this.reapplyCfg();
+    $('status').textContent = '已恢复默认名称与分类（追加源与源调整保留）';
   },
 
-  /* —— 失配清单：moves/names/hideS/srcs 的键没命中任何当前台的源 URL = 上游 URL 漂移（欧美台同步重建常见） —— */
+  /* —— 失配清单（P4 扩容）：moves/names/hideS/srcs/srcLabels 的键没命中任何当前台的源 URL、
+     srcManualOrder/srcDisabled（键 = 身份 URL u[0] 严格命中）没命中任何台主 URL = 上游 URL 漂移
+     （欧美台同步重建常见）——B1 生命周期三字段此前不可观测，本批补上 ---------- */
   missList() {
     const used = new Set(); for (const s of this.state.stations) for (const u of s.u) used.add(u);
+    const u0s = new Set(); for (const s of this.state.stations) u0s.add(s.u[0]);
     const bad = [];
-    for (const [m, kind] of [[this.cfg.moves, '移动'], [this.cfg.names, '改名'], [this.cfg.hideS, '隐藏'], [this.cfg.srcs, '备源']])
+    for (const [m, kind] of [[this.cfg.moves, '移动'], [this.cfg.names, '改名'], [this.cfg.hideS, '隐藏'], [this.cfg.srcs, '备源'], [this.cfg.srcLabels, '标签']])
       for (const u of Object.keys(m)) if (!used.has(u)) bad.push({ u, kind, name: this.cfg.tag[u] || u.replace(/^https?:\/\//, '').slice(0, 40) });
+    for (const [m, kind] of [[this.cfg.srcManualOrder, '排序'], [this.cfg.srcDisabled, '禁用']])
+      for (const u of Object.keys(m)) if (!u0s.has(u)) bad.push({ u, kind, name: this.cfg.tag[u] || u.replace(/^https?:\/\//, '').slice(0, 40) });
     return bad;
   },
   renderMiss() {
@@ -1927,8 +2022,8 @@ const App = {
     this.cfg = c; this.saveCfg(); this.reapplyCfg();
     $('status').textContent = '已导入维护配置';
   },
-  resetCfg() {
-    if (!confirm('清空全部维护配置？分类与电台将回到同步默认（电台数据本身不受影响）。')) return;
+  resetCfg() { // §5.4 表「重置全部维护配置」：单独列出数量与范围；不删除收藏、主库、个人文件或歌史
+    if (!confirm(`清空全部维护配置（共 ${this.cfgCount(this.cfg)} 项：分类重命名/隐藏、电台改名/移动/隐藏/追加源/源排序与启停）？分类与电台将回到同步默认——不删除收藏、主库、个人文件或歌史。`)) return;
     this.cfg = this.normCfg(null); this.saveCfg(); this.state.cat = '全部'; this.reapplyCfg();
     $('status').textContent = '已重置维护配置';
   },
@@ -2166,6 +2261,9 @@ const App = {
     // 曲讯轮询（B-6）：15s 常驻轮（条件不满足时空转不发包）；页面重新可见时立刻补一轮
     setInterval(() => this.tickSong(), 15000);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) this.tickSong(); });
+    // toast 悬停/焦点延长（§5.4）：撤销按钮区域停留时暂停倒计时，离开按剩余时限恢复
+    for (const ev of ['mouseenter', 'focusin']) $('toast').addEventListener(ev, () => this.toastPause());
+    for (const ev of ['mouseleave', 'focusout']) $('toast').addEventListener(ev, () => this.toastResume());
     // 歌曲历史浮层（B-7）：点曲名行开关；点别处收起
     $('song').onclick = () => this.toggleSongHist();
     // 快捷键帮助（N8/r2 ⑧）：? 呼出，Esc/点外关闭，焦点归还呼出点；与歌曲历史浮层互斥（AIbot P3-3）
@@ -2371,6 +2469,11 @@ const App = {
           else if (a === 'cancel') this.mEditorEnd(); // 取消 = 丢弃本对象草稿回浏览（§5.3，显式取消不再确认）
           else if (a === 'reload') { const d = this.mEditor.getDraft(); try { this.mEditor.begin(d.identityUrl, d.kind); } catch (err) { $('status').textContent = err.message; } }
           else if (a === 'srcmemclr') { const s = this.mEditorStation(); if (s) this.resetSrcDefaults(s); } // 立即动作（只清源记忆，不入草稿）
+          else if (a === 'strestore') { // §5.4「恢复名称与分类」：独立恢复动作，先过草稿门（当前草稿可能同名冲突）
+            const d = this.mEditor.getDraft();
+            try { const st = uiResolveUnique(this.state.stations, d.identityUrl); this.mDepart(() => this.mRestoreNameCat(st)); }
+            catch (err) { $('status').textContent = err.message; }
+          }
           return;
         }
         const sb = e.target.closest('[data-sact]');
@@ -2447,13 +2550,13 @@ const App = {
       const s = this.state.stations.find(x => keyOf(x) === b.closest('.mrow').dataset.k); if (!s) return;
       const act = b.dataset.act;
       if (act === 'edit') this.mBeginEditor('st', s.u[0]); // 电台对象编辑：名称/分类/隐藏草稿（替代 prompt 即时保存）
-      else if (act === 'reset') this.mDepart(() => this.cfgResetStation(s)); // ↺ 独立操作（预览确认在 §5.4 批接入）
+      else if (act === 'reset') this.mDepart(() => this.confirmResetStation(s)); // ↺ 撤回全部个人调整：预览清单确认后提交（§5.4）
       else if (act === 'srcs') this.mBeginEditor('src', s.u[0]); // 备选源管理 = 本台源草稿（§6.9：排序/禁用/标签/追加保存才提交）
     };
     $('mMiss').onclick = e => {
       if (!e.target.closest('[data-act="missclear"]')) return;
-      this.mDepart(() => { // 清失配项是 cfg 独立操作：先处理现有草稿（§5.2）
-        for (const b of this.missList()) { delete this.cfg.moves[b.u]; delete this.cfg.names[b.u]; delete this.cfg.hideS[b.u]; delete this.cfg.srcs[b.u]; delete this.cfg.tag[b.u]; }
+      this.mDepart(() => { // 清失配项是 cfg 独立操作：先处理现有草稿（§5.2）；键集随 missList 扩容（含生命周期三字段）
+        for (const b of this.missList()) { delete this.cfg.moves[b.u]; delete this.cfg.names[b.u]; delete this.cfg.hideS[b.u]; delete this.cfg.srcs[b.u]; delete this.cfg.srcLabels[b.u]; delete this.cfg.srcManualOrder[b.u]; delete this.cfg.srcDisabled[b.u]; delete this.cfg.tag[b.u]; }
         this.saveCfg(); this.renderManage();
       });
     };

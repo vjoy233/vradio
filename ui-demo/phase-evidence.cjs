@@ -262,7 +262,11 @@ async function main() {
       ? ok('Z3', '清理失败门：browser 关闭 / server 退出 / worktree 移除全部成功（零泄漏成立）', '')
       : bad('Z3', '清理失败门未过（不得宣称零泄漏，需手动回收）', cleanupErr.join(' | ') + (srvGone ? '' : ' [server未退出]') + (wtGone ? '' : ' [worktree未移除]'));
     if (faultPin) { try { faultPin.kill(); await sleep(500); git(`worktree remove --force "${wt}"`); console.error('（注入钉已拔除并补清理，临时 worktree 已回收——Z3 失败记录保留为门验证证据）'); } catch (_) { try { faultPin.kill(); } catch (_) {} console.error('注入钉拔除后仍需手动清理:', wt); } }
-    fs.writeFileSync(path.join(OUT, 'evidence.json'), JSON.stringify({ phase: PHASE, head: git('rev-parse --short HEAD').trim(), started, pass, fail, assertions: rec }, null, 2));
+    // head 不变式（AIbot 四轮可追溯性意见）：head = 采证时刻的代码提交；本 evidence.json 自身的提交只改产物不改代码，
+    // 验证 = 产物提交的父提交 === head 且产物提交 diff 仅 docs/ui-redesign-assets/evidence/**（详见 evidence/README.md）
+    fs.writeFileSync(path.join(OUT, 'evidence.json'), JSON.stringify({ phase: PHASE, head: git('rev-parse --short HEAD').trim(),
+      headNote: 'head = 采证时的代码提交；承载本文件的产物提交不改代码，git log 验证：产物提交父 == head 且 diff 仅 evidence/**',
+      started, pass, fail, assertions: rec }, null, 2));
     if (fail) process.exitCode = 1;
     console.log(`phase-evidence(${PHASE}): ${pass} 通过, ${fail} 失败 → ${path.relative(ROOT, OUT)}`);
   }

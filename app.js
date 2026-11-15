@@ -113,6 +113,11 @@ function uiChooseResume(opt) { // 续听候选（§6.3，本批次先立纯函�
   }
   return null;
 }
+/* 唱片旋转判定（ui-redesign §6.10 纯逻辑，P3 立函数供测试）：仅「真实 playing + 页面可见 + 未开启减动效」
+   才转（§4.4：连接/缓冲/暂停/失败/ended/后台/系统减动效一律静止；不得以 play 事件或 paused=false 提前宣称） */
+function uiPhaseRunning(phase, hidden, reduce) {
+  return phase === 'playing' && !hidden && !reduce;
+}
 /* 主题入口窄屏收纳（§6.11，boot 装配一次并留销毁函数）：同一节点（#themeWrap 含三选菜单）搬家——≤640px 收进
    #lowfreq（「⋯ 更多」内，文字 span 由 CSS 放出）、更宽回顶栏原锚点（#file 之前）；监听/radio.theme 随节点走，
    不复制 id。跨断点焦点：焦点在将隐藏的菜单内先关菜单（归还触发器）；DOM 搬家必脱焦——焦点还给随行 themeBtn，
@@ -184,6 +189,8 @@ const App = {
   cfg: null,   // 个人维护层（radio.cfg，owner 三批拍板）：分类重命名/隐藏/自建 + 电台移动/重命名/隐藏 + 追加备选源（P1-a/r2 ⑨）。
                // 键 = 源 URL（身份公理），同步重建后自动复用；tag = URL→原始台名快照，仅供失配清单显示
   songFor: '',   // 曲讯归属台（B-6/B-7）：切台/刷新即清零重取（当前曲名本体在 B3 管线 metaPipe.last）
+  phase: '',     // 瞬时播放阶段（P3/§6.10，Player.onphase 只读投影）：'connecting'|'playing'|'buffering'|'paused'|'idle'
+                 // 固定枚举；仅驱动唱片旋转与续听卡按钮，不新增持久键、不覆盖 onstate 任何副作用
   metaPipe: null,  // 曲讯事件管线（B3-A）：boot 创建（Metadata.mpCreate）——世代校验/清洗/同曲去重/入史决策的唯一所在
   metaV2: false,   // sink 选择（boot 按 FEATURES.metadataV2 定格）：false=Legacy（现状行为）/true=V2（归一化字段消费），绝不双写
   metaLast: null,  // V2 sink 记的最近一次归一化事件（artist/track/program 供统计/发现派生；Legacy 不写）
@@ -756,7 +763,10 @@ const App = {
     });
     const conn = pick && Player.connecting && keyOf(Player.connecting) === keyOf(pick.station);
     const cur = pick && Player.station && keyOf(Player.station) === keyOf(pick.station);
-    const label = !pick ? '' : conn ? '正在连接' : cur && !Player.isPaused() ? '暂停' : cur ? '继续收听' : '开始收听';
+    // 按钮四态（P3 收敛 P2 的 isPaused 代理，§6.10）：以真实 phase 为准——buffering 是「播着但短暂缺数据」，
+    // 按钮语义仍为「暂停」（点了确实是暂停）；仅 playing/buffering 算「在播」，连接期不提前宣称（§4.4）
+    const act = this.phase === 'playing' || this.phase === 'buffering';
+    const label = !pick ? '' : conn ? '正在连接' : cur && act ? '暂停' : cur ? '继续收听' : '开始收听';
     const kick = !pick ? '' : pick.origin === 'current' ? '当前电台' : pick.origin === 'recent' ? '接着上次收听' : '今日精选';
     const sig = pick ? [pick.station.u[0], kick, label, conn].join('|') : 'empty';
     if (hero.dataset.sig === sig) return;
@@ -777,6 +787,20 @@ const App = {
         <span class="hero-actions"><button type="button" class="btn" id="heroPlay" data-act="heroplay"${conn ? ' disabled' : ''} aria-label="${label}：${this.esc(s.n)}"><svg class="ic"><use href="#i-${label === '暂停' ? 'pause' : 'play'}"/></svg><span>${label}</span></button></span></div>`;
     }
     hero.hidden = false;
+    this.syncVinyl(); // 重建即重挂旋转类（innerHTML 清掉了 .running；判定走 uiPhaseRunning 纯函数，P3/§6.10）
+  },
+  /* 真实播放阶段投影（P3/§6.10，Player.onphase 消费方）：只存瞬时 phase + 局部更新——唱片旋转类与续听卡
+     按钮（renderHero 自带签名短路，无变化零开销），绝不整表重渲、不新增 radio.*、不覆盖 onstate 副作用 */
+  onPhase(ph, s) {
+    this.phase = ph;
+    this.syncVinyl();
+    if (s && Player.station === s) this.renderHero(); // 仅当前台的事件才可能改按钮四态
+  },
+  syncVinyl() { // 唱片 running 类 = uiPhaseRunning(phase, 页面可见, 未减动效)；visibilitychange/reduced-motion 变化时由 boot 监听重算
+    const v = document.querySelector('#resumeHero .vinyl');
+    if (!v) return;
+    const rm = this.reduceMq || matchMedia('(prefers-reduced-motion: reduce)');
+    v.classList.toggle('running', uiPhaseRunning(this.phase, document.hidden, rm.matches));
   },
   /* 更多工具 popover（§6.6）：普通按钮 popover（不贴 role=menu），Esc/点外/点操作项收起，焦点归还触发器；
      显隐只动 #sideTools 的 .open 类——绝不碰 display:contents 的 #lowfreq 容器 */
@@ -1779,6 +1803,13 @@ const App = {
     // Player 状态回调：full=true 需整表重渲（行高亮/连接中变化），否则只轻量更新底部。
     // renderHero 随行（P2）：pause 走 full=false 不整表重渲，续听卡按钮文案也要跟上（签名未变时零开销）
     Player.onstate = full => { this.playerNow(); this.renderHero(); if (full) this.render(); if (FEATURES.listenStats) this.lsState(); };
+    // 真实播放阶段通知（P3/§6.10）：Player 只发布只读 phase（固定枚举），app 投影唱片旋转/续听卡按钮——
+    // 与 onstate/onqos 各走各的回调互不覆盖；页面可见性/系统减动效变化时旋转类就地重算（§6.10）
+    Player.onphase = (ph, s) => this.onPhase(ph, s);
+    document.addEventListener('visibilitychange', () => this.syncVinyl());
+    this.reduceMq = matchMedia('(prefers-reduced-motion: reduce)');
+    if (this.reduceMq.addEventListener) this.reduceMq.addEventListener('change', () => this.syncVinyl());
+    else if (this.reduceMq.addListener) this.reduceMq.addListener(() => this.syncVinyl()); // 旧实现兜底（uiPlaceTheme 同款）
     Player.onstatus = t => { $('status').textContent = t; };
     Player.onfail = () => { this.showLast(); if (FEATURES.listenStats) ListenStats.onState('FAILED'); }; // 全部源失败：曲讯/统计一并收口
     Player.onlogo = s => Logos.get(s); // 锁屏 artwork 台标（r2 ⑩）：同步窥探绝不发请求，无台标回空数组静默缺省

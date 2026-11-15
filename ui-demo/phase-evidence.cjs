@@ -32,16 +32,23 @@ async function main() {
     await waitReady();
     const { chromium } = require(PW_PATH);
     const browser = await chromium.launch();
-    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
-    await ctx.addInitScript(() => localStorage.setItem('radio.baseline', 'done')); // 跳过首启基线确认门槛（不触后台全量体检）
-    const page = await ctx.newPage();
-    page.setDefaultTimeout(15000); page.setDefaultNavigationTimeout(20000); // 交互 15s 兜底：不可点即失败，绝不无限等
-    await page.goto(`http://127.0.0.1:${PORT}/`);
-    await page.waitForSelector('#list [data-k]', { timeout: 30000 });
-    await sleep(900); // 首帧渲染/异步对账稳定
-    const shot = (n, full) => page.screenshot({ path: path.join(OUT, n + '.png'), fullPage: !!full });
-    const vw = () => page.evaluate(() => document.documentElement.clientWidth);
-    const listW = () => page.evaluate(() => Math.round(document.querySelector('#list').getBoundingClientRect().width));
+    const open = async feat => { // 通用开页：feat='1' 预置 feat.uiRefresh（P2 开关开形态；不传 = 开关关 fresh 态）
+      const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+      await ctx.addInitScript(f => { localStorage.setItem('radio.baseline', 'done'); if (f) localStorage.setItem('feat.uiRefresh', f); }, feat); // 跳过首启基线门槛（不触后台全量体检）
+      const page = await ctx.newPage();
+      page.setDefaultTimeout(15000); page.setDefaultNavigationTimeout(20000); // 交互 15s 兜底：不可点即失败，绝不无限等
+      await page.goto(`http://127.0.0.1:${PORT}/`);
+      await page.waitForSelector('#list [data-k]', { timeout: 30000 });
+      await sleep(900); // 首帧渲染/异步对账稳定
+      return page;
+    };
+    let page = null, shot = null, vw = null, listW = null; // P1 段沿用既有局部名（不重排缩进）
+    if (PHASE === 'p1') {
+      page = await open();
+      shot = (n, full) => page.screenshot({ path: path.join(OUT, n + '.png'), fullPage: !!full });
+      vw = () => page.evaluate(() => document.documentElement.clientWidth);
+      listW = () => page.evaluate(() => Math.round(document.querySelector('#list').getBoundingClientRect().width));
+    }
 
     console.log(`[P1-E1/E2] 窄屏列表全宽（§6.11，commit 3237228 修复项）`);
     const widthPair = async () => ({ l: await listW(), v: await vw() });
@@ -140,8 +147,73 @@ async function main() {
     await shot('p1-qall-keepword');
     (after.q === '新闻' && after.n > 0 && after.all) ? ok('E6c', '搜全部保词：#q 保留、范围解除、结果非空', JSON.stringify(after)) : bad('E6c', '搜全部保词', JSON.stringify(after));
     await page.click('[data-c="★收藏"]'); await sleep(300);
-    const catReset = await page.evaluate(() => !document.querySelector(`[data-c="${CSS.escape('${catChip}')}"][aria-current="true"]`));
-    catReset ? ok('E6d', '切范围重置分类（§3.2）', '') : bad('E6d', '切范围重置 cat', '分类 chip 仍高亮');
+    const catReset = await page.evaluate(c => !document.querySelector(`[data-c="${CSS.escape(c)}"][aria-current="true"]`), catChip); // catChip 须经 arg 传入（evaluate 不携带闭包）
+    catReset ? ok('E6d', `切范围重置分类（§3.2，原=${catChip}）`, '') : bad('E6d', '切范围重置 cat', '分类 chip 仍高亮');
+
+    if (PHASE === 'p2') { /* PR#30 验收证据：uiRefresh 开关关零回归 / 开关开桌面壳与 1023/1024 断点 / 双主题 / dock 焦点 */
+      const snap = p => p.evaluate(() => ({ shell: document.documentElement.classList.contains('ui-refresh'),
+        hero: getComputedStyle(document.querySelector('#resumeHero')).display, heroHidden: document.querySelector('#resumeHero').hidden,
+        side: getComputedStyle(document.querySelector('.desktop-sidebar')).display,
+        list: Math.round(document.querySelector('#list').getBoundingClientRect().width), vw: document.documentElement.clientWidth }));
+
+      console.log('[P2-F1/F2] 开关关（默认）零回归：宽窄视口都不出壳');
+      const off = await open();
+      await off.setViewportSize({ width: 1024, height: 768 }); await sleep(300);
+      let s = await snap(off);
+      (!s.shell && s.hero === 'none' && s.side === 'none') ? ok('F2', '1024 开关关：无 ui-refresh 类、hero/侧栏 display:none（紧凑原样）', JSON.stringify(s)) : bad('F2', '开关关 1024', JSON.stringify(s));
+      await off.screenshot({ path: path.join(OUT, 'p2-1024-off-compact.png') });
+      await off.setViewportSize({ width: 390, height: 844 }); await sleep(250);
+      s = await snap(off);
+      (!s.shell && Math.abs(s.list - s.vw) <= 36) ? ok('F1', '390 开关关：列表全宽不受壳影响', `list=${s.list} vw=${s.vw}`) : bad('F1', '开关关 390', JSON.stringify(s));
+
+      console.log('[P2-F3] 开关开 @1440：侧栏/主区壳/续听卡就位');
+      const on = await open('1');
+      await on.setViewportSize({ width: 1440, height: 900 }); await sleep(400);
+      s = await snap(on);
+      const grid = await on.evaluate(() => getComputedStyle(document.querySelector('.dashboard-shell')).gridTemplateColumns);
+      (s.shell && s.side !== 'none' && !s.heroHidden && s.hero !== 'none' && grid.startsWith('200px'))
+        ? ok('F3', 'ui-refresh 类 + 侧栏可见 + hero 显示 + 壳 200px 网格', `grid=${grid}`) : bad('F3', '开壳 1440', JSON.stringify({ ...s, grid }));
+      await on.screenshot({ path: path.join(OUT, 'p2-1440-shell.png') });
+
+      console.log('[P2-F4/F5] 开关开 <1024：CSS 拦截回紧凑（1023 断点 / 390 / 768）');
+      await on.setViewportSize({ width: 1023, height: 768 }); await sleep(350);
+      s = await snap(on);
+      (s.side === 'none' && s.hero === 'none') ? ok('F4', '1023 侧栏/hero 双拦截（断点 1024 生效）', JSON.stringify(s)) : bad('F4', '1023 拦截', JSON.stringify(s));
+      await on.screenshot({ path: path.join(OUT, 'p2-1023-on-compact.png') });
+      await on.setViewportSize({ width: 390, height: 844 }); await sleep(250);
+      s = await snap(on);
+      (s.side === 'none' && s.hero === 'none' && Math.abs(s.list - s.vw) <= 36) ? ok('F5a', '390 紧凑全宽（开壳不泄漏）', `list=${s.list}`) : bad('F5a', '390 开壳紧凑', JSON.stringify(s));
+      await on.screenshot({ path: path.join(OUT, 'p2-390-on.png') });
+      await on.setViewportSize({ width: 768, height: 1024 }); await sleep(250);
+      s = await snap(on);
+      (s.side === 'none' && s.hero === 'none') ? ok('F5b', '768 紧凑（同口径）', '') : bad('F5b', '768 开壳紧凑', JSON.stringify(s));
+
+      console.log('[P2-F6] 开壳双主题（ui-* token 双套）');
+      await on.setViewportSize({ width: 1440, height: 900 }); await sleep(300);
+      await on.click('#themeBtn'); await on.click('#themeMenu [data-theme-v="light"]'); await sleep(300);
+      (await on.evaluate(() => document.documentElement.dataset.theme)) === 'light' ? ok('F6a', '开壳 light 生效', '') : bad('F6a', 'light', await on.evaluate(() => document.documentElement.dataset.theme));
+      await on.screenshot({ path: path.join(OUT, 'p2-1440-light.png') });
+      await on.click('#themeBtn'); await on.click('#themeMenu [data-theme-v="dark"]'); await sleep(300);
+      (await on.evaluate(() => document.documentElement.dataset.theme)) === 'dark' ? ok('F6b', '开壳 dark 生效', '') : bad('F6b', 'dark', await on.evaluate(() => document.documentElement.dataset.theme));
+      await on.screenshot({ path: path.join(OUT, 'p2-1440-dark.png') });
+
+      console.log('[P2-F7] hero 焦点：签名未变重渲早退不重建（防焦点丢失）');
+      const hasHero = await on.evaluate(() => !!document.querySelector('#heroPlay'));
+      if (hasHero) {
+        await on.evaluate(() => document.querySelector('#heroPlay').focus());
+        await on.evaluate(() => App.renderHero()); // 同状态重渲 → 签名早退
+        (await on.evaluate(() => document.activeElement && document.activeElement.id)) === 'heroPlay' ? ok('F7', '重渲后焦点仍在 #heroPlay', '') : bad('F7', 'hero 焦点', '焦点丢失');
+      } else bad('F7', 'hero 焦点', '无 #heroPlay（候选缺失）');
+
+      console.log('[P2-F8] dock：--dock-h 实测 + footer fixed + 键盘可达');
+      const dock = await on.evaluate(() => ({ dock: document.documentElement.style.getPropertyValue('--dock-h'),
+        spb: getComputedStyle(document.documentElement).scrollPaddingBottom, foot: getComputedStyle(document.querySelector('footer')).position }));
+      (parseFloat(dock.dock) > 0 && dock.foot === 'fixed' && parseFloat(dock.spb || '0') > 0)
+        ? ok('F8a', '--dock-h 写入 + footer fixed + scroll-padding 联动', JSON.stringify(dock)) : bad('F8a', 'dock', JSON.stringify(dock));
+      await on.evaluate(() => document.querySelector('#q').focus());
+      let inFoot = false; for (let i = 0; i < 25 && !inFoot; i++) { await on.keyboard.press('Tab'); inFoot = await on.evaluate(() => !!(document.activeElement && document.activeElement.closest('footer'))); }
+      inFoot ? ok('F8b', '键盘 Tab 可达底栏控件', '') : bad('F8b', 'Tab 到 footer', '25 次 Tab 未达');
+    }
 
     await browser.close();
   } finally { srv.kill(); }

@@ -4,11 +4,12 @@
    装载顺序硬约束：store → player → logos → radio-data → features → srcorder → quality-store → metadata → listen-stats → app → sync（app 读开关装配 sink/统计/发现入口）。 */
 window.FEATURES = (function () {
   const def = {
-    metadataV2: false,  // B3-A 元数据 v2 管线（关 = LegacyMetadataSink，现状曲讯/icy-br/MediaSession/radio.songs 不回归）
-    listenStats: false, // B3-B 本地收听统计（关 = 不消费统计事件、不 flush sidecar；不清已有数据）
-    discovery: false,   // B3-C 本地发现页（关 = 隐藏入口与派生计算；不影响主列表排序）
-    uiRefresh: false,   // 桌面新版壳总开关（ui-redesign §6.6/P2）：默认关 = 页面与紧凑布局完全一致；
-                        // 开发开启 = localStorage['feat.uiRefresh']='1'（≥1024px 时生效为桌面壳）
+    // 2026-11-15 发布翻转：B3 双端门槛验收通过 + ui-redesign P6 验收（51 断言）通过，四开关默认开。
+    // 回滚 = 对应默认值改回 false 再发一版（各开关独立回滚）；用户单侧退出 localStorage['feat.<名>']='0'。
+    metadataV2: true,   // B3-A 元数据 v2 管线（关 = LegacyMetadataSink，曲讯/icy-br/MediaSession/radio.songs 走旧链）
+    listenStats: true,  // B3-B 本地收听统计（关 = 不消费统计事件、不 flush sidecar；不清已有数据）
+    discovery: true,    // B3-C 本地发现页（关 = 隐藏入口与派生计算；不影响主列表排序）
+    uiRefresh: true,    // 桌面新版壳总开关（ui-redesign §6.6/P2）：≥1024px 生效为桌面壳，窄窗口与旧紧凑布局不变
   };
   try {
     const o = {};

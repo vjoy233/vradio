@@ -321,6 +321,23 @@
     /* 台标外框桌面规格（§6.5 骨架）：48px + padding4 + 圆角8（网格/列表/详情统一，骨架原样） */
     html.ui-refresh .station-logo { width:48px; height:48px; padding:4px; border-radius:8px; }
     html.ui-refresh .card .logo.ph, html.ui-refresh .row .logo.ph, html.ui-refresh .dheadinfo .logo.ph { font-size:18px; }
+    /* 长名截断（§6.5 骨架原样）：网格两行定高 2.9em、列表单行 ellipsis；完整名称走 #namett 单例 tooltip（§4.2/§9.3 不依赖 title） */
+    html.ui-refresh .station-title { min-width:0; max-width:min(100%,15rem); overflow:hidden; font-size:15px; line-height:1.45; }
+    html.ui-refresh #list.grid .station-title { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; min-height:2.9em; max-height:2.9em; }
+    html.ui-refresh #list:not(.grid) .station-title { display:block; white-space:nowrap; text-overflow:ellipsis; }
+    /* 卡片桌面规格（§4.2）：顶行 = logo + 弹性留白 + 收藏(44×44 命中) + 详情，名称独立换行块，meta 第三行——
+       DOM 与紧凑布局共用一套（单行排布），此处用 flex-wrap + order 重排，紧凑零回归；卡高 152–168 区间取 156 */
+    html.ui-refresh #list.grid .chead { flex-wrap:wrap; }
+    html.ui-refresh #list.grid .chead .cname { order:3; flex-basis:100%; }
+    html.ui-refresh #list.grid .chead .fav:not(.dmore) { order:1; margin:0 0 0 auto; width:44px; height:44px; padding:0; display:grid; place-items:center; }
+    html.ui-refresh #list.grid .chead .fav.dmore { order:2; margin:0; width:32px; height:44px; padding:0; display:grid; place-items:center; }
+    html.ui-refresh #list.grid .card { min-height:156px; contain-intrinsic-size:auto 160px; }
+    /* 列表行桌面（§4.2）：保横向排列、元信息右对齐同排——col 转横向 + meta 靠右可收缩，紧凑的纵向 col 不动 */
+    html.ui-refresh #list:not(.grid) .row .col { flex-direction:row; align-items:center; gap:12px; }
+    html.ui-refresh #list:not(.grid) .row .l1 { flex:1; min-width:0; }
+    html.ui-refresh #list:not(.grid) .row .meta { margin-left:auto; text-align:right; }
+    /* 长名完整提示（§4.2/§9.3）：单例 tooltip 定位在触发行下方、不越视口；pointer-events:none 不拦悬停 */
+    html.ui-refresh #namett { position:fixed; z-index:12; background:var(--ui-surface); color:var(--ui-text); border:1px solid var(--ui-line); border-radius:8px; padding:5px 10px; font-size:12px; line-height:1.5; max-width:min(420px,80vw); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; box-shadow:0 8px 24px rgba(0,0,0,.25); pointer-events:none; }
   }
   @media (prefers-reduced-motion:reduce) { html.ui-refresh .vinyl { animation:none !important; } } /* 唱片旋转为 P3 接线，先立规约（§6.5） */
 </style>
@@ -451,6 +468,9 @@
 <div id="songhist" hidden></div>
 <!-- toast：后台任务通告（增量体检/自动基线），与 #status 分工——用户主动操作的反馈不走这里 -->
 <div id="toast" role="status" aria-live="polite" hidden></div>
+<!-- 长名完整提示单例（P3/§4.2/§9.3）：聚焦行/卡/底栏台名/曲讯时由 app.js 委托填充——截断提示不依赖浏览器
+     title（键盘聚焦不出原生提示）；仅桌面新版壳启用，其余布局恒隐 -->
+<div id="namett" role="tooltip" hidden></div>
 <!-- 快捷键帮助（N8/r2 ⑧）：按 ? 呼出；键位集合与 app.js 实际绑定一一对应，改键位时两处同步 -->
 <div id="keys" hidden tabindex="-1" role="dialog" aria-label="快捷键一览">
   <b>快捷键一览</b>

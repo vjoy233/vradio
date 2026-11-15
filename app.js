@@ -669,7 +669,8 @@ const App = {
       const base = `${playing ? ' playing' : ''}${k === ck ? ' connecting' : ''}${s.health === 'dead' ? ' dead' : ''}`;
       // title=全名（UI 审计 P3-9）：截断长名（最长 84 字）此前无处可看全名；死台按档位叠加提示（R1 拍板分文案）
       // data-u0 = 身份 URL 锚点（§6.7）：维护改名后 data-k 失配，keepFocus 按它兜底找回焦点
-      const attrs = `data-k="${this.esc(k)}" data-u0="${this.esc(s.u[0])}" data-i="${i}" role="listitem" tabindex="${i === ri ? 0 : -1}" aria-label="${this.esc(s.n)}${playing ? '（播放中）' : ''}"${playing ? ' aria-current="true"' : ''} title="${this.esc(s.n)}${s.health === 'dead' ? (s.perm ? '（长期确认停运）' : '（疑似不可达，点击仍可尝试播放）') : ''}"`;
+      // data-fn = 全名快照（P3/§4.2）：单例 tooltip 聚焦可见的填充源——截断提示不能只依赖浏览器 title（键盘聚焦不出原生提示）
+      const attrs = `data-k="${this.esc(k)}" data-u0="${this.esc(s.u[0])}" data-fn="${this.esc(s.n)}" data-i="${i}" role="listitem" tabindex="${i === ri ? 0 : -1}" aria-label="${this.esc(s.n)}${playing ? '（播放中）' : ''}"${playing ? ' aria-current="true"' : ''} title="${this.esc(s.n)}${s.health === 'dead' ? (s.perm ? '（长期确认停运）' : '（疑似不可达，点击仍可尝试播放）') : ''}"`;
       const hp = s.health ? `<span class="health ${s.health === 'ok' ? 'ok' : 'bad'}" title="体检${s.health === 'ok' ? '可用' : (s.perm ? '长期确认停运' : '疑似不可用')}">${s.health === 'ok' ? '<svg class="ic"><use href="#i-check"/></svg>' : '<svg class="ic"><use href="#i-x"/></svg>'}</span>` : '';
       // 信息降噪（UI 审计 P2-1/P2-2，owner 拍板）：① 台名剥离「[国别]」后缀进 meta（搜索/aria/身份仍用全名，
       // 数据层不动）；② meta 行按视图降级——分类 badge 只在 cat=全部（含 scope 态）显示（分类视图下 100% 冗余），
@@ -679,9 +680,9 @@ const App = {
       const parts = `${s.perm ? '<span class="badge permb" title="长期确认停运（复测可达会自动回归）">已停运</span>' : ''}${!inCat ? `<span class="badge">${this.esc(s.c)}</span>` : ''}${cn ? `<span class="srcs" title="国家/地区">${this.esc(cn)}</span>` : ''}${s.u.length > 1 ? `<span class="srcs" title="备选源数量">${s.u.length}源</span>` : ''}`;
       const cfoot = (parts || hp) ? `<div class="cfoot">${parts}${hp}</div>` : '';
       const more = `<button type="button" class="fav dmore" data-more="${this.esc(k)}" aria-label="电台详情：${this.esc(s.n)}" title="详情与逐源诊断（B1）"><svg class="ic"><use href="#i-info"/></svg></button>`;
-      if (grid) return `<div class="card${base}" ${attrs}><div class="chead">${Logos.visual(s)}<span class="cname">${this.esc(dn)}</span>${this.favBtn(k, on, s)}${more}</div>${cfoot}</div>`;
+      if (grid) return `<div class="card${base}" ${attrs}><div class="chead">${Logos.visual(s)}<span class="cname station-title">${this.esc(dn)}</span>${this.favBtn(k, on, s)}${more}</div>${cfoot}</div>`;
       const meta = parts ? `<div class="meta">${parts}</div>` : '';
-      return `<div class="row${base}" ${attrs}>${this.favBtn(k, on, s)}<div class="col"><div class="l1">${Logos.visual(s)}<span class="name">${this.esc(dn)}</span>${hp}</div>${meta}</div>${more}</div>`;
+      return `<div class="row${base}" ${attrs}>${this.favBtn(k, on, s)}<div class="col"><div class="l1">${Logos.visual(s)}<span class="name station-title">${this.esc(dn)}</span>${hp}</div>${meta}</div>${more}</div>`;
     }).join('') || this.emptyHtml();
     restore();
     const ae = document.activeElement; // 重渲后焦点行找回（keepFocus）：同步 roving 落点，防 Tab 跳回别行
@@ -2021,6 +2022,7 @@ const App = {
         this.themeMenuClose(); // 主题三选菜单（§6.11）：Esc 收起 + 焦点归还
         this.srcPopClose(); // 选源浮层（AIbot P2-1）：Esc 收起 + 焦点归还，与 ? 帮助的 Esc 自述一致
         this.sideToolsClose(); // 更多工具 popover（P2 桌面壳）：Esc 收起 + 焦点归还
+        $('namett').hidden = true; // 长名提示单例（P3/§4.2）：Esc 可关
       }
       if (e.key === 'Tab' && (!$('manage').hidden || !$('detail').hidden || !$('discovery').hidden)) { // 焦点困在弹窗内（UI 审计 P2-7）：aria-modal 此前 Tab 可穿透到被遮罩的主页（B1 扩到详情、B3 扩到发现页）
         const dlg = !$('manage').hidden ? $('manage') : !$('detail').hidden ? $('detail') : $('discovery');
@@ -2070,6 +2072,25 @@ const App = {
         const s = this.state.stations.find(x => x.u[0] === this.heroK);
         if (s) this.togglePlay(keyOf(s)); // 当前台 → 暂停/继续（不重记最近）；非当前 → startPlay 记最近（只有点播放才记）
       });
+      // 长名完整提示（P3/§4.2/§9.3）：单例 #namett + focusin/focusout 委托填充——行/卡读 data-fn 全名快照，
+      // 底栏 #nowline/#song 读自身文本；定位在触发元素下方、左右夹回视口内。桌面限定（硬约束），悬停提示
+      // 仍由既有 title 承担不重复造；Esc 收起在全局 Esc 块、滚动即收（位置失效不飘）
+      const ttShow = el => {
+        const t = (el.dataset && el.dataset.fn) || (el.id === 'nowline' || el.id === 'song' ? el.textContent : '');
+        const tip = $('namett');
+        if (!t) { tip.hidden = true; return; }
+        tip.textContent = t; tip.hidden = false;
+        const r = el.getBoundingClientRect(), b = tip.getBoundingClientRect();
+        tip.style.left = Math.max(12, Math.min(r.left, innerWidth - b.width - 12)) + 'px';
+        tip.style.top = Math.min(r.bottom + 6, Math.max(12, innerHeight - b.height - 12)) + 'px';
+      };
+      document.addEventListener('focusin', e => { // 桌面断点内才出提示（增强面约束）；焦点挪走即收
+        const el = e.target && e.target.closest && e.target.closest('[data-fn],#nowline,#song');
+        if (el && document.documentElement.classList.contains('ui-refresh') && matchMedia('(min-width:1024px)').matches) ttShow(el);
+        else $('namett').hidden = true;
+      });
+      document.addEventListener('focusout', () => { $('namett').hidden = true; });
+      addEventListener('scroll', () => { $('namett').hidden = true; }, { passive: true, capture: true }); // 列表/文档滚动都收（capture 兜 #list 内滚）
     }
     $('mTabC').onclick = () => { this.mTab = 'cats'; this.renderManage(); };
     $('mTabS').onclick = () => { this.mTab = 'st'; this.renderManage(); };

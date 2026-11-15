@@ -41,11 +41,19 @@ function fakeAudio() { // player.js 的 audio 桩：监听捕获 + fire() 手动
   return a;
 }
 
-function fakeDocument() { // store.js 只用 document.addEventListener('visibilitychange') + document.hidden；$() 元素按需缓存
+function fakeDocument() { // store/sync 用 document.addEventListener('visibilitychange')/hidden；$() 取元素按需缓存
   const els = {}, L = {};
+  const mkEl = () => { // querySelector 按选择器确定性缓存（sync.js 反复读写 b.querySelector('span').textContent 须同一实例）
+    const el = { innerHTML: '', textContent: '', value: '', hidden: false, disabled: false, dataset: {}, _q: {},
+      classList: { toggle() {}, add() {}, remove() {} }, setAttribute() {}, removeAttribute() {}, onclick: null };
+    el.querySelector = sel => el._q[sel] || (el._q[sel] = mkEl());
+    el.querySelectorAll = () => [];
+    return el;
+  };
   return {
     hidden: false, activeElement: null, _els: els,
-    getElementById(id) { return els[id] || (els[id] = { innerHTML: '', value: '', classList: { toggle() {}, add() {}, remove() {} }, setAttribute() {}, querySelector: () => null, querySelectorAll: () => [] }); },
+    getElementById(id) { return els[id] || (els[id] = mkEl()); },
+    createElement(tag) { const el = mkEl(); el.tag = tag; return el; },
     addEventListener(ev, fn) { (L[ev] = L[ev] || []).push(fn); },
     dispatch(ev) { for (const fn of (L[ev] || []).slice()) fn(); },
   };

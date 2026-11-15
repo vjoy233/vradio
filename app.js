@@ -73,12 +73,55 @@ function buildDiscovery(input) {
   return { groups: g, unknown };
 }
 
+/* ---------- 筛选纯函数（ui-redesign §6.2/§6.3，P1 单一筛选状态）：state.scope='all'|'favorites'|'recent' 与
+   state.cat（真实分类）双轨——旧 ★收藏/最近 哨兵不再写入 cat。依赖全显式注入（数据只读，不写 Store/不改
+   stations），test/ui-scope.js 经 vm 沙箱直测。可见性规则：手动隐藏（台/分类）永不豁免——正在播也不豁免
+   （手动是明确意图）；all=true 仅豁免自动 dead 标记（空态判断「只是被死台隐藏」用），正在播/连接中例外照旧。
+   搜索 = 台名 + 空格 + 分类名拼接后逐词 AND（§3.4：不同词可分别命中台名/分类；dCat 留底不参与）。 ---------- */
+function uiStationShown(s, opt) {
+  if (!s || s.hidden || opt.hiddenCategories[s.c]) return false;
+  const k = opt.key(s);
+  return !!(opt.all || opt.showDead || s.health !== 'dead' || k === opt.playingKey || k === opt.connectingKey);
+}
+function uiProjectStations(opt) { // 范围投影：recent 源 = recents 前 20 条回绑解析（失配丢弃、URL 回绑、keyOf 去重保队首）；
+  // favorites 按 favoriteKeys 过滤；category 只收真实分类（'全部' 不过滤）；多词 AND 可分别命中台名/分类
+  const words = String(opt.keyword || '').toLowerCase().split(/\s+/).filter(Boolean);
+  const seen = new Set();
+  const source = opt.scope === 'recent'
+    ? opt.recents.slice(0, 20).map(opt.resolveRecent).filter(Boolean)
+    : opt.stations;
+  return source.filter(s => {
+    const k = opt.key(s);
+    if (seen.has(k) || !uiStationShown(s, opt)) return false;
+    if (opt.scope === 'favorites' && !opt.favoriteKeys.has(k)) return false;
+    if (opt.category !== '全部' && s.c !== opt.category) return false;
+    const text = (s.n + ' ' + s.c).toLowerCase();
+    if (!words.every(w => text.includes(w))) return false;
+    seen.add(k); return true;
+  });
+}
+function uiChooseResume(opt) { // 续听候选（§6.3，本批次先立纯函数，P2 接首页渲染）：当前播放/暂停 → 最近前 20 条 →
+  // STARTER 精选，三级逐级回退；eligible 由调用方按 uiStationShown 组装（不受当前搜索影响）。无合格 → null
+  const current = opt.current && opt.resolveCurrent(opt.current);
+  if (current && opt.eligible(current)) return { station: current, origin: 'current' };
+  for (const entry of opt.recents.slice(0, 20)) {
+    const s = opt.resolveRecent(entry);
+    if (s && opt.eligible(s)) return { station: s, origin: 'recent' };
+  }
+  for (const s of opt.starters) {
+    if (s && opt.eligible(s)) return { station: s, origin: 'starter' };
+  }
+  return null;
+}
+
 const App = {
   /* 集中状态（docs/review.md 架构-风险 2）：stations 数据 + 渲染哨兵 + 行索引（体检增量更新用，去 O(n²)）
      view：网格/列表视图（boot 从 localStorage 恢复，网格为默认——单列长列表浪费纵向空间）
      showDead：无效源（体检 ✗）台是否显示，默认隐藏（boot 从 localStorage 恢复）
-     theme：auto/light/dark，默认跟随系统（boot 从 localStorage 恢复，写 <html data-theme>） */
-  state: { stations: STARTER.slice(), cat: '全部', keyword: '', view: 'grid', showDead: false, theme: 'auto', stamp: 0, index: new Map() },
+     theme：auto/light/dark，默认跟随系统（boot 从 localStorage 恢复，写 <html data-theme>）
+     scope：范围筛选（ui-redesign §3.2 单一筛选状态）='all'|'favorites'|'recent'——内存态不持久化（刷新回全部）；
+     cat 只存真实分类名（旧 ★收藏/最近 哨兵绝不写入，切范围入口统一转 scope），与 scope/keyword 组合筛选 */
+  state: { stations: STARTER.slice(), scope: 'all', cat: '全部', keyword: '', view: 'grid', showDead: false, theme: 'auto', stamp: 0, index: new Map() },
   rowIdx: 0, // 方向键导航落点（UI 审计 P2-5）：roving tabindex——仅此行 tabindex=0，Tab 不再穿全库停靠点
   favs: [],    // [{k, u:[源URL…]}] —— 带 URL 的条目永不回收（休眠待回绑），旧名字键回绑失败即刻回收
   recents: [], // [{k, n, u:[…]}] 最近在前、≤20；队首即「上次收听」（E3 与 lastKey 合并为单一队列）
@@ -405,8 +448,15 @@ const App = {
     return out.sort((a, b) => a[0] - b[0]).slice(0, 200).map(x => x[1]);
   },
   baselineList() { // 首启基线范围（R4 拍板）：无体检证据的国内台——欧美两分类同步期已逐个实测跳过
-    // （dCat = 维护层套用前的默认分类留底，免疫分类重命名/单台移动的显示层改写）
-    return this.visible(true).filter(s => !['欧美音乐', '国际新闻·谈话'].includes(s.dCat || s.c));
+    // （dCat = 维护层套用前的默认分类留底，免疫分类重命名/单台移动的显示层改写）。
+    // 基线是全库口径：显式全库投影（scope/cat/keyword 一律不带，§6.7「搜索不能截断全库基线」），
+    // all=true 只忽略自动 dead（基线本来就要给死台落标记），不走用户当前筛选的 visible()
+    return uiProjectStations({
+      stations: this.state.stations, scope: 'all', category: '全部', keyword: '',
+      recents: [], resolveRecent: () => null, favoriteKeys: new Set(), hiddenCategories: this.cfg.hideC,
+      showDead: this.state.showDead, all: true, key: keyOf,
+      playingKey: Player.station && keyOf(Player.station), connectingKey: Player.connecting && keyOf(Player.connecting),
+    }).filter(s => !['欧美音乐', '国际新闻·谈话'].includes(s.dCat || s.c));
   },
   toast(msg, opt = {}) { // 极简 toast（R1 拍板新增）：后台任务专用（增量体检/自动基线/多标签提示），
     // 用户主动操作走 #status——两通道不双写，读屏器不念两遍（R4 分工规则）。action = {label, fn} 确认门槛用；
@@ -434,11 +484,14 @@ const App = {
   },
 
   /* ---------- 渲染（唯一入口）：网格 = 精简卡片 / 列表 = 两行详情（元信息行含「正在播」节目） ---------- */
-  keepFocus(box, ...attrs) { // innerHTML 整表重建会把键盘焦点弹回 body：重建前后找回同节点
+  keepFocus(box, ...attrs) { // innerHTML 整表重建会把键盘焦点弹回 body：重建前后找回同节点。
+    // 多锚点按序兜底（§6.7）：主 attr 失配（如维护改名后 data-k 变了）退到下一锚点（data-u0 URL 不变），焦点不丢
     const ae = document.activeElement;
     if (!box.contains(ae) || !ae.dataset) return () => {};
-    const pair = attrs.map(a => [a, ae.dataset[a]]).find(([, v]) => v != null);
-    return () => { if (pair) box.querySelector(`[data-${pair[0]}="${CSS.escape(pair[1])}"]`)?.focus({ preventScroll: true }); };
+    const pairs = attrs.map(a => [a, ae.dataset[a]]).filter(([, v]) => v != null);
+    return () => {
+      for (const [a, v] of pairs) { const t = box.querySelector(`[data-${a}="${CSS.escape(v)}"]`); if (t) { t.focus({ preventScroll: true }); return; } }
+    };
   },
   favBtn(k, on, s) {
     return `<button type="button" class="fav${on ? ' on' : ''}" data-fav="${this.esc(k)}" aria-pressed="${on}" aria-label="${on ? '取消收藏' : '收藏'}：${this.esc(s.n)}" title="${on ? '取消收藏' : '收藏'}">${on ? '<svg class="ic"><use href="#i-star-filled"/></svg>' : '<svg class="ic"><use href="#i-star"/></svg>'}</button>`;
@@ -451,30 +504,33 @@ const App = {
     const order = [...pins.filter(c => present.has(c)),                                  // 置顶双音乐类
       ...this.cfg.cats.filter(c => present.has(c) && !hid(c) && !pins.includes(c)),       // 自建分类（移入台后才出现）
       ...[...present].filter(c => !pins.includes(c) && !this.cfg.cats.includes(c))];     // 其余按数据序
-    const cats = ['全部', '★收藏', '最近', ...order];
-    if (!cats.includes(this.state.cat)) this.state.cat = '全部'; // 数据更新/分类被藏后回退全部
-    // 数量角标（UI 审计 P3-5，owner 拍板）：与 visible() 同口径的可见台数，帮用户预判列表规模
+    const cats = ['全部', '★收藏', '最近', ...order]; // 紧凑布局保留三范围入口（§3.2）：chip 点击映射 scope，真实分类映射 cat
+    if (this.state.cat !== '全部' && !order.includes(this.state.cat)) this.state.cat = '全部'; // 有效性只查真实分类（scope 独立有效——切收藏/最近不误回全部）；数据更新/分类被藏后回退
+    // 数量角标（UI 审计 P3-5，owner 拍板）：范围计数=全库口径、分类计数=当前 scope 口径（见 catCounts）
     const cc = this.catCounts();
     const cnt = c => c === '全部' ? cc.all : c === '★收藏' ? cc.favN : c === '最近' ? cc.recN : (cc.m.get(c) || 0);
+    const on = c => c === '全部' ? this.state.scope === 'all' : c === '★收藏' ? this.state.scope === 'favorites' : c === '最近' ? this.state.scope === 'recent' : c === this.state.cat; // 范围 chip 与分类 chip 各自高亮——组合筛选（收藏+分类）两个都亮
     // 互斥单选语义用 aria-current（aria-pressed 是独立开关语义，不适用）
-    $('cats').innerHTML = cats.map(c => `<button type="button" class="chip${c === this.state.cat ? ' on' : ''}" data-c="${this.esc(c)}"${c === this.state.cat ? ' aria-current="true"' : ''}>${this.esc(c)}<i class="n">${cnt(c)}</i></button>`).join('');
+    $('cats').innerHTML = cats.map(c => `<button type="button" class="chip${on(c) ? ' on' : ''}" data-c="${this.esc(c)}"${on(c) ? ' aria-current="true"' : ''}>${this.esc(c)}<i class="n">${cnt(c)}</i></button>`).join('');
     restore();
     this.updateCatsFade();
   },
-  /* chip 角标计数：手动隐藏/藏分类不计；死台默认隐藏不计（正在播/连接中例外，与 visible 一致） */
+  /* chip 角标计数（§3.2 口径）：范围计数（全部/收藏/最近三个 chip）沿用全库健康/手动隐藏口径（不含 keyword/category）；
+     分类计数按当前 scope 投影但**不应用**当前 category 与 keyword——搜索时分类条不消失、0 计数也可恢复。
+     死台默认隐藏不计（正在播/连接中例外，与 visible 一致） */
   catCounts() {
     const pk = Player.station && keyOf(Player.station), ck = Player.connecting && keyOf(Player.connecting), favs = this.favKeys();
+    const shown = s => !s.hidden && !this.cfg.hideC[s.c] && (this.state.showDead || s.health !== 'dead' || keyOf(s) === pk || keyOf(s) === ck);
+    const seen = new Set(), recentKeys = new Set(); // recent 集合：recents 前 20 条回绑解析 + shown + keyOf 去重（与 uiProjectStations 同源口径）
+    for (const r of this.recents.slice(0, 20)) { const s = this.resolve(r); if (s && shown(s) && !seen.has(keyOf(s))) { seen.add(keyOf(s)); recentKeys.add(keyOf(s)); } }
+    const inScope = s => this.state.scope === 'favorites' ? favs.has(keyOf(s)) : this.state.scope === 'recent' ? recentKeys.has(keyOf(s)) : true;
     const m = new Map(); let all = 0, favN = 0;
     for (const s of this.state.stations) {
-      if (s.hidden || this.cfg.hideC[s.c]) continue;
-      if (s.health === 'dead' && !this.state.showDead && keyOf(s) !== pk && keyOf(s) !== ck) continue;
+      if (!shown(s)) continue;
       all++; if (favs.has(keyOf(s))) favN++;
-      m.set(s.c, (m.get(s.c) || 0) + 1);
+      if (inScope(s)) m.set(s.c, (m.get(s.c) || 0) + 1);
     }
-    const recN = this.recents.slice(0, 20).filter(r => {
-      const s = this.resolve(r);
-      return s && !s.hidden && !this.cfg.hideC[s.c] && (this.state.showDead || s.health !== 'dead' || keyOf(s) === pk || keyOf(s) === ck);
-    }).length;
+    const recN = [...recentKeys].length; // 已在 recentKeys 构建时按 resolve+去重收口（回绑失配的不计）
     return { m, all, favN, recN };
   },
   /* 分类条两端渐隐（UI 审计 P3-5）：滚动位置离端点远才渐隐该端，提示横向可滚（细滚动条已在 CSS） */
@@ -483,54 +539,76 @@ const App = {
     c.classList.toggle('fade-l', c.scrollLeft > 4);
     c.classList.toggle('fade-r', c.scrollLeft + c.clientWidth < c.scrollWidth - 4);
   },
+  /* ---------- 单一筛选状态（ui-redesign §3.2/§6.7）：scope/cat/keyword 组合筛选的三个入口。
+     切范围重置 cat（keyword/view/播放不动）；选分类只改 cat（scope/keyword 不动）；搜全部解除 scope+cat
+     但保留 keyword。均为内存态，无持久键；绝不把 ★收藏/最近 哨兵写进 cat ---------- */
+  setScope(scope) {
+    if (!['all', 'favorites', 'recent'].includes(scope)) return; // 非法值忽略（状态不被污染）
+    this.state.scope = scope; this.state.cat = '全部'; this.rowIdx = 0;
+    this.swapRender();
+  },
+  setCategory(category) {
+    this.state.cat = category; this.rowIdx = 0;
+    this.swapRender();
+  },
+  searchEverywhere() { // 空态「搜全部电台」入口：解除范围/分类限制，关键词与 #q.value 保留
+    this.state.scope = 'all'; this.state.cat = '全部'; this.rowIdx = 0;
+    this.swapRender();
+  },
+  /* 当前筛选下的可见列表（渲染/方向键/收藏切台唯一口径）。all=true 仅忽略自动 dead（空态判断用），
+     scope/category/keyword 照常生效、手动隐藏任何情况不可见——投影逻辑全在 uiProjectStations 纯函数 */
   visible(all) {
-    const st = this.state, favs = this.favKeys();
-    const kws = st.keyword.toLowerCase().split(/\s+/).filter(Boolean); // 多词 AND（audit-r2 拍板四-1）：空格分词全命中，「音乐 北京」→ 北京音乐广播
-    const hit = n => kws.every(w => n.includes(w));
-    // 手动维护层（隐藏台/隐藏分类）彻底消失（owner 拍板：全部/收藏/搜索/体检均不可见）；
-    // 死台默认隐藏的「正在播例外」只豁免自动标记，不豁免手动隐藏。all=true 供空态判断「只是被死台隐藏」
-    const show = s => !s.hidden && !this.cfg.hideC[s.c] && (all || st.showDead || s.health !== 'dead'
-      || (Player.station && keyOf(Player.station) === keyOf(s)) || (Player.connecting && keyOf(Player.connecting) === keyOf(s)));
-    if (st.cat === '最近') { // 最近播放（E3）：按 recents 队序（键或 URL 回绑解析），上限 20
-      const hits = [];
-      for (const r of this.recents.slice(0, 20)) { const s = this.resolve(r); if (s && (!kws.length || hit(s.n.toLowerCase())) && show(s)) hits.push(s); }
-      return hits;
-    }
-    return st.stations.filter(s =>
-      (st.cat === '全部' || (st.cat === '★收藏' ? favs.has(keyOf(s)) : s.c === st.cat)) &&
-      (!kws.length || hit(s.n.toLowerCase())) && show(s));
+    return uiProjectStations({
+      stations: this.state.stations, scope: this.state.scope,
+      category: this.state.cat, keyword: this.state.keyword,
+      recents: this.recents, resolveRecent: r => this.resolve(r),
+      favoriteKeys: this.favKeys(), hiddenCategories: this.cfg.hideC,
+      showDead: this.state.showDead, all: !!all, key: keyOf,
+      playingKey: Player.station ? keyOf(Player.station) : null,
+      connectingKey: Player.connecting ? keyOf(Player.connecting) : null,
+    });
   },
   // 电台名/分类来自远程上游仓库，渲染前必须转义（防注入）
   esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); },
-  emptyHtml() { // 空态给出原因和下一步动作
-    const msg = this.state.cat === '★收藏' && !this.favs.length ? '还没有收藏电台——点电台左侧 ☆ 即可收藏'
-      : this.state.cat === '最近' && !this.recents.length ? '还没有播放记录——点任意电台即开始收听'
+  emptyHtml() { // 空态给出原因和下一步动作（§6.2）：scope 空收藏/空最近点名；有 keyword 给「清空搜索」与
+    // 「搜全部电台」两个出口（data-act 委托在 #list onclick——qclear 清词保 scope/cat，qall 解除范围保词）；
+    // visible(true) 非空说明只是被自动 dead 过滤（手动隐藏任何情况不出现，不给误导入口）
+    const kw = this.state.keyword;
+    const msg = this.state.scope === 'favorites' && !this.favs.length ? '还没有收藏电台——点电台左侧 ☆ 即可收藏'
+      : this.state.scope === 'recent' && !this.recents.length ? '还没有播放记录——点任意电台即开始收听'
       : this.visible(true).length ? '当前筛选的电台均已体检不可用（默认隐藏）——点上方「✗ 无效源」开关显示它们'
-      : this.state.keyword ? `没有匹配「${this.esc(this.state.keyword)}」的电台，换个关键词试试` : '该分类暂无电台';
-    return `<div class="empty">${msg}</div>`;
+      : kw ? `没有匹配「${this.esc(kw)}」的电台，换个关键词试试`
+      : this.state.cat !== '全部' ? '该分类暂无电台' : '该范围内暂无电台';
+    const acts = kw ? `<div style="display:flex;gap:8px;flex-wrap:wrap;padding:12px 0 0">
+      <button type="button" class="btn" data-act="qclear">清空搜索</button>
+      <button type="button" class="btn" data-act="qall">搜全部电台</button></div>` : '';
+    return `<div class="empty">${msg}${acts}</div>`; // 动作并进 .empty 内层：网格视图空态占满整行的规则（#list.grid .empty）连按钮一起生效
   },
   render() {
     this.buildCats(); // 角标与列表同源刷新（AIbot PR#9 review P2-a）：render 内统一调，调用方无需再单独调 buildCats
-    const restore = this.keepFocus($('list'), 'k', 'fav'); // 焦点在行/卡片或按钮上都找回
+    const restore = this.keepFocus($('list'), 'k', 'fav', 'u0'); // 焦点在行/卡片或按钮上都找回；data-u0 兜底（改名后 data-k 失配仍可按 URL 锚点找回，§6.7）
     const list = this.visible();
     $('deadBtn').hidden = !this.state.stations.some(s => s.health === 'dead'); // 出现过死台才亮「无效源」开关
     this.state.stamp++;
     this.state.index = new Map(list.map((s, i) => [s, i])); // 行索引（体检增量更新用，替代 indexOf 的 O(n²)）
     const pk = Player.station && keyOf(Player.station), ck = Player.connecting && keyOf(Player.connecting);
     const favs = this.favKeys(), grid = this.state.view === 'grid';
-    $('list').className = grid ? 'grid' : '';
+    $('list').classList.toggle('grid', grid); // §6.5：classList 替代 className 整体赋值（整体赋值会抹掉 swap 淡入等挂类）
+    const scT = { all: '全部电台', favorites: '收藏', recent: '最近' }[this.state.scope] || '全部电台';
+    $('q').placeholder = `在${scT}${this.state.cat !== '全部' ? ' · ' + this.state.cat : ''}内搜索`; // placeholder 明确当前范围（§3.4，范围/分类/搜索入口共用 render 收口）
     const ri = Math.min(this.rowIdx || 0, list.length - 1); // roving tabindex（P2-5）：仅落点行可 Tab 停靠
     $('list').innerHTML = list.map((s, i) => {
       const k = keyOf(s), on = favs.has(k), playing = k === pk;
       const base = `${playing ? ' playing' : ''}${k === ck ? ' connecting' : ''}${s.health === 'dead' ? ' dead' : ''}`;
       // title=全名（UI 审计 P3-9）：截断长名（最长 84 字）此前无处可看全名；死台按档位叠加提示（R1 拍板分文案）
-      const attrs = `data-k="${this.esc(k)}" data-i="${i}" role="listitem" tabindex="${i === ri ? 0 : -1}" aria-label="${this.esc(s.n)}${playing ? '（播放中）' : ''}"${playing ? ' aria-current="true"' : ''} title="${this.esc(s.n)}${s.health === 'dead' ? (s.perm ? '（长期确认停运）' : '（疑似不可达，点击仍可尝试播放）') : ''}"`;
+      // data-u0 = 身份 URL 锚点（§6.7）：维护改名后 data-k 失配，keepFocus 按它兜底找回焦点
+      const attrs = `data-k="${this.esc(k)}" data-u0="${this.esc(s.u[0])}" data-i="${i}" role="listitem" tabindex="${i === ri ? 0 : -1}" aria-label="${this.esc(s.n)}${playing ? '（播放中）' : ''}"${playing ? ' aria-current="true"' : ''} title="${this.esc(s.n)}${s.health === 'dead' ? (s.perm ? '（长期确认停运）' : '（疑似不可达，点击仍可尝试播放）') : ''}"`;
       const hp = s.health ? `<span class="health ${s.health === 'ok' ? 'ok' : 'bad'}" title="体检${s.health === 'ok' ? '可用' : (s.perm ? '长期确认停运' : '疑似不可用')}">${s.health === 'ok' ? '<svg class="ic"><use href="#i-check"/></svg>' : '<svg class="ic"><use href="#i-x"/></svg>'}</span>` : '';
       // 信息降噪（UI 审计 P2-1/P2-2，owner 拍板）：① 台名剥离「[国别]」后缀进 meta（搜索/aria/身份仍用全名，
-      // 数据层不动）；② meta 行按视图降级——分类 badge 只在 全部/收藏/最近 显示（分类视图下 100% 冗余），
+      // 数据层不动）；② meta 行按视图降级——分类 badge 只在 cat=全部（含 scope 态）显示（分类视图下 100% 冗余），
       // 源数只在 ≥2 源时显示；国别在 meta 与源数并列展示
       const cm = s.n.match(/\s*\[([^\]]+)\]\s*$/), cn = cm ? cm[1] : '', dn = cm ? s.n.slice(0, s.n.length - cm[0].length) : s.n;
-      const inCat = this.state.cat !== '全部' && this.state.cat !== '★收藏' && this.state.cat !== '最近';
+      const inCat = this.state.cat !== '全部'; // cat 只存真实分类（scope 态 cat=全部时 badge 照常，收藏+分类组合不重复显示）
       const parts = `${s.perm ? '<span class="badge permb" title="长期确认停运（复测可达会自动回归）">已停运</span>' : ''}${!inCat ? `<span class="badge">${this.esc(s.c)}</span>` : ''}${cn ? `<span class="srcs" title="国家/地区">${this.esc(cn)}</span>` : ''}${s.u.length > 1 ? `<span class="srcs" title="备选源数量">${s.u.length}源</span>` : ''}`;
       const cfoot = (parts || hp) ? `<div class="cfoot">${parts}${hp}</div>` : '';
       const more = `<button type="button" class="fav dmore" data-more="${this.esc(k)}" aria-label="电台详情：${this.esc(s.n)}" title="详情与逐源诊断（B1）"><svg class="ic"><use href="#i-info"/></svg></button>`;
@@ -612,7 +690,7 @@ const App = {
   startPlay(s, prefer) { // 点播装配共用（remember + 台标 + 最近重排）；prefer=手动指定源序号（②：footer 浮层/⚙ 面板传入，当次最高优先）
     this.remember(s);
     this.logosEnsure(); // 正在播的台也优先补台标
-    if (this.state.cat === '最近') this.render(); // 最近队列头插后刷新顺序
+    if (this.state.scope === 'recent') this.render(); // 最近队列头插后刷新顺序（§6.7：哨兵迁移后按 scope 判断）
     Player.play(s, prefer);
   },
   stepFav(d) { // ←/→ 在收藏间切台（A-5）：顺序取当前可见列表内的收藏台；当前台不在收藏则从队首/队尾起步
@@ -623,14 +701,14 @@ const App = {
     const nx = cur < 0 ? (d > 0 ? 0 : list.length - 1) : (cur + d + list.length) % list.length;
     this.togglePlay(keyOf(list[nx]));
   },
-  /* 回到正在播（N5/r2 ⑦）：点 footer 台名定位列表行——当前分类/搜索词下不可见则先切「全部」+清搜索；
-     台被手动隐藏/死台隐藏时行不存在，静默不跳（与 visible() 口径一致，不报错） */
+  /* 回到正在播（N5/r2 ⑦）：点 footer 台名定位列表行——当前范围/分类/搜索词下不可见则先清全部筛选
+     （scope=all + cat=全部 + 清搜索，§3.2「不解除手动隐藏，不改健康开关」——手动隐藏台依然不可见，静默不跳） */
   locatePlaying() {
     const s = Player.station;
     if (!s) return;
     const k = keyOf(s);
     if (!this.visible().some(x => keyOf(x) === k)) {
-      this.state.cat = '全部'; this.state.keyword = ''; $('q').value = '';
+      this.state.scope = 'all'; this.state.cat = '全部'; this.state.keyword = ''; $('q').value = '';
     }
     this.render(); // 整表重建：定位必须放在 render 之后
     const row = $('list').querySelector(`[data-k="${CSS.escape(k)}"]`);
@@ -1658,10 +1736,21 @@ const App = {
     // 分类与列表（行/卡片可用键盘操作：Enter/Space 播放；收藏按钮由原生 button 处理）
     $('cats').addEventListener('scroll', () => this.updateCatsFade(), { passive:true }); // 分类条渐隐随滚动切换（P3-5）
     addEventListener('resize', () => this.updateCatsFade());
-    $('cats').onclick = e => { const c = e.target.closest('.chip'); if (c) { this.state.cat = c.dataset.c; this.swapRender(); } };
+    // 分类条点击（§3.2 单一筛选状态统一入口）：★收藏/最近/全部 哨兵 chip 转 scope（绝不写进 cat），真实分类只改 cat
+    $('cats').onclick = e => {
+      const c = e.target.closest('.chip'); if (!c) return;
+      const v = c.dataset.c;
+      if (v === '★收藏') this.setScope('favorites');
+      else if (v === '最近') this.setScope('recent');
+      else if (v === '全部') this.setScope('all');
+      else this.setCategory(v);
+    };
     $('list').onclick = e => {
       if (this._lpSup) { this._lpSup = false; return; } // 长按触发后的合成 click 吞一次（review P3-3）：「长按只收藏不播放」从依赖目标脱离的未规范行为变为显式保证
       if (e.detail > 1) return; // 双击的第二次 click 跳过（audit-r2 四-2）：否则「点播→再点暂停」，由 ondblclick 统一收口收藏
+      const act = e.target.closest('[data-act]'); // 空态动作（§6.2）：qclear 清词保 scope/cat、qall 解除范围保词
+      if (act && act.dataset.act === 'qclear') { this.state.keyword = ''; $('q').value = ''; this.render(); return; }
+      if (act && act.dataset.act === 'qall') return this.searchEverywhere();
       const fav = e.target.closest('.fav');
       if (fav && !fav.classList.contains('dmore')) {
         const s = this.state.stations.find(x => keyOf(x) === fav.dataset.fav);

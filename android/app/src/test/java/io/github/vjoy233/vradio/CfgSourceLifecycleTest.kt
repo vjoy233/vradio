@@ -5,7 +5,9 @@ import io.github.vjoy233.vradio.data.Library
 import io.github.vjoy233.vradio.data.Store
 import io.github.vjoy233.vradio.model.Cfg
 import io.github.vjoy233.vradio.model.HealthEntry
+import io.github.vjoy233.vradio.player.playSourceOrder
 import io.github.vjoy233.vradio.ui.SourceRowAct
+import io.github.vjoy233.vradio.ui.diagBatches
 import io.github.vjoy233.vradio.ui.sourceRowActs
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -21,7 +23,8 @@ import kotlin.io.path.createTempDirectory
    有效顺序语义（manual 全列/部分列/含未知 URL/无 manual）、禁用剔除与全禁（NO_ENABLED_SOURCE）、
    u[]/u[0] 物理序不动（身份公理）、收藏/健康回绑不受排序影响、旧 cfg 无新字段行为不变、
    恢复默认两动作彼此独立、cfg round-trip 不丢三字段；装配每台 6 条统一封顶（B1 review P1）+
-   源详情行动作可见性（B1 review P1：禁用行不渲染播放/重播）。 */
+   源详情行动作可见性（B1 review P1：禁用行不渲染播放/重播）；人工源顺序压过启发式（B1 review
+   P1-6：moManual 挂标 + playSourceOrder 纯函数）；详情诊断分批 ≤4（B1 review P1-7）。 */
 class CfgSourceLifecycleTest {
   private lateinit var dir: File
 
@@ -228,5 +231,43 @@ class CfgSourceLifecycleTest {
       sourceRowActs(cur = false, off = false))
     assertEquals(listOf(SourceRowAct.REPLAY, SourceRowAct.COPY, SourceRowAct.DISABLE, SourceRowAct.MOVE_UP, SourceRowAct.MOVE_DOWN),
       sourceRowActs(cur = true, off = false))
+  }
+
+  // —— 人工源顺序压过启发式（B1 review P1-6：Web「moManual ? mo : mo.sort(srcRank)」镜像，上移/下移写入后播放不再被启发式重排）——
+
+  @Test fun 装配挂moManual标() { // 有 srcManualOrder → true；无 → false；撤序回落
+    val l = lib(MAIN, """{"v":2,"srcManualOrder":{"http://a/1":["http://a/3","http://a/1"]}}""")
+    assertTrue(stA(l).moManual)
+    assertFalse(lib(MAIN, """{"v":2}""").stations.first { it.n == "台A" }.moManual)  // 空 cfg 对照（Store 单例共享，须显式覆盖）
+    val s = stA(l)
+    l.srcOrderReset(s)
+    assertFalse(s.moManual)                                   // 撤序后回启发式
+  }
+
+  @Test fun 人工序保留用户序压过启发式() { // playSourceOrder（PlayerHolder.srcOrder 同款委托）
+    val u = listOf("http://d/1.m3u8", "http://d/2.mp3", "http://d/3.mp3")
+    val rank: (String) -> Int = { if (it.endsWith(".m3u8")) 1 else 0 }
+    assertEquals(listOf(0, 1, 2), playSourceOrder(listOf(0, 1, 2), u, manual = true, rank = rank))  // m3u8 在前也原样保留
+    assertEquals(listOf(1, 2, 0), playSourceOrder(listOf(0, 1, 2), u, manual = false, rank = rank)) // 无人工序 → 直流优先
+    assertEquals(listOf(2, 1, 0), playSourceOrder(listOf(2, 0, 1), u, manual = false, rank = rank)) // 同级稳定保持行序
+  }
+
+  @Test fun 人工序端到端不被启发式覆盖() { // 装配（moManual）+ playSourceOrder：人工把 m3u8 排前，播放序原样保留
+    val main = "华语音乐,#genre#\n台D,http://d/1.m3u8\n台D,http://d/2.mp3"
+    val l = lib(main, """{"v":2,"srcManualOrder":{"http://d/1.m3u8":["http://d/1.m3u8","http://d/2.mp3"]}}""")
+    val s = l.stations.first { it.n == "台D" }
+    assertEquals(listOf(0, 1), playSourceOrder(s.effOrder(), s.u, s.moManual) { if (it.endsWith(".m3u8")) 1 else 0 })
+    val s2 = lib(main, """{"v":2}""").stations.first { it.n == "台D" }   // 空 cfg 对照（Store 单例共享）→ 启发式 mp3 先
+    assertEquals(listOf(1, 0), playSourceOrder(s2.effOrder(), s2.u, s2.moManual) { if (it.endsWith(".m3u8")) 1 else 0 })
+  }
+
+  // —— 详情诊断分批（B1 review P1-7：≤4/批，AppVm.checkDetailSources 批间串行、批内并发）——
+
+  @Test fun 诊断分批四条一批() {
+    assertEquals(emptyList<IntRange>(), diagBatches(0))
+    assertEquals(listOf(0..0), diagBatches(1))
+    assertEquals(listOf(0..3), diagBatches(4))                 // 恰 4 条一批收
+    assertEquals(listOf(0..3, 4..4), diagBatches(5))           // 5+ 源 → 两批（4+1），单次放大面恒 ≤4
+    assertEquals(listOf(0..3, 4..7, 8..8), diagBatches(9))
   }
 }

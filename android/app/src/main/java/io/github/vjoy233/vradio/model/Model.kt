@@ -21,6 +21,7 @@ data class Station(
      dis = 手动禁用索引集（播放与自动体检都跳过）；lbl = 源标签（键=源 URL）。
      三者都绝不物理重排 u[]——u[0] 是 srcmem/收藏/健康标记的身份键。 */
   var mo: List<Int>? = null
+  var moManual: Boolean = false   // mo 来自 cfg.srcManualOrder（B1 review P1-6）：播放决策保留用户序压过启发式（player.js moManual 同款）
   var dis: Set<Int> = emptySet()
   var lbl: Map<String, String> = emptyMap()
 

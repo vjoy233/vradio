@@ -454,7 +454,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   fun detailStation(): Station? = detailKey.value?.let { runCatching { lib.resolve(it) }.getOrNull() }
 
   /** 逐源诊断（B1）：只测启用源——手动禁用的源不发请求（浮层已明示「不能诊断」+「取消禁用」入口）；
-   *  Android 无 /api?detail=1，CheckStream 直连；结果按测的 URL 归位，诊断顺序 = 人工有效序。 */
+   *  Android 无 /api?detail=1，CheckStream 直连；结果按测的 URL 归位，诊断顺序 = 人工有效序。
+   *  ≤4/批串行推进（B1 review P1-7，Web checkStationSources 分批口径：单次探活放大面 ≤4，超 4 分批）。 */
   fun checkDetailSources(s: Station) {
     if (detailBusy.value) return
     viewModelScope.launch(Dispatchers.IO) {
@@ -465,7 +466,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         }
         if (urls.isEmpty()) return@launch
         val out = java.util.concurrent.ConcurrentHashMap<String, DiagnosticResult>()
-        coroutineScope { for (u in urls) launch { runCatching { checker.check(u) }.getOrNull()?.let { out[u] = it.toDiagnostic(u) } } }
+        for (b in diagBatches(urls.size))                       // 批间串行、批内并发（放大面恒 ≤4）
+          coroutineScope { for (i in b) launch { runCatching { checker.check(urls[i]) }.getOrNull()?.let { out[urls[i]] = it.toDiagnostic(urls[i]) } } }
         withContext(Dispatchers.Main) { detailDiag.value = urls.mapNotNull { out[it] } }
       } catch (_: Exception) { } finally { detailBusy.value = false }
     }
@@ -917,5 +919,12 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   companion object {
     const val EXTRA_SC = "vradio.shortcut"   // E3 快捷方式 extra 键（MainActivity 路由进 handleIntent）
   }
+}
+
+/** 详情诊断分批（B1 review P1-7，Web checkStationSources ≤4/批口径）：n 条启用源切成 ≤4 条的下标区间，
+    批间串行推进——单次探活放大面恒 ≤4。Top-level 纯函数 JVM 直测。 */
+fun diagBatches(n: Int): List<IntRange> {
+  if (n <= 0) return emptyList()
+  return (0 until n).chunked(4).map { it.first()..it.last() }
 }
 

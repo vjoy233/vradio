@@ -241,7 +241,7 @@ class Library(
     val c = cfg
     for (s in stations) {
       s.hidden = false
-      s.mo = null; s.dis = emptySet(); s.lbl = emptyMap() // 重套前清零（cfg 撤改后不留残序）
+      s.mo = null; s.moManual = false; s.dis = emptySet(); s.lbl = emptyMap() // 重套前清零（cfg 撤改后不留残序）
       for (u in s.u) {
         if (c.hideS[u] == true) s.hidden = true
         c.moves[u]?.let { s.c = it }
@@ -259,6 +259,7 @@ class Library(
         for (x in manual) { val i = s.u.indexOf(x); if (i >= 0 && seen.add(i)) mo.add(i) }
         for (i in s.u.indices) if (seen.add(i)) mo.add(i)
         s.mo = mo
+        s.moManual = true // B1 review P1-6：播放决策据此保留用户序，不再被启发式重排（Web s.moManual 同款）
       }
       val dis = c.srcDisabled[s.u0]
       if (!dis.isNullOrEmpty()) s.dis = dis.mapNotNull { x -> s.u.indexOf(x).takeIf { i -> i >= 0 } }.toSet()

@@ -285,9 +285,10 @@ object PlayerHolder {
 
   fun srcmemOf(s: Station): Int = srcMem[s.u0]?.i?.takeIf { it in s.u.indices } ?: -1 // 选源浮层「记忆」徽标
 
-  /** 决策链基座（B1 扩展）：人工有效序（无 manual = 默认序）剔除禁用后按直流优先稳定排序；
+  /** 决策链基座（B1 扩展 + review P1-6）：有人工序（moManual，mo 来自 cfg.srcManualOrder）保留用户原序
+     压过启发式（player.js:131「moManual ? mo : mo.sort(srcRank)」同款）；仅无人工序时按直流优先稳定排序；
      UI「默认」徽标共用——人工序/禁用后徽标随决策链同步，不会漂移。 */
-  fun srcOrder(s: Station): List<Int> = s.effOrder().sortedBy { srcRank(s.u[it]) } // player.js:126
+  fun srcOrder(s: Station): List<Int> = playSourceOrder(s.effOrder(), s.u, s.moManual) { srcRank(it) } // player.js:126
 
   /* ---------- 睡眠定时 ---------- */
 
@@ -644,3 +645,8 @@ object PlayerHolder {
   private class Variant(val u: String, val si: Int)
   private class Pctx(val urls: List<Variant>, val my: Int) { var i = 0 } // player.js:14
 }
+
+/** 播放源顺序决策（B1 review P1-6，player.js srcOrder 纯逻辑镜像）：manual=true 保留用户序（启发式让位，
+    同级保持行序）；manual=false 按直流优先稳定排序。Top-level 纯函数 JVM 直测；PlayerHolder.srcOrder 委派至此。 */
+fun playSourceOrder(eff: List<Int>, u: List<String>, manual: Boolean, rank: (String) -> Int): List<Int> =
+  if (manual) eff.toList() else eff.sortedBy { rank(u[it]) }

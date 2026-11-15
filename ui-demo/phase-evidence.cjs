@@ -46,7 +46,7 @@ async function main() {
   if (dirty.length) { console.error('存在未提交改动（证据只采自提交态）：\n' + dirty.join('\n')); process.exitCode = 1; return; }
   const before = hostSnap(), started = new Date().toISOString();
   const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'vradio-evidence-'));
-  let srv = null, browser = null, wtAlive = false, faultLock = null; // faultLock：--fault-cleanup 注入的清理失败句柄
+  let srv = null, browser = null, wtAlive = false, faultPin = null; // faultPin：--fault-cleanup 注入的目录钉子进程（cwd 不可删，文件句柄带 FILE_SHARE_DELETE 拦不住 git）
   try {
     git(`worktree add --detach "${wt}" HEAD`); wtAlive = true; // 被测实例检出：数据面全在临时 worktree
     srv = spawn(process.execPath, ['server.js'], { cwd: wt, env: Object.assign({}, process.env, { PORT: String(PORT) }), stdio: 'ignore' });
@@ -173,7 +173,7 @@ async function main() {
     catReset ? ok('E6d', `切范围重置分类（§3.2，原=${catChip}）`, '') : bad('E6d', '切范围重置 cat', '分类 chip 仍高亮');
     } // —— P1 断言组结束 ——
 
-    if (FAULT_CLEANUP && wtAlive) faultLock = fs.openSync(path.join(wt, 'z3-cleanup-lock'), 'w'); // 持句柄：Windows 下目录 remove 必败
+    if (FAULT_CLEANUP && wtAlive) faultPin = spawn(process.execPath, ['-e', 'setTimeout(()=>{},120000)'], { cwd: wt, stdio: 'ignore' }); // 钉住目录令 worktree remove 必败
     if (FAULT) throw new Error('故障注入：验证失败路径的退出码/浏览器回收/worktree 清理/宿主不变');
   } catch (e) {
     bad('Z0', '运行期异常（失败路径也落盘报告）', String(e && e.message || e).split('\n')[0]);
@@ -184,8 +184,9 @@ async function main() {
     try { if (srv) {
       const waitExit = ms => new Promise(r => { const t = setTimeout(r, ms); srv.once('exit', () => { clearTimeout(t); r(); }); });
       srv.kill(); await waitExit(3000);
-      if (srv.exitCode === null && !srv.signalCode) { srv.kill('SIGKILL'); await waitExit(2000); } // 高负载下 exit 事件偶发迟到：超时补杀再等，仍无信号才算未退出
-      if (srv.exitCode === null && !srv.signalCode) { srvGone = false; cleanupErr.push('server: kill 后 5s 无退出信号'); } } } catch (e) { srvGone = false; cleanupErr.push('server:' + String(e.message || e).split('\n')[0]); }
+      if (srv.exitCode === null && !srv.signalCode) { srv.kill('SIGKILL'); await waitExit(2000); } // 高负载下 exit 事件偶发迟到：超时补杀再等
+      srvGone = srv.exitCode !== null || !!srv.signalCode; // 成功退出（信号或码）即置真——初值只覆盖无 server 形态
+      if (!srvGone) cleanupErr.push('server: kill 后 5s 无退出信号'); } } catch (e) { srvGone = false; cleanupErr.push('server:' + String(e.message || e).split('\n')[0]); }
     if (wtAlive) { try { git(`worktree remove --force "${wt}"`); wtGone = true; }
       catch (_) { await sleep(800); try { git(`worktree remove --force "${wt}"`); wtGone = true; }
         catch (e2) { cleanupErr.push('worktree remove 两连败:' + String(e2.message || e2).split('\n')[0]); } } }
@@ -193,7 +194,7 @@ async function main() {
     (cleanupErr.length === 0 && srvGone && wtGone)
       ? ok('Z3', '清理失败门：browser 关闭 / server 退出 / worktree 移除全部成功（零泄漏成立）', '')
       : bad('Z3', '清理失败门未过（不得宣称零泄漏，需手动回收）', cleanupErr.join(' | ') + (srvGone ? '' : ' [server未退出]') + (wtGone ? '' : ' [worktree未移除]'));
-    if (faultLock) { try { fs.closeSync(faultLock); git(`worktree remove --force "${wt}"`); console.error('（注入锁已释放并补清理，临时 worktree 已回收——Z3 失败记录保留为门验证证据）'); } catch (_) { console.error('注入锁释放后仍需手动清理:', wt); } }
+    if (faultPin) { try { faultPin.kill(); await sleep(500); git(`worktree remove --force "${wt}"`); console.error('（注入钉已拔除并补清理，临时 worktree 已回收——Z3 失败记录保留为门验证证据）'); } catch (_) { try { faultPin.kill(); } catch (_) {} console.error('注入钉拔除后仍需手动清理:', wt); } }
     fs.writeFileSync(path.join(OUT, 'evidence.json'), JSON.stringify({ phase: PHASE, head: git('rev-parse --short HEAD').trim(), started, pass, fail, assertions: rec }, null, 2));
     if (fail) process.exitCode = 1;
     console.log(`phase-evidence(${PHASE}): ${pass} 通过, ${fail} 失败 → ${path.relative(ROOT, OUT)}`);

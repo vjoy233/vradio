@@ -312,6 +312,16 @@
     #moreBtn { display:inline-block; }
     .fav { font-size:19px; padding:8px 9px; margin:-8px 0; } /* 触屏命中区 ~37px（原 ~26px 达标偏小，UI 审计 P2-6 备注） */
   }
+  /* ===== 窄屏维护单列（ui-redesign §5.1/图11，P5；Q31 拍板：分类/电台/数据三分区共用本规则，且为通用规则——
+     不限 ui-refresh，#manage 自身布局双布局共用）：全屏单列面板 + 分区 seg 顶部可达 + 编辑区/列表纵向堆叠 +
+     编辑器操作条 sticky 底部可达 + 面板整体可滚动；输入 16px+ 防 iOS 聚焦缩放（裁量采纳）。桌面（≥1024px
+     ui-refresh）与紧凑 >768px 布局不受影响 ---------- */
+  @media (max-width:768px) {
+    #manage { padding:0; align-items:stretch; }
+    #manage .mbox { width:100%; height:100%; max-height:none; border-radius:0; border-left:none; border-right:none; overflow-y:auto; }
+    .medit-a { position:sticky; bottom:0; z-index:1; background:var(--bg); margin:4px -12px -10px; padding:9px 12px 11px; border-top:1px solid var(--line); }
+    #manage input[type="text"], #manage input[type="url"], #manage input[type="search"], #manage select, #manage .lbin { font-size:16px; }
+  }
   /* ===== 桌面新版壳（ui-redesign P2/§4.1/§6.5，FEATURES.uiRefresh 开关 + ≥1024px 断点）=====
      开关关或 <1024px：下列规则一律不生效（结构壳 wrapper display:contents 对布局透明），紧凑布局零回归。
      ui-* token 色值原样抄自 §4.1（24 组平面配对已验证 ≥5.19:1，见 ui-redesign-assets/review-v22/contrast-results.json） */
@@ -345,6 +355,10 @@
     html.ui-refresh #sideTools .btn { border:none; background:none; justify-content:flex-start; }
     html.ui-refresh #sideTools .btn:hover { background:var(--ui-raised); }
     html.ui-refresh #manageBtn { display:none; } /* 侧栏已有维护入口：桌面隐藏 header 版避免双触发器 */
+    /* 维护面板（§5.1）：宽屏最大 1100px（P5 补齐——P4 沿用 680px 通用宽度）；数据分区两组卡并排（图09），个人列表卡独占整行 */
+    html.ui-refresh #manage .mbox { width:min(1100px, calc(100vw - 64px)); }
+    html.ui-refresh #mData .dsec2 { display:grid; grid-template-columns:1fr 1fr; gap:0 12px; align-items:start; padding:0 14px; }
+    html.ui-refresh #mData .dsec2 .dcard { margin:10px 0; }
     html.ui-refresh .scope-title { display:inline; font-size:14px; color:var(--ui-muted); white-space:nowrap; }
     html.ui-refresh .dashboard-main { display:block; box-sizing:border-box; min-width:0; width:100%; max-width:1440px; margin-inline:auto; padding:20px 24px calc(var(--dock-h,100px) + 24px); } /* padding-bottom = 实际 footer 占位（紧凑态 #list 的 90px 规则保持不动，不叠加） */
     html.ui-refresh #cats, html.ui-refresh #hint { width:100%; max-width:1328px; margin-inline:auto; } /* 分类条/提示与网格同宽对齐 */

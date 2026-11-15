@@ -2268,10 +2268,31 @@ const App = {
         $('status').textContent = `已导入维护配置（覆盖后 ${newN} 项）`;
       }).catch(() => {}); // 确认层被占用（理论罕见）：静默放弃，不打断既有弹窗
   },
-  resetCfg() { // §5.4 表「重置全部维护配置」：单独列出数量与范围；不删除收藏、主库、个人文件或歌史
-    if (!confirm(`清空全部维护配置（共 ${this.cfgCount(this.cfg)} 项：分类重命名/隐藏、电台改名/移动/隐藏/追加源/源排序与启停）？分类与电台将回到同步默认——不删除收藏、主库、个人文件或歌史。`)) return;
+  async resetCfg() { // §5.4 表「重置全部维护配置」升级：预览清除数量与范围（复用 uiCfgDiff(current, {})），明示不删除清单；确认后执行（语义不变）
+    const d = uiCfgDiff(this.cfg, this.normCfg(null)), curN = this.cfgCount(this.cfg);
+    if (!d.total) { $('status').textContent = '当前没有可重置的维护配置'; return; }
+    let v;
+    try {
+      v = await uiChooseDialog('重置全部维护配置', '将清空以下全部个人维护配置，分类与电台回到同步默认：',
+        [{ value: 'ok', label: '确认重置', primary: true }, { value: 'stay', label: '取消' }], {
+        safe: 'stay',
+        build: body => {
+          const pre = document.createElement('div'); pre.className = 'ecpreview';
+          const lines = [];
+          for (const [k, lab] of UI_CFG_FIELDS) {
+            const f = d.fields[k], n = f.add + f.del + f.chg;
+            if (n) lines.push(lab + ' ' + n + ' 项');
+          }
+          pre.textContent = lines.join('\n');
+          body.appendChild(pre);
+          const keep = document.createElement('p'); keep.className = 'ecsum';
+          keep.textContent = `共清除 ${curN} 项。不会删除：收藏与最近播放、电台主库（radio.txt）、个人电台文件（my-radio.txt）、歌曲历史。`;
+          body.appendChild(keep);
+        } });
+    } catch (_) { return; } // 确认层被占用（理论罕见）：放弃重置，不打断既有弹窗
+    if (v !== 'ok') return;
     this.cfg = this.normCfg(null); this.saveCfg(); this.state.cat = '全部'; this.reapplyCfg();
-    $('status').textContent = '已重置维护配置';
+    $('status').textContent = `已重置维护配置（清除 ${curN} 项）`;
   },
 
   /* —— 完整备份导出/导入（R4 拍板 → r4/B4 升 v3，BackupV3 纯逻辑内核）：全部 radio.* + 个人电台行

@@ -1,7 +1,6 @@
 {
-  "capturedAt": "2026-11-15T08:04:47.943Z",
-  "browser": "151.0.7922.34",
-  "url": "http://127.0.0.1:8237/",
+  "capturedAt": "2026-11-15T09:37:19.006Z",
+  "url": "http://127.0.0.1:8278/",
   "assertions": [
     "A1 html 无 ui-refresh 类",
     "A2 1280 侧栏隐藏",
@@ -39,17 +38,20 @@
     "F3 dirty 离开三选（保存并继续/放弃修改/继续编辑）",
     "F4 继续编辑草稿保留",
     "F5 取消丢弃草稿退出编辑",
+    "F5b1 保存隐藏出 8s 撤销 toast（已隐藏「CRI Hit FM FM88.7」撤销）",
+    "F5b2 隐藏生效（hidden=true、visible() 除名、cfg.hideS 落键）",
+    "F5b3 点击撤销后状态恢复（hidden=false、回 visible()、hideS 键清除）",
     "F6 数据分区三组卡",
     "F7 cfg 导入差异预览出现",
     "F8 取消零改动（radio.cfg 不变）",
     "F9 备份恢复覆盖预览（版本/键数/个人电台/sidecar）",
-    "F10 恢复取消零副作用（favs 不变）",
+    "F10 恢复取消零副作用（favs/recents/cfg/view/theme 快照前后深比较一致）",
     "G1 390 侧栏/hero 隐藏（紧凑）",
     "G2 跨断点筛选状态不丢（scope=all 保留）",
     "G3 themeWrap 在 lowfreq（≤640）",
-    "G4 窄屏维护面板可用且单列",
+    "G4 窄屏维护单列（mbox 390x844 满屏；3 张卡同左缘 x=14、各宽 ≥ mbox-40）",
     "G5 关闭后焦点未落 body 外不可见节点",
-    "H1 render 中位 58.4ms < 100ms",
+    "H1 render 中位 58.9ms < 100ms",
     "Z1 无页面脚本错误"
   ],
   "screenshots": [
@@ -65,7 +67,7 @@
     "12-narrow-390-maintenance-light.png"
   ],
   "perf": {
-    "renderMedianMs": 58.4,
+    "renderMedianMs": 58.9,
     "stations": 1523
   },
   "errors": [],
@@ -73,8 +75,8 @@
     "hero 候选=CRI 怀旧金曲频道",
     "点播后 phase=playing heroLabel=暂停",
     "hero 候选规则（隐藏不复活/下一候选）由 test/ui-scope.js 钉住；真机音频时序未验证（沙箱网络）",
-    "隐藏撤销链路由 P4 实机验证（保存→8s toast→还原）；此处不再重复造隐藏入口",
-    "render() 全库 1523 台中位耗时 58.4ms（§9.3 建议 <100ms）"
+    "render() 全库 1523 台中位耗时 58.9ms（§9.3 建议 <100ms）"
   ],
+  "browser": "151.0.7922.34",
   "result": "PASS"
 }

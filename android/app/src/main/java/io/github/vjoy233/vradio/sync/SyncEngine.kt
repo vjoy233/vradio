@@ -79,12 +79,19 @@ class SyncEngine(private val gh: Gh, private val check: CheckStream, private val
     val oldSecs = ClassifyCn.splitSections(curText)
     val res = ClassifyCn.classifySections(ClassifyCn.splitSections(cnText ?: curText))
     val oldOf: (String) -> List<String> = { cat -> oldSecs.firstOrNull { it.cat == cat }?.lines ?: emptyList() }
+    // B2 国内候选管线（Candidates 三层去重）：跨节全局精确/归一化 URL 去重 + 非法行过滤（fromLine），
+    // 同分类同名多源行全部保留（下游同名行自然并源）、不同分类同名不强并——既有分类/装配口径不变
+    val cnCands = ArrayList<SyncCandidate>()
+    for (cat in ClassifyCn.CAT_ORDER) if (cat != EU_CAT && cat != INTL_CAT)
+      for (l in res.out.getValue(cat)) Candidates.fromLine(cat, l, "gao")?.let { cnCands.add(it) }
+    val cnLines = LinkedHashMap<String, MutableList<String>>()
+    for (c in Candidates.dedupe(cnCands)) cnLines.getOrPut(c.category) { ArrayList() }.add(Candidates.toLine(c))
     // 欧美系拼装按 URL 去重（P1-3）：本体在前、捞回在后——同 URL 保留本体（带国名后缀的规范行）
     val euBody = dedupUrl((eu?.lines ?: oldOf(EU_CAT)) + res.euExtra.getValue(EU_CAT))
     val intlBody = dedupUrl((eu?.newsLines ?: oldOf(INTL_CAT)) + res.euExtra.getValue(INTL_CAT))
     val merged = ArrayList<String>()
     for (cat in ClassifyCn.CAT_ORDER) {
-      val body = when (cat) { EU_CAT -> euBody; INTL_CAT -> intlBody; else -> res.out.getValue(cat) }
+      val body = when (cat) { EU_CAT -> euBody; INTL_CAT -> intlBody; else -> cnLines[cat] ?: emptyList() }
       if (body.isNotEmpty()) { merged.add("$cat,#genre#"); merged.addAll(body) }
     }
     val after = countEntries(merged)
@@ -93,13 +100,21 @@ class SyncEngine(private val gh: Gh, private val check: CheckStream, private val
       log("合并结果异常（仅 $after 台 < $MIN_TOTAL 下限），中止写盘，保留原文件")
       return SyncResult(false, before, 0, 0, 0, emptyList(), emptyList(), emptyList(), emptyList(), null, null, cnUpdated, -1)
     }
-    writeTextAtomic(File(filesDir, "radio.txt"), merged.joinToString("\r\n") + "\r\n")
+    val mergedText = merged.joinToString("\r\n") + "\r\n"
+    writeTextAtomic(File(filesDir, "radio.txt"), mergedText)
     // stamp 随写（G P2-3）：不写的话 D7 check 会拿仓库既有提交判「有新版」，apply 用仓库数据覆盖刚同步出的
     // 列表来回跳；commitIso=当前时刻 = 本地内容不旧于仓库任何既有提交，repo 出更新提交前 D7 保持安静。
     // 已知边界留档（审计 P3）：设备时钟前跳（手动调未来时间）后 stamp 会掩蔽 D7 直到真实时间追上
     // （判新只错在「无更新」方向，无数据损坏）；radio 与 stamp 两步原子写之间被杀 → stamp 留旧值 →
     // 下次 D7 判仓库更新、apply 用仓库数据覆盖（仍是合法数据，自愈方向安全）
-    writeTextAtomic(File(filesDir, "stamp.json"), JSONObject().put("commitIso", Instant.now().toString()).toString())
+    // AIbot P1-4 混态拦截：端内同步产出的 radio.txt 不带 radio-meta（Android 不生成 meta）——旧 meta 若
+    // 留存即「新库配旧 meta」，发现页「最近新增」会指错台；删旧件 + stamp.meta=false（RadioMeta.bound
+    // 据此把该分组置空，不猜）。AIbot 三轮 P1：radioHash 同随写入（与 LightUpdate.apply 同一 stamp 形态；
+    // meta=false 本就不绑定，哈希只是形态一致——两写之间被杀残留旧 stamp 时哈希核对同样拦下）
+    runCatching { File(filesDir, "radio-meta.json").delete() }
+    writeTextAtomic(File(filesDir, "stamp.json"),
+      JSONObject().put("commitIso", Instant.now().toString()).put("meta", false)
+        .put("radioHash", hashText(mergedText)).toString())
     // 4.5) diff 摘要（N4/r2 ⑥）：按台名集合对比——分类变化不算（重分类是常规操作），改名 = 消失+新增如实呈现
     val oldNames = entryNamesOf(oldSecs.flatMap { it.lines })
     val neuNames = entryNamesOf(merged)

@@ -1,0 +1,82 @@
+{
+  "phase": "p3",
+  "head": "727d806",
+  "headNote": "head = 采证时的代码提交；承载本文件的产物提交不改代码，git log 验证：产物提交父 == head 且 diff 仅 evidence/**",
+  "started": "2026-11-15T11:46:07.595Z",
+  "pass": 12,
+  "fail": 0,
+  "assertions": [
+    {
+      "id": "G1a",
+      "name": "默认网格视图（.card 行/卡形态）",
+      "pass": true,
+      "detail": "{\"cards\":1521,\"rows\":0}"
+    },
+    {
+      "id": "G1b",
+      "name": "切列表视图（.row 两行详情形态）",
+      "pass": true,
+      "detail": "{\"cards\":0,\"rows\":1521}"
+    },
+    {
+      "id": "G2",
+      "name": "无嵌套外框、每个台标都带 data-tone（单层统一框）",
+      "pass": true,
+      "detail": "{\"nested\":0,\"tone\":1522,\"logos\":1522}"
+    },
+    {
+      "id": "G3a",
+      "name": "详情浮层 position:fixed 且页面不被推开（P3 1218042 修复项）",
+      "pass": true,
+      "detail": "{\"hidden\":false,\"pos\":\"fixed\",\"sh\":61818}"
+    },
+    {
+      "id": "G3b",
+      "name": "Esc 关闭详情",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "id": "G4",
+      "name": "三组容器 + #prevFav/#nextFav 就位",
+      "pass": true,
+      "detail": "{\"id\":true,\"main\":true,\"help\":true,\"prev\":true,\"next\":true}"
+    },
+    {
+      "id": "G5a",
+      "name": "playing → 唱片 .running + vinylspin 运行（按钮四态须真实 Player.station——onPhase 仅当前台事件重渲 hero，无播放时不重渲是正确行为；真实音频时序属验收文档既列未验证项）",
+      "pass": true,
+      "detail": "{\"run\":true,\"anim\":\"vinylspin\",\"btn\":\"开始收听\"}"
+    },
+    {
+      "id": "G5b",
+      "name": "系统减动效 → 唱片静止（animation none）",
+      "pass": true,
+      "detail": "{\"run\":false,\"anim\":\"none\"}"
+    },
+    {
+      "id": "G5c",
+      "name": "paused → 唱片停转（.running 摘除）",
+      "pass": true,
+      "detail": "{\"run\":false,\"btn\":\"开始收听\"}"
+    },
+    {
+      "id": "G6",
+      "name": "行/卡名称 .station-title[data-fn] + #namett 单例 tooltip 就位",
+      "pass": true,
+      "detail": "{\"has\":true,\"fn\":true,\"tt\":true}"
+    },
+    {
+      "id": "Z1",
+      "name": "宿主 data/store.json + my-radio.txt 运行前后哈希不变（真隔离终检）",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "id": "Z3",
+      "name": "清理失败门：browser 关闭 / server 退出 / worktree 移除全部成功（零泄漏成立）",
+      "pass": true,
+      "detail": ""
+    }
+  ]
+}

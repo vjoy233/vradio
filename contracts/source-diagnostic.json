@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "kind": "source-diagnostic",
+  "description": "一次源探活的结构化结果（B1）。ok 语义与既有 checkStream/CheckStream 一致；所有正常/失败/重定向/HLS 分支都必须返回完整结构，UI 不得根据 why 文案反推状态（B1 硬约束）。",
+  "result": {
+    "url": "string——被测源地址（safeTarget 归一后的目标）",
+    "ok": "boolean——字节级验收结论",
+    "code": "枚举，见 codes；程序分支唯一依据",
+    "hls": "boolean——目标是 m3u8 形态",
+    "mode": "direct|hls|proxy——播放变体模式（探活视角：direct=直流字节验收，hls=分片验收）",
+    "httpStatus": "number——最终响应状态码（未建连=0）",
+    "contentType": "string——Content-Type（未建连=空串）",
+    "bytes": "number——观察窗内累计字节数",
+    "latencyMs": "number——首字节/建流延迟",
+    "why": "string——人读说明；不可被程序反推",
+    "checkedAt": "number——epoch ms"
+  },
+  "codes": ["OK", "NETWORK", "HTML", "HTTP", "EMPTY_PLAYLIST", "NO_SEGMENT", "SHORT_BODY", "REDIRECT_REJECTED", "INVALID_URL"],
+  "codeMeanings": {
+    "OK": "验收通过（直流字节阈值 / HLS 分片字节阈值）",
+    "NETWORK": "建连/解析/超时失败（guardLookup 拒绝也在内）",
+    "HTML": "响应是 HTML 错误页（假流常见形态）",
+    "HTTP": "HLS 清单拉取非 200（直流按字节验收不看状态码——AGENTS 已知坑：不能信状态码/Content-Type；非 2xx 的 httpStatus 照常上报但不参与 ok 判定）",
+    "EMPTY_PLAYLIST": "m3u8 可解析但无分片条目",
+    "NO_SEGMENT": "m3u8 有条目但首个分片拉不到/不吐字节",
+    "SHORT_BODY": "有响应但窗内字节数低于阈值（336B 假流类）",
+    "REDIRECT_REJECTED": "重定向目标被 safeTarget/tryUrl 拒绝或畸形",
+    "INVALID_URL": "URL 本身不合法（safeTarget 字符串层拒绝）"
+  },
+  "api": {
+    "detail": "GET /api/check?detail=1&url=u1&url=u2 → { ok, results:[result…] }；最多 4 URL、逐 URL 过 safeTarget+guardLookup、重定向逐跳复查、跨源拒绝、不返回响应体、时间窗口不放宽"
+  }
+}

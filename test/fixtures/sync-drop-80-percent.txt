@@ -1,0 +1,10 @@
+华语音乐,#genre#
+动感101,http://lhttp.qingting.fm/live/274/64k.mp3
+经典947,http://lhttp.qingting.fm/live/267/64k.mp3
+新闻资讯,#genre#
+上海东广新闻台,http://lhttp.qingting.fm/live/275/64k.mp3
+交通广播,#genre#
+上海交通台,http://lhttp.qingting.fm/live/266/64k.mp3
+综合·其他,#genre#
+某某人民广播电台,http://example.stream.cn/rm/64.mp3
+某某城市之声,http://example.stream.cn/cs/64.mp3

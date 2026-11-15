@@ -1,20 +1,34 @@
 // VRadio — 最简静态服务器 + 流媒体代理：node server.js（或 npm start）后访问 http://localhost:8137
 // /proxy?url=...   同源转发远端音频流/HLS，绕开浏览器 CORS 限制（配合前端 hls.js 使用；同源无需 ACAO）
-// /api/sync        一键同步最新源（update-sources.js，进行中重复触发返回 409）
+// /api/sync        一键同步最新源（update-sources.js 管线，进行中重复触发返回 409；被替换决策门拦截时
+//                  返回 {ok:false, gated:true, report, reportHash} 不落盘；body 带 forceToken = 两步协议强制发布）
+// /api/sync/force-token  两步协议第一步：{reportHash} → {token, expiresAt(5min), reportHash}（一次性、绑定报告指纹）
+// /api/boot        启动资产状态（B2 manifest 校验/bootstrap/恢复结果；前端「数据资产不完整」toast 用）
 // /api/check?url=  可用性探测（url 参数可重复=多源、任一活即 OK，最多 4 个；服务端检测无 CORS 限制）
 // /api/mystation   添加自定义电台（POST JSON {n,u,c}：先探活拒绝假流/死链，再原子写入 my-radio.txt）
 // /api/nowplaying?url=  曲讯（ICY StreamTitle）：对 mp3/AAC 直流旁路建会话持续读取；HLS 结构性无 ICY 直接返回空
 // /api/store       前端持久层主源（GET 全量 / POST 覆盖写 data/store.json）：rev 服务端唯一发号（方案二/R4），
 //                  localStorage 只作镜像；白名单键集合 STORE_KEYS 与 store.js 的 KEYS 同步扩（AGENTS.md 契约）
-// 安全：默认仅监听 127.0.0.1；proxy/check 仅允许公网 http(s) 目标 —— safeTarget 字符串校验 + guardLookup
-//       连接级 IP 校验（防 DNS rebinding/TOCTOU），重定向逐跳复查；/proxy 与全部 /api/* 校验
+// /api/quality     质量聚合 sidecar（B0/B2）：GET ?rev= 条件获取 / POST {baseRev,ops,keep} 操作事件合并（op.id 幂等去重，
+//                  rev 唯一发号，409 仅限 schema/批量超限/超 2MB，三类均带机器可读 code=schema|batch-limit|too-large
+//                  供客户端 flush 分类处置；keep=trim 保护集 ≤64；契约 contracts/quality-summary.json）
+//                  POST {replace:true,data}（B4）= v3 备份 sidecar 覆盖导入（仅收完整 data，同款安全边界）
+// /api/listenstats 本地收听统计 sidecar（B3）：GET ?rev= 条件获取（AIbot 复核 P2，对齐 /api/quality——BC 重拉
+//                  命中只回 notModified 不重复传输全量）/ POST {baseRev,ops} 增量合并（AIbot P1-3，对齐 /api/quality//                  模式）——op = {id,day,u0,cat,ms,sess} 日桶增量，op.id 幂等去重 + rev 唯一发号 + 90 天服务端裁剪；
+//                  多标签同 base 各自 POST 不同增量不互相覆盖；坏日期键（非历法 YYYY-MM-DD）schema 拒绝整批；
+//                  409 响应带机器可读 code（schema|batch-limit，AIbot 复核 P1）——客户端分类处置不静默丢统计；
+//                  POST {replace:true,days}（B4）= v3 备份 sidecar 覆盖导入（lsTrimImport 白名单 + 超 90 日/512KB 拒绝）
+// /api/myradio     my-radio.txt 全量替换（B0）：v2+ 备份恢复通道，行形态清洗 + 500 行/64KB 封顶 + tmp+rename
+// 安全：默认仅监听 127.0.0.1；proxy/check 仅允许公网 http(s) 目标 —— safeTarget 字符串校验 + guardLookup//       连接级 IP 校验（防 DNS rebinding/TOCTOU），重定向逐跳复查；/proxy 与全部 /api/* 校验
 //       Origin/Sec-Fetch-Site（防跨源 CSRF/探活驱动/把本机当流中继——媒体元素加载无需 CORS，audit A2）；
 //       回环监听模式下校验 Host 头（rebinding 页面 Origin==Host==攻击者域名，Origin 比对全失效，唯有
 //       握手层 Host 无从伪造，audit A3）；静态服务拒绝目录穿越、dotfile、备份文件与 data/ 段——段名比较
 //       先归一大小写与尾部点空格（Windows 大小写不敏感 + Win32 剥尾点曾实测绕过字面量比较，audit A1；
 //       store.json 是全量个人数据，HOST=0.0.0.0 局域网模式下不可被直接 GET）。
-const http = require('http'), https = require('https'), fs = require('fs'), path = require('path');
-const { syncSources, checkStream, safeTarget, guardLookup, tryUrl } = require('./update-sources');
+const http = require('http'), https = require('https'), fs = require('fs'), path = require('path'), crypto = require('crypto');
+const { runPipeline, publishResult, bootManifest, forceTokenIssue, forceTokenConsume, checkStream, checkDetail, safeTarget, guardLookup, tryUrl } = require('./update-sources');
+const { qApplyOp, qTrim } = require('./quality-store'); // B2：质量聚合应用/裁剪纯函数（与客户端逐字节同语义）
+const { lsDayKeyOk, lsApplyOp } = require('./listen-stats'); // B3：收听统计 op 应用/日期键历法校验（与客户端同语义）
 const ROOT = __dirname, PORT = process.env.PORT || 8137, HOST = process.env.HOST || '127.0.0.1';
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.txt': 'text/plain; charset=utf-8' };
 // Host 头白名单（audit A3，防 DNS rebinding）：回环监听（默认）下只认本机名——rebinding 攻击里页面
@@ -78,6 +92,17 @@ function myStationWrite(n, u, c) {
   })).catch(() => ({ ok: false, error: '写入失败' }));
 }
 
+// ---------- my-radio.txt 全量替换（B0）：v2+ 备份恢复通道。与 myStationWrite 共用串行队列（追加与整替不互踩），
+// tmp+rename 原子替换；行形态清洗在路由层完成（只收「分类,#genre#」与「台名,http(s)」两种合法行） ----------
+function myRadioReplace(lines) {
+  return myQ = myQ.then(() => new Promise(done => {
+    const out = lines.length ? lines.join('\r\n') + '\r\n' : '';
+    const tmp = MY_FILE + '.tmp';
+    fs.writeFile(tmp, out, e => e ? done({ ok: false, error: '写入失败' })
+      : fs.rename(tmp, MY_FILE, e2 => done(e2 ? { ok: false, error: '写入失败' } : { ok: true })));
+  })).catch(() => ({ ok: false, error: '写入失败' }));
+}
+
 // ---------- data/store.json（方案二/R4 拍板）：前端持久层主源。仲裁 = 服务端唯一发号（rev 由 POST 成功才分配，
 // 客户端永不自造）——跨浏览器/换机窗口不会「同 rev 不同数据」静默压掉一端改动，并发退化为显式 last-write-wins。
 // 写入复用 my-radio 口径：tmp+rename 原子替换 + 串行队列；结构白名单只收已知键（值形状前端自管，键集合即边界） ----------
@@ -106,6 +131,248 @@ function storeWrite(data) {
           if (e3) return done({ ok: false, error: '写入失败' });
           storeRev = rev; storeCache = { rev, data };
           done({ ok: true, rev });
+        }));
+    });
+  })).catch(() => ({ ok: false, error: '写入失败' }));
+}
+
+// ---------- data/quality.json（B0 骨架 / B2 QualityStore 服务端底座）：质量聚合 sidecar。
+// 仲裁模型 = 操作事件合并（非 last-write-wins，契约 contracts/quality-summary.json）：POST {baseRev, ops[, keep]} 逐条
+// 应用，同一 op.id 已处理则跳过——网络重试/页面刷新/多标签重复提交不重复计数；去重日志 FIFO（512 条）淘汰时
+// 推进 at 水位线 floorAt，旧于水位线的重试显式拒绝（响应 rejected 计数）而非静默重算，幂等边界可证明；baseRev 只是客户端观测版本，
+// 不作整段覆盖条件、版本落后不拒绝合并；仅 schema 错误/单批超限/无法合并（含 2MB 硬上限）返回 409——
+// 三类 409 均带机器可读 code（schema|batch-limit|too-large，AIbot PR#26 复核 P2）：客户端只丢不可恢复的
+// schema 批、容量类保留 pending 重试（quality-store.js flush 分类处置）。
+// rev 服务端唯一发号（成功应用 ≥1 条才 +1，纯去重命中不动号）。安全边界复用 store 口径：跨源拒绝、
+// 请求体/单批操作数封顶、tmp+rename + 串行队列、坏文件按空库恢复。
+// B2 落地：聚合应用走 quality-store.js 纯函数 qApplyOp（每台 {cf, sources:{源URL:{聚合值…}}} 内层形态与
+// Android filesDir/quality.json 一致；本文件包装 = {v,rev,ops,data}、Android = {v,stations}，契约 files 节冻结）；
+// keep = 客户端随批附带的收藏+最近保护集（≤64 条 http(s) URL），
+// trim 时保留——B2 临场设计（契约 trimOrder 的保护集服务端落地）。trim 下钻序见 quality-store.js。 ----------
+const QUALITY_FILE = path.join(DATA_DIR, 'quality.json');
+const Q_MAX = +(process.env.VR_TEST_Q_MAX || 0) || 2 * 1024 * 1024, Q_OPS_MAX = 32, Q_BODY_MAX = 256 * 1024, Q_OPLOG = 512; // VR_TEST_Q_MAX 仅测试注入缝（真实 HTTP 链压 2MB 拒绝路径用，生产不设）
+const Q_KINDS = new Set(['diagnostic', 'playback']), Q_TRIGGERS = new Set(['manual', 'boot', 'sync', 'play', 'watchdog', 'switch', 'error']), Q_MODES = new Set(['direct', 'hls', 'proxy']);
+let qCache = null, qQ = Promise.resolve();
+function qRead() { // 懒加载 + 坏文件按空库恢复（只清自身，绝不碰 radio.health / store.json）
+  if (!qCache) {
+    try { qCache = JSON.parse(fs.readFileSync(QUALITY_FILE, 'utf8')); } catch (_) { qCache = null; }
+    if (!qCache || typeof qCache !== 'object' || !Array.isArray(qCache.ops) || typeof qCache.data !== 'object' || !Number.isFinite(qCache.rev)) qCache = { v: 1, rev: 0, ops: [], data: {} };
+    if (!Array.isArray(qCache.ats) || qCache.ats.length !== qCache.ops.length) { qCache.ats = qCache.ops.map(() => 0); qCache.floorAt = 0; } // 幂等水位线兼容：旧文件/形态不齐按 0 对齐（不拒绝任何重试）
+    if (!Number.isFinite(qCache.floorAt)) qCache.floorAt = 0;
+  }
+  return qCache;
+}
+function qValidOp(o) { // schema 校验（契约 opEvent）：不合即 409，不做静默修补
+  return !!o && typeof o === 'object' && typeof o.id === 'string' && o.id.length > 0 && o.id.length <= 128
+    && /^https?:\/\//.test(o.identityUrl || '') && (o.identityUrl || '').length <= 512
+    && /^https?:\/\//.test(o.sourceUrl || '') && (o.sourceUrl || '').length <= 512
+    && Q_KINDS.has(o.kind) && Q_TRIGGERS.has(o.trigger) && typeof o.ok === 'boolean'
+    && Number.isFinite(+o.latencyMs) && Number.isFinite(+o.bytes) && Number.isFinite(+o.at) && Q_MODES.has(o.mode);
+}
+// ---------- v3 备份 sidecar 覆盖导入（B4，§13.2-6「导入语义=明确覆盖」）：POST {replace:true,data} ----------
+// 与前端 backup.js qualityTrim 同款白名单。B2 起服务端存储为嵌套形态（每台 {cf, sources:{源URL:{聚合…}}}，
+// 与 Android filesDir/quality.json 同构）——导入只收该形态的迁移字段：台级 cf + 每源计数/时间戳/延迟/
+// modes/最近诊断与播放失败；未列字段（summary 派生值/响应正文/DNS/token）一律剔除。键须公网 http(s)≤512、
+// 台 2000/每台源 6 封顶、总量受 2MB 硬上限
+const Q_SRC_NUM = ['okCount', 'failCount', 'lastOkAt', 'lastFailAt', 'lastPlaybackAt', 'latSum', 'latN', 'disconnects'];
+const qImpNum = x => { const n = Math.floor(+x); return Number.isFinite(n) && n >= 0 ? Math.min(n, 1e9) : null; };
+const qImpEvt = x => x && typeof x === 'object' && !Array.isArray(x)
+  ? { t: String(x.t || '').slice(0, 16), ok: !!x.ok, at: qImpNum(x.at) || 0, lat: qImpNum(x.lat) || 0 } : null;
+function qTrimImport(data) {
+  const out = {};
+  for (const k of Object.keys(data)) {
+    if (Object.keys(out).length >= 2000) return null; // 条目封顶（构造面防护，超限整体拒绝）
+    if (!/^https?:\/\//.test(k) || k.length > 512) continue;
+    const v = data[k];
+    if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
+    const e = { cf: Math.min(qImpNum(v.cf) || 0, 1e9), sources: {} };
+    const srcs = v.sources && typeof v.sources === 'object' && !Array.isArray(v.sources) ? v.sources : {};
+    for (const su of Object.keys(srcs).slice(0, 6)) { // 每台源封顶（caps.sourcesPerStation）
+      if (!/^https?:\/\//.test(su) || su.length > 512) continue;
+      const s = srcs[su];
+      if (!s || typeof s !== 'object' || Array.isArray(s)) continue;
+      const es = {};
+      for (const f of Q_SRC_NUM) { const n = qImpNum(s[f]); if (n != null) es[f] = n; }
+      if (Array.isArray(s.modes)) {
+        const m = [...new Set(s.modes.map(x => String(x).slice(0, 16)).filter(x => /^(direct|hls|proxy)$/.test(x)))].slice(0, 8);
+        if (m.length) es.modes = m;
+      }
+      const ld = qImpEvt(s.lastDiag); if (ld && (ld.at || ld.t)) es.lastDiag = ld;
+      const lp = qImpEvt(s.lastPlayFail); if (lp && (lp.at || lp.t)) es.lastPlayFail = lp;
+      if (Object.keys(es).length) e.sources[su] = es;
+    }
+    if (Object.keys(e.sources).length) out[k] = e; else if (e.cf > 0) out[k] = { cf: e.cf, sources: {} };
+  }
+  if (JSON.stringify(out).length > Q_MAX) return null;
+  return out;
+}
+function qReplace(clean) { // 覆盖写 data（去重日志保留：旧 op 重放不复活旧数据）；写盘/发号纪律与 qCommit 同款
+  return qQ = qQ.then(() => new Promise(done => {
+    const st = JSON.parse(JSON.stringify(qRead()));
+    st.data = clean;
+    const rev = st.rev + 1, out = JSON.stringify(st), tmp = QUALITY_FILE + '.tmp';
+    if (Buffer.byteLength(out) > Q_MAX) return done({ ok: false, error: 'quality sidecar 超过 2MB 硬上限' });
+    fs.mkdir(DATA_DIR, { recursive: true }, e => {
+      if (e) return done({ ok: false, error: '写入失败' });
+      fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
+        : fs.rename(tmp, QUALITY_FILE, e3 => {
+          if (e3) return done({ ok: false, error: '写入失败' });
+          qCache = st; qCache.rev = rev; done({ ok: true, rev });
+        }));
+    });
+  })).catch(() => ({ ok: false, error: '写入失败' }));
+}
+function qCommit(ops, keep) { // 串行：克隆当前态 → 应用（qApplyOp）→ trim（契约淘汰序，keep 保护集）→ 写盘
+  return qQ = qQ.then(() => new Promise(done => {   // 成功才换内存与 rev（写失败不留半应用状态）
+    const st = JSON.parse(JSON.stringify(qRead()));
+    let applied = 0, rejected = 0;
+    for (const op of ops) {
+      if (st.ops.includes(op.id)) continue;          // 窗口内命中：幂等跳过
+      if (+op.at <= st.floorAt) { rejected++; continue; } // 旧于淘汰水位线：显式拒绝（响应带 rejected 计数），绝不重复计数——容量裁剪可丢聚合样本，不得破坏幂等语义（AIbot B0-P1）
+      // 设计边界（AIbot #20 复核 P2 设计清单留档）：floorAt 以事件时间为水位线——客户端时钟回拨/离线队列
+      // 延迟可能令合法新事件被拒计入 rejected（误伤上限 = 淘汰窗口外的少量新样本，不破坏幂等语义）；
+      // B2 后续完整实现的改进方向 = 持久哈希/分区去重索引（精确区分「已淘汰旧重试」与「迟到的合法新事件」），
+      // 当前语义已由 test/quality.js「超过 512 条后：淘汰旧 op 重试被显式拒绝」测试钉死。
+      qApplyOp(st.data, op);                        // B2 纯函数应用（与客户端/Android 同语义）
+      st.ops.push(op.id);
+      st.ats.push(+op.at || 0);
+      applied++;
+    }
+    if (st.ops.length > Q_OPLOG) { // 去重日志 FIFO（与数据同受 2MB 约束）；淘汰推进幂等水位线 floorAt——已淘汰 op 的重试按 at<=floorAt 显式拒绝
+      const cut = st.ops.length - Q_OPLOG, ev = st.ats.splice(0, cut);
+      st.ops.splice(0, cut);
+      st.floorAt = Math.max(st.floorAt || 0, ...ev);
+    }
+    if (!applied) return done({ ok: true, rev: st.rev, applied: 0, rejected });
+    const rev = st.rev + 1;
+    const serialize = () => JSON.stringify({ v: 1, rev, ops: st.ops, ats: st.ats, floorAt: st.floorAt, data: st.data }); // 水位线随盘持久
+    qTrim(st.data, keep, () => Buffer.byteLength(serialize()), Q_MAX); // 2MB 逼近时按淘汰序裁（每 2 步复核防过冲）
+    const out = serialize(), tmp = QUALITY_FILE + '.tmp';
+    if (Buffer.byteLength(out) > Q_MAX) return done({ ok: false, error: 'quality sidecar 超过 2MB 硬上限', code: 'too-large' }); // 无法合并（含 2MB 硬上限）→ 409（路由按 code 映射；写失败仍 200 ok:false——临时错误非协议拒）
+    fs.mkdir(DATA_DIR, { recursive: true }, e => {
+      if (e) return done({ ok: false, error: '写入失败' });
+      fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
+        : fs.rename(tmp, QUALITY_FILE, e3 => {
+          if (e3) return done({ ok: false, error: '写入失败' });
+          qCache = st; qCache.rev = rev; done({ ok: true, rev, applied, rejected });
+        }));
+    });
+  })).catch(() => ({ ok: false, error: '写入失败' }));
+}
+
+// ---------- data/listen-stats.json（B3 本地收听统计 sidecar）：GET 全量 / POST {baseRev,ops} 增量合并。
+// 仲裁模型对齐 /api/quality（AIbot P1-3：原「全量快照覆盖」在多标签并发下后写者覆盖先写者——两页同 base
+// 各自 POST 不同增量会丢一页统计）：op = {id,day,u0,cat,ms,sess} 日桶增量事件，服务端 op.id 幂等去重
+// （客户端失败重试/响应丢失重放不双计）+ rev 唯一发号（baseRev 只是观测版本不作覆盖条件）+ 日桶累加。
+// 存储形态：{v:1, rev, ops:[已见 op.id 去重日志], days:{'YYYY-MM-DD':{ms,stations:{URL:ms},categories:{名:ms},
+// sessions}}}（days 部分与 Android filesDir/listen-stats.json 同构）。日期键严格历法校验（AIbot P1-1：
+// YYYY-MM-DD 且月/日真实存在——02-31/13-01/非闰 02-29 拒绝整批，规则与 listen-stats.js lsDayKeyOk 同源）。
+// 安全边界复用 store 口径：跨源拒绝、方法校验、单批 64/请求体 2MB/去重日志 2048 封顶、90 天服务端裁剪、
+// tmp+rename + 串行队列、坏文件按空库恢复（只清自身，绝不碰 store.json/quality.json）。
+// GET ?rev=<n> 条件获取（AIbot 复核 P2）：命中当前版本回 {v,rev,notModified:true} 不带 days（多标签 BC
+// 重拉零全量传输）；409 响应带机器可读 code：'schema'（形态/历法日键违规，不可恢复）/ 'batch-limit'（超
+// 单批 64 条，客户端收窄批宽分批重试）——客户端按 code 分类处置（listen-stats.js flush），契约描述见
+// contracts/listen-stats-summary.json（Web test/listen-stats.js + Android ContractTest 双端点名）。 ----------
+const LS_FILE = path.join(DATA_DIR, 'listen-stats.json');
+const LS_MAX = 2 * 1024 * 1024, LS_OPS_MAX = 64, LS_OPLOG = 2048, LS_KEEP_DAYS = 90;
+const LS_MS_MAX = 86400000, LS_SESS_MAX = 1000, LS_MAP_MAX = 64, LS_URL_MAX = 512, LS_CAT_MAX = 24;
+let lsCache = null, lsQ = Promise.resolve();
+function lsRead() { // 懒加载 + 坏文件按空库恢复
+  if (!lsCache) {
+    try { lsCache = JSON.parse(fs.readFileSync(LS_FILE, 'utf8')); } catch (_) { lsCache = null; }
+    if (!lsCache || lsCache.v !== 1 || !Number.isFinite(lsCache.rev) || !Array.isArray(lsCache.ops)
+      || typeof lsCache.days !== 'object' || Array.isArray(lsCache.days)) lsCache = { v: 1, rev: 0, ops: [], days: {} };
+  }
+  return lsCache;
+}
+function lsValidOp(o) { // schema 校验（契约 opEvent：不合即 409，不做静默修补；坏日期键整批拒绝）
+  return !!o && typeof o === 'object' && typeof o.id === 'string' && o.id.length > 0 && o.id.length <= 64
+    && lsDayKeyOk(o.day)                                   // 历法有效 YYYY-MM-DD（AIbot P1-1）
+    && (o.u0 === undefined || o.u0 === '' || (typeof o.u0 === 'string' && o.u0.length <= LS_URL_MAX && /^https?:\/\//.test(o.u0)))
+    && (o.cat === undefined || typeof o.cat === 'string' && o.cat.length <= LS_CAT_MAX)
+    && (o.ms === undefined || (Number.isFinite(o.ms) && o.ms >= 0 && o.ms <= LS_MS_MAX))
+    && (o.sess === undefined || (Number.isInteger(o.sess) && o.sess >= 0 && o.sess <= LS_SESS_MAX));
+}
+function lsTrimDays(days) { // 90 天服务端裁剪（与客户端同口径；ISO 键字典序 = 时间序）+ 台/分类条目封顶护栏
+  const ks = Object.keys(days).filter(lsDayKeyOk).sort();
+  for (const k of Object.keys(days)) if (!lsDayKeyOk(k)) delete days[k]; // 旧盘残留坏键清理
+  for (const k of ks.slice(0, Math.max(0, ks.length - LS_KEEP_DAYS))) delete days[k];
+  for (const k of Object.keys(days)) {
+    const d = days[k];
+    for (const m of ['stations', 'categories']) {
+      const e = Object.entries(d[m] || {}).sort((a, b) => a[0].localeCompare(b[0]));
+      for (const [kk] of e.slice(0, Math.max(0, e.length - LS_MAP_MAX))) delete d[m][kk]; // 超限裁字典序最前（防御性，正常进不来）
+    }
+  }
+}
+function lsCommit(ops) { // 串行：克隆当前态 → op.id 去重 + 日桶累加（lsApplyOp 与客户端同语义）→ 裁剪 → 写盘
+  return lsQ = lsQ.then(() => new Promise(done => {       // 成功才换内存与 rev（写失败不留半应用状态）
+    const st = JSON.parse(JSON.stringify(lsRead()));
+    let applied = 0;
+    for (const op of ops) {
+      if (st.ops.includes(op.id)) continue;
+      lsApplyOp(st.days, op);
+      st.ops.push(op.id);
+      applied++;
+    }
+    while (st.ops.length > LS_OPLOG) st.ops.splice(0, st.ops.length - LS_OPLOG); // 去重日志 FIFO（与数据同受 2MB 约束）
+    if (!applied) return done({ ok: true, rev: st.rev, applied: 0 });
+    const rev = st.rev + 1;
+    lsTrimDays(st.days);
+    const serialize = () => JSON.stringify({ v: 1, rev, ops: st.ops, days: st.days });
+    const out = serialize(), tmp = LS_FILE + '.tmp';
+    if (Buffer.byteLength(out) > LS_MAX) return done({ ok: false, error: 'listen-stats sidecar 超过 2MB 硬上限' });
+    fs.mkdir(DATA_DIR, { recursive: true }, e => {
+      if (e) return done({ ok: false, error: '写入失败' });
+      fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
+        : fs.rename(tmp, LS_FILE, e3 => {
+          if (e3) return done({ ok: false, error: '写入失败' });
+          lsCache = st; lsCache.rev = rev; done({ ok: true, rev, applied });
+        }));
+    });
+  })).catch(() => ({ ok: false, error: '写入失败' }));
+}
+// ---------- v3 备份 sidecar 覆盖导入（B4，§13.2-6「导入语义=明确覆盖」）：POST {replace:true,days} ----------
+// 与前端 backup.js lsTrim / Android Backup.lsTrim 同语义白名单，服务端严格把关（超限整体拒绝 → 409）：
+// 日键历法有效、台键 http(s)≤512、分类 ≤24、数值非负封顶、日 90 封顶（sidecar 本体同款保留期）、
+// 每日台/分类 ≤64、总量 512KB 封顶（对齐 sidecar fileCap——构造面防护）
+function lsTrimImport(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+  const num = x => { const n = Math.floor(+x); return Number.isFinite(n) && n >= 0 ? Math.min(n, 1e9) : null; };
+  const out = {};
+  const dayKeys = Object.keys(data).filter(lsDayKeyOk).sort();
+  if (dayKeys.length > LS_KEEP_DAYS) return null; // 合法导出恒 ≤90 日（sidecar 保留期），超限视为构造面攻击
+  for (const k of dayKeys) {
+    const d = data[k];
+    if (!d || typeof d !== 'object' || Array.isArray(d)) continue;
+    const map = (o, keyOk) => {
+      const e = {};
+      for (const kk of Object.keys(o || {}).slice(0, LS_MAP_MAX)) {
+        if (!keyOk(kk)) continue;
+        const v = num(o[kk]); if (v != null && v > 0) e[kk] = v;
+      }
+      return e;
+    };
+    const e = { ms: num(d.ms) || 0, sessions: Math.min(num(d.sessions) || 0, 1e6) };
+    e.stations = map(d.stations, kk => /^https?:\/\//.test(kk) && kk.length <= 512);
+    e.categories = map(d.categories, kk => kk.length > 0 && kk.length <= 24);
+    if (e.ms > 0 || e.sessions > 0 || Object.keys(e.stations).length || Object.keys(e.categories).length) out[k] = e;
+  }
+  if (Buffer.byteLength(JSON.stringify(out)) > 512 * 1024) return null;
+  return out;
+}
+function lsReplace(clean) { // 覆盖写 days（op 去重日志保留：旧 op 重放不复活旧数据）；写盘/发号纪律与 lsCommit 同款
+  return lsQ = lsQ.then(() => new Promise(done => {
+    const st = JSON.parse(JSON.stringify(lsRead()));
+    st.days = clean;
+    const rev = st.rev + 1, out = JSON.stringify(st), tmp = LS_FILE + '.tmp';
+    if (Buffer.byteLength(out) > LS_MAX) return done({ ok: false, error: 'listen-stats sidecar 超过 2MB 硬上限' });
+    fs.mkdir(DATA_DIR, { recursive: true }, e => {
+      if (e) return done({ ok: false, error: '写入失败' });
+      fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
+        : fs.rename(tmp, LS_FILE, e3 => {
+          if (e3) return done({ ok: false, error: '写入失败' });
+          lsCache = st; lsCache.rev = rev; done({ ok: true, rev });
         }));
     });
   })).catch(() => ({ ok: false, error: '写入失败' }));
@@ -183,16 +450,72 @@ setInterval(() => {
 }, NP_IDLE);
 
 let syncInFlight = null;
+// 启动资产校验（§13.3）：manifest 缺失且四资产齐全 → 写 bootstrap 继续；校验失败 → 自动恢复上一批（.tmp/sync-prev）；
+// 资产不完整 → ok:false（前端 toast「数据资产不完整」提示，服务照常起，不静默混态）
+const bootState = bootManifest(ROOT, m => console.log('[sync]', m));
+/* B2 强制同步两步协议（§6.4）：普通 /api/sync 被决策门拦截时不落盘，返回 {ok:false, gated:true, report,
+   reportHash} 并把候选产物 stash 进内存单槽；POST /api/sync/force-token {reportHash} 换一次性 token（5 分钟、
+   绑定报告指纹）；POST /api/sync {forceToken} 消费 token → 复用 stash 原料重跑强制发布（不重拉上游）。
+   普通 /api/sync 不收 force 字段（400）；force 只绕数量/分类类决策门，安全护栏/格式过滤/生成失败照拦。 */
+let syncStash = null; // {report, reportHash, inputs:{cn,eu}, tokens:{token:{expiresAt,reportHash}}}
+const randHex = () => crypto.randomBytes(32).toString('hex');
 http.createServer((req, res) => {
   if (HOST_OK && !HOST_OK.has(hostName(req.headers.host || '') || '')) return res.writeHead(403).end('403 unexpected Host'); // rebinding 面（audit A3）：Host 不在白名单一律拒
   const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(obj)); };
+  const readJsonBody = (req, cap, onJson) => { // 小体量 JSON 读取（sync/force-token 用；空体 = {}，解析失败 = null）
+    let body = '', big = false;
+    req.on('data', c => { body += c; if (body.length > cap) { big = true; json(413, { error: '请求体过大' }); req.destroy(); } });
+    req.on('end', () => {
+      if (big) return;
+      if (!body.trim()) return onJson({});
+      let j; try { j = JSON.parse(body); } catch (_) { return onJson(null); }
+      onJson(j);
+    });
+  };
 
+  if (req.url.split('?')[0] === '/api/sync/force-token') { // 两步协议第一步：换一次性 token（只收 POST）
+    if (req.method !== 'POST') return json(405, { error: 'method not allowed' });
+    if (crossOrigin(req)) return json(403, { error: '跨源请求被拒绝' });
+    return readJsonBody(req, 4096, j => {
+      if (j === null) return json(400, { error: 'bad request' });
+      const r = forceTokenIssue(syncStash, j, Date.now(), randHex);
+      json(r.status, r.status === 200 ? r.body : { error: r.error });
+    });
+  }
   if (req.method === 'POST' && req.url.split('?')[0] === '/api/sync') {
     if (crossOrigin(req)) return json(403, { error: '跨源请求被拒绝' }); // 防 CSRF（P2-5）
     if (syncInFlight) return json(409, { error: '同步已在进行中，请稍候' });
-    syncInFlight = syncSources(m => console.log('[sync]', m));
-    syncInFlight.then(s => json(200, s)).catch(e => json(500, { error: String(e.message || e) })).finally(() => { syncInFlight = null; });
-    return;
+    return readJsonBody(req, 4096, j => {
+      if (j === null) return json(400, { error: 'bad request' });
+      if ('force' in j) return json(400, { error: '不接受 force 字段——强制同步走 /api/sync/force-token 两步协议' });
+      const forceToken = typeof j.forceToken === 'string' ? j.forceToken : '';
+      const run = (async () => {
+        if (forceToken) { // 两步协议第二步：消费 token（单次、绑定指纹复查）→ 复用 stash 原料强制发布
+          const c = forceTokenConsume(syncStash, forceToken, Date.now());
+          if (c.status !== 200) return { __http: c.status, __err: c.error };
+          const r2 = await runPipeline(m => console.log('[sync]', m), { inputs: syncStash.inputs, force: true, entry: 'web' });
+          if (r2.hardAbort) return r2.summary; // 复跑撞硬门槛（理论不可达：门检查同一批原料）——保留旧库
+          return publishResult(ROOT, r2, { entry: 'web', forced: true });
+        }
+        const r = await runPipeline(m => console.log('[sync]', m), { entry: 'web' });
+        if (r.hardAbort) return r.summary;                                   // 既有 aborted 语义（消费方兼容）
+        if (r.gated) {                                                       // 决策门：不落盘，stash 供强制复用
+          syncStash = { report: r.report, reportHash: r.reportHash, inputs: r.artInputs, tokens: {} };
+          return { ok: false, gated: true, report: r.report, reportHash: r.reportHash };
+        }
+        syncStash = null; // 门通过正常发布：旧 stash 作废（其 token 随之失效）
+        return publishResult(ROOT, r, { entry: 'web' });
+      })();
+      syncInFlight = run;
+      run.then(s => s && s.__http ? json(s.__http, { error: s.__err }) : json(200, s))
+        .catch(e => json(500, { error: String(e.message || e) }))
+        .finally(() => { syncInFlight = null; });
+    });
+  }
+  if (req.url.split('?')[0] === '/api/boot') { // B2 启动资产状态（§13.3）：manifest 校验/bootstrap/恢复结果（前端 toast 用）
+    if (req.method !== 'GET') return json(405, { ok: false, error: 'method not allowed' });
+    if (crossOrigin(req)) return json(403, { error: '跨源请求被拒绝' });
+    return json(200, { ok: bootState.ok, version: bootState.version, missing: bootState.missing || [], restored: !!bootState.restored });
   }
   if (req.url.startsWith('/api/check?')) {
     if (req.method !== 'GET') return json(405, { ok: false, detail: 'method not allowed' }); // 探活只该被 GET 驱动（audit-r2 P3-1，与 /proxy、静态同口径）
@@ -208,6 +531,11 @@ http.createServer((req, res) => {
     const tms = Math.min(Math.max(parseInt(sp.searchParams.get('t'), 10) || 0, 0), 30000);
     const opt = tms >= 1000 ? { timeout: tms } : {};
     (async () => {
+      if (sp.searchParams.get('detail') === '1') { // 结构化详情（B1，契约 contracts/source-diagnostic.json）：逐源完整结果、
+        // 绝不返回响应体；安全边界与旧口径一致（≤4 URL/双护栏/逐跳复查/跨源拒/时间窗口不放宽——单 URL 窗口同 t 钳制）
+        const results = await Promise.all(targets.map(t => checkDetail(t, 0, opt)));
+        return json(200, { ok: results.some(r => r.ok), results });
+      }
       for (const t of targets) { const r = await checkStream(t, 0, opt); if (r.ok) return json(200, { ok: true, detail: r.detail }); }
       json(200, { ok: false, detail: `${targets.length} 个源均不可用` });
     })();
@@ -231,6 +559,103 @@ http.createServer((req, res) => {
         if (!r.ok) return json(200, { ok: false, detail: '探活失败：' + r.detail });
         json(200, await myStationWrite(n, target, c));
       }).catch(e => json(500, { error: String(e && e.message || e) }));
+    });
+    return;
+  }
+  if (req.url.split('?')[0] === '/api/quality') { // 质量 sidecar（B0 契约）：GET 条件获取（rev 命中只回 notModified）/ POST ops 合并
+    if (crossOrigin(req)) return json(403, { error: '跨源请求被拒绝' });
+    if (req.method === 'GET') {
+      const s = qRead();
+      let rv = NaN;
+      try { rv = parseInt(new URL(req.url, `http://${req.headers.host || 'localhost'}`).searchParams.get('rev') || '', 10); } catch (_) {}
+      if (rv === s.rev) return json(200, { rev: s.rev, notModified: true });
+      return json(200, { rev: s.rev, data: s.data });
+    }
+    if (req.method === 'POST') {
+      let body = '', big = false;
+      req.on('data', c => { body += c; if (body.length > Q_BODY_MAX) { big = true; json(409, { ok: false, error: '请求体过大', code: 'too-large' }); req.destroy(); } }); // 超限先写响应再断连（与 store 同口径）；字节超限 → code=too-large
+      req.on('end', () => {
+        if (big) return;
+        let j; try { j = JSON.parse(body); } catch (_) { return json(400, { ok: false, error: 'bad request' }); }
+        if (j && j.replace === true) { // v3 备份 sidecar 覆盖导入（B4）：同款跨源/方法/封顶边界，仅收完整 data
+          const data = j.data;
+          if (!data || typeof data !== 'object' || Array.isArray(data)) return json(409, { ok: false, error: 'sidecar 数据不合法' });
+          const clean = qTrimImport(data);
+          if (!clean) return json(409, { ok: false, error: 'sidecar 数据不合法或超限（条目 2000 / 2MB）' });
+          return qReplace(clean).then(r => json(200, r));
+        }
+        const ops = j && j.ops;
+        // 三类 409 各带机器可读 code（AIbot PR#26 复核 P2）：schema=op 事件校验失败（不可恢复，客户端丢批）；
+        // batch-limit=单批 32 条超限（可恢复，客户端减半分批）；契约口径不变——仅 schema/批量超限/无法合并 → 409
+        if (!Array.isArray(ops) || !ops.length) return json(409, { ok: false, error: '操作事件列表不合法', code: 'schema' });
+        if (ops.length > Q_OPS_MAX) return json(409, { ok: false, error: '单批操作事件超过上限（32 条）', code: 'batch-limit' });
+        if (!ops.every(qValidOp)) return json(409, { ok: false, error: '操作事件 schema 校验失败', code: 'schema' }); // baseRev 落后不拒
+        // keep = 收藏+最近保护集（B2 临场设计：客户端每次 POST 附带 ≤64 条 http(s) URL，服务端 trim 时保留）
+        const keep = Array.isArray(j.keep) ? [...new Set(j.keep.filter(u => typeof u === 'string' && u.length <= 512 && /^https?:\/\//.test(u)))].slice(0, 64) : [];
+        qCommit(ops, keep).then(r => json(r && r.code ? 409 : 200, r)); // qCommit 唯一带 code 的失败 = 2MB 无法合并（too-large）；写失败 200 ok:false
+      });
+      return;
+    }
+    return json(405, { ok: false, error: 'method not allowed' });
+  }
+  if (req.url.split('?')[0] === '/api/listenstats') { // 收听统计 sidecar（B3）：GET ?rev= 条件获取 / POST {baseRev,ops} 增量合并（AIbot P1-3）
+    if (crossOrigin(req)) return json(403, { error: '跨源请求被拒绝' });
+    if (req.method === 'GET') { // 条件获取（AIbot 复核 P2，对齐 /api/quality）：?rev= 命中当前版本只回 notModified——多标签 BC 重拉不重复传输全量 days
+      const s = lsRead();
+      let rv = NaN;
+      try { rv = parseInt(new URL(req.url, `http://${req.headers.host || 'localhost'}`).searchParams.get('rev') || '', 10); } catch (_) {}
+      if (rv === s.rev) return json(200, { v: 1, rev: s.rev, notModified: true });
+      return json(200, { v: 1, rev: s.rev, days: s.days });
+    }
+    if (req.method === 'POST') {
+      let body = '', big = false;
+      req.on('data', c => { body += c; if (body.length > LS_MAX) { big = true; json(413, { ok: false, error: '请求体过大' }); req.destroy(); } }); // 超限先写响应再断连（与 store 同口径）
+      req.on('end', () => {
+        if (big) return;
+        let j; try { j = JSON.parse(body); } catch (_) { return json(400, { ok: false, error: 'bad request' }); }
+        if (j && j.replace === true) { // v3 备份 sidecar 覆盖导入（B4）：同款跨源/方法/封顶边界，仅收完整 days
+          const clean = lsTrimImport(j.days);
+          if (clean == null) return json(409, { ok: false, error: '收听统计数据不合法或超限（日 90/512KB 封顶，字段白名单见 contracts/backup-v3.schema.json）' });
+          return lsReplace(clean).then(r => json(200, r));
+        }
+        const ops = j && j.ops;
+        if (!Array.isArray(ops) || !ops.length || !ops.every(lsValidOp))
+          return json(409, { ok: false, code: 'schema', error: '统计操作事件不合法（op={id,day,u0?,cat?,ms?,sess?}，day 须历法有效 YYYY-MM-DD）' }); // 契约：仅 schema 错误/批量超限 → 409，带机器可读 code（AIbot 复核 P1）；baseRev 落后不拒（增量合流）
+        if (ops.length > LS_OPS_MAX)
+          return json(409, { ok: false, code: 'batch-limit', error: '统计操作事件超过单批上限（64 条）——客户端收窄批宽分批重试' });
+        lsCommit(ops).then(r => json(200, r));
+      });
+      return;
+    }
+    return json(405, { ok: false, error: 'method not allowed' });
+  }
+  if (req.url.split('?')[0] === '/api/myradio') { // my-radio.txt 全量替换（B0）：v2+ 备份恢复通道；行形态清洗 + 行数/字节封顶
+    if (crossOrigin(req)) return json(403, { error: '跨源请求被拒绝' });
+    if (req.method !== 'POST') return json(405, { ok: false, error: 'method not allowed' });
+    let body = '', big = false;
+    req.on('data', c => { body += c; if (body.length > 128 * 1024) { big = true; json(413, { ok: false, error: '请求体过大' }); req.destroy(); } });
+    req.on('end', () => {
+      if (big) return;
+      let j; try { j = JSON.parse(body); } catch (_) { return json(400, { ok: false, error: 'bad request' }); }
+      const lines = j && j.lines;
+      if (!Array.isArray(lines)) return json(400, { ok: false, error: 'bad request' });
+      const clean = []; // 只收「分类,#genre#」与「台名,http(s) 地址」；台名去 csv 分隔符（与 mystation 同口径）
+      for (const l of lines) {
+        if (typeof l !== 'string') continue;
+        const t = l.trim().slice(0, 600).replace(/[\r\n]/g, '');
+        if (!t) continue;
+        if (t.endsWith('#genre#')) {
+          const c = t.slice(0, -8).replace(/,\s*$/, '').replace(/[,\r\n|]/g, ' ').trim().slice(0, 24);
+          if (c) clean.push(c + ',#genre#');
+          continue;
+        }
+        const i = t.lastIndexOf(',');
+        if (i < 0) continue;
+        const n = t.slice(0, i).replace(/[,\r\n|]/g, ' ').trim().slice(0, 40), u = t.slice(i + 1).trim();
+        if (n && /^https?:\/\//.test(u)) clean.push(n + ',' + u);
+      }
+      if (clean.length > MY_MAX_LINES || clean.join('\r\n').length > MY_MAX_BYTES) return json(413, { ok: false, error: `个人电台列表超上限（${MY_MAX_LINES} 行/64KB）` });
+      myRadioReplace(clean).then(r => json(200, r));
     });
     return;
   }

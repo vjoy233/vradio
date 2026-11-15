@@ -29,24 +29,40 @@ const Player = {
   onplaylast: null, // 媒体键 play 但当前无台时，转交 app 走「续播上次收听」（与 pp 按钮同语义）
   onlogo: null,     // (station) → 台标 URL（锁屏 artwork 大图，r2 ⑩）；由 app 注入 Logos.get，player 不伸手进台标模块
   onstepfav: null,  // (±1) 锁屏/媒体键 ⏮⏭ = 收藏间切台（A2/r2 ①）；由 app 注入 stepFav
+  onqos: null,      // (ev) 播放质量原始转换回调（B2）：{phase:'playing'|'disconnect'|'exhaust', station, si, mode,
+                    // trig?, reason?, lat}。本引擎只发状态机转换（CONNECTING→PLAYING / PLAYING→CONNECTING / 级联耗尽），
+                    // 不感知 QualityStore——trigger 映射（play/switch/watchdog/error）由 app.js 完成（模块契约）
+  loadT0: 0,        // 当前 load() 的建流锚（playing 事件的延迟 = now - loadT0）
+  sessionPlayed: false, // 本次 play() 会话内是否已到达过 playing（区分 play 首达/换源到达）
+  qLastSi: -1,      // 上次到达 playing 的源序号（同台换源到达 = switch、同源重连到达 = play）
+  qDown: false,     // 本次离开 playing 已发过 disconnect（防 watchdog→重连失败→级联双计一次断流）
+  qEmittedT0: 0,    // 已发过 playing 事件的 load 锚（resume 不经 load，重复 playing 不采样）
+  qLastMode: '',    // 最近一次装载 variant 的 mode（AIbot P1-1：curPlay 已清的耗尽善后边界兜底，onqos 的 mode 永不为空）
+  onphase: null,    // (phase, station) 只读播放阶段通知（ui-redesign §6.10，P3）：phase 固定枚举
+                    // 'connecting'|'playing'|'buffering'|'paused'|'idle'。不新增状态机——只在既有事件处理器末尾追加
+                    // 发布，不覆盖 onstate/onqos 任何副作用；Player 只发布不反向访问 App，消费方（app.js）自行投影
 
   init(el, vol0) {
     this.audio = el; this.vol = this.gvol = vol0; el.volume = vol0;
     this.reloadMems(); // 每台音量/成功源记忆装载（Store 收敛层出口，方案二：http 下随 /api/store 对账后可重载）
     el.addEventListener('playing', () => {
       this.connecting = null; this.stopWatchdog(); this.onAir(); this.say('直播中'); this.emit(true);
+      this.qosPlaying(); // B2 播放质量：CONNECTING→PLAYING 到达事件（app.js 映射 play/switch 样本）
       if (this.bc) this.bc.postMessage('on'); // 多标签页防双播（N3）：建流成功即广播，旧标签页让位
+      this.emitPhase('playing'); // P3/§6.10 只读阶段通知（各事件处理器末尾追加，原逻辑零改动）
     });
     el.addEventListener('play', () => this.emit(false));
-    el.addEventListener('pause', () => { if (!this.connecting) { this.emit(false); if (this.station) this.say('已暂停'); } });
+    el.addEventListener('pause', () => { if (!this.connecting) { this.emit(false); if (this.station) this.say('已暂停'); this.emitPhase('paused'); } }); // connecting 抑制期不发 paused（建流中的元素 pause 是加载噪音，非用户意图）
     // 断流自愈（A-1）：error 级联已覆盖「显式失败」，这里补「静默挂起」——
     // stalled/waiting 说明暂时没数据（网络抖动/建流慢，先观察不抢），ended 说明服务端正常断连（直播不该 ended，立即自愈）
     el.addEventListener('timeupdate', () => { if (this.wd && !el.paused) this.stopWatchdog(); }); // 有实际进展即撤看门狗
-    el.addEventListener('stalled', () => this.armWatchdog());
-    el.addEventListener('waiting', () => this.armWatchdog());
+    el.addEventListener('stalled', () => { this.armWatchdog(); this.emitPhase('buffering'); });
+    el.addEventListener('waiting', () => { this.armWatchdog(); this.emitPhase('buffering'); });
     el.addEventListener('ended', () => { // halt 守卫（三审 B3，audit-r2 P2-2 证实未落地）：暂停/让位页不得被 ended 自愈复活——retryOrNext 重连分支 audio.play() 会广播 'on' 反杀对方标签（AIbot P2-1 的 ping-pong）
       if (!this.station || this.connecting) return;
       if (this.halt) { this.heldNext = true; return; } // 暂停期上游断流：置搁浅标记，resume 走 retryOrNext 立即重连（review P3-1）——否则对已 ended 元素 play() 无效，最坏要等看门狗 12s
+      this.qosDown('watchdog'); // B2：直播被服务端断连（不该 ended），先同源重连——断流样本（在播态才计）
+      this.emitPhase('idle'); // 直播不该 ended：真实播放标记立即清（重连经 load 再发 connecting，切台清标记语义达成）
       this.retryOrNext();
     });
     try { localStorage.removeItem('radio.srcmem'); } catch (_) {} // 键升级一次性失效：旧记忆多记着「xmcdn 代理旧路」，留着会压住启发式直流优先
@@ -79,6 +95,9 @@ const Player = {
   },
   emit(full) { if (this.onstate) this.onstate(full); },
   say(t) { if (this.onstatus) this.onstatus(t); },
+  emitPhase(ph) { // 只读阶段发布（P3/§6.10）：try 包裹——消费方异常不得反噬播放引擎
+    try { if (this.onphase) this.onphase(ph, this.station); } catch (_) {}
+  },
   isPaused() { return !this.audio || this.audio.paused; },
   reloadMems() { // 记忆装载（init 与 Store 对账后重载共用）：容错读取 + 形状清洗
     if (this.volT) { clearTimeout(this.volT); delete this.volT; Store.set('radio.volperst', JSON.stringify(this.volMem)); } // 先落未攒完的音量（AIbot P3-2）：防对账重载 volMem 后，300ms 窗口内到点的旧值回写压掉本次拖动
@@ -123,19 +142,40 @@ const Player = {
     return vs;
   },
 
-  /* 默认源决策链（grill 拍板，单次点播内从高到低）：手动指定 prefer > 成功源记忆 srcmem > 静态启发式
-     > 级联自愈顺延。启发式零网络成本只看形态：首个 variant 是直流（mp3/aac 直达，或蜻蜓 m3u8 换算出的
-     64k mp3）优先——不经代理、低延迟、有曲讯；102 台「xmcdn 首源+蜻蜓次源」由此首播直接命中直流 */
+  /* 默认源决策链（grill 拍板 + B1 源生命周期，单次点播内从高到低）：手动指定 prefer > 成功源记忆 srcmem2
+     （须在启用序内）> 人工默认顺序（s.mo 头部，仅该台存在 cfg.srcManualOrder 时压过启发式）> 静态启发式
+     > 级联自愈顺延。s.mo/s.dis 由 app.applyCfg 经 SrcOrder.effective 挂上台对象（启用有效序/禁用索引），
+     本引擎绝不物理重排 s.u[]；未装配的老对象（file:// 早退路径）兜底全量启发式。
+     启发式零网络成本只看形态：首个 variant 是直流（mp3/aac 直达，或蜻蜓 m3u8 换算出的 64k mp3）优先——
+     不经代理、低延迟、有曲讯；102 台「xmcdn 首源+蜻蜓次源」由此首播直接命中直流 */
   srcRank(u) { return /\.m3u8(\?|$)/i.test(this.variants(u)[0]) ? 1 : 0; },
-  srcOrder(s) { return s.u.map((_, i) => i).sort((a, b) => this.srcRank(s.u[a]) - this.srcRank(s.u[b])); }, // sort 稳定（ES2019）：同级保持上游行序
+  srcOrder(s) { // 启用源有效序（B1）：人工序原样使用（用户意图压过启发式）；无人工序对启用集启发式稳定排序（同级保持行序）
+    if (Array.isArray(s.mo)) {
+      if (!s.mo.length) return []; // 全部源已禁用
+      return s.moManual ? s.mo.slice() : s.mo.slice().sort((a, b) => this.srcRank(s.u[a]) - this.srcRank(s.u[b]));
+    }
+    return s.u.map((_, i) => i).sort((a, b) => this.srcRank(s.u[a]) - this.srcRank(s.u[b]));
+  },
 
   play(s, prefer) {
     this.stopWatchdog();
     this.halt = this.heldNext = false; // 清上一轮的有意暂停/级联搁浅标记（AIbot P2-1）
-    const order = this.srcOrder(s); // 启发式基座（①）；记忆/手动在其上叠加，序号对齐原始 s.u
+    this.sessionPlayed = false; this.qDown = false; this.qEmittedT0 = 0; this.qLastSi = -1; // B2 质量会话复位
+    const order = this.srcOrder(s); // 有效序基座（禁用源已剔除，序号对齐原始 s.u）
+    if (!order.length) { // 全部源已手动禁用（B1 拍板）：不创建 audio/HLS/代理连接、不写 radio.health、不触发自动
+      // 复活/不换身份键；停掉在播旧台（有意停播，非级联失败）+ onstatus 提示 + 可区分返回值
+      this.token++; this.stopHls(); this.stopWatchdog();
+      this.audio.removeAttribute('src'); this.audio.load();
+      this.station = this.connecting = null;
+      this.curSi = -1; this.curPlay = this.curUrl = '';
+      this.emit(true);
+      this.emitPhase('idle'); // 全禁源 = 无连接：真实播放标记清零（P3/§6.10）
+      this.say('该台所有源都已手动禁用，请先启用一个源');
+      return 'NO_ENABLED_SOURCE';
+    }
     const mem = this.srcMem[s.u[0]];
-    if (mem && Number.isInteger(mem.i) && mem.i >= 0 && mem.i < s.u.length) { order.splice(order.indexOf(mem.i), 1); order.unshift(mem.i); } // 上次试通的源先行（流地址天然漂移，省一轮必败等待）
-    if (Number.isInteger(prefer) && prefer >= 0 && prefer < s.u.length) { order.splice(order.indexOf(prefer), 1); order.unshift(prefer); } // 手动选源（②）：当次点播最高优先
+    if (mem && Number.isInteger(mem.i) && mem.i >= 0 && mem.i < s.u.length && order.includes(mem.i)) { order.splice(order.indexOf(mem.i), 1); order.unshift(mem.i); } // 上次试通的源先行（流地址天然漂移，省一轮必败等待）；记忆指向禁用源则忽略顺延
+    if (Number.isInteger(prefer) && prefer >= 0 && prefer < s.u.length && order.includes(prefer)) { order.splice(order.indexOf(prefer), 1); order.unshift(prefer); } // 手动选源（②）：当次点播最高优先；禁用源不可 prefer
     const urls = [];
     for (const si of order) for (const v of this.variants(s.u[si])) urls.push({ u: v, si });
     this.pctx = { urls, i: 0, my: ++this.token }; // 世代令牌：快速连续点播时旧链路回调全部失效，防串台
@@ -155,8 +195,11 @@ const Player = {
   next() { // error 级联：换下一个 variant（顺序不能乱的三级策略展开序）
     const { urls, my } = this.pctx;
     if (my !== this.token) return;
+    this.qosDown('error'); // B2：级联换源 = 断流样本（在播态失败才计；watchdog 同一次断流已被 qDown 挡）
     if (this.pctx.i >= urls.length) { // 全部源失败：状态栏给出结论与下一步指引，footer 由 onfail 复位
+      if (this.onqos && this.station) this.onqos({ phase: 'exhaust', station: this.station, si: this.curSi, mode: this.qosMode() }); // B2：级联耗尽 = error 样本
       this.station = this.connecting = null; this.stopWatchdog(); this.emit(true);
+      this.emitPhase('idle'); // 级联耗尽：无连接，真实播放标记清零（P3/§6.10）
       this.say('⚠ 全部源失败，建议点「体检」或「同步源」');
       if (this.onfail) this.onfail();
       return;
@@ -168,6 +211,7 @@ const Player = {
     if (this.halt && this.pctx.i > 0) { this.heldNext = true; return; }
     const cur = urls[this.pctx.i++];
     this.curSi = cur.si; this.curPlay = cur.u; this.retried = false;
+    this.qLastMode = cur.u.startsWith('/proxy') ? 'proxy' : (/\.m3u8(\?|$)/i.test(cur.u) ? 'hls' : 'direct'); // B2：记最近尝试 variant 的 mode（耗尽事件兜底）
     this.connecting = this.station; this.emit(true); // 换源重试期间保持连接中指示
     this.say('连接中… 源' + this.pctx.i + '/' + urls.length);
     this.load(cur.u, () => { if (my === this.token) this.next(); });
@@ -176,6 +220,8 @@ const Player = {
   load(u, onFail) {
     this.stopHls();
     const audio = this.audio;
+    this.loadT0 = Date.now(); // B2 建流锚：playing 事件的延迟 = now - loadT0
+    this.emitPhase('connecting'); // P3/§6.10：装载即连接中——play 请求/切台/级联顺延/重连统一入口，切台立即清真实播放标记
     const viaProxy = u.startsWith('/proxy');
     const raw = viaProxy ? decodeURIComponent(u.replace(/^\/proxy\?url=/, '')) : u;
     this.curUrl = raw; // 正在播的远端原始 URL（曲讯轮询取 ICY 用）
@@ -223,6 +269,7 @@ const Player = {
     this.station = this.connecting = null; this.cancelSleep();
     this.curSi = -1; this.curPlay = this.curUrl = '';
     this.emit(true);
+    this.emitPhase('idle'); // 有意停止（P3/§6.10）：真实播放标记清零
   },
 
   /* ---------- 断流自愈（A-1）：静默挂起看门狗 + 先重连当前源一次 ---------- */
@@ -235,7 +282,7 @@ const Player = {
       this.wd = 0;
       if (my !== this.token || !this.station) return; // 级联已终结（全部源失败/切台）：残留看门狗不说话不动作
       if (this.isPaused()) return; // 武装后用户按了暂停：不强制起播（pause() 亦会撤表，此处双保险——AIbot P2-3）
-      this.say('流卡住，自动恢复…'); this.retryOrNext();
+      this.say('流卡住，自动恢复…'); this.qosDown('watchdog'); this.retryOrNext(); // B2：静默挂起断流（在播态才计）
     }, 12000);
   },
   stopWatchdog() { if (this.wd) { clearTimeout(this.wd); this.wd = 0; } },
@@ -258,12 +305,51 @@ const Player = {
     while (ks.length > 300) delete this.srcMem[ks.shift()];
     Store.set('radio.srcmem2', JSON.stringify(this.srcMem));
   },
-  forgetSrc() { // 「恢复默认源」（②c）：清当前台成功源记忆并落盘，重播由调用方（app）发起——无 prefer 且记忆已空 = 纯启发式序
-    const s = this.station;
+  forgetSrc(s0) { // 「恢复默认源」（②c + B1 两动作之一）：清指定台（缺省=当前台）成功源记忆并落盘；重播由调用方（app）发起——无 prefer 且记忆已空 = 默认序
+    const s = s0 || this.station;
     if (!s || this.srcMem[s.u[0]] == null) return false;
     delete this.srcMem[s.u[0]];
     Store.set('radio.srcmem2', JSON.stringify(this.srcMem));
     return true;
+  },
+  srcToken() { return this.token; }, // 世代令牌只读口（B3 曲讯管线校验旧世代事件用；play/stop 递增，本方法不新增写路径）
+  getSourceState() { // 只读快照（B1 详情中心）：app 不直接读 audio/HLS/token；mode 按 variant URL 形态判（/proxy 包裹的 m3u8 亦判 hls）
+    const s = this.station, m = s ? this.srcMem[s.u[0]] : null;
+    return {
+      station: s, sourceIndex: this.curSi, variantUrl: this.curPlay, connecting: !!this.connecting,
+      mode: this.curPlay ? (/\.m3u8(\?|$)/i.test(this.curPlay) ? 'hls' : 'direct') : '',
+      srcMemIndex: m && Number.isInteger(m.i) ? m.i : -1,
+    };
+  },
+
+  /* ---------- B2 播放质量原始转换（本引擎不感知 QualityStore，app.js 经 onqos 映射样本） ----------
+     口径与 Android 冻结一致：CONNECTING→PLAYING = 成功（首达/同源重连 play、同台换源到达 switch）；
+     PLAYING→CONNECTING = 断流（同源重连 watchdog / 级联换源 error，均计 disconnects，一次断流只计一次）；
+     级联耗尽 = error。resume 不经 load 不采样；暂停态不是断流（sessionPlayed 随 pause 清零）。 */
+  qosMode() { // curPlay 已清（耗尽善后/边界态）用最近尝试过的 variant mode 兜底——级联耗尽也尝试过具体 variant，
+    // 契约 opEvent.mode 必填枚举不允许空（AIbot P1-1；QualityStore.qNormMode 是第二道网）
+    if (this.curPlay) return this.curPlay.startsWith('/proxy') ? 'proxy' : (/\.m3u8(\?|$)/i.test(this.curPlay) ? 'hls' : 'direct');
+    return this.qLastMode;
+  },
+  qosPlaying() {
+    if (!this.onqos || !this.station) return;
+    if (this.qEmittedT0 === this.loadT0) return; // resume/重复 playing：非新建流不采样
+    this.qEmittedT0 = this.loadT0;
+    const trig = this.sessionPlayed && this.qLastSi !== this.curSi ? 'switch' : 'play';
+    this.sessionPlayed = true; this.qLastSi = this.curSi; this.qDown = false;
+    this.onqos({ phase: 'playing', station: this.station, si: this.curSi, mode: this.qosMode(), trig, lat: this.loadT0 ? Date.now() - this.loadT0 : 0 });
+  },
+  qosDown(reason) { // PLAYING→CONNECTING 断流：在播态（sessionPlayed）且本次断流未计过（qDown）才发
+    if (!this.onqos || !this.station || !this.sessionPlayed || this.qDown) return;
+    this.qDown = true;
+    this.onqos({ phase: 'disconnect', station: this.station, si: this.curSi, mode: this.qosMode(), reason });
+  },
+  refresh() { // 手动刷新回直播头（docs/plan-refresh-live.md §2）：当前赢家源整链重开——play 自带 token 作废在飞链/
+    // 清 halt/heldNext/prefer 提首/台记忆音量/MediaSession/连接中指示；暂停态直接起播（刷新=要听最新的，
+    // 直播流停在直播头不是稳定态）；空台无响应。不写成功源记忆（onAir 同源早退）
+    const s = this.station, si = this.curSi;
+    if (!s) return;
+    this.play(s, si >= 0 ? si : undefined);
   },
   // 暂停恢复：直播流建流慢（蜻蜓 5-10s），先给连接中提示；失败由遗留 onerror 闭包接管换源。
   // 暂停期间级联被 next() 守卫挡住过（源已报错、error 不再发）→ retryOrNext 接回：先重连当前源一次再顺延
@@ -271,6 +357,7 @@ const Player = {
     if (!this.station) return; // 无台可续：媒体键空台场景已转 onplaylast，此处兜底
     this.halt = false;
     this.connecting = this.station; this.emit(true); this.say('连接中…');
+    this.emitPhase('connecting'); // P3/§6.10：恢复起播也是建流（不经 load，需单独发）
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
     if (this.heldNext) { this.heldNext = false; this.retryOrNext(); return; }
     this.audio.play().catch(() => {});
@@ -278,6 +365,7 @@ const Player = {
   pause() {
     this.stopWatchdog(); // 用户主动暂停是明确意图：武装中的看门狗一并撤（否则 12s 后 retryOrNext 会把流强拉起来——AIbot P2-3）
     this.halt = true; // 有意暂停：挡住在飞 error 级联的续摊（AIbot P2-1）
+    this.sessionPlayed = false; // B2：暂停态不是断流——之后的级联/重连不产 disconnect 样本
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
     this.audio.pause();
   },

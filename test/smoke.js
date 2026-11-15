@@ -129,8 +129,50 @@ const boot = () => new Promise(async (resolve, reject) => { // 起服 + 就绪�
       assert.strictEqual((await req('GET', '/api/store', { Origin: 'http://evil.com' })).status, 403));
     await ok('/api/check 拒私网目标', async () =>
       assert.strictEqual((await req('GET', '/api/check?url=' + encodeURIComponent('http://127.0.0.1/'))).status, 400));
+    // /api/check?detail=1（B1 结构化探活，契约 contracts/source-diagnostic.json）：安全边界与旧口径一致
+    await ok('/api/check?detail=1 方法校验：POST → 405', async () =>
+      assert.strictEqual((await req('POST', '/api/check?detail=1&url=x')).status, 405));
+    await ok('/api/check?detail=1 拒跨源 Origin → 403', async () =>
+      assert.strictEqual((await req('GET', '/api/check?detail=1&url=x', { Origin: 'http://evil.com' })).status, 403));
+    await ok('/api/check?detail=1 拒私网目标 → 400', async () =>
+      assert.strictEqual((await req('GET', '/api/check?detail=1&url=' + encodeURIComponent('http://127.0.0.1/'))).status, 400));
+    await ok('/api/check?detail=1 结果只含结构化字段、不返回响应体（.invalid 域离线快速失败；code 不断言——公网环境差异）', async () => {
+      const r = await req('GET', '/api/check?detail=1&url=' + encodeURIComponent('http://vradio-smoke.invalid/live.mp3'));
+      assert.strictEqual(r.status, 200);
+      const j = JSON.parse(r.body);
+      assert.ok(Array.isArray(j.results) && j.results.length === 1);
+      assert.strictEqual(typeof j.ok, 'boolean');
+      assert.deepStrictEqual(Object.keys(j.results[0]).sort(),
+        ['bytes', 'checkedAt', 'code', 'contentType', 'hls', 'httpStatus', 'latencyMs', 'mode', 'ok', 'url', 'why'].sort());
+      assert.ok(!('body' in j.results[0]) && !r.body.slice(0, 200).includes('<'), '不得带响应体');
+    });
     await ok('/api/sync 拒跨站 POST', async () =>
       assert.strictEqual((await req('POST', '/api/sync', { 'Sec-Fetch-Site': 'cross-site' })).status, 403));
+    // B2 强制同步两步协议形态（不真跑管线）：方法校验/跨源拒/普通 sync 不收 force 字段/force-token 无 stash
+    await ok('/api/sync/force-token 方法校验：GET → 405（只收 POST）', async () =>
+      assert.strictEqual((await req('GET', '/api/sync/force-token')).status, 405));
+    await ok('/api/sync/force-token 拒跨源 Origin → 403', async () =>
+      assert.strictEqual((await req('POST', '/api/sync/force-token', { Origin: 'http://evil.com' }, '{}')).status, 403));
+    await ok('普通 /api/sync 带 force 字段 → 400（强制走两步协议，不认内联 force）', async () => {
+      const r = await req('POST', '/api/sync', { 'Content-Type': 'application/json' }, JSON.stringify({ force: true }));
+      assert.strictEqual(r.status, 400);
+      assert.ok(JSON.parse(r.body).error.includes('force-token'));
+    });
+    await ok('/api/sync/force-token 无 stash → 404（无可强制的同步报告）', async () => {
+      const r = await req('POST', '/api/sync/force-token', { 'Content-Type': 'application/json' }, JSON.stringify({ reportHash: 'deadbeef' }));
+      assert.strictEqual(r.status, 404);
+    });
+    await ok('/api/sync/force-token 裸 JSON 解析失败 → 400', async () =>
+      assert.strictEqual((await req('POST', '/api/sync/force-token', { 'Content-Type': 'application/json' }, 'not json')).status, 400));
+    await ok('/api/boot 形态：GET → 200 且含 ok/missing（manifest bootstrap/恢复的服务端路径）', async () => {
+      const r = await req('GET', '/api/boot');
+      assert.strictEqual(r.status, 200);
+      const j = JSON.parse(r.body);
+      assert.strictEqual(typeof j.ok, 'boolean');
+      assert.ok(Array.isArray(j.missing));
+    });
+    await ok('/api/boot 方法校验：POST → 405', async () =>
+      assert.strictEqual((await req('POST', '/api/boot')).status, 405));
     await ok('/api/nowplaying 对 .M3U8 大小写变形短路返回空（不建旁路连接）', async () => {
       const r = await req('GET', '/api/nowplaying?url=' + encodeURIComponent('http://example.com/live.M3U8'));
       assert.strictEqual(r.status, 200); assert.strictEqual(JSON.parse(r.body).title, '');

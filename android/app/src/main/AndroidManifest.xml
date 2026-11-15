@@ -26,6 +26,44 @@
         <action android:name="android.intent.action.MAIN" />
         <category android:name="android.intent.category.LAUNCHER" />
       </intent-filter>
+      <!-- E4 浏览器流链接接流（Transistor 思路，不抄代码）：点 m3u/mp3/aac 直链 → 系统菜单出现 VRadio
+           → 预填添加电台页（探活先行口径不变）。mime 组覆盖已知类型；pathPattern 组兜底浏览器不报 mime 的
+           场景（双写 pattern 是 PatternMatcher 点号怪癖的标准解法）。⚠ 每条 data 必须带 host：
+           官方语义「filter 未指定 host 时 port 与全部 path 属性被忽略」——缺 host 的 pathPattern 组
+           会退化成「匹配一切无 mime 的 http(s) VIEW」，VRadio 出现在所有 WebView 兜底/跳转链的选择器里
+           （AIbot P1-2）。残留限制：pathPattern 只匹配 path，带 query 的 .mp3?token= 仍靠 mime 组兜底。 -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="http" android:mimeType="audio/*" />
+        <data android:scheme="https" android:mimeType="audio/*" />
+        <data android:scheme="http" android:mimeType="application/vnd.apple.mpegurl" />
+        <data android:scheme="https" android:mimeType="application/vnd.apple.mpegurl" />
+        <data android:scheme="http" android:mimeType="application/x-mpegurl" />
+        <data android:scheme="https" android:mimeType="application/x-mpegurl" />
+      </intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="http" android:host="*" android:pathPattern=".*\.m3u8" />
+        <data android:scheme="https" android:host="*" android:pathPattern=".*\.m3u8" />
+        <data android:scheme="http" android:host="*" android:pathPattern=".*\..*\.m3u8" />
+        <data android:scheme="https" android:host="*" android:pathPattern=".*\..*\.m3u8" />
+        <data android:scheme="http" android:host="*" android:pathPattern=".*\.m3u" />
+        <data android:scheme="https" android:host="*" android:pathPattern=".*\.m3u" />
+        <data android:scheme="http" android:host="*" android:pathPattern=".*\..*\.m3u" />
+        <data android:scheme="https" android:host="*" android:pathPattern=".*\..*\.m3u" />
+        <data android:scheme="http" android:host="*" android:pathPattern=".*\.mp3" />
+        <data android:scheme="https" android:host="*" android:pathPattern=".*\.mp3" />
+        <data android:scheme="http" android:host="*" android:pathPattern=".*\..*\.mp3" />
+        <data android:scheme="https" android:host="*" android:pathPattern=".*\..*\.mp3" />
+        <data android:scheme="http" android:host="*" android:pathPattern=".*\.aac" />
+        <data android:scheme="https" android:host="*" android:pathPattern=".*\.aac" />
+        <data android:scheme="http" android:host="*" android:pathPattern=".*\..*\.aac" />
+        <data android:scheme="https" android:host="*" android:pathPattern=".*\..*\.aac" />
+      </intent-filter>
     </activity>
 
     <!-- Media3 会话服务：通知栏/锁屏/耳机线控（通知权限 13+ 首播时运行时申请，拒绝不阻断播放） -->
@@ -37,5 +75,20 @@
         <action android:name="androidx.media3.session.MediaSessionService" />
       </intent-filter>
     </service>
+
+    <!-- 桌面 Widget（B5 §9.1）：exported=false + BIND_APPWIDGET 权限声明——APPWIDGET_UPDATE 等
+         系统广播与同 app 的点击 PendingIntent 放行、第三方广播拒收（同 app 发送者按平台规则豁免权限检查）。 -->
+    <receiver
+      android:name=".widget.RadioWidgetProvider"
+      android:exported="false"
+      android:label="@string/widget_name"
+      android:permission="android.permission.BIND_APPWIDGET">
+      <intent-filter>
+        <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+      </intent-filter>
+      <meta-data
+        android:name="android.appwidget.provider"
+        android:resource="@xml/radio_widget_info" />
+    </receiver>
   </application>
 </manifest>

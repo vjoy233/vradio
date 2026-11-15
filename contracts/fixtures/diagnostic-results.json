@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "kind": "diagnostic-results",
+  "description": "/api/check?detail=1 黄金样本（B1 双端一致）：results 数组元素必须符合 contracts/source-diagnostic.json 的 result 形态。",
+  "ok": false,
+  "results": [
+    {
+      "url": "https://music.example.test/live.mp3",
+      "ok": true,
+      "code": "OK",
+      "mode": "direct",
+      "hls": false,
+      "bytes": 12000,
+      "latencyMs": 320,
+      "contentType": "audio/mpeg",
+      "httpStatus": 200,
+      "why": "audio/mpeg 12000B",
+      "checkedAt": 1731500000000
+    },
+    {
+      "url": "https://dead.example.test/live.m3u8",
+      "ok": false,
+      "code": "NO_SEGMENT",
+      "mode": "hls",
+      "hls": true,
+      "bytes": 410,
+      "latencyMs": 980,
+      "contentType": "application/vnd.apple.mpegurl",
+      "httpStatus": 200,
+      "why": "m3u8 无可用分片",
+      "checkedAt": 1731500000000
+    },
+    {
+      "url": "https://fake.example.test/live",
+      "ok": false,
+      "code": "SHORT_BODY",
+      "mode": "direct",
+      "hls": false,
+      "bytes": 336,
+      "latencyMs": 240,
+      "contentType": "text/html",
+      "httpStatus": 200,
+      "why": "窗内仅 336B（假流）",
+      "checkedAt": 1731500000000
+    }
+  ]
+}

@@ -19,7 +19,10 @@
   #q:focus { border-color:var(--acc); }
   .btn { background:var(--panel); border:1px solid var(--line); color:var(--tx); border-radius:8px; padding:7px 12px; cursor:pointer; white-space:nowrap; font:inherit; transition:border-color .15s, background-color .15s; display:inline-flex; align-items:center; gap:5px; }
   .ic { width:1em; height:1em; flex:0 0 auto; } /* sprite 引用：1em 随按钮字号缩放，stroke 走 currentColor 继承主题色（UI 审计 P3-1） */
-  #pp .ic { width:17px; height:17px; }
+  #pp .ic, #prevFav .ic, #nextFav .ic { width:17px; height:17px; } /* 中部三键（P3）：prev/next 与 pp 同尺寸 */
+  /* 播放器底栏三组（P3/§4.3/§6.5）：紧凑态 display:contents 对布局透明——子级仍为 footer flex 的直接布局项，
+     旧紧凑布局除新增 #prevFav/#nextFav（#pp 两侧，G19 双端语义）外零变化 */
+  .player-identity, .player-main, .player-helpers { display:contents; }
   .btn:hover { border-color:var(--acc); }
   .btn.on { color:var(--acc); border-color:var(--acc); }
   .btn:active, .chip:active, .row:active, .card:active { transform:translateY(1px); } /* 按压物理反馈（UI 审计 A 批：此前无 :active 态） */
@@ -122,24 +125,42 @@
   .cfoot { margin-top:auto; display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
   .cfoot .badge, .cfoot .srcs { font-size:11px; }
   /* 列表视图：两行详情（l1 台名 + 体检；meta 分类/源数）；宽屏限宽居中不浪费视口（UI 审计 P2-4） */
-  #list:not(.grid) { max-width:900px; margin:0 auto; }
+  #list:not(.grid) { width:100%; max-width:900px; margin:0 auto; } /* width:100%（§6.11 基线修复，不在 @media 内修）：缺它窄屏列表收缩到内容宽（390px 视口仅 ~337px），补全宽规则覆盖紧凑布局与桌面开关关闭态 */
   .row .col { flex:1; min-width:0; display:flex; flex-direction:column; gap:1px; }
   .row .l1 { display:flex; align-items:center; gap:10px; min-width:0; }
   .row .meta { font-size:12px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .row .meta .badge, .row .meta .srcs { font-size:11px; }
-  /* 台标：网格 40px / 列表 22px；img 直连加载不受 CORS 限制，坏图 onerror 换首字母色块（AIbot PR#9 review P2-c）。
-     色块兜底（UI 审计 P2-3，owner 拍板）：底色=台名 hash 确定性生成，白字双主题稳，有图无图节奏统一 */
-  .logo { flex:0 0 auto; object-fit:cover; border:1px solid var(--line); background:var(--panel); }
-  .card .logo { width:40px; height:40px; border-radius:10px; }
-  .row .logo { width:22px; height:22px; border-radius:4px; }
-  .logo.ph { display:flex; align-items:center; justify-content:center; color:#fff; font-weight:600; border:none; }
+  /* 台标（P3/§4.2/§6.10 统一外框）：.station-logo 外框负责尺寸/圆角/边框/底色——底色走 data-tone 分类
+     固定色板（低饱和、白字双主题可读；未知/自建分类中性灰，不做全色相 hash），内部 .logo img 100% contain
+     不裁宽图；无图/坏图同框同色（兜底首字 span 只出字，色全由外框给）。img 直连加载不受 CORS 限制，
+     坏图 onerror 换首字（AIbot PR#9 review P2-c）。双布局共用同一结构：网格 40px / 列表 22px（紧凑视觉不变） */
+  .station-logo { --lg:hsl(210 10% 44%); flex:0 0 auto; display:grid; place-items:center; overflow:hidden; border:1px solid var(--line); background:var(--lg); }
+  .station-logo[data-tone="green"] { --lg:hsl(150 28% 34%); }
+  .station-logo[data-tone="blue"] { --lg:hsl(210 32% 40%); }
+  .station-logo[data-tone="teal"] { --lg:hsl(175 28% 33%); }
+  .station-logo[data-tone="orange"] { --lg:hsl(28 45% 42%); }
+  .station-logo[data-tone="steel"] { --lg:hsl(215 16% 44%); }
+  .station-logo[data-tone="amber"] { --lg:hsl(40 42% 40%); }
+  .station-logo[data-tone="plum"] { --lg:hsl(300 22% 38%); }
+  .station-logo[data-tone="gold"] { --lg:hsl(50 42% 36%); }
+  .station-logo .logo { width:100%; height:100%; object-fit:contain; }
+  .logo.ph { display:flex; align-items:center; justify-content:center; color:#fff; font-weight:600; background:var(--lg); }
+  .card .station-logo { width:40px; height:40px; border-radius:10px; }
+  .row .station-logo { width:22px; height:22px; border-radius:4px; }
   .card .logo.ph { font-size:17px; }
   .row .logo.ph { font-size:11px; }
+  .dheadinfo .station-logo { width:40px; height:40px; border-radius:8px; } /* 详情中心头部（B1）：原为自然尺寸，统一 40px 外框 */
   #hint { padding:6px 14px; color:var(--warn); font-size:12px; display:none; }
   .empty { padding:30px; color:var(--dim); }
   #list.grid .empty { grid-column:1 / -1; } /* 空态文案占满整行（UI 审计 P1-3：否则被压成 160px 网格窄条逐字折行） */
   /* 维护面板（⚙）：全屏遮罩 + 居中卡片，主题变量随行；file:// 降级模式同样可用（配置只落 localStorage） */
   #manage { position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; padding:16px; z-index:10; }
+  /* 详情中心（B1）/发现页（B3）遮罩（P3 基线遗留修复）：两容器此前无定位规则，hidden 揭开后按文档流渲染
+     会把页面内容向下推开——补 #manage 同款全屏遮罩 + 居中卡片（.mbox 的 max-height 滚动随行）；
+     紧凑/桌面通用（bug 修复非桌面增强，不做 ui-refresh 限定）；Esc/点遮罩/焦点归还既有逻辑不动。
+     z 层级：toast(11) ≥ manage/detail/discovery(10，同层按 DOM 序后者在上——⚙ 源管理里开详情时详情盖面板)
+     > songhist/keys(9) > sleepMenu/themeMenu/srcMenu/sideTools(6)；确认弹窗 #editorConfirm（P4 并行）另行最高 */
+  #detail, #discovery { position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; padding:16px; z-index:10; }
   .mbox { background:var(--panel); border:1px solid var(--line); border-radius:12px; width:min(680px,100%); max-height:min(82vh,760px); display:flex; flex-direction:column; }
   .mhead { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 14px; border-bottom:1px solid var(--line); }
   .mbox .seg { margin:10px 14px 0; }
@@ -166,15 +187,87 @@
   .msrc-add { display:flex; gap:6px; margin-top:6px; }
   .msrc-add input { flex:1; min-width:150px; background:var(--panel); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:5px 8px; outline:none; font:inherit; font-size:12px; }
   .msrc-add input:focus { border-color:var(--acc); }
+  /* 源生命周期（B1）：⚙ 面板源行按有效序展示（启用在前/禁用殿后）；禁用行划线淡出，排序按钮边界置灰 */
+  .srcline { flex-wrap:wrap; }
+  .srcline.off .u { text-decoration:line-through; opacity:.5; }
+  .msrc-acts { display:inline-flex; gap:4px; margin-left:6px; flex-wrap:wrap; }
+  .badge.okb { color:var(--acc); border-color:var(--acc); }  /* 详情诊断徽标（B1）：可用/失败两态 */
+  .badge.badb { color:var(--warn); border-color:var(--warn); }
+  /* 详情中心（B1）：#manage 同范式（全屏遮罩 + 居中卡片，.mbox/.mhead 复用）；源行 = 序号 + URL/徽标/诊断行 + 动作组 */
+  #detailBody { flex:1; overflow-y:auto; padding:10px 14px; margin:0; scrollbar-width:thin; scrollbar-color:var(--line) transparent; }
+  /* 发现页（B3-C）：#detail 同范式浮层；行 = 全宽按钮（台名 + 分类 badge + 时间提示），点击统一起播 */
+  #discBody { flex:1; overflow-y:auto; padding:10px 14px; margin:0; scrollbar-width:thin; scrollbar-color:var(--line) transparent; }
+  .discrow { display:flex; width:100%; justify-content:flex-start; gap:8px; margin:2px 0; font-size:13px; }
+  .discrow .dn { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left; }
+  .dheadinfo { display:flex; gap:10px; align-items:center; }
+  .dheadinfo .dstats { flex:1; min-width:0; }
+  .dheadinfo .dstats b { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; }
+  .dcur { font-size:12px; color:var(--acc); padding:2px 0 6px; }
+  .dsec { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; color:var(--dim); border-top:1px solid var(--line); margin-top:8px; padding-top:8px; }
+  .dsec b { color:var(--tx); font-weight:500; }
+  .derr { color:var(--warn); font-size:12px; padding:2px 0; word-break:break-all; }
+  .dsrc { display:flex; gap:8px; align-items:flex-start; padding:7px 0; border-bottom:1px solid var(--line); font-size:12px; }
+  .dsrc .idx { font-style:normal; color:var(--dim); font-variant-numeric:tabular-nums; }
+  .dsrc-m { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+  .dsrc-u { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; word-break:break-all; }
+  .dsrc-i { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .dsrc-a { display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-end; }
+  .dsrc.off .dsrc-u { text-decoration:line-through; opacity:.55; }
+  .dsrc.cur .idx, .dsrc.cur .dsrc-u { color:var(--acc); }
+  .dacts { display:flex; gap:8px; flex-wrap:wrap; padding:4px 0; }
+  .dmore { font-size:15px; } /* 行/卡「详情」图标钮：.fav 同款无边框图标钮 */
+  /* 统一确认弹窗层（ui-redesign §6.8，P4）：#editorConfirm 唯一实例，#manage 同款遮罩机制（hidden div，
+     不引入 <dialog> 新机制）+ .mbox 复用样式；z-index 高于维护面板(10)/toast(11)——确认是最上层模态 */
+  #editorConfirm { position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; padding:16px; z-index:12; }
+  #editorConfirm .ecbox { width:min(460px,100%); }
+  .btn.acc { color:var(--acc); border-color:var(--acc); } /* 确认弹窗主动作（保存/确认撤回等） */
+  .btn.acc:disabled { opacity:.5; }
+  .ecbody { padding:14px; font-size:13px; overflow-y:auto; }
+  .ecbody p { white-space:pre-line; word-break:break-all; }
+  .ecacts { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
+  .ecpreview { border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin:10px 0 2px; font-size:12px; line-height:1.9; word-break:break-all; white-space:pre-line; } /* 撤回确认/导入重置预览的影响清单（§5.4/§5.5） */
+  .ecrows { border:1px solid var(--line); border-radius:8px; padding:4px 10px; margin:10px 0 2px; font-size:12px; } /* 备份恢复覆盖预览行（§5.5/图10：数据项 | 本次影响 两列） */
+  .ecrow { display:flex; gap:10px; padding:5px 0; border-bottom:1px dashed var(--line); }
+  .ecrow:last-child { border-bottom:none; }
+  .ecrow .k { flex:0 0 8.5em; color:var(--dim); }
+  .ecrow .v { flex:1; min-width:0; word-break:break-all; }
+  .ecsum { font-size:12px; color:var(--dim); margin:8px 0 0; word-break:break-all; }
+  .ecck { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--dim); margin-top:8px; cursor:pointer; }
   #mq { width:100%; margin:10px 0 4px; background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:8px; padding:7px 12px; outline:none; font:inherit; }
   #mq:focus { border-color:var(--acc); }
   .mrow select { background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:4px 6px; font:inherit; font-size:12px; max-width:9em; }
+  /* 对象编辑区（ui-redesign §5.1/§5.2/§6.6，P4）：#mEdit/#dEdit 与列表容器分离（renderManage 重建不碰、
+     Store 对账不销毁）；行内编辑 = 名称/分类/隐藏 + 保存/取消，校验错误就地展示（不静默裁切） */
+  #mEdit, #dEdit { flex:0 0 auto; }
+  .medit { margin:10px 14px 0; border:1px solid var(--acc); border-radius:8px; padding:10px 12px; background:var(--bg); }
+  .medit-h { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; margin-bottom:6px; }
+  .medit-h b { font-size:13px; }
+  .medit-f { display:flex; flex-direction:column; gap:6px; }
+  .medit-f label { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--dim); flex-wrap:wrap; }
+  .medit-f input[type="text"] { flex:1; min-width:160px; background:var(--panel); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:6px 8px; outline:none; font:inherit; }
+  .medit-f input[type="text"]:focus, .medit-f select:focus, .lbin:focus { border-color:var(--acc); }
+  .medit-f select { background:var(--panel); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:6px; font:inherit; font-size:12px; max-width:16em; }
+  .medit-ck input { accent-color:var(--acc); }
+  .emed { margin-top:8px; }
+  .medit-a { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .estatus { font-size:12px; color:var(--dim); }
+  .merr { color:var(--warn); font-size:12px; padding:2px 0; word-break:break-all; }
+  .econflict { color:var(--warn); font-size:12px; border:1px dashed var(--warn); border-radius:6px; padding:4px 8px; margin-bottom:6px; }
+  .lbin { flex:0 1 10em; min-width:6em; background:var(--panel); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:2px 6px; outline:none; font:inherit; font-size:12px; } /* 源标签行内输入（§6.9 替代 prompt） */
+  /* 「数据」分区（§5.5，P5）：三组动作按卡分组（图09）；file:// 能力矩阵容器空时零占位 */
+  #mData { flex:1; min-height:0; overflow-y:auto; scrollbar-width:thin; scrollbar-color:var(--line) transparent; }
+  #mDataEnv:empty { display:none; }
+  #mData .dcard { border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin:10px 14px; }
+  #mData .dcard b { display:block; font-size:13px; margin-bottom:4px; }
+  #mData .dcard p { margin:0 0 8px; font-size:12px; color:var(--dim); line-height:1.7; }
+  .dacts2 { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .mnote { padding:10px 14px 0; font-size:12px; color:var(--dim); }
   /* 添加自定义电台（A-2）：面板电台页顶部表单，先探活（拒绝假流/死链）再写入 my-radio.txt（持久层，区别于 cfg 显示层） */
   #mAdd { display:flex; gap:6px; padding:10px 14px 0; flex-wrap:wrap; }
   #mAdd input { flex:1; min-width:110px; background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:6px 8px; outline:none; font:inherit; font-size:12px; }
   #mAdd input:focus { border-color:var(--acc); }
   #mAdd select { background:var(--bg); border:1px solid var(--line); color:var(--tx); border-radius:6px; padding:6px; font:inherit; font-size:12px; max-width:9em; }
-  .mfoot { display:flex; gap:8px; justify-content:flex-end; padding:10px 14px; border-top:1px solid var(--line); flex-wrap:wrap; } /* wrap：五个动作按钮窄屏换行不溢出 */
+  .mck { display:inline-flex; align-items:center; gap:5px; font-size:12px; color:var(--dim); margin-right:auto; white-space:nowrap; cursor:pointer; } /* 备份「含质量数据」复选（B4）：靠 margin-right:auto 推到行首，按钮组靠右 */
   /* 更多菜单（UI 审计 P2-6）：桌面 display:contents 按钮原样排布；≤640px 收进锚定 header 右下的浮层 */
   #lowfreq { display:contents; }
   #moreBtn { display:none; }
@@ -182,6 +275,15 @@
   #sleepMenu { position:absolute; right:0; bottom:calc(100% + 8px); display:flex; flex-direction:column; gap:2px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:6px; min-width:8em; box-shadow:0 8px 24px rgba(0,0,0,.25); z-index:6; }
   #sleepMenu .btn { border:none; background:none; justify-content:flex-start; }
   #sleepMenu .btn:hover { background:var(--bg); } /* 浮层菜单项无默认边框/底色，hover 给底色反馈（AIbot PR#9 review P3-2） */
+  /* 主题三选菜单（§6.11/Q25）：themeBtn 点击弹三选（不再循环切换），当前项 aria-pressed 高亮；普通按钮 popover 不贴 role=menu（§6.6） */
+  #themeWrap { position:relative; display:inline-flex; }
+  #themeMenu { position:absolute; right:0; top:calc(100% + 8px); display:flex; flex-direction:column; gap:2px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:6px; min-width:8em; box-shadow:0 8px 24px rgba(0,0,0,.25); z-index:6; } /* 顶栏在页首：向下弹（footer 菜单向上弹相反）；收进 lowfreq 时同样向下不遮触发器 */
+  #themeMenu .btn { border:none; background:none; justify-content:flex-start; }
+  #themeMenu .btn:hover { background:var(--bg); }
+  #themeMenu .btn[aria-pressed="true"] { color:var(--acc); }
+  /* 主题文字（§6.11）：桌面只留图标；≤640px（含收进 lowfreq 时）显示「主题：xx」——span 显隐全走 CSS，syncThemeUI 每次重写恒带 */
+  #themeBtn .theme-t { display:none; }
+  @media (max-width:640px) { #themeBtn .theme-t { display:inline; } }
   /* 选源浮层（②a）：同 sleepMenu 范式；源行整行可点，URL 截断 title 全显（与 ⚙ 面板同口径） */
   #srcWrap { position:relative; display:inline-flex; }
   #srcMenu { position:absolute; right:0; bottom:calc(100% + 8px); display:flex; flex-direction:column; gap:2px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:6px; min-width:min(24em,88vw); max-width:min(88vw,38em); max-height:46vh; overflow-y:auto; box-shadow:0 8px 24px rgba(0,0,0,.25); z-index:6; }
@@ -191,6 +293,8 @@
   #srcMenu .srcrow { width:100%; font-size:12px; gap:6px; }
   #srcMenu .srcrow .u { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left; }
   #srcMenu .srcrow.cur { color:var(--acc); }
+  #srcMenu .srcrow.off { color:var(--dim); padding:4px 6px; font-size:12px; display:flex; gap:6px; align-items:center; cursor:default; } /* 禁用源行（B1）：非交互 div，点播级联本就跳过 */
+  #srcMenu .srcrow.off .u { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .badge.acc { color:var(--acc); border-color:var(--acc); } /* 「正在用」徽标（⚙ 面板与浮层共用） */
   .srcline.cur .u { color:var(--acc); opacity:1; }
   .badge.permb { color:var(--warn); border-color:var(--warn); } /* 「已停运」徽标（R1 拍板分档区分，排查场景一眼分清没救的） */
@@ -208,6 +312,119 @@
     #moreBtn { display:inline-block; }
     .fav { font-size:19px; padding:8px 9px; margin:-8px 0; } /* 触屏命中区 ~37px（原 ~26px 达标偏小，UI 审计 P2-6 备注） */
   }
+  /* ===== 窄屏维护单列（ui-redesign §5.1/图11，P5；Q31 拍板：分类/电台/数据三分区共用本规则，且为通用规则——
+     不限 ui-refresh，#manage 自身布局双布局共用）：全屏单列面板 + 分区 seg 顶部可达 + 编辑区/列表纵向堆叠 +
+     编辑器操作条 sticky 底部可达 + 面板整体可滚动；输入 16px+ 防 iOS 聚焦缩放（裁量采纳）。桌面（≥1024px
+     ui-refresh）与紧凑 >768px 布局不受影响 ---------- */
+  @media (max-width:768px) {
+    #manage { padding:0; align-items:stretch; }
+    #manage .mbox { width:100%; height:100%; max-height:none; border-radius:0; border-left:none; border-right:none; overflow-y:auto; }
+    .medit-a { position:sticky; bottom:0; z-index:1; background:var(--bg); margin:4px -12px -10px; padding:9px 12px 11px; border-top:1px solid var(--line); }
+    #manage input[type="text"], #manage input[type="url"], #manage input[type="search"], #manage select, #manage .lbin { font-size:16px; }
+  }
+  /* ===== 桌面新版壳（ui-redesign P2/§4.1/§6.5，FEATURES.uiRefresh 开关 + ≥1024px 断点）=====
+     开关关或 <1024px：下列规则一律不生效（结构壳 wrapper display:contents 对布局透明），紧凑布局零回归。
+     ui-* token 色值原样抄自 §4.1（24 组平面配对已验证 ≥5.19:1，见 ui-redesign-assets/review-v22/contrast-results.json） */
+  html.ui-refresh { --ui-bg:#111916; --ui-surface:#19231e; --ui-raised:#223029; --ui-text:#e8f0ea; --ui-muted:#a9bbb0; --ui-accent:#93dbb4; --ui-on-accent:#112419; --ui-favorite:#e4c36f; --ui-danger:#f1a9a3; --ui-line:#40584a; }
+  html.ui-refresh[data-theme="light"] { --ui-bg:#f3f6f3; --ui-surface:#ffffff; --ui-raised:#e8efea; --ui-text:#16251d; --ui-muted:#53675b; --ui-accent:#246344; --ui-on-accent:#ffffff; --ui-favorite:#78560d; --ui-danger:#a4322b; --ui-line:#849b8c; }
+  /* P6 验收修正：桌面壳基底面重指 ui-* token（旧语义变量在桌面作用域别名，一处生效全组件——
+     否则 body/header/footer/分类条仍是旧配色，P6 实测 body 残留 #101418） */
+  html.ui-refresh { --bg:var(--ui-bg); --panel:var(--ui-surface); --line:var(--ui-line); --tx:var(--ui-text); --dim:var(--ui-muted); --acc:var(--ui-accent); }
+  html.ui-refresh[data-theme="light"] { --bg:var(--ui-bg); --panel:var(--ui-surface); --line:var(--ui-line); --tx:var(--ui-text); --dim:var(--ui-muted); --acc:var(--ui-accent); }
+  /* 结构壳（§6.5 骨架）：wrapper 对布局透明——否则开关关闭时 body 的 flex 子级被 div 隔断、#list flex:1 失效；
+     aside 常隐（新元素，桌面 media 内再放行）；这两条不带 ui-refresh 前缀是刻意的（结构中性，双模式零布局影响） */
+  .desktop-sidebar { display:none; }
+  .dashboard-shell, .dashboard-main { display:contents; }
+  /* 续听卡兜底隐藏（显隐以 JS hidden 为主，此处兜底开关关闭态）与紧凑/窄于断点态 */
+  html:not(.ui-refresh) #resumeHero { display:none !important; }
+  html.ui-refresh #resumeHero, html.ui-refresh .scope-title { display:none; }
+  @media (min-width:1024px) {
+    html.ui-refresh body { height:auto; min-height:100dvh; display:block; overflow:visible; } /* 解除定高：滚动统一走文档流（§6.5），主库与 body 不再双滚动 */
+    html.ui-refresh { scroll-padding-bottom:calc(var(--dock-h,100px) + 24px); } /* 焦点行滚入视口不被固定 footer 遮挡（--dock-h 由 app uiWatchDock 实测） */
+    html.ui-refresh .dashboard-shell { display:grid; grid-template-columns:200px minmax(0,1fr); position:relative; }
+    html.ui-refresh .dashboard-shell::before { content:''; position:absolute; left:0; top:0; bottom:0; width:200px; border-right:1px solid var(--ui-line); pointer-events:none; } /* 全高侧栏分隔线（参考图 01/15） */
+    html.ui-refresh .desktop-sidebar { display:flex; flex-direction:column; gap:24px; position:sticky; top:0; align-self:start; max-height:100dvh; padding:20px 14px 16px; min-width:0; }
+    html.ui-refresh .side-brand { padding:0 10px 4px; }
+    html.ui-refresh .side-brand b { display:block; font-size:22px; font-weight:700; letter-spacing:.02em; }
+    html.ui-refresh .side-brand span { display:block; font-size:12px; color:var(--ui-muted); margin-top:2px; }
+    html.ui-refresh .side-group { display:flex; flex-direction:column; gap:4px; position:relative; }
+    html.ui-refresh .side-link { display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%; min-height:36px; padding:7px 12px; border:none; border-radius:8px; background:none; color:var(--ui-muted); font:inherit; font-size:14px; text-align:left; cursor:pointer; transition:background-color .15s, color .15s; }
+    html.ui-refresh .side-link:hover { background:var(--ui-raised); color:var(--ui-text); }
+    html.ui-refresh .side-link.on { background:var(--ui-raised); color:var(--ui-accent); font-weight:600; }
+    html.ui-refresh .side-link .n { font-style:normal; font-size:12px; color:var(--ui-muted); font-variant-numeric:tabular-nums; }
+    html.ui-refresh .side-link.on .n { color:inherit; opacity:.75; }
+    /* 更多工具 popover（§6.6）：宿主 #sideTools 锚在 .side-group 右侧；#lowfreq 原样搬入（display:contents，按钮即弹层项） */
+    html.ui-refresh #sideTools { position:absolute; left:calc(100% + 12px); bottom:-6px; display:none; flex-direction:column; gap:2px; background:var(--ui-surface); border:1px solid var(--ui-line); border-radius:10px; padding:6px; min-width:11em; box-shadow:0 8px 24px rgba(0,0,0,.25); z-index:6; }
+    html.ui-refresh #sideTools.open { display:flex; }
+    html.ui-refresh #sideTools .btn { border:none; background:none; justify-content:flex-start; }
+    html.ui-refresh #sideTools .btn:hover { background:var(--ui-raised); }
+    html.ui-refresh #manageBtn { display:none; } /* 侧栏已有维护入口：桌面隐藏 header 版避免双触发器 */
+    /* 维护面板（§5.1）：宽屏最大 1100px（P5 补齐——P4 沿用 680px 通用宽度）；数据分区两组卡并排（图09），个人列表卡独占整行 */
+    html.ui-refresh #manage .mbox { width:min(1100px, calc(100vw - 64px)); }
+    html.ui-refresh #mData .dsec2 { display:grid; grid-template-columns:1fr 1fr; gap:0 12px; align-items:start; padding:0 14px; }
+    html.ui-refresh #mData .dsec2 .dcard { margin:10px 0; }
+    html.ui-refresh .scope-title { display:inline; font-size:14px; color:var(--ui-muted); white-space:nowrap; }
+    html.ui-refresh .dashboard-main { display:block; box-sizing:border-box; min-width:0; width:100%; max-width:1440px; margin-inline:auto; padding:20px 24px calc(var(--dock-h,100px) + 24px); } /* padding-bottom = 实际 footer 占位（紧凑态 #list 的 90px 规则保持不动，不叠加） */
+    html.ui-refresh #cats, html.ui-refresh #hint { width:100%; max-width:1328px; margin-inline:auto; } /* 分类条/提示与网格同宽对齐 */
+    html.ui-refresh #list { width:100%; min-width:0; flex:none; overflow:visible; } /* 滚动交还文档流；#list 自身 padding 不动 */
+    html.ui-refresh #list.grid { display:grid; max-width:1328px; margin-inline:auto; grid-template-columns:repeat(auto-fill,minmax(216px,1fr)); gap:16px; } /* 1024≈3 列 / 1280≈4 列 / ≥1440 最多 5 列（§4.2） */
+    /* 续听卡（§3.3）：壳级面板底色；唱片为静态圆盘装饰（旋转接线是 P3） */
+    html.ui-refresh #resumeHero { display:flex; gap:24px; align-items:center; max-width:1328px; margin:4px auto 28px; padding:28px 32px; background:var(--ui-surface); border:1px solid var(--ui-line); border-radius:16px; }
+    html.ui-refresh .vinyl { width:112px; height:112px; flex:none; border-radius:50%; border:1px solid var(--ui-line); background:repeating-radial-gradient(circle, var(--ui-raised) 0 3px, var(--ui-surface) 3px 7px); display:grid; place-items:center; overflow:hidden; }
+    /* 唱片内嵌台标（P3 外框迁移）：station-logo 外框退为透明定尺寸容器，唱片质感由 .vinyl 底色承担；
+       兜底首字 span 自带 tone 底色（--lg 继承自外框 data-tone），坏图/无图仍是圆形色块 */
+    html.ui-refresh .vinyl .station-logo { width:56px; height:56px; padding:0; border:none; border-radius:50%; background:none; }
+    html.ui-refresh .vinyl .station-logo .logo { width:100%; height:100%; border-radius:50%; object-fit:cover; }
+    html.ui-refresh .vinyl .logo.ph { font-size:20px; }
+    /* 唱片旋转（P3/§4.4/§6.10）：仅真实 audio playing（App.uiPhaseRunning 投影挂 .running）后 36s 匀速一圈；
+       连接/缓冲/暂停/失败/ended/后台/系统减动效一律静止（reduced-motion 全局规约见媒体查询块） */
+    html.ui-refresh .vinyl.running { animation:vinylspin 36s linear infinite; }
+    @keyframes vinylspin { to { transform:rotate(360deg); } }
+    html.ui-refresh .hero-info { min-width:0; display:flex; flex-direction:column; gap:6px; align-items:flex-start; }
+    html.ui-refresh .hero-kicker { font-size:12px; color:var(--ui-accent); }
+    html.ui-refresh .hero-name { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:30px; line-height:1.25; font-weight:700; }
+    html.ui-refresh .hero-meta { font-size:13px; color:var(--ui-muted); }
+    html.ui-refresh .hero-actions { display:flex; gap:12px; margin-top:8px; }
+    html.ui-refresh #heroPlay { background:var(--ui-accent); border-color:var(--ui-accent); color:var(--ui-on-accent); font-weight:600; padding:9px 18px; }
+    html.ui-refresh #heroPlay:disabled { opacity:.6; cursor:wait; }
+    /* 卡片/行壳级底色（ui-* token；卡片精致化是 P3） */
+    html.ui-refresh #list .card { background:var(--ui-surface); }
+    html.ui-refresh #list .card:hover, html.ui-refresh #list .row:hover { background:var(--ui-raised); }
+    html.ui-refresh :focus-visible { outline:2px solid var(--ui-accent); outline-offset:3px; }
+    /* 台标外框桌面规格（§6.5 骨架）：48px + padding4 + 圆角8（网格/列表/详情统一，骨架原样） */
+    html.ui-refresh .station-logo { width:48px; height:48px; padding:4px; border-radius:8px; }
+    html.ui-refresh .card .logo.ph, html.ui-refresh .row .logo.ph, html.ui-refresh .dheadinfo .logo.ph { font-size:18px; }
+    /* 长名截断（§6.5 骨架原样）：网格两行定高 2.9em、列表单行 ellipsis；完整名称走 #namett 单例 tooltip（§4.2/§9.3 不依赖 title） */
+    html.ui-refresh .station-title { min-width:0; max-width:min(100%,15rem); overflow:hidden; font-size:15px; line-height:1.45; }
+    html.ui-refresh #list.grid .station-title { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; min-height:2.9em; max-height:2.9em; }
+    html.ui-refresh #list:not(.grid) .station-title { display:block; white-space:nowrap; text-overflow:ellipsis; }
+    /* 卡片桌面规格（§4.2）：顶行 = logo + 弹性留白 + 收藏(44×44 命中) + 详情，名称独立换行块，meta 第三行——
+       DOM 与紧凑布局共用一套（单行排布），此处用 flex-wrap + order 重排，紧凑零回归；卡高 152–168 区间取 156 */
+    html.ui-refresh #list.grid .chead { flex-wrap:wrap; }
+    html.ui-refresh #list.grid .chead .cname { order:3; flex-basis:100%; }
+    html.ui-refresh #list.grid .chead .fav:not(.dmore) { order:1; margin:0 0 0 auto; width:44px; height:44px; padding:0; display:grid; place-items:center; }
+    html.ui-refresh #list.grid .chead .fav.dmore { order:2; margin:0; width:32px; height:44px; padding:0; display:grid; place-items:center; }
+    html.ui-refresh #list.grid .card { min-height:156px; contain-intrinsic-size:auto 160px; }
+    /* 列表行桌面（§4.2）：保横向排列、元信息右对齐同排——col 转横向 + meta 靠右可收缩，紧凑的纵向 col 不动 */
+    html.ui-refresh #list:not(.grid) .row .col { flex-direction:row; align-items:center; gap:12px; }
+    html.ui-refresh #list:not(.grid) .row .l1 { flex:1; min-width:0; }
+    html.ui-refresh #list:not(.grid) .row .meta { margin-left:auto; text-align:right; }
+    /* 长名完整提示（§4.2/§9.3）：单例 tooltip 定位在触发行下方、不越视口；pointer-events:none 不拦悬停 */
+    html.ui-refresh #namett { position:fixed; z-index:12; background:var(--ui-surface); color:var(--ui-text); border:1px solid var(--ui-line); border-radius:8px; padding:5px 10px; font-size:12px; line-height:1.5; max-width:min(420px,80vw); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; box-shadow:0 8px 24px rgba(0,0,0,.25); pointer-events:none; }
+    /* 播放器底栏三列（§6.5 骨架原样）：identity 弹性截断 | main 自适应居中 | helpers 右对齐可换行（1024 允许两行，
+       小音量条不挤主播放——§4.3）；main 大圆播放键 + 幽灵 prev/next（参考图 01/12） */
+    html.ui-refresh .player-dock { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(280px,1fr); align-items:center; gap:16px; }
+    html.ui-refresh .player-identity { display:flex; align-items:center; gap:10px; min-width:0; }
+    html.ui-refresh .player-main { display:flex; align-items:center; justify-content:center; gap:8px; }
+    html.ui-refresh .player-helpers { display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:center; gap:6px 8px; min-width:0; }
+    html.ui-refresh #status { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    html.ui-refresh #pp { width:48px; height:48px; padding:0; justify-content:center; border-radius:50%; background:var(--ui-accent); border-color:var(--ui-accent); color:var(--ui-on-accent); }
+    html.ui-refresh #prevFav, html.ui-refresh #nextFav { width:44px; height:44px; padding:0; justify-content:center; border:none; background:none; color:var(--ui-muted); }
+    html.ui-refresh #prevFav:hover, html.ui-refresh #nextFav:hover { border:none; background:var(--ui-raised); color:var(--ui-text); }
+    /* toast/歌曲历史/快捷键表锚到实际底栏上方（--dock-h 实测，§4.3）；紧凑态保持各自现值不动 */
+    html.ui-refresh #toast, html.ui-refresh #songhist, html.ui-refresh #keys { bottom:calc(var(--dock-h,100px) + 16px); }
+  }
+  @media (prefers-reduced-motion:reduce) { html.ui-refresh .vinyl { animation:none !important; } } /* 唱片旋转为 P3 接线，先立规约（§6.5） */
 </style>
 </head>
 <body>
@@ -226,6 +443,8 @@
 <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454l0 .008" /></symbol>
 <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12" /><path d="M6 6l12 12" /></symbol>
 <symbol id="i-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v16l13 -8l-13 -8" /></symbol>
+<symbol id="i-prev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6l6 6" /></symbol>
+<symbol id="i-next" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6l-6 6" /></symbol>
 <symbol id="i-pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1l0 -12" /><path d="M14 6a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1l0 -12" /></symbol>
 <symbol id="i-sleep" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h6l-6 8h6" /><path d="M14 4h6l-6 8h6" /></symbol>
 <symbol id="i-star" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17.75l-6.172 3.245l1.179 -6.873l-5 -4.867l6.9 -1l3.086 -6.253l3.086 6.253l6.9 1l-5 4.867l1.179 6.873l-6.158 -3.245" /></symbol>
@@ -241,17 +460,46 @@
 <symbol id="i-vol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 8a5 5 0 0 1 0 8" /><path d="M17.7 5a9 9 0 0 1 0 14" /><path d="M6 15h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2l3.5 -4.5a.8 .8 0 0 1 1.5 .5v14a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5" /></symbol>
 <symbol id="i-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 8a5 5 0 0 1 1.912 4.934m-1.377 2.602a5 5 0 0 1 -.535 .464" /><path d="M17.7 5a9 9 0 0 1 2.362 11.086m-1.676 2.299a9 9 0 0 1 -.686 .615" /><path d="M9.069 5.054l.431 -.554a.8 .8 0 0 1 1.5 .5v2m0 4v8a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2l1.294 -1.664" /><path d="M3 3l18 18" /></symbol>
 <symbol id="i-star-filled" viewBox="0 0 24 24" fill="currentColor"><path d="M8.243 7.34l-6.38 .925l-.113 .023a1 1 0 0 0 -.44 1.684l4.622 4.499l-1.09 6.355l-.013 .11a1 1 0 0 0 1.464 .944l5.706 -3l5.693 3l.1 .046a1 1 0 0 0 1.352 -1.1l-1.091 -6.355l4.624 -4.5l.078 -.085a1 1 0 0 0 -.633 -1.62l-6.38 -.926l-2.852 -5.78a1 1 0 0 0 -1.794 0l-2.853 5.78z" /></symbol>
+<symbol id="i-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14" /><path d="M5 11l7 -7l7 7" /></symbol>
+<symbol id="i-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14" /><path d="M5 13l7 7l7 -7" /></symbol>
+<symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12v4" /><path d="M12 8h.01" /><path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" /></symbol>
+<symbol id="i-compass" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" /><path d="M8 16l2 -6l6 -2l-2 6l-6 2" /></symbol>
 </svg>
 
+<!-- 桌面新版壳（ui-redesign P2/§6.1）：aside+main 包进 .dashboard-shell；compact（开关关或 <1024px）下
+     wrapper display:contents、aside display:none——header/cats/list 仍是 body 的有效布局子级，零回归。
+     audio/浮层（#manage/#detail/#discovery/#songhist/#toast/#keys）与 footer 留在 shell 外原位 -->
+<div class="dashboard-shell">
+<aside class="desktop-sidebar" aria-label="电台导航">
+  <div class="side-brand"><b>VRadio</b><span>把世界，听近一点。</span></div>
+  <!-- 范围导航（§3.2 单一筛选状态）：data-scope 委托给 App.setScope；计数角标 render 内随 catCounts 刷新 -->
+  <div class="side-group" role="group" aria-label="收听范围">
+    <button type="button" class="side-link on" id="sideAll" data-scope="all" aria-current="true"><span>全部电台</span><i class="n">0</i></button>
+    <button type="button" class="side-link" id="sideFav" data-scope="favorites"><span>我的收藏</span><i class="n">0</i></button>
+    <button type="button" class="side-link" id="sideRec" data-scope="recent"><span>最近收听</span><i class="n">0</i></button>
+  </div>
+  <div class="side-group" role="group" aria-label="管理">
+    <button type="button" class="side-link" id="sideManage"><span>维护</span></button>
+    <button type="button" class="side-link" id="sideMore" aria-haspopup="true" aria-expanded="false"><span>更多工具</span></button>
+    <!-- 更多工具 popover 宿主（P2/§6.6）：ui-refresh + ≥1024px 时 #lowfreq 整体搬入（uiPlaceTools，节点唯一监听随行）；
+         hidden 仅占首屏，boot 后改由 .open 类控显隐（不对 display:contents 的 #lowfreq 误加 hidden） -->
+    <div id="sideTools" hidden></div>
+  </div>
+</aside>
+<main class="dashboard-main" id="mainContent">
 <header>
   <h1><span class="live" aria-hidden="true">●</span> VRadio</h1>
+  <!-- 范围标题（P2/§3.1 顶栏）：紧凑态 hidden（boot 后显隐由 CSS 断点接管），桌面显示「范围 · 分类」 -->
+  <span id="scopeTitle" class="scope-title" hidden></span>
   <input id="q" type="search" aria-label="搜索电台" title="按 / 快速聚焦，Esc 清空，↓ 进列表，? 全部快捷键" placeholder="搜索电台名，如：中国之声 / Love / NHK">
   <span class="seg" role="group" aria-label="视图切换">
     <button class="btn" id="gridBtn" aria-pressed="true" title="网格视图：精简卡片，一页看更多"><svg class="ic"><use href="#i-grid"/></svg><span>网格</span></button>
     <button class="btn" id="listBtn" aria-pressed="false" title="列表视图：两行详情（分类/源数）"><svg class="ic"><use href="#i-list"/></svg><span>列表</span></button>
   </span>
-  <!-- 低频操作收组（UI 审计 P2-6）：桌面 display:contents 原样排布；≤640px 收进「⋯ 更多」菜单，header 压回两行 -->
+  <!-- 低频操作收组（UI 审计 P2-6）：桌面 display:contents 原样排布；≤640px 收进「⋯ 更多」菜单，header 压回两行；
+       ui-refresh 桌面壳（≥1024px）下整体搬进侧栏 #sideTools popover（uiPlaceTools） -->
   <span id="lowfreq">
+    <button class="btn" id="discBtn" hidden title="发现电台：本地派生推荐（精选/稳定直连/最近新增与恢复/有曲讯/未听过）"><svg class="ic"><use href="#i-compass"/></svg><span>发现</span></button>
     <button class="btn" id="syncBtn" title="同步上游国内源 + 实测重建欧美音乐台"><svg class="ic"><use href="#i-sync"/></svg><span>同步源</span></button>
     <button class="btn" id="healthBtn" title="体检当前列表的电台可用性"><svg class="ic"><use href="#i-health"/></svg><span>体检</span></button>
     <button class="btn" id="importBtn" title="导入 radio.txt / m3u 列表，或本项目导出的收藏备份"><svg class="ic"><use href="#i-import"/></svg><span>导入列表</span></button>
@@ -260,44 +508,74 @@
   <button class="btn" id="moreBtn" aria-haspopup="true" aria-expanded="false" aria-label="更多操作"><svg class="ic"><use href="#i-dots"/></svg></button>
   <button class="btn" id="deadBtn" aria-pressed="false" hidden title="体检不可用（✗）的电台默认隐藏；点击显示/隐藏它们"><svg class="ic"><use href="#i-x"/></svg><span>无效源</span></button>
   <button class="btn" id="manageBtn" title="分类与电台维护：移动/重命名/隐藏电台，新建/重命名/隐藏分类（个人配置，同步后保留）"><svg class="ic"><use href="#i-gear"/></svg><span>维护</span></button>
-  <button class="btn" id="themeBtn" aria-label="主题：跟随系统，点击切换" title="主题：跟随系统（点击循环：跟随系统 → 浅色 → 深色）"><svg class="ic"><use href="#i-auto"/></svg></button> <!-- 首屏即 SVG（AIbot PR#9 review P3-3）：默认档=auto，boot 前不闪 🌓 emoji -->
+  <!-- 主题三选菜单（§6.11/Q25）：唯一实例静态骨架，app.js 只管显隐与选中态；#themeWrap 整体随断点在顶栏/#lowfreq 间搬家（uiPlaceTheme），监听与 radio.theme 语义不复制 -->
+  <span id="themeWrap">
+    <button class="btn" id="themeBtn" aria-haspopup="true" aria-expanded="false" aria-label="主题：跟随系统" title="主题：跟随系统"><svg class="ic"><use href="#i-auto"/></svg></button> <!-- 首屏即 SVG（AIbot PR#9 review P3-3）：默认档=auto，boot 前不闪 🌓 emoji -->
+    <span id="themeMenu" hidden>
+      <button type="button" class="btn" data-theme-v="auto" aria-pressed="true">跟随系统</button>
+      <button type="button" class="btn" data-theme-v="light" aria-pressed="false">浅色</button>
+      <button type="button" class="btn" data-theme-v="dark" aria-pressed="false">深色</button>
+    </span>
+  </span>
   <input type="file" id="file" accept=".txt,.csv,.m3u" hidden aria-label="导入电台列表文件">
 </header>
+<!-- 续听卡（P2/§3.3）：仅桌面新版壳显示（ui-refresh + ≥1024px），scope=all + cat=全部 + 无关键词时由 renderHero 渲染 -->
+<section id="resumeHero" aria-label="继续收听" hidden></section>
 <div id="cats" role="group" aria-label="电台分类"></div>
 <div id="hint">radio.txt 未加载（file:// 下 fetch 受限）——点右上「导入列表」选择本目录的 radio.txt 即可获得全部电台；当前为内置精选。</div>
 <div id="list" role="list" aria-label="电台列表"></div>
-<footer>
+</main>
+</div>
+<!-- 播放器底栏三组（P3/§4.3/§6.5）：.player-identity（台名/曲讯/均衡器）+ .player-main（上一收藏/播放/下一收藏，
+     G19 双端语义：#prevFav/#nextFav 与 ←/→ 键同义、紧凑态也显示）+ .player-helpers（刷新/睡眠/选源/详情/静音/
+     状态/音量）。全部现有 id 原位保留、监听不动；紧凑态三组 display:contents（子级仍为 footer flex 的直接布局
+     项，除新增按钮外布局零变化），桌面 ui-refresh 才落三列 grid -->
+<footer class="player-dock">
   <div id="prog" hidden><i></i></div>
-  <button class="btn" id="pp" aria-label="播放 / 暂停"><svg class="ic"><use href="#i-play"/></svg></button>
-  <span id="eq" aria-hidden="true"><i></i><i></i><i></i></span>
-  <div id="now" aria-live="polite"><div id="nowline" role="button" tabindex="0">未在播放</div><div id="song" role="button" tabindex="0" hidden></div></div> <!-- 两行：台名 + 曲讯（B-6）；键盘可达（audit-r2 P3-2）：可点 div 补 role/tabindex，Enter/Space 在 app.js 接线 -->
-  <span id="sleepWrap">
-    <button class="btn" id="sleepBtn" title="睡眠定时：到点渐弱停止" aria-label="睡眠定时"><svg class="ic"><use href="#i-sleep"/></svg><span id="sleepLab"></span></button>
-    <!-- 睡眠菜单（UI 审计 P3-7）：一次点选替代 15→30→60 循环（想设 60 分钟原要按三下）；进行中点击按钮直接取消 -->
-    <span id="sleepMenu" hidden>
-      <button type="button" class="btn" data-min="15">15 分钟</button>
-      <button type="button" class="btn" data-min="30">30 分钟</button>
-      <button type="button" class="btn" data-min="60">60 分钟</button>
+  <div class="player-identity">
+    <div id="now" aria-live="polite"><div id="nowline" role="button" tabindex="0">未在播放</div><div id="song" role="button" tabindex="0" hidden></div></div> <!-- 两行：台名 + 曲讯（B-6）；键盘可达（audit-r2 P3-2）：可点 div 补 role/tabindex，Enter/Space 在 app.js 接线 -->
+    <span id="eq" aria-hidden="true"><i></i><i></i><i></i></span>
+  </div>
+  <div class="player-main">
+    <button class="btn" id="prevFav" aria-label="上一收藏台" title="上一收藏台（与 ← 键同义）"><svg class="ic"><use href="#i-prev"/></svg></button>
+    <button class="btn" id="pp" aria-label="播放 / 暂停"><svg class="ic"><use href="#i-play"/></svg></button>
+    <button class="btn" id="nextFav" aria-label="下一收藏台" title="下一收藏台（与 → 键同义）"><svg class="ic"><use href="#i-next"/></svg></button>
+  </div>
+  <div class="player-helpers">
+    <button class="btn" id="refreshBtn" aria-label="刷新，回到直播最新处" title="刷新：断开当前连接，回到直播最新处"><svg class="ic"><use href="#i-sync"/></svg></button> <!-- 手动刷新回直播头（plan-refresh-live）：与 header「同步源」同 icon 不同语境，title 消歧 -->
+    <span id="sleepWrap">
+      <button class="btn" id="sleepBtn" title="睡眠定时：到点渐弱停止" aria-label="睡眠定时"><svg class="ic"><use href="#i-sleep"/></svg><span id="sleepLab"></span></button>
+      <!-- 睡眠菜单（UI 审计 P3-7）：一次点选替代 15→30→60 循环（想设 60 分钟原要按三下）；进行中点击按钮直接取消 -->
+      <span id="sleepMenu" hidden>
+        <button type="button" class="btn" data-min="15">15 分钟</button>
+        <button type="button" class="btn" data-min="30">30 分钟</button>
+        <button type="button" class="btn" data-min="60">60 分钟</button>
+      </span>
     </span>
-  </span>
-  <span id="srcWrap" hidden>
-    <button class="btn" id="srcBtn" title="备选源：切换当前电台的播放源 / 恢复默认" aria-label="备选源" aria-haspopup="true" aria-expanded="false"><svg class="ic"><use href="#i-dots"/></svg></button>
-    <!-- 选源浮层（②a）：正在听的多源台一键切源；点行 = 用此源播放，底部 ↺ 恢复默认源 -->
-    <span id="srcMenu" hidden></span>
-  </span>
-  <button class="btn" id="muteBtn" aria-label="静音" title="静音 / 取消静音"><svg class="ic"><use href="#i-vol"/></svg></button>
-  <span id="status" role="status" aria-live="polite"></span>
-  <input type="range" id="vol" min="0" max="100" value="90" aria-label="音量">
+    <span id="srcWrap" hidden>
+      <button class="btn" id="srcBtn" title="备选源：切换当前电台的播放源 / 恢复默认" aria-label="备选源" aria-haspopup="true" aria-expanded="false"><svg class="ic"><use href="#i-dots"/></svg></button>
+      <!-- 选源浮层（②a）：正在听的多源台一键切源；点行 = 用此源播放，底部 ↺ 恢复默认源 -->
+      <span id="srcMenu" hidden></span>
+    </span>
+    <button class="btn" id="detailBtn" hidden title="电台详情：逐源诊断 / 源启停与排序 / 歌曲历史" aria-label="电台详情"><svg class="ic"><use href="#i-info"/></svg></button> <!-- 详情中心入口（B1）：正在播的台；台名行保留「回到正在播」语义不抢点 -->
+    <button class="btn" id="muteBtn" aria-label="静音" title="静音 / 取消静音"><svg class="ic"><use href="#i-vol"/></svg></button>
+    <span id="status" role="status" aria-live="polite"></span>
+    <input type="range" id="vol" min="0" max="100" value="90" aria-label="音量">
+  </div>
 </footer>
 <audio id="audio" preload="none"></audio>
 <div id="songhist" hidden></div>
 <!-- toast：后台任务通告（增量体检/自动基线），与 #status 分工——用户主动操作的反馈不走这里 -->
 <div id="toast" role="status" aria-live="polite" hidden></div>
+<!-- 长名完整提示单例（P3/§4.2/§9.3）：聚焦行/卡/底栏台名/曲讯时由 app.js 委托填充——截断提示不依赖浏览器
+     title（键盘聚焦不出原生提示）；仅桌面新版壳启用，其余布局恒隐 -->
+<div id="namett" role="tooltip" hidden></div>
 <!-- 快捷键帮助（N8/r2 ⑧）：按 ? 呼出；键位集合与 app.js 实际绑定一一对应，改键位时两处同步 -->
 <div id="keys" hidden tabindex="-1" role="dialog" aria-label="快捷键一览">
   <b>快捷键一览</b>
   <div class="krow"><span><kbd>/</kbd></span>聚焦搜索框</div>
   <div class="krow"><span><kbd>空格</kbd></span>播放 / 暂停</div>
+  <div class="krow"><span><kbd>R</kbd></span>刷新：回到直播最新处</div>
   <div class="krow"><span><kbd>←</kbd><kbd>→</kbd></span>收藏间切台</div>
   <div class="krow"><span><kbd>↑</kbd><kbd>↓</kbd></span>列表行导航（<kbd>Home</kbd>/<kbd>End</kbd> 跳首尾）</div>
   <div class="krow"><span><kbd>Enter</kbd>/<kbd>空格</kbd></span>播放聚焦行</div>
@@ -313,8 +591,12 @@
     <div class="seg" role="group" aria-label="维护对象切换">
       <button class="btn on" id="mTabC">分类</button>
       <button class="btn" id="mTabS">电台</button>
+      <button class="btn" id="mTabD">数据</button>
     </div>
     <div id="mMiss"></div>
+    <!-- 对象编辑区（ui-redesign §5.1/§6.6，P4）：与下方列表容器分离——renderManage 重建 mlist/mCats、
+         Store 对账、台标回调都不碰这里，编辑草稿与输入值在重渲后存活；详情中心开着时编辑区进 #dEdit -->
+    <div id="mEdit"></div>
     <div id="mCats"></div>
     <div id="mStations" hidden>
       <div id="mAdd">
@@ -326,27 +608,90 @@
       <input id="mq" type="search" placeholder="搜索要维护的电台（含已隐藏），如：动感 / CNN / 戏曲" aria-label="搜索电台">
       <div id="mlist" role="list"></div>
     </div>
-    <div class="mfoot">
-      <button class="btn" id="mBackup" title="导出全部本地数据（收藏/维护配置/健康标记/歌曲历史）为单 JSON 完整备份——换浏览器/换机的兜底通道">备份全部</button>
-      <button class="btn" id="mRestore" title="从完整备份恢复（覆盖本地全部数据，确认后执行）">恢复备份</button>
-      <button class="btn" id="mExport" title="导出维护配置为 JSON（备份/换机；收藏另有 m3u 导出）">导出配置</button>
-      <button class="btn" id="mImport" title="导入维护配置 JSON（覆盖本地全部维护配置，确认后执行）">导入配置</button>
-      <button class="btn" id="mReset" title="清空全部维护配置，分类与电台回到同步默认">重置</button>
+    <!-- 「数据」分区（§5.5，P5）：三组独立动作按卡分组（图09 信息层级）——完整备份 / 维护配置 / 个人列表。
+         全部现有 id（mExport/mImport/mReset/mBackup/mRestore/mPlaylist/mPaste/mSidecar/mfile*）原位保留，
+         动作绑定与语义一行不改；cfg 导入差异预览/备份覆盖预览/重置预览/file:// 能力矩阵在 P5 接入 -->
+    <div id="mData" hidden>
+      <div class="mnote">备份、导入、重置各自一次提交、互不隶属电台编辑草稿；执行前会先处理未保存的草稿，预览确认后生效。</div>
+      <div id="mDataEnv"></div>
+      <div class="dsec2">
+        <div class="dcard">
+          <b>完整备份</b>
+          <p>打包全部本地数据（收藏/维护配置/健康标记/歌曲历史 + 个人电台）导出 vradio-backup.json，可勾选附带质量与收听统计；恢复前先看覆盖预览，失败如实区分未提交/已回滚并给恢复路径。</p>
+          <div class="dacts2">
+            <label class="mck"><input type="checkbox" id="mSidecar" title="备份附带本机质量与收听统计数据（探活/播放的聚合统计 + 按日收听时长，跨机迁移用；不含任何响应正文；默认不含）">含统计数据</label>
+            <button class="btn" id="mBackup" title="导出全部本地数据为 v3 完整备份（收藏/维护配置/健康标记/歌曲历史 + 个人电台 my-radio；可勾选附带质量/收听统计数据）——换浏览器/换机的兜底通道">备份全部</button>
+            <button class="btn" id="mRestore" title="从完整备份恢复（v1/v2/v3 均可读；覆盖本地全部数据，覆盖预览确认后执行，提交中不可重复触发）">恢复备份</button>
+          </div>
+        </div>
+        <div class="dcard">
+          <b>维护配置</b>
+          <p>导出/导入个人调整（改名/移动/隐藏/追加源/源排序启停标签）；导入先出差异预览再覆盖，重置先列出清除范围——都不删除电台主库和收藏。</p>
+          <div class="dacts2">
+            <button class="btn" id="mExport" title="导出维护配置为 JSON（备份/换机；收藏另有 m3u 导出）">导出配置</button>
+            <button class="btn" id="mImport" title="导入维护配置 JSON：先解析校验出差异预览，明确覆盖确认后执行">导入配置</button>
+            <button class="btn" id="mReset" title="清空全部维护配置：预览清除数量与范围后确认，分类与电台回到同步默认（不删除收藏/主库/个人文件/歌史）">重置</button>
+          </div>
+        </div>
+      </div>
+      <div class="dcard">
+        <b>个人列表</b>
+        <p>歌单文件（m3u/pls/xspf/asx/txt）与粘贴链接导入个人列表：先解析为纯本地条目，四桶预览后新台写入 my-radio.txt（http 形态）。</p>
+        <div class="dacts2">
+          <button class="btn" id="mPlaylist" title="导入歌单文件（m3u / pls / xspf / asx / txt）：先解析为纯本地条目（不联网探活），预览新增/已知/重复/非法四桶，确认后新台写入 my-radio.txt">导入歌单</button>
+          <button class="btn" id="mPaste" title="粘贴纯链接文本（每行一个 http(s) 流地址）导入个人列表">粘贴链接</button>
+        </div>
+      </div>
       <input type="file" id="mfile" accept=".json,application/json" hidden aria-label="导入维护配置文件">
       <input type="file" id="mfile2" accept=".json,application/json" hidden aria-label="导入完整备份文件">
+      <input type="file" id="mfile3" accept=".m3u,.pls,.xspf,.asx,.wax,.wmx,.txt,audio/x-mpegurl,audio/x-scpls,application/xml,text/plain" hidden aria-label="导入歌单文件">
     </div>
   </div>
 </div>
-<!-- 结构壳：样式与结构在此，逻辑按模块契约分置五文件；
+<!-- 详情中心（B1，plan-expansion-r4 §5.3）：台信息/逐源诊断/源生命周期动作/歌曲历史；
+     入口 = 列表行与网格卡 ⓘ 按钮、footer ⓘ（正在播的台）、⚙ 面板源管理「详情」；逻辑在 app.js -->
+<div id="detail" hidden>
+  <div class="mbox" role="dialog" aria-modal="true" aria-label="电台详情">
+    <div class="mhead"><b><svg class="ic"><use href="#i-info"/></svg> 电台详情</b><button class="btn" id="dClose" title="关闭（Esc）"><svg class="ic"><use href="#i-x"/></svg><span>关闭</span></button></div>
+    <div id="detailBody"></div>
+    <!-- 源配置编辑区（ui-redesign §6.9，P4）：详情里的启停/排序/标签动作共用维护面板的同一编辑器草稿
+         （保存才提交）；宿主选择逻辑在 App.mEditHost——详情开着时编辑区渲染到这里 -->
+    <div id="dEdit"></div>
+  </div>
+</div>
+<!-- 发现页（B3，plan-expansion-r4 §7.3）：本地派生六分组推荐（纯本地、不联网、不改主列表排序）；
+     入口 = header「发现」（features.discovery 开关，默认关）；点击行统一 Player.play；逻辑在 app.js -->
+<div id="discovery" hidden>
+  <div class="mbox" role="dialog" aria-modal="true" aria-label="发现电台">
+    <div class="mhead"><b><svg class="ic"><use href="#i-compass"/></svg> 发现电台</b><button class="btn" id="discClose" title="关闭（Esc）"><svg class="ic"><use href="#i-x"/></svg><span>关闭</span></button></div>
+    <div id="discBody"></div>
+  </div>
+</div>
+<!-- 统一确认弹窗层（ui-redesign §6.8，P4）：离开三选（保存并继续/放弃修改/继续编辑）、冲突三选
+     （重新加载最新值/明确覆盖此对象/继续编辑）、撤回影响预览确认等共用的唯一实例；
+     Promise resolver 在 app.js uiChooseDialog（按钮/Esc/点遮罩只 resolve 一次），内容由其 textContent 构造 -->
+<div id="editorConfirm" hidden>
+  <div class="mbox ecbox" role="alertdialog" aria-modal="true" aria-labelledby="ecHead"></div>
+</div>
+<!-- 结构壳：样式与结构在此，逻辑按模块契约分置；
      顺序 = store（存储收敛层，方案二）→ player（引擎）→ logos（台标数据）→ radio-data（同步生成的全库数据，
-     file:// 降级直读，文件缺失仅控制台 404 不影响）→ app（数据/渲染）→ sync（同步/体检编排）；
-     store 最底层（player/app 的读写出口）、logos 先于 app 装载（boot 渲染行内入口时即引用）；经典 script 是 file:// 硬约束 -->
-<script src="hls.min.js"></script>
+     file:// 降级直读，文件缺失仅控制台 404 不影响）→ features（发布开关，B3 独立单元）→ srcorder（源顺序/禁用
+     纯函数，B1 双端同语义）→ quality-store（源质量 sidecar，B2：详情质量摘要 + playback/diagnostic 样本出口）→
+     metadata（曲讯事件管线，B3：归一化 + 世代状态机）→ listen-stats（收听统计，B3：状态机 + 日桶 sidecar）→
+     playlist-import（歌单多格式解析，B4）→ backup（备份 v3 纯逻辑，B4）→ app（数据/渲染）→ sync（同步/体检编排）；
+     store 最底层（player/app 的读写出口）、logos 先于 app 装载（boot 渲染行内入口时即引用）、srcorder/quality-store
+     先于 app（applyCfg 消费 SrcOrder；详情中心与播放映射读 QualityStore）、metadata/listen-stats 在 features 后
+     app 前（app.boot 即建管线/按开关 init 统计）；经典 script 是 file:// 硬约束 --><script src="hls.min.js"></script>
 <script src="store.js"></script>
 <script src="player.js"></script>
 <script src="logos.js"></script>
 <script src="radio-data.js"></script>
-<script src="app.js"></script>
+<script src="features.js"></script>
+<script src="srcorder.js"></script>
+<script src="quality-store.js"></script>
+<script src="metadata.js"></script>
+<script src="listen-stats.js"></script><script src="playlist-import.js"></script>
+<script src="backup.js"></script><script src="app.js"></script>
 <script src="sync.js"></script>
 </body>
 </html>

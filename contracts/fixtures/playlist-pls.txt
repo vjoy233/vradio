@@ -1,0 +1,10 @@
+[playlist]
+NumberOfEntries=3
+File1=https://music.example.test/live1.mp3
+Title1=示例电台一
+Length1=-1
+File2=https://news.example.test/live2.aac
+Title2=News Radio
+Length2=-1
+File3=https://jazz.example.test/stream
+Length3=-1

@@ -1,0 +1,88 @@
+{
+  "phase": "p2",
+  "head": "727d806",
+  "headNote": "head = 采证时的代码提交；承载本文件的产物提交不改代码，git log 验证：产物提交父 == head 且 diff 仅 evidence/**",
+  "started": "2026-11-15T11:45:07.206Z",
+  "pass": 13,
+  "fail": 0,
+  "assertions": [
+    {
+      "id": "F2",
+      "name": "1024 开关关：无 ui-refresh 类、hero/侧栏 display:none（紧凑原样）",
+      "pass": true,
+      "detail": "{\"shell\":false,\"hero\":\"none\",\"heroHidden\":true,\"side\":\"none\",\"list\":1024,\"vw\":1024}"
+    },
+    {
+      "id": "F1",
+      "name": "390 开关关：列表全宽不受壳影响",
+      "pass": true,
+      "detail": "list=390 vw=390"
+    },
+    {
+      "id": "F3",
+      "name": "ui-refresh 类 + 侧栏可见 + hero 显示 + 壳 200px 网格",
+      "pass": true,
+      "detail": "grid=200px 1240px"
+    },
+    {
+      "id": "F4",
+      "name": "1023 侧栏/hero 双拦截（断点 1024 生效）",
+      "pass": true,
+      "detail": "{\"shell\":true,\"hero\":\"none\",\"heroHidden\":false,\"side\":\"none\",\"list\":1023,\"vw\":1023}"
+    },
+    {
+      "id": "F5a",
+      "name": "390 紧凑全宽（开壳不泄漏）",
+      "pass": true,
+      "detail": "list=390"
+    },
+    {
+      "id": "F5b",
+      "name": "768 紧凑（同口径）",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "id": "F6a",
+      "name": "开壳 light 生效",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "id": "F6b",
+      "name": "开壳 dark 生效",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "id": "F7",
+      "name": "重渲后焦点仍在 #heroPlay",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "id": "F8a",
+      "name": "--dock-h 写入 + footer fixed + scroll-padding 联动",
+      "pass": true,
+      "detail": "{\"dock\":\"69px\",\"spb\":\"93px\",\"foot\":\"fixed\"}"
+    },
+    {
+      "id": "F8b",
+      "name": "键盘 Tab 可达底栏控件（列表末行 → footer）",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "id": "Z1",
+      "name": "宿主 data/store.json + my-radio.txt 运行前后哈希不变（真隔离终检）",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "id": "Z3",
+      "name": "清理失败门：browser 关闭 / server 退出 / worktree 移除全部成功（零泄漏成立）",
+      "pass": true,
+      "detail": ""
+    }
+  ]
+}

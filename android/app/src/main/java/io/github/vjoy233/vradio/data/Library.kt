@@ -55,6 +55,38 @@ class Library(
     rebind()
   }
 
+  /* —— B1 源生命周期编辑（cfg 三字段整表写，写后 reapplyCfg 即时生效；索引一律 u 空间，
+     u[]/u[0] 物理序与身份键永不动——「任一源 URL 命中」回绑面也随之免疫） —— */
+  fun srcMove(s: Station, i: Int, up: Boolean) { // 上移/下移：材料化当前完整顺序（含禁用位）相邻交换后写回
+    val cur = s.mo ?: s.u.indices.toList()
+    val p = cur.indexOf(i); val q = if (up) p - 1 else p + 1
+    if (p < 0 || q < 0 || q >= cur.size) return
+    val m = cur.toMutableList(); val t = m[p]; m[p] = m[q]; m[q] = t
+    writeSrcManualOrder(s, m)
+  }
+
+  fun srcOrderReset(s: Station) { // 撤销人工源排序：只删该台 srcManualOrder（禁用表/追加源保留——三维度独立）
+    if (!cfg.srcManualOrder.containsKey(s.u0)) return
+    val m = cfg.srcManualOrder.toMutableMap(); m.remove(s.u0)
+    cfg = cfg.copy(srcManualOrder = m); reapplyCfg()
+  }
+
+  fun srcDisabledToggle(s: Station, i: Int) { // 启用/禁用切换（主源也可禁——只标记不换身份键）
+    if (i !in s.u.indices) return
+    val u = s.u[i]
+    val cur = cfg.srcDisabled[s.u0].orEmpty().toMutableList()
+    if (!cur.remove(u)) cur.add(u)
+    val d = cfg.srcDisabled.toMutableMap()
+    if (cur.isEmpty()) d.remove(s.u0) else d[s.u0] = cur
+    cfg = cfg.copy(srcDisabled = d); reapplyCfg()
+  }
+
+  private fun writeSrcManualOrder(s: Station, idx: List<Int>) {
+    val m = cfg.srcManualOrder.toMutableMap()
+    m[s.u0] = idx.map { s.u[it] }   // >6 源台超出部分由 CfgCodec.parse 封顶截断（urlArrMap take(6)，两侧同款护栏）
+    cfg = cfg.copy(srcManualOrder = m); reapplyCfg()
+  }
+
   /* —— 收藏/最近 —— */
   fun favKeys(): Set<String> = favs.map { it.k }.toSet()
   fun isFav(s: Station) = favs.any { it.k == s.key }
@@ -124,13 +156,42 @@ class Library(
   fun resolve(key: String): Station? = stations.firstOrNull { it.key == key }
   fun resolveByUrl(u0: String): Station? = stations.firstOrNull { u0 in it.u }
 
+  /** N2 m3u 泛导入分流（纯决策不变异，AIbot P1-1 语义修复）：库内可解析台（键优先、任一源 URL 兜底，
+   *  resolveEntry 同口径；任一 URL 命中即整条算命中）→ favHits 交调用方批量恢复收藏；
+   *  库外台（URL 不在 stations/favs 快照/my 层行——休眠收藏与 my 层台勿重复入库）→ extra 待确认入
+   *  my-radio。known 快照必须先于收藏变异，否则刚恢复的收藏把库外 URL 全部遮蔽、extra 恒空。 */
+  fun partitionImport(list: List<Station>): Pair<List<Station>, List<Station>> {
+    val known = HashSet<String>()
+    for (s in stations) known.addAll(s.u)
+    for (f in favs) known.addAll(f.u)
+    val myRows = myText.split(Regex("\\r?\\n"))
+    val favHits = ArrayList<Station>()
+    val extra = ArrayList<Station>()
+    val seen = HashSet<String>()
+    for (s in list) {
+      val hit = resolve(s.key) ?: stations.firstOrNull { st -> s.u.any { it in st.u } }
+      if (hit != null) { favHits.add(hit); continue }
+      for (u in s.u) {
+        if (u in known || u in seen || myRows.any { it.trim().endsWith(",$u") }) continue
+        seen.add(u)
+        val c = s.c.takeIf { it.isNotEmpty() && it != "未分类" } ?: "自定义"   // m3u 无 group-title 的兜底分类
+        extra.add(Station(c, s.n, mutableListOf(u)))
+      }
+    }
+    return favHits to extra
+  }
+
   /* —— 生命周期 —— */
   fun reload() { // parse(mainText/myText) → applySources → applyCfg → rebind → 挂死台标
     val byKey = LinkedHashMap<String, Station>(); val byName = HashSet<String>()
     for (s in RadioTxt.parse(mainText)) { byKey[s.key] = s; byName.add(s.n) }
-    for (st in STARTER) if (!byName.contains(st.n)) { // 精确重名的精选台不再并入（主列表同台已代表它）
-      byKey[st.key] = Station(st.c, st.n, st.u.toMutableList(), st.l); byName.add(st.n)
+    for (st in STARTER) { // 精确重名的精选台不再并入（主列表同台已代表它）——代表台打 starter 位；装配现状不变
+      val dup = byKey.values.firstOrNull { it.n == st.n }
+      if (dup != null) dup.starter = true   // B3-C originMask：精确同名命中
+      else { val s = Station(st.c, st.n, st.u.toMutableList(), st.l); s.starter = true; byKey[st.key] = s; byName.add(s.n) }
     }
+    // B3-C originMask（双端冻结口径）：STARTER URL 命中也带位（只打标记不动装配——不同名共存两台都算精选来源）
+    for (st in STARTER) for (s in byKey.values) if (st.u.any { it in s.u }) s.starter = true
     for (s in RadioTxt.parse(myText)) { // 个人层常驻并入（只补源不覆盖）；⚠ 大括号必须显式——裸写双 if 的话
       val cur = byKey[s.key]            // else 会悬挂绑到内层 if（新键台永不并入的隐形 bug，测试逮住）
       if (cur != null) {
@@ -177,11 +238,14 @@ class Library(
   }
 
   /* 维护层套用（app.js applyCfg 同款）：移动/重命名/手藏/追加源按「任一源 URL 命中」（变体换序免疫）；
-     追加源只挂台尾不动身份键（s.u[0] 是 srcmem/收藏/健康标记的键）；分类重命名最后映射 */
+     追加源只挂台尾不动身份键（s.u[0] 是 srcmem/收藏/健康标记的键）；分类重命名最后映射；
+     B1：u 定稿后计算源生命周期运行时字段（键=身份 URL，与 srcs 的任一源命中口径不同——排序/禁用
+     是「这台」的属性，不是单条源的属性） */
   private fun applyCfg() {
     val c = cfg
     for (s in stations) {
       s.hidden = false
+      s.mo = null; s.moManual = false; s.dis = emptySet(); s.lbl = emptyMap() // 重套前清零（cfg 撤改后不留残序）
       for (u in s.u) {
         if (c.hideS[u] == true) s.hidden = true
         c.moves[u]?.let { s.c = it }
@@ -190,7 +254,20 @@ class Library(
       val add = ArrayList<String>()
       for (u in s.u) for (x in c.srcs[u] ?: emptyList()) if (x !in s.u && x !in add) add.add(x)
       if (add.isNotEmpty()) s.u.addAll(add)
+      if (s.u.size > C.SRC_TOTAL_CAP) s.u = s.u.take(C.SRC_TOTAL_CAP).toMutableList() // 每台最多 6 条（plan §5.4，review P1）：
+      // 合并追加后对最终源集合统一封顶——保主源 u[0] 首位只裁台尾（原生超编同理）；详情/诊断同口径不漂移
       c.renames[s.c]?.let { s.c = it }
+      val manual = c.srcManualOrder[s.u0]
+      if (!manual.isNullOrEmpty()) { // 人工序：manual 序在前（存在于 u 的才收），未列的按 u 原序追加——不物理重排 u
+        val seen = HashSet<Int>(); val mo = ArrayList<Int>(s.u.size)
+        for (x in manual) { val i = s.u.indexOf(x); if (i >= 0 && seen.add(i)) mo.add(i) }
+        for (i in s.u.indices) if (seen.add(i)) mo.add(i)
+        s.mo = mo
+        s.moManual = true // B1 review P1-6：播放决策据此保留用户序，不再被启发式重排（Web s.moManual 同款）
+      }
+      val dis = c.srcDisabled[s.u0]
+      if (!dis.isNullOrEmpty()) s.dis = dis.mapNotNull { x -> s.u.indexOf(x).takeIf { i -> i >= 0 } }.toSet()
+      if (c.srcLabels.isNotEmpty()) s.lbl = c.srcLabels.filterKeys { u -> s.u.contains(u) }
     }
   }
 

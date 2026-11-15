@@ -46,6 +46,8 @@ fun AddStationScreen(vm: AppVm) {
   LaunchedEffect(cats) { if (selCat.isEmpty() && cats.isNotEmpty()) selCat = cats.first() }
   val addBusy by vm.addBusy.collectAsState()
   val addMsg by vm.addMsg.collectAsState()
+  val preset by vm.addPreset.collectAsState()                    // E4 接流预填：浏览器流链接路由进本页（消费后自清）
+  LaunchedEffect(preset) { preset?.let { url = it; vm.addPreset.value = null } }
 
   Column(
     Modifier.fillMaxSize().background(pal.bg).statusBarsPadding().imePadding()

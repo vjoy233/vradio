@@ -1,8 +1,9 @@
 package io.github.vjoy233.vradio.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -38,6 +39,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -96,11 +99,12 @@ fun StationList(vm: AppVm) {
       )
       TextButton(onClick = { vm.nav.value = Nav.SETTINGS }) { Text("设置") }
     }
-    // 次行：双视图切换 + 无效源开关（出现过死台才亮，app.js deadBtn 同款）
+    // 次行：双视图切换 + 无效源开关（出现过死台才亮，app.js deadBtn 同款）+ 发现入口（B3-C 开关）
     Row(Modifier.padding(horizontal = 12.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
       SegBtn("网格", view == "grid") { vm.setView("grid") }
       SegBtn("列表", view == "list") { vm.setView("list") }
       if (lu.hasDead) SegBtn("✗ 无效源", showDead) { vm.toggleDead() }
+      if (io.github.vjoy233.vradio.FeatureFlags.DISCOVERY) SegBtn("✦ 发现", false) { vm.showDiscovery.value = true }
     }
     // 分类条（数量角标与列表同口径刷新，P3-5）
     LazyRow(
@@ -136,15 +140,22 @@ fun StationList(vm: AppVm) {
   }
 }
 
-/* 收藏星（命中区 ≥48dp；星色双主题分档） */
+/* 收藏星（命中区 ≥48dp；星色双主题分档）。combinedClickable 自吞长按（AIbot P2-6）：星若是纯
+   clickable，长按星 = 外层长按切换一次 + 抬指时星 onClick 再切一次（净效果状态不变但有震动，
+   体感「长按没生效」）——星自身消费长按后外层手势即取消，长按星 = 恰好一次切换（星内自带震动）。 */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun FavStar(on: Boolean, onClick: () -> Unit) {
+private fun FavStar(on: Boolean, onToggle: () -> Unit) {
   val pal = LocalVrPalette.current
+  val haptic = LocalHapticFeedback.current
   Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
     Text(
       if (on) "★" else "☆", fontSize = 22.sp,
       color = if (on) pal.star else pal.dim,
-      modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(6.dp),
+      modifier = Modifier.clip(RoundedCornerShape(8.dp)).combinedClickable(
+        onClick = onToggle,
+        onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onToggle() },
+      ).padding(6.dp),
     )
   }
 }
@@ -164,10 +175,13 @@ private fun metaBadges(vm: AppVm, s: Station, inCat: Boolean) {
   }
 }
 
-/* 网格卡片：精简两行（台名+星 / 徽标行），正在播边框高亮 + ▶ 前缀；fav 由外层响应式传入（勿在行内直读 lib） */
+/* 网格卡片：精简两行（台名+星 / 徽标行），正在播边框高亮 + ▶ 前缀；fav 由外层响应式传入（勿在行内直读 lib）。
+   N7：长按整卡 = 收藏切换（震动反馈；时长取系统默认长按超时，Web 侧是 500ms 定时，手感近似） */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun StationCard(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?, fav: Boolean, inCat: Boolean) {
   val pal = LocalVrPalette.current
+  val haptic = LocalHapticFeedback.current
   val k = s.key
   val playing = ui.station?.key == k && ui.st != PState.IDLE && ui.st != PState.CONNECTING
   val connecting = ui.station?.key == k && ui.st == PState.CONNECTING
@@ -178,7 +192,10 @@ private fun StationCard(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?
     Modifier.fillMaxWidth().clip(shape)
       .background(if (playing) pal.panel else Color.Transparent)
       .border(1.dp, when { flash == k || playing -> pal.acc; else -> pal.line }, shape)
-      .clickable { vm.togglePlay(k) }.padding(10.dp),
+      .combinedClickable(
+        onClick = { vm.togglePlay(k) },
+        onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); vm.toggleFav(s) },
+      ).padding(10.dp),
   ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
       StationLogo(vm.logoOf(s), s.n, s.key, 40.dp)
@@ -200,10 +217,12 @@ private fun StationCard(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?
   }
 }
 
-/* 列表行：两行详情（台名/徽标），正在播底色高亮；fav 由外层响应式传入 */
+/* 列表行：两行详情（台名/徽标），正在播底色高亮；fav 由外层响应式传入；长按整行 = 收藏（N7，同卡片） */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun StationRow(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?, fav: Boolean, inCat: Boolean) {
   val pal = LocalVrPalette.current
+  val haptic = LocalHapticFeedback.current
   val k = s.key
   val playing = ui.station?.key == k && ui.st != PState.IDLE && ui.st != PState.CONNECTING
   val connecting = ui.station?.key == k && ui.st == PState.CONNECTING
@@ -212,7 +231,10 @@ private fun StationRow(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?,
   Row(
     Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
       .background(when { flash == k -> pal.acc.copy(alpha = .12f); playing -> pal.panel; else -> Color.Transparent })
-      .clickable { vm.togglePlay(k) }.padding(vertical = 2.dp),
+      .combinedClickable(
+        onClick = { vm.togglePlay(k) },
+        onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); vm.toggleFav(s) },
+      ).padding(vertical = 2.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
     FavStar(fav) { vm.toggleFav(s) }

@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "sync": "node update-sources.js",
-    "test": "node test/smoke.js"
+    "test": "node test/run.js"
   },
   "keywords": [
     "radio",

@@ -2,13 +2,24 @@ package io.github.vjoy233.vradio.ui
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.ShortcutInfo
+import android.content.pm.ShortcutManager
 import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
+import android.os.BatteryManager
+import android.os.Build
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import io.github.vjoy233.vradio.FeatureFlags
 import io.github.vjoy233.vradio.MainActivity
+import io.github.vjoy233.vradio.Prefs
 import io.github.vjoy233.vradio.check.CheckStream
 import io.github.vjoy233.vradio.check.Health
+import io.github.vjoy233.vradio.check.toDiagnostic
 import io.github.vjoy233.vradio.consts.C
 import io.github.vjoy233.vradio.data.Backup
 import io.github.vjoy233.vradio.data.CfgCodec
@@ -16,19 +27,44 @@ import io.github.vjoy233.vradio.data.HttpText
 import io.github.vjoy233.vradio.data.Library
 import io.github.vjoy233.vradio.data.Logos
 import io.github.vjoy233.vradio.data.MyRadio
+import io.github.vjoy233.vradio.data.PlaylistParser
+import io.github.vjoy233.vradio.data.QualityStore
 import io.github.vjoy233.vradio.data.RadioTxt
 import io.github.vjoy233.vradio.data.SafeTarget
 import io.github.vjoy233.vradio.data.Store
 import io.github.vjoy233.vradio.check.OkHttpRaw
 import io.github.vjoy233.vradio.data.OkHttpText
+import io.github.vjoy233.vradio.discovery.Discovery
+import io.github.vjoy233.vradio.discovery.DiscoveryInput
+import io.github.vjoy233.vradio.discovery.Groups
+import io.github.vjoy233.vradio.discovery.QInfo
+import io.github.vjoy233.vradio.discovery.RecoveryLog
+import io.github.vjoy233.vradio.metadata.LegacyMetadataSink
+import io.github.vjoy233.vradio.metadata.MetadataPipeline
+import io.github.vjoy233.vradio.model.MetadataEvent
 import io.github.vjoy233.vradio.model.Cfg
+import io.github.vjoy233.vradio.model.DiagnosticResult
+import io.github.vjoy233.vradio.model.FavEntry
 import io.github.vjoy233.vradio.model.PState
+import io.github.vjoy233.vradio.model.PlayerUiState
 import io.github.vjoy233.vradio.model.Station
 import io.github.vjoy233.vradio.model.SongRec
+import io.github.vjoy233.vradio.network.NetGate
+import io.github.vjoy233.vradio.network.NetProbe
+import io.github.vjoy233.vradio.network.NetworkPolicy
+import io.github.vjoy233.vradio.network.TrafficEstimator
 import io.github.vjoy233.vradio.player.PlayerHolder
+import io.github.vjoy233.vradio.timeshift.Timeshift
+import io.github.vjoy233.vradio.stats.ListenSidecar
+import io.github.vjoy233.vradio.stats.ListenStats
+import io.github.vjoy233.vradio.stats.ListenStatsCodec
+import io.github.vjoy233.vradio.stats.ListenTracker
 import io.github.vjoy233.vradio.sync.Gh
 import io.github.vjoy233.vradio.sync.LightUpdate
+import io.github.vjoy233.vradio.sync.RadioMeta
 import io.github.vjoy233.vradio.sync.SyncEngine
+import io.github.vjoy233.vradio.widget.WidgetCommands
+import io.github.vjoy233.vradio.widget.WidgetPush
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
@@ -70,6 +106,9 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   private val light = LightUpdate(gh, ctx.filesDir)
   // SyncEngine.run(curText)：写 filesDir 副本 + 返回 SyncResult（ok=false=合并低于下限已中止未动文件）
   private val engine by lazy { SyncEngine(gh, checker, ctx.filesDir) }
+  // B2 源质量 sidecar（filesDir/quality.json，不进 radio.* 主 Store）+ radio-meta 消费态（生成在 Web 同步侧）
+  private val quality = QualityStore(ctx.filesDir)
+  val radioMeta = MutableStateFlow(RadioMeta.EMPTY)          // 来源追踪元数据（发现页 B3 消费；缺件空对象）
 
   /* ---------- 列表态（radio.view/showdead/theme 三键持久化，app.js loadUi3 同款） ---------- */
   val cat = MutableStateFlow("全部")
@@ -91,13 +130,92 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   val syncBusy = MutableStateFlow(false); val syncMsg = MutableStateFlow("")
   val addBusy = MutableStateFlow(false); val addMsg = MutableStateFlow("")
   val confirmReq = MutableStateFlow<String?>(null)           // 导入覆盖确认门槛
+  val impHasQuality = MutableStateFlow(false)                // 待确认备份含质量 sidecar（确认框显隐复选，AIbot 三轮 P1-3）
+  val impSidecar = MutableStateFlow(false)                   // 用户勾选「恢复质量 sidecar」（默认不勾 = 保留本机，与 Web 同语义）
+  val backupWithSidecar = MutableStateFlow(false)            // 导出「包含本机 sidecar」复选（默认关，与 Web mSidecar 同口径）
   val manualRun = MutableStateFlow(false)                     // 手动体检在跑（静默版让位标志；StateFlow 供设置页「取消体检」按钮态，B3）
   private val healthAbort = AtomicBoolean(false)              // 手动体检取消（Web sync.js this.abort 同款：已确认的标记保留）
   private var pendingImp: Pair<Imp, Any?>? = null
   private var assetsStamp = ""
 
+  /* —— batch1（2026-10-18 拍板）新增态：N4/E5 本地开关（Prefs，非 radio.* 契约）+ E3/E4 入口 —— */
+  val resumeOnStart = MutableStateFlow(false)          // N4 启动自动续播（默认关）
+  val audioOffload = MutableStateFlow(false)           // E5 音频卸载（默认关，实验性，重启生效）
+  val timeshiftOn = MutableStateFlow(false)            // B7 Spike：时移回听实验开关（本地 pref，默认关）
+  val addPreset = MutableStateFlow<String?>(null)      // E4 接流预填 URL（AddStationScreen 消费后自清）
+  private var pendingSc: String? = null                // E3 待点播的快捷方式目标（"last" 或台 key）
+  private var booted = false
+
+  /** E5 能力探测：API 33+ 且 mp3 offload 支持（静态查询；不支持设置页置灰；探测失败按不支持，宁灰勿误开） */
+  val offloadCap: Boolean = runCatching {
+    Build.VERSION.SDK_INT >= 33 && android.media.AudioManager.isOffloadedPlaybackSupported(
+      android.media.AudioFormat.Builder().setEncoding(android.media.AudioFormat.ENCODING_MP3)
+        .setSampleRate(44100).setChannelMask(android.media.AudioFormat.CHANNEL_OUT_MONO).build(),
+      android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC).build())
+  }.getOrDefault(false)
+
   enum class Imp { BACKUP, M3U, CFG }
   enum class Exp { BACKUP, M3U, SONGS, CFG }
+  /** B4 歌单导入确认载荷：hits=库内命中台（确认后恢复收藏，N2 语义）；extra=库外新台（确认后批量入 my-radio）。
+   *  确认前零副作用（B4：取消=无副作用），四桶计数 dup/invalid 随行进完成态文案 */
+  data class PlaylistImp(val hits: List<Station>, val extra: List<Station>, val dup: Int, val invalid: Int, val fmt: String)
+
+  /* ---------- B5：网络策略与流量（plan-expansion-r4 §9.2；设置本地态存 Prefs，非 radio.* 契约） ---------- */
+
+  /** 探测面：ConnectivityManager 经 NetProbe 注入（network/ 纯 JVM 不碰 android.*）；查不到一律 UNKNOWN 宽松 */
+  private val policy = NetworkPolicy(object : NetProbe {
+    override fun online(): Boolean? {
+      val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return null
+      val net = cm.activeNetwork ?: return false                       // 无活动网络 = 离线
+      val caps = cm.getNetworkCapabilities(net) ?: return null
+      return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+    override fun metered(): Boolean? {
+      val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return null
+      return cm.isActiveNetworkMetered
+    }
+  })
+
+  val netFullCheck = MutableStateFlow("confirm")   // 移动数据全量体检（allow/confirm/deny）
+  val netSync = MutableStateFlow("confirm")        // 移动数据主库同步（同款三态）
+  val netLogoWifi = MutableStateFlow(true)         // 台标补全 Wi-Fi 优先
+  val trafficTxt = MutableStateFlow("")            // 本次收听流量估算（设置页展示；估算口径非精确计费）
+  private val gate = NetGate(policy)                     // 入口门（AIbot P1）：三入口同构门控，纯 JVM 可测
+  val netGate = MutableStateFlow<Pair<NetGate.Act, String>?>(null)   // 移动数据大流量操作确认门（载荷=待恢复动作）
+
+  private var listenMs = 0L                        // 本次会话累计收听时长（不持久化：会话级口径）
+  private var lastKbps = 0                         // 最近一次已知码率（0=无 ICY，估算按 128kbps 并明示）
+
+  private fun netRules() = NetworkPolicy.Rules(
+    cellFullCheck = ruleOf(netFullCheck.value),
+    cellSync = ruleOf(netSync.value),
+    logoWifiOnly = netLogoWifi.value,
+  )
+  private fun ruleOf(s: String) = when (s) {
+    "allow" -> NetworkPolicy.CellularRule.ALLOW
+    "deny" -> NetworkPolicy.CellularRule.DENY
+    else -> NetworkPolicy.CellularRule.CONFIRM
+  }
+
+  fun setNetFullCheck(v: String) { netFullCheck.value = v; Prefs.set(ctx, Prefs.NET_FULL_CHECK, v) }
+  fun setNetSync(v: String) { netSync.value = v; Prefs.set(ctx, Prefs.NET_SYNC, v) }
+  fun setNetLogoWifi(b: Boolean) { netLogoWifi.value = b; Prefs.set(ctx, Prefs.NET_LOGO_WIFI, b) }
+
+  /** 确认门：允许则放行原操作（大流量二段式——DENY 在入口已拦，CONFIRM 弹门，ALLOW 直跑） */
+  fun proceedGate() {
+    val g = netGate.value ?: return
+    netGate.value = null
+    when (g.first) {
+      NetGate.Act.FULL_CHECK -> runManualHealth()
+      NetGate.Act.SYNC -> runFullSync()
+      NetGate.Act.LIGHT_UPDATE -> runCheckUpdate()        // AIbot P1：确认后续跑轻更新整链（检查+下载+应用）
+    }
+  }
+  fun cancelGate() { netGate.value = null }
+
+  /** 台标补全 Wi-Fi 优先：策略判过才发请求（已缓存台标的同步窥探不受影响） */
+  private fun logoAllowed() = policy.allow(NetworkPolicy.Op.LOGO_PREFETCH, netRules()).ok
 
   private val toastCh = Channel<String>(Channel.BUFFERED)
   val toasts: Flow<String> = toastCh.receiveAsFlow()
@@ -105,6 +223,23 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   private val cur get() = PlayerHolder.ui.value
   private val playKeys = PlayerHolder.ui.map { it.st to it.station?.key }.distinctUntilChanged()
+
+  /* —— B3 状态声明（须在 init 前声明：init 内装载/接线，声明式初始化按文本序执行会回写覆盖）—— */
+  /** v2 新消费面（规范化事件，供统计/发现派生；legacy 恒 null）。切台/清空随管线 reset 归 null。 */
+  val curMetadata = MutableStateFlow<MetadataEvent?>(null)
+  private var metaState = MetadataPipeline.State()
+  /** Legacy 曲讯分支（AIbot P1-2）：metadataV2 关闭时专用——B2 前语义独立消费（不经 MetadataPipeline，
+   *  v2 的 30s 窗/迟到 at 丢弃不渗入）；show=setSong（ui.song+MediaSession）、archive=pushSong 入史。 */
+  private val legacySink = LegacyMetadataSink(
+    show = { PlayerHolder.setSong(it) },
+    archive = { u0, t -> viewModelScope.launch(Dispatchers.IO) { runCatching { lib.pushSong(u0, t) }; stamp.value++ } })
+  private val listenSidecar = ListenSidecar(ctx.filesDir)
+  private var listenTracker: ListenTracker? = null
+  val showDiscovery = MutableStateFlow(false)
+  private val recovered = LinkedHashMap<String, Long>()   // 台 key → 复活时刻（Prefs 缓存 7 天过期）
+  /** radio-meta 与当前 radio 资产同批绑定（AIbot P1-4 + 三轮 P1）：false/混态时发现页「最近新增」置空（不猜）。
+   *  判据见 RadioMeta.bound（filesDir/assets 来源配对 + stamp.meta 见证 + radio/meta 内容哈希核对）。 */
+  var metaBound = false; private set
 
   /** 渲染快照（唯一渲染入口精神：列表 + 分类角标 + 死台开关可见性 + 空态文案）；
    *  ver = stamp 哨兵进值域（审计 P2）：StateFlow 按相等合并，内容未变的 stamp++ 会被判等丢弃——
@@ -130,7 +265,53 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   init {
     wirePlayer()
+    resumeOnStart.value = Prefs.get(ctx, Prefs.RESUME, false)   // N4
+    audioOffload.value = Prefs.get(ctx, Prefs.OFFLOAD, false)   // E5
+    netFullCheck.value = Prefs.get(ctx, Prefs.NET_FULL_CHECK, "confirm")   // B5 网络策略三键
+    netSync.value = Prefs.get(ctx, Prefs.NET_SYNC, "confirm")
+    netLogoWifi.value = Prefs.get(ctx, Prefs.NET_LOGO_WIFI, true)
+    timeshiftOn.value = Prefs.get(ctx, Prefs.TIMESHIFT, false)  // B7 Spike（attach 处也会读，幂等）
+    // B3-C：health 复活记录运行时缓存（7 天过期剪裁；坏 JSON 按空表恢复）
+    recovered.putAll(runCatching { parseRecovered(Prefs.getStr(ctx, Prefs.RECOVERED, "")) }.getOrDefault(emptyMap()))
+    if (FeatureFlags.LISTEN_STATS) {
+      // B3-B：sidecar 装载在 Main 构造（filesDir 小文件）；消费/flush 由开关门控——关 = 不消费不 flush不清数据。
+      // AIbot 三轮 P1：restore 先合流 pending（上次写失败残留的未确认增量快照）——重启不丢，走既有 flush 链路
+      listenTracker = runCatching {
+        ListenTracker.restore(SystemClock::elapsedRealtime, System::currentTimeMillis, listenSidecar)
+      }.getOrNull() ?: ListenTracker(SystemClock::elapsedRealtime, System::currentTimeMillis)
+      viewModelScope.launch {   // 30s 周期 flush（页面隐藏 flush 在 onAppHidden；快照覆盖幂等）
+        while (true) { delay(30_000); runCatching { flushStats() } }
+      }
+    }
     viewModelScope.launch(Dispatchers.IO) { boot() }
+    // B5：Widget 状态推送（与 PlaybackService 侧收集生命周期互补，onUi 幂等去重不双刷）
+    viewModelScope.launch { PlayerHolder.ui.collect { WidgetPush.onUi(ctx, it) } }
+    // B2 播放样本 + B3 元数据管线 reset / 收听状态机：PlayerHolder 状态流统一消费（映射在 Main；
+    // QualityStore 写盘派发 IO）。PlayerHolder 不感知这些消费方（模块边界照抄 onstate 回调注入方向）
+    viewModelScope.launch {
+      PlayerHolder.ui.collect { u ->
+        runCatching { mapQualityEvent(u) }
+        runCatching { mapMetaReset(u) }
+        if (listenTracker != null) runCatching { mapListenState(u) }
+        qPrev = u
+      }
+    }
+    // B5：流量估算采样（30s 一跳，仅播放中累计；估算口径防精确计费误导）
+    viewModelScope.launch {
+      while (true) {
+        delay(30000)
+        val u = PlayerHolder.ui.value
+        if (u.st == PState.PLAYING) {
+          listenMs += 30000
+          if (u.kbps > 0) lastKbps = u.kbps
+          trafficTxt.value = TrafficEstimator.estimateText(lastKbps, listenMs, listenMs / 60000)
+        }
+      }
+    }
+  }
+
+  override fun onCleared() {   // VM 亡后通知栏/Widget 的 ⏮⏭ 与空台续播仍可用：回装文件侧兜底（VRadioApp 同款）
+    WidgetCommands.wireFallback(ctx)
   }
 
   /* ---------- boot 编排（app.js boot + sync.js bootQuiet 平移；安卓不跑首启基线，plan M3 拍板）：
@@ -141,18 +322,32 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     assetsStamp = readAsset("data-stamp.txt")?.trim() ?: ""
     val aRadio = readAsset("radio.txt") ?: ""
     val aLogos = readAsset("logos.txt") ?: ""
-    val mainTxt = light.radioText() ?: aRadio                 // 文件读取留 IO
+    val fRadio = light.radioText()                            // filesDir 副本（AIbot P1-4 绑定判据）
+    val mainTxt = fRadio ?: aRadio                            // 文件读取留 IO
     val myTxt = myRadio.readText()
     val logosTxt = light.logosText() ?: aLogos
+    val fMeta = light.metaText()
+    runCatching { quality.load() }                            // B2 质量侧车（坏文件按空库恢复）
+    radioMeta.value = RadioMeta.parse(fMeta ?: readAsset("radio-meta.json")) ?: RadioMeta.EMPTY   // 缺件/坏件空对象兜底
+    // AIbot P1-4 混态拦截：meta 与当前 radio 资产须同批（filesDir/assets 来源配对 + stamp.meta 见证 +
+    // 三轮 P1 内容哈希核对——新 radio 配残留旧 stamp 时哈希对不上）→ 不绑定则发现页「最近新增」置空（不猜）
+    val hashW = light.stampHashOk()
+    metaBound = RadioMeta.bound(fRadio != null, fMeta != null, light.stampMetaOk(), hashW.first, hashW.second)
     withContext(Dispatchers.Main) {                           // Library 装配收敛主线程（审计 P2：非线程安全集合与渲染读侧单线程化）
       lib.mainText = mainTxt
       lib.myText = myTxt
       runCatching { lib.reload() }
       runCatching { logos.loadBuiltins(logosTxt) }
+      quality.keepHint = qualityKeepSnapshot()                // trim 保护集（收藏+最近的 URL 快照，Main 侧读）
     }
     refreshUi3()                                                          // view/showdead/theme 三键恢复（app.js loadUi3 同款）
     stamp.value++
     primeAll()
+    withContext(Dispatchers.Main) {
+      booted = true
+      consumePending()   // batch1 启动末梢：E3 快捷方式点播 > E4 接流预填 > N4 自动续播（默认关）
+      updateShortcuts()  // E3 动态快捷方式初装（收藏变更/导入时增量刷新）
+    }
     delay(4000)                                                          // 首屏后 4s 静默复查（B-10）
     if (unmetered()) silentCheck()                                       // 仅 WiFi（D10）；移动数据静默跳过
   }
@@ -161,18 +356,267 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     ctx.assets.open(name).bufferedReader().use { it.readText() }
   }.getOrNull()
 
+  /* ---------- batch1：E3/E4 入口路由 · N4 启动续播 · N8 分享 · E3 桌面快捷方式 ---------- */
+
+  /** E3/E4 入口（MainActivity onCreate/onNewIntent 都到这）。boot 未完成时挂起由启动末梢消费
+   *  （列表未装载无法解析台 key）；已 boot 则即时消费（Main 线程——play 链要求）。 */
+  fun handleIntent(i: Intent?) {
+    i ?: return
+    val sc = i.getStringExtra(EXTRA_SC)
+    if (sc != null) {
+      pendingSc = sc
+      if (booted) viewModelScope.launch(Dispatchers.Main) { consumePending() }
+      return
+    }
+    if (i.action == Intent.ACTION_VIEW) {   // E4：流链接 → 预填添加页（探活口径不变，不自动入库）
+      val u = i.data?.toString()?.trim().orEmpty()
+      if (u.startsWith("http://", ignoreCase = true) || u.startsWith("https://", ignoreCase = true)) {   // AIbot P3：浏览器转发可能保留大写 scheme
+        addPreset.value = u
+        if (booted) { nav.value = Nav.ADD; toast("已填入流地址，探活通过后点「添加」") }
+      }
+    }
+  }
+
+  /** 启动末梢的消费序（有意固定）：快捷方式点播 > 链接接流预填 > 自动续播——显式意图不抢。 */
+  private fun consumePending() {
+    val sc = pendingSc; pendingSc = null
+    when {
+      sc == "last" -> resumeLast()
+      sc != null -> {
+        val s = runCatching { lib.stations.firstOrNull { it.key == sc } }.getOrNull()
+        if (s != null) startPlay(s)
+        else { resumeLastIfWanted(); status.value = "快捷方式指向的电台已不在列表中" }
+      }
+      addPreset.value != null -> { nav.value = Nav.ADD; toast("已填入流地址，探活通过后点「添加」") }   // AIbot P3：冷启动接流与热路径反馈一致
+      else -> resumeLastIfWanted()
+    }
+  }
+
+  /** N4 启动自动续播（默认关，2026-10-18 拍板）：冷启动且无台在播时接续上次收听 */
+  private fun resumeLastIfWanted() {
+    if (!resumeOnStart.value || PlayerHolder.ui.value.station != null || lib.recents.isEmpty()) return
+    resumeLast()
+  }
+
+  /** E3 动态桌面快捷方式：「继续收听」+ 收藏前 N 台（maxShortcutCountPerActivity 封顶）。
+   *  minSdk 26 ≥ ShortcutManager 基线；收藏变更/导入后调用刷新（setDynamicShortcuts 整组替换）。 */
+  fun updateShortcuts() {
+    if (Build.VERSION.SDK_INT < 26) return
+    runCatching {
+      val sm = ctx.getSystemService(ShortcutManager::class.java) ?: return
+      val cap = sm.maxShortcutCountPerActivity.coerceAtLeast(1)
+      val out = ArrayList<ShortcutInfo>(cap)
+      fun mk(id: String, label: String, extra: String) = ShortcutInfo.Builder(ctx, id)
+        .setShortLabel(label.take(10)).setLongLabel(label.take(25))
+        .setIntent(Intent(ctx, MainActivity::class.java).setAction(Intent.ACTION_MAIN).putExtra(EXTRA_SC, extra)).build()
+      out.add(mk("last", "继续上次收听", "last"))
+      for (f in lib.favs) {
+        if (out.size >= cap) break
+        val s = runCatching { lib.resolve(f.k) }.getOrNull() ?: continue
+        out.add(mk("fav:" + s.key, s.n, s.key))
+      }
+      sm.setDynamicShortcuts(out)
+    }
+  }
+
+  /** N8 分享电台：台名 + 主源 URL 纯文本（http 直链任何播放器可开） */
+  fun shareStation(s: Station) {
+    runCatching {
+      val i = Intent(Intent.ACTION_SEND).setType("text/plain")
+        .putExtra(Intent.EXTRA_TEXT, "${s.n} · VRadio\n${s.u0}")
+      ctx.startActivity(Intent.createChooser(i, "分享电台").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }.onFailure { toast("分享失败：${it.message ?: it.toString()}") }
+  }
+
+  fun setResume(b: Boolean) { resumeOnStart.value = b; Prefs.set(ctx, Prefs.RESUME, b) }   // N4
+  fun setOffload(b: Boolean) { audioOffload.value = b; Prefs.set(ctx, Prefs.OFFLOAD, b) } // E5（重启生效）
+  fun setTimeshift(b: Boolean) {                                                        // B7 Spike（即时生效）
+    timeshiftOn.value = b; Prefs.set(ctx, Prefs.TIMESHIFT, b); Timeshift.setEnabled(b)
+  }
+
   /* PlayerHolder 回调接线（player 不反向伸手进 UI，方向照抄 Web） */
   private fun wirePlayer() {
     PlayerHolder.onStepFav = { d -> stepFav(d) }                          // ⏮⏭ / ←→ 收藏间切台
     PlayerHolder.onPlayLast = { resumeLast() }                            // 媒体键 play 空台 → 续播上次
-    PlayerHolder.onSong = { u0, t ->                                     // ICY 换歌（PlayerHolder 已做换歌判定）：入史
-      viewModelScope.launch(Dispatchers.IO) { runCatching { lib.pushSong(u0, t) }; stamp.value++ }
-    }
+    PlayerHolder.onMetadata = { ev -> runCatching { onMetaEvent(ev) } }   // B3-A：ICY 事件（清洗已做）→ 管线/sink
     PlayerHolder.logoProvider = { s -> logos.get(s) }                     // 锁屏 artwork 同步窥探口径
   }
 
-  /* 台标预取（收藏 + 正在播优先，请求量可控）；完成后重渲一次取新解析到的 URL */
+  /* ---------- B3-A 元数据 sink（Legacy/V2 显式分支，AIbot P1-2；两者不得同时写历史） ---------- */
+
+  /** 事件消费：flag 开 = MetadataV2Sink（管线决策：30s 窗/迟到丢弃 + 归一化事件留底 curMetadata）；
+   *  flag 关 = LegacyMetadataSink（B2 前语义独立分支：连续同名去重/换歌入史，无 30s 窗——绝不双写）。 */
+  private fun onMetaEvent(ev: MetadataEvent) {
+    if (FeatureFlags.METADATA_V2) {
+      val (st, d) = MetadataPipeline.accept(metaState, ev)
+      metaState = st
+      if (d.show != null) PlayerHolder.setSong(d.show)
+      if (d.archiveU0 != null && d.archiveTitle != null) {
+        val u0 = d.archiveU0; val t = d.archiveTitle
+        viewModelScope.launch(Dispatchers.IO) { runCatching { lib.pushSong(u0, t) }; stamp.value++ }
+      }
+      curMetadata.value = metaState.last
+    } else {
+      legacySink.accept(ev.stationIdentityUrl, ev)
+      curMetadata.value = null
+    }
+  }
+
+  /** 切台/刷新/全部失败先清空旧曲讯再接受新世代事件（防旧连接串台）：play()/refresh() 必经
+   *  CONNECTING+空 song（ui 承担显示清零）、善后必清台——管线簿记与 legacySink.last（B2 lastSong 等价物）
+   *  一并 reset；台变化兜底第三分支。 */
+  private fun mapMetaReset(u: PlayerUiState) {
+    val id = u.station?.u0
+    when {
+      id == null -> if (metaState.station != null || legacySink.last.isNotEmpty()) {
+        metaState = MetadataPipeline.reset(metaState, null); legacySink.reset()
+      }
+      u.song.isEmpty() && (u.st == PState.CONNECTING || u.st == PState.IDLE) ->
+        if (metaState.station != id || metaState.display.isNotEmpty() || legacySink.last.isNotEmpty()) {
+          metaState = MetadataPipeline.reset(metaState, id); legacySink.reset()
+        }
+      metaState.station != id -> { metaState = MetadataPipeline.reset(metaState, id); legacySink.reset() }
+    }
+    if (!FeatureFlags.METADATA_V2) curMetadata.value = null
+  }
+
+  /* ---------- B3-B 收听统计（filesDir/listen-stats.json sidecar；只 PLAYING 累加，诊断不算收听） ---------- */
+
+  /** PState 流映射（fake-clock 可测状态机在 ListenTracker；这里只喂事件）。 */
+  private fun mapListenState(u: PlayerUiState) {
+    val src = u.station?.let { s -> u.srcIdx.takeIf { i -> i in s.u.indices }?.let { s.u[it] } }
+    listenTracker?.onState(u.st, u.station, src)
+  }
+
+  /** flush（30s tick / 页面隐藏 / 手动）：收账 + trim(90 天·512KB) + 快照覆盖写（幂等）；写成功才推进
+   *  确认快照——失败增量保留内存下次 flush/启动重试（AIbot 复核 P1，ListenTracker.flush 单元把守）。 */
+  fun flushStats() {
+    val t = listenTracker ?: return
+    viewModelScope.launch(Dispatchers.IO) { runCatching { t.flush(listenSidecar) } }
+  }
+
+  /** 页面隐藏（MainActivity.onStop）：收听统计 flush（Web visibilitychange 同款时机）。 */
+  fun onAppHidden() { if (FeatureFlags.LISTEN_STATS) runCatching { flushStats() } }
+
+  /** 近 N 天汇总（设置页/发现页展示口径；开关关时数据仍在，读不消费）。 */
+  fun statsSummary(days: Int = 7) = listenTracker?.let { ListenStats.summary(it.state, days) }
+    ?: runCatching { ListenStats.summary(listenSidecar.load(), days) }.getOrNull()
+
+  /* ---------- B3-C 本地发现页（纯本地派生：不联网、不改主列表排序、点击走既有 play 通道） ---------- */
+
+  data class DiscoveryUi(val groups: Groups, val ver: Int = 0)
+
+  /** 派生视图（stamp 哨兵驱动：体检/同步/收藏/数据更新后自动重算；开关关 UI 不入口，计算也跳过）。 */
+  val discovery: StateFlow<DiscoveryUi> = combine(stamp, showDead, playKeys) { _, _, _ ->
+    DiscoveryUi(if (FeatureFlags.DISCOVERY) runCatching { buildDiscovery() }.getOrDefault(Groups.EMPTY)
+               else Groups.EMPTY, stamp.value)
+  }.stateIn(viewModelScope, SharingStarted.Eagerly, DiscoveryUi(Groups.EMPTY))
+
+  private fun buildDiscovery(): Groups {
+    val sts = runCatching { lib.stations.toList() }.getOrDefault(emptyList())
+    val q = HashMap<String, QInfo>()
+    for (s in sts) runCatching { quality.summary(s.u0, s.u) }.getOrNull()?.let {
+      q[s.u0] = QInfo(it.stability, it.directCount, it.metadata, it.lastObservedAt)
+    }
+    val meta = radioMeta.value
+    val firstSeen = HashMap<String, Long>()
+    if (metaBound) for ((id, m) in meta.stations) {   // firstSeenAt 挂 sources[] 为主、台级直挂容错——取最早（B3-C 双端口径）；
+      val fs = (listOf(m.firstSeenAt) + m.sources.map { it.firstSeenAt }).filter { it > 0L }.minOrNull() ?: 0L   // AIbot P1-4：混态（不绑定）整组置空
+      if (fs > 0L) firstSeen[id] = fs
+    }
+    return Discovery.build(DiscoveryInput(
+      stations = sts,
+      playingKey = playKey(), connectingKey = connKey(),
+      hiddenCats = runCatching { lib.cfg.hideC.keys }.getOrDefault(emptySet()),
+      quality = q, firstSeenAt = firstSeen,
+      recoveredAt = RecoveryLog.prune(recovered, System.currentTimeMillis()),
+      recentKeys = runCatching { lib.recents.map { it.k }.toSet() }.getOrDefault(emptySet()),
+    ))
+  }
+
+  /** health dead→alive 转移记录（体检三通道共用；调用方先验 marks 含 key 才调——转移才记，不猜）。 */
+  private fun noteRecoveredIfRevived(key: String) {
+    if (recovered.containsKey(key)) return
+    val now = System.currentTimeMillis()
+    recovered[key] = now
+    val pruned = RecoveryLog.prune(recovered, now)   // 顺带清过期（保留刚记的）
+    recovered.clear(); recovered.putAll(pruned)
+    Prefs.setStr(ctx, Prefs.RECOVERED, JSONObject().apply { for ((k, v) in pruned) put(k, v) }.toString())
+    stamp.value++   // 发现页「最近恢复」即时可见
+  }
+
+  private fun parseRecovered(raw: String): Map<String, Long> {
+    if (raw.isEmpty()) return emptyMap()
+    val o = runCatching { JSONObject(raw) }.getOrNull() ?: return emptyMap()
+    val out = LinkedHashMap<String, Long>()
+    for (k in o.keys()) { val v = o.optLong(k, 0L); if (v > 0) out[k] = v }
+    return RecoveryLog.prune(out, System.currentTimeMillis())
+  }
+
+  /* ---------- B2 质量样本映射（PlayerUiState 流 → QualityStore；自动体检路径只写 diagnostic，绝不产 playback） ----------
+     事件面（plan §6.1 样本来源四类）：CONNECTING→PLAYING = 成功（trigger=play；同台换源到达 = switch，
+     延迟 = 该源 CONNECTING 锚起算）；PLAYING→CONNECTING 同台 = 断流（同源重连 = watchdog、级联换源 =
+     error，均计 disconnects）；CONNECTING→IDLE 清台且「⚠ 全部源失败」= 播放失败（error）。暂停/停止不产事件。 */
+  private var qPrev = PlayerUiState()
+  private var qConnMark = ""       // "key|srcIdx" 的 CONNECTING 计时锚（成功事件延迟采样）
+  private var qConnAt = 0L
+  private var qPlayedKey: String? = null   // 最近一次成功起播的台 key / 源序号（switch 判定）
+  private var qPlayedSrc = -1
+
+  private fun mapQualityEvent(cur: PlayerUiState) {
+    val prev = qPrev
+    val ps = prev.station; val cs = cur.station
+    if (cur.st == PState.CONNECTING && cs != null) {
+      val mark = "${cs.key}|${cur.srcIdx}"
+      // 断流重开（PLAYING→CONNECTING）也重置锚：恢复成功的延迟 = 重连耗时，不混入已播时长
+      if (mark != qConnMark || prev.st == PState.PLAYING) { qConnMark = mark; qConnAt = System.currentTimeMillis() }
+    }
+    if (prev.st == PState.PLAYING && cur.st == PState.CONNECTING && ps != null && cs != null && cs.key == ps.key) {
+      val u = cur.srcIdx.takeIf { it in cs.u.indices }?.let { cs.u[it] }
+      if (u != null) qPlayback(cs.u0, u, false, 0, cur.mode, if (cur.srcIdx == prev.srcIdx) "watchdog" else "error")
+      return   // 断流后紧接的成功/失败由后续状态迁移单独产事件
+    }
+    if (cur.st == PState.PLAYING && cs != null &&
+      (prev.st == PState.CONNECTING || prev.station?.key != cs.key || prev.srcIdx != cur.srcIdx)) {
+      val u = cur.srcIdx.takeIf { it in cs.u.indices }?.let { cs.u[it] }
+      if (u != null) {
+        val lat = if (qConnMark == "${cs.key}|${cur.srcIdx}" && qConnAt > 0) System.currentTimeMillis() - qConnAt else 0L
+        val trig = if (qPlayedKey == cs.key && qPlayedSrc >= 0 && qPlayedSrc != cur.srcIdx) "switch" else "play"
+        qPlayback(cs.u0, u, true, lat, cur.mode, trig)
+        qPlayedKey = cs.key; qPlayedSrc = cur.srcIdx
+      }
+    }
+    if (prev.st == PState.CONNECTING && cur.st == PState.IDLE && cur.station == null && ps != null &&
+      cur.status.startsWith("⚠")) {   // 级联耗尽善后文案（PlayerHolder 常量串；stop() 清空 status 不误触）
+      val u = prev.srcIdx.takeIf { it in ps.u.indices }?.let { ps.u[it] }
+      if (u != null) qPlayback(ps.u0, u, false, 0, prev.mode, "error")
+    }
+    if (cur.station == null) { qPlayedKey = null; qPlayedSrc = -1 }
+  }
+
+  private fun qPlayback(id0: String, src: String, ok: Boolean, latMs: Long, mode: String, trig: String) {
+    quality.keepHint = runCatching { qualityKeepSnapshot() }.getOrDefault(quality.keepHint)
+    viewModelScope.launch(Dispatchers.IO) { runCatching { quality.recordPlayback(id0, src, ok, latMs, mode, trig) } }
+  }
+
+  /** trim 保护集：收藏 + 最近的源 URL 快照（身份 URL 含于其中；Main 侧快照防与 Library 变异并发）。 */
+  private fun qualityKeepSnapshot(): Set<String> {
+    val out = HashSet<String>()
+    runCatching {
+      for (f in lib.favs) out.addAll(f.u)
+      for (r in lib.recents) out.addAll(r.u)
+    }
+    return out
+  }
+
+  /** 源详情质量摘要（B2）：无样本返回 null（浮层不渲染稳定性行）。 */
+  fun qualitySummaryOf(s: Station): QualityStore.QualityAggregate? =
+    runCatching { quality.summary(s.u0, s.u) }.getOrNull()
+
+  /* 台标预取（收藏 + 正在播优先，请求量可控）；完成后重渲一次取新解析到的 URL。
+     B5：Wi-Fi 优先策略——移动数据（未开「也允许」）整段跳过，已缓存台标的同步窥探不受影响 */
   private fun primeAll() = viewModelScope.launch(Dispatchers.IO) {
+    if (!logoAllowed()) return@launch
     val favs = withContext(Dispatchers.Main) {                             // favs 快照归 Main（审计 P2：IO 迭代与 Main 变异并发 CME）
       runCatching { lib.favs.toList() }.getOrDefault(emptyList())
     }
@@ -192,6 +636,17 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
     return !cm.isActiveNetworkMetered
   }
+
+  /* E13 同步前置电量检查（xueshi86 思路）：sticky 广播读电量；读不到按 100 放行（不误拦） */
+  private fun battSticky() = runCatching {
+    ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+  }.getOrNull()
+  private fun battPct(): Int {
+    val b = battSticky() ?: return 100
+    val lv = b.getIntExtra(BatteryManager.EXTRA_LEVEL, -1); val sc = b.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+    return if (lv < 0 || sc <= 0) 100 else lv * 100 / sc
+  }
+  private fun charging(): Boolean = (battSticky()?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0) != 0
 
   /* ---------- 列表计算（app.js visible/catCounts/emptyHtml 平移；分类/关键词口径叠加在 Library.visible 之上） ---------- */
 
@@ -261,7 +716,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       runCatching { lib.recordRecent(s) }
       stamp.value++
     }
-    viewModelScope.launch(Dispatchers.IO) { runCatching { logos.prime(s, true) } }   // 正在播台标优先补全
+    viewModelScope.launch(Dispatchers.IO) { if (logoAllowed()) runCatching { logos.prime(s, true) } }   // 正在播台标优先补全（B5 策略门）
     PlayerHolder.play(s, prefer)
   }
 
@@ -276,8 +731,10 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     viewModelScope.launch {                                               // Library 变异归 Main（审计 P2：与 favKeys/computeListUi 迭代并发 CME）
       runCatching { lib.toggleFav(s) }
       val fav = runCatching { lib.isFav(s) }.getOrDefault(false)
+      quality.keepHint = runCatching { qualityKeepSnapshot() }.getOrDefault(quality.keepHint)   // B2：trim 保护集随收藏增减
       stamp.value++
-      if (fav) viewModelScope.launch(Dispatchers.IO) { runCatching { logos.prime(s, true) } }   // 新收藏优先补台标
+      updateShortcuts()                                                  // E3：快捷方式随收藏增减刷新
+      if (fav && logoAllowed()) viewModelScope.launch(Dispatchers.IO) { runCatching { logos.prime(s, true) } }   // 新收藏优先补台标（B5 策略门）
     }
   }
 
@@ -318,12 +775,73 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     status.value = if (had) "已恢复默认源，从默认源重播" else "本无源记忆，按默认序重播"
   }
 
+  /* ---------- B1 源详情（SourceDetailSheet 编排）：逐源诊断（禁用源不发请求）+ 源动作 ---------- */
+
+  val showDetail = MutableStateFlow(false)
+  val detailKey = MutableStateFlow<String?>(null)              // 详情浮层打开时的台 key（台消失即收起）
+  val detailDiag = MutableStateFlow<List<DiagnosticResult>>(emptyList()) // 最近一轮逐源诊断（按 URL 归位）
+  val detailBusy = MutableStateFlow(false)                      // 诊断进行中（浮层按钮态）
+
+  fun openDetail(s: Station) { detailKey.value = s.key; detailDiag.value = emptyList(); showDetail.value = true }
+  fun openDetailOf(k: String?) {                               // PlayerBar 台名长按等入口：按 key 反解
+    val s = k?.let { runCatching { lib.resolve(it) }.getOrNull() } ?: return
+    openDetail(s)
+  }
+  fun closeDetail() { showDetail.value = false; detailKey.value = null; detailDiag.value = emptyList() }
+  fun detailStation(): Station? = detailKey.value?.let { runCatching { lib.resolve(it) }.getOrNull() }
+
+  /** 逐源诊断（B1）：只测启用源——手动禁用的源不发请求（浮层已明示「不能诊断」+「取消禁用」入口）；
+   *  Android 无 /api?detail=1，CheckStream 直连；结果按测的 URL 归位，诊断顺序 = 人工有效序。
+   *  ≤4/批串行推进（B1 review P1-7，Web checkStationSources 分批口径：单次探活放大面 ≤4，超 4 分批）。 */
+  fun checkDetailSources(s: Station) {
+    if (detailBusy.value) return
+    viewModelScope.launch(Dispatchers.IO) {
+      detailBusy.value = true
+      try {
+        val urls = withContext(Dispatchers.Main) {              // 快照归 Main（审计 P2：与 reapplyCfg 变异并发防 CME）
+          runCatching { s.effOrder().map { s.u[it] } }.getOrDefault(emptyList())
+        }
+        if (urls.isEmpty()) return@launch
+        quality.keepHint = runCatching { qualityKeepSnapshot() }.getOrDefault(quality.keepHint)
+        val out = java.util.concurrent.ConcurrentHashMap<String, DiagnosticResult>()
+        for (b in diagBatches(urls.size))                       // 批间串行、批内并发（放大面恒 ≤4，B1 三轮 P1-7）
+          coroutineScope { for (i in b) launch {
+            runCatching { checker.check(urls[i]) }.getOrNull()?.let {
+              val d = it.toDiagnostic(urls[i])
+              out[urls[i]] = d
+              runCatching { quality.recordDiagnostic(s.u0, d, "manual") }   // B2：手动逐源诊断产 diagnostic 样本
+            }
+          } }
+        withContext(Dispatchers.Main) { detailDiag.value = urls.mapNotNull { out[it] } }
+      } catch (_: Exception) { } finally { detailBusy.value = false }
+    }
+  }
+
+  /** 源动作编排（B1）：排序/禁用走 Library 整表写（reapplyCfg 即时生效）；恢复默认两动作彼此独立——
+   *  「恢复默认播放源」只清 srcmem2（人工序/禁用保留），「撤销人工源排序」只删 srcManualOrder。 */
+  fun srcEdit(s: Station, act: SourceAction) = viewModelScope.launch(Dispatchers.Main) {
+    when (act) {
+      is SourceAction.Move -> runCatching { lib.srcMove(s, act.index, act.up) }
+      is SourceAction.ToggleDisable -> runCatching { lib.srcDisabledToggle(s, act.index) }
+      SourceAction.RestoreDefault -> {                          // 恢复默认播放源（清 srcmem2；正在听则按链重播）
+        val had = PlayerHolder.forgetSrcOf(s)
+        if (cur.station?.key == s.key) startPlay(s)
+        status.value = if (had) "已恢复默认播放源（人工顺序与禁用保留）" else "本无源记忆，按默认序处理"
+      }
+      SourceAction.ResetOrder -> {                              // 撤销人工源排序（恢复同步原始顺序；禁用/追加源保留）
+        runCatching { lib.srcOrderReset(s) }
+        status.value = "已撤销人工源排序（禁用与追加源保留）"
+      }
+    }
+    stamp.value++
+  }
+
   /* ---------- 音量（每台音量记忆在 PlayerHolder；取消静音的恢复值走 restoreVolPct——AIbot P1-5） ---------- */
 
   private fun refreshUi3() {                                              // view/showdead/theme 三键恢复（boot 与备份导入共用，app.js loadUi3 同款）
     view.value = if (Store.get(C.K_VIEW) == "list") "list" else "grid"    // 网格默认
     showDead.value = Store.get(C.K_SHOWDEAD) == "1"                       // 死台默认隐藏
-    theme.value = listOf("auto", "light", "dark").firstOrNull { it == Store.get(C.K_THEME) } ?: "auto"
+    theme.value = listOf("auto", "light", "dark", "oled").firstOrNull { it == Store.get(C.K_THEME) } ?: "auto"   // N18 +oled（软扩展：Web 侧未知值回退 auto 不炸，app.js:236 已核）
   }
 
   fun setVol(pct: Int) { PlayerHolder.setVolPct(pct) }
@@ -356,19 +874,23 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   private enum class Probe { OK, DEAD, NET }   // AIbot P1-4：NET=探测请求自身失败（sync.js:23 口径——请求失败不落标，
                                                // 与「台真的死」分开；防中途断网把整片台 n+1 误升停运档）
 
-  private suspend fun probe(s: Station): Probe {
+  private suspend fun probe(s: Station, qTrigger: String): Probe {
     var allNet = true                       // 全部源都「网络失败」→ 本台无判定依据
     // G P3：s.u 与主线程 applyCfg/reapplyCfg 的 addAll 并发遍历可 CME——快照失败按无判据跳过（不落标，安全方向）
-    val us = runCatching { s.u.take(4) }.getOrNull() ?: return Probe.NET
+    // B1：禁用源不测（体检口径=播放口径）；按人工有效序取前 4（用户优先序先测）。全禁台 us 空 → 无判据 NET
+    val us = runCatching { s.effOrder().map { s.u[it] }.take(4) }.getOrNull() ?: return Probe.NET
     for (u in us) {
       val v = runCatching { checker.check(u, C.CHECK_WINDOW_MS) }.getOrNull() ?: return Probe.NET
+      // B2：体检通道产 diagnostic 样本（trigger=manual|boot|sync；自动体检绝不产 playback）；写失败只丢样本
+      runCatching { quality.recordDiagnostic(s.u0, v.toDiagnostic(u), qTrigger) }
       if (v.ok) return Probe.OK
-      if (v.why != "网络失败") allNet = false // 有任一源给出真应答（HTTP/超阈拒），死结论才有据
+      if (v.code != CheckStream.Verdict.Code.NETWORK) allNet = false // code 是程序分支唯一依据（B1：不按 why 文案反推）
     }
     return if (allNet) Probe.NET else Probe.DEAD
   }
 
-  private suspend fun probeAll(list: List<Station>, conc: Int, stop: () -> Boolean, onProg: (Int, Int) -> Unit): List<Pair<Station, Probe>> {
+  private suspend fun probeAll(list: List<Station>, conc: Int, qTrigger: String, stop: () -> Boolean,
+                               onProg: (Int, Int) -> Unit): List<Pair<Station, Probe>> {
     val q = ConcurrentLinkedQueue(list)
     val out = ConcurrentLinkedQueue<Pair<Station, Probe>>()
     val done = AtomicInteger(); val total = list.size
@@ -377,7 +899,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         launch(Dispatchers.IO) {
           while (!stop()) {
             val s = q.poll() ?: return@launch
-            out.add(s to probe(s))
+            out.add(s to probe(s, qTrigger))
             onProg(done.incrementAndGet(), total)
           }
         }
@@ -391,7 +913,11 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     val c = IntArray(4)
     val marks = lib.healthMarks
     for ((s, p) in res) when (p) {
-      Probe.OK -> { runCatching { Health.onAlive(marks, s.key) }; c[0]++ }
+      Probe.OK -> {
+        // B3-C：dead→alive 转移才记「最近恢复」（marks 原含 key = 复活；无标记台探活成功不算恢复，不猜）
+        if (runCatching { marks.containsKey(s.key) }.getOrDefault(false)) runCatching { noteRecoveredIfRevived(s.key) }
+        runCatching { Health.onAlive(marks, s.key) }; c[0]++
+      }
       Probe.DEAD -> {
         runCatching { Health.onDead(marks, s.key, s.u.take(6), System.currentTimeMillis()) }
         if (marks[s.key]?.perm == 1) c[2]++ else c[1]++
@@ -406,8 +932,16 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     withContext(Dispatchers.Main) { runCatching { lib.applyHealthToStations() }; stamp.value++ }
   }
 
-  fun manualHealth() {                                                    // 手动全量（并发 5=Web runCheck 口径；反馈走设置页文案 + 完成 toast）
+  fun manualHealth() {                                                    // 手动全量入口（B5：移动数据先过策略门——允许直跑/需确认弹门/禁止明示）
     if (manualRun.value) return
+    when (val n = gate.enter(NetworkPolicy.Op.FULL_CHECK, NetGate.Act.FULL_CHECK, netRules())) {
+      is NetGate.Next.Deny -> { healthResult.value = "未开始：${n.why}"; toast(healthResult.value) }
+      is NetGate.Next.Confirm -> netGate.value = n.act to n.why
+      NetGate.Next.Run -> runManualHealth()
+    }
+  }
+
+  private fun runManualHealth() {                                         // 手动全量（并发 5=Web runCheck 口径；反馈走设置页文案 + 完成 toast）
     viewModelScope.launch {
       manualRun.value = true
       healthAbort.set(false)
@@ -419,7 +953,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         healthResult.value = ""
         val list = runCatching { lib.visible(true, playKey(), connKey()) }.getOrDefault(emptyList())   // 连默认隐藏的死台一起复查
         healthProg.value = "体检中 0/${list.size}"
-        val res = probeAll(list, 5, { healthAbort.get() }) { d, t -> if (!healthAbort.get()) healthProg.value = "体检中 $d/$t" }
+        quality.keepHint = runCatching { qualityKeepSnapshot() }.getOrDefault(quality.keepHint)   // trim 保护集随体检通道刷新
+        val res = probeAll(list, 5, "manual", { healthAbort.get() }) { d, t -> if (!healthAbort.get()) healthProg.value = "体检中 $d/$t" }
         if (healthAbort.get()) {                                          // B3 取消：已探完的结果照常落标（sync.js 取消也走收尾 saveHealth——「已确认的标记已保留」）
           applyMarks(res); persistHealth()
           healthResult.value = "体检已取消：完成 ${res.size}/${list.size}（已确认的标记已保留）"
@@ -457,7 +992,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       if (scope.isEmpty()) return@launch
       healthBusy.value = true
       try {
-        val res = probeAll(scope, 2, { manualRun.value }) { _, _ -> }
+        val res = probeAll(scope, 2, "boot", { manualRun.value }) { _, _ -> }
         if (manualRun.value) return@launch                                // 让位手动：已测结果由手动收尾统一落
         if (res.size >= 5 && res.all { it.second == Probe.NET }) return@launch
         withContext(Dispatchers.Main) { applyMarks(res) }
@@ -475,7 +1010,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       healthBusy.value = true
       toast("后台体检新增电台 ${list.size} 台…")
       try {
-        val res = probeAll(list, 2, { manualRun.value }) { _, _ -> }
+        val res = probeAll(list, 2, "sync", { manualRun.value }) { _, _ -> }
         if (manualRun.value) return@launch
         if (res.size >= 5 && res.all { it.second == Probe.NET }) return@launch
         val c = withContext(Dispatchers.Main) { applyMarks(res) }
@@ -487,7 +1022,17 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   /* ---------- D7 轻更新（设置页手动触发；判新旧 = GitHub commits vs 打包基线/assets 副本 stamp） ---------- */
 
-  fun checkUpdate() {
+  fun checkUpdate() {      // 入口（AIbot PR#21 P1）：检查+下载+应用整链同过 Op.SYNC 门（§9.2「主库同步」同类别，
+                           // 与 fullSyncNow 同构）——蜂窝 deny 拒绝明示、confirm 弹确认后经 proceedGate 续跑整链，
+                           // Wi-Fi/allow 直跑；无「仅查版本免门」暗道（版本检查本身也走 GitHub 网络）
+    when (val n = gate.enter(NetworkPolicy.Op.SYNC, NetGate.Act.LIGHT_UPDATE, netRules())) {
+      is NetGate.Next.Deny -> { updateMsg.value = "未开始：${n.why}"; toast(updateMsg.value) }
+      is NetGate.Next.Confirm -> netGate.value = n.act to n.why
+      NetGate.Next.Run -> runCheckUpdate()
+    }
+  }
+
+  private fun runCheckUpdate() {                                          // 门后执行体（直跑或确认后续跑，唯一调 light.check/apply 的路径）
     viewModelScope.launch {
       if (updateBusy.value) return@launch
       if (syncBusy.value) { updateMsg.value = "同步进行中，等同步完成后再检查更新（两通道写同一份 filesDir 数据，并发会互相覆盖）"; return@launch }   // 审计 P2：互锁
@@ -509,10 +1054,15 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         val texts = withContext(Dispatchers.IO) { light.radioText() to light.logosText() }
         texts.first?.let { lib.mainText = it }
         texts.second?.let { runCatching { logos.loadBuiltins(it) } }
+        val nfMeta = light.metaText()
+        radioMeta.value = withContext(Dispatchers.IO) { RadioMeta.parse(nfMeta) ?: RadioMeta.EMPTY }   // B2 meta 随更新收口（缺件空对象；混态已被 apply 删件拦截）
+        val hW = light.stampHashOk()   // AIbot 三轮 P1：apply 后即时核对（radio/meta 内容哈希 vs stamp 见证）
+        metaBound = RadioMeta.bound(true, nfMeta != null, light.stampMetaOk(), hW.first, hW.second)   // AIbot P1-4：更新后重算绑定（apply 已写 stamp 见证）
         lib.reload(); stamp.value++
         primeAll()
         updateMsg.value = "已更新到 ${res.commitIso.take(10)} · 台数 +${res.added}/-${res.removed}"
         toast(updateMsg.value)
+        if (res.metaInvalid) toast("质量元数据（radio-meta.json）校验失败，已保留旧数据（不影响播放）")   // B2：仅「下载到但非法」明示；仓库未提供时静默
         pointGone(before)                                                 // 收藏台消失点名（removed ∩ 收藏）
         if (res.addedCheck.isNotEmpty()) { delay(800); incCheck(res.addedCheck.take(C.ADDED_CHECK_CAP)) }   // D4 增量体检（审计 P2）：D7 是主更新通道且安卓无首启基线——缺此调用 D7 新增国内台永远零体检（Web 唯一同步路径必跑 incHealth）
       } catch (e: Exception) { updateMsg.value = "检查更新失败：${e.message ?: "网络错误"}" }
@@ -520,15 +1070,27 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     }
   }
 
-  /* ---------- M4 端内同步（WiFi-only：移动数据给提示不跑；完成后 diff 摘要 + 收藏点名 + 增量体检） ---------- */
+  /* ---------- M4 端内同步（B5：移动数据按策略门默认需确认；完成后 diff 摘要 + 收藏点名 + 增量体检） ---------- */
 
-  fun fullSyncNow() {
+  fun fullSyncNow() {                                                    // 入口：先过网络策略门，再过电量门（与 checkUpdate 同构）
+    when (val n = gate.enter(NetworkPolicy.Op.SYNC, NetGate.Act.SYNC, netRules())) {
+      is NetGate.Next.Deny -> { syncMsg.value = "未开始：${n.why}"; toast(syncMsg.value) }
+      is NetGate.Next.Confirm -> netGate.value = n.act to n.why
+      NetGate.Next.Run -> runFullSync()
+    }
+  }
+
+  private fun runFullSync() {
     viewModelScope.launch {
       if (syncBusy.value) return@launch
       if (updateBusy.value) { syncMsg.value = "数据更新进行中，稍后再同步"; return@launch }   // 审计 P2：互锁（与 checkUpdate 对称）
-      if (!unmetered()) {
-        syncMsg.value = "移动数据下不同步（欧美台逐个实测流量大）——连 WiFi 后再试"
-        toast(syncMsg.value); return@launch
+      if (!charging()) {                                                 // E13 电量前置（充电中跳过；<5% 拒 / <20% 警告放行）
+        val bp = battPct()
+        if (bp < 5) {
+          syncMsg.value = "电量 ${bp}%，请先充电再同步（欧美台逐个实测约 1 分钟）"
+          toast(syncMsg.value); return@launch
+        }
+        if (bp < 20) toast("电量 ${bp}% 偏低，同步约 1 分钟，建议插电进行")
       }
       syncBusy.value = true
       syncMsg.value = "同步中：国内上游 + 欧美台逐个实测，约 1 分钟…"
@@ -575,6 +1137,10 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     if (dup != null) { addMsg.value = "该流地址已存在（「${dup.trim().substringBefore(',')}」），同一地址请直接使用现有电台"; return }
     viewModelScope.launch {
       addBusy.value = true; addMsg.value = "探活中…（最长 12 秒，蜻蜓系建流慢属正常）"
+      // B5 网络策略：单台探活移动数据允许但一次性提示；离线直接明示（不发注定失败的请求）
+      val pd = policy.allow(NetworkPolicy.Op.SINGLE_CHECK, netRules())
+      if (!pd.ok) { addMsg.value = "未探活：${pd.why}"; addBusy.value = false; return@launch }
+      if (policy.state() == NetworkPolicy.State.CELLULAR) toast(pd.why)
       try {
         val v = withContext(Dispatchers.IO) { runCatching { checker.check(u, C.MYSTATION_TIMEOUT_MS) }.getOrNull() }
         if (v == null || !v.ok) {
@@ -598,7 +1164,23 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     viewModelScope.launch(Dispatchers.IO) {
       try {
         val content = when (kind) {
-          Exp.BACKUP -> Backup.exportAll(lib, myRadio.readText(), System.currentTimeMillis())
+          // 「包含本机 sidecar」勾选（AIbot 三轮 P1-3）：捕获数据经 qualityTrim/lsTrim 白名单裁剪（与 Web exportAll 同构）。
+          // 收听统计取内存账（settle 收账后 ⊇ 磁盘快照——未确认增量也随备份走），经 ListenStatsCodec 白名单解码
+          Exp.BACKUP -> {
+            val qExt = if (backupWithSidecar.value) runCatching {
+              val cap = JSONObject(quality.capture())
+              val trimmed = Backup.qualityTrim(cap.optJSONObject("stations") ?: JSONObject())
+              if (trimmed.length() > 0) JSONObject().put("v", 1).put("data", trimmed) else null
+            }.getOrNull() else null
+            val lExt = if (backupWithSidecar.value) runCatching {
+              listenTracker?.settle()
+              val st = listenTracker?.state ?: listenSidecar.load()
+              val days = JSONObject(ListenStatsCodec.toJson(ListenStats.trim(st))).optJSONObject("days") ?: JSONObject()
+              val trimmed = Backup.lsTrim(days)
+              if (trimmed.length() > 0) JSONObject().put("v", 1).put("data", trimmed) else null
+            }.getOrNull() else null
+            Backup.exportAll(lib, myRadio.readText(), System.currentTimeMillis(), qExt, lExt)
+          }
           Exp.M3U -> Backup.m3uFavs(lib)                                  // 空串 = 无可解析收藏台（收藏全休眠同判）
           Exp.SONGS -> Backup.songsTxt(lib) { System.currentTimeMillis() }
           Exp.CFG -> Backup.cfgJson(lib.cfg)
@@ -633,22 +1215,38 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
           val n = C.KEYS.count { p.data[it] != null }
           if (n == 0) { toast("导入失败：备份中无有效数据"); return@launch }
           pendingImp = Imp.BACKUP to p
-          confirmReq.value = "导入将覆盖本地全部数据（备份含 $n 个数据项：收藏/维护配置/健康标记/歌曲历史全部替换）。继续？"
+          // sidecar 选择语义与 Web 对齐（AIbot 三轮 P1-3，B4 起双 sidecar 一个复选整体覆盖）：备份含质量/收听
+          // 统计数据时确认框出复选（默认不勾=保留本机），勾选才经事务恢复（下方 applyConfirmed 按 impSidecar 传参）
+          val qn = p.quality?.optJSONObject("data")?.length() ?: 0
+          val ln = p.listenStats?.optJSONObject("data")?.length() ?: 0
+          impHasQuality.value = qn > 0 || ln > 0
+          impSidecar.value = false
+          val scNote = listOfNotNull(
+            if (qn > 0) "$qn 台质量数据" else null,
+            if (ln > 0) "$ln 天收听统计" else null,
+          ).takeIf { it.isNotEmpty() }?.joinToString("、")
+          confirmReq.value = "导入将覆盖本地全部数据（备份含 $n 个数据项：收藏/维护配置/健康标记/歌曲历史全部替换" +
+            (if (scNote != null) "；备份含 $scNote，勾选下方复选框才会覆盖本机对应数据" else "") + "）。继续？"
         }
-        Imp.M3U -> {                                                      // 收藏恢复（E4）：主列表不动，只恢复收藏态
-          if (!text.contains("#VRADIO:FAV")) { toast("导入失败：不是本项目导出的收藏 m3u（缺 #VRADIO:FAV 标记）"); return@launch }
-          val list = runCatching { RadioTxt.parse(text) }.getOrDefault(emptyList())
-          if (list.isEmpty()) { toast("导入失败：未解析到任何电台"); return@launch }
-          var added = 0
-          withContext(Dispatchers.Main) {                                 // Library 变异归 Main（审计 P2：toggleFav/rebind 与渲染迭代并发 CME）
-            for (s in list) {
-              val has = runCatching { lib.isFav(s) }.getOrDefault(false)
-              if (!has) { runCatching { lib.toggleFav(s) }; added++ }
-            }
-            runCatching { lib.rebind() }                                  // AIbot P3：导入后立即回绑（改名台休眠条目不等下次 reload 自愈）
-            stamp.value++
+        Imp.M3U -> {                                                      // B4 歌单导入：m3u/pls/xspf/asx/纯 URL 统一解析（PlaylistParser，
+                                                                          // 纯本地不联网探活）→ 四桶预览（新增/已知/重复/非法）→ 确认后已知台恢复收藏（N2 语义）+ 新台入 my-radio
+          val r = runCatching { PlaylistParser.parse(text) }.getOrNull()
+          if (r == null || (r.entries.isEmpty() && r.invalid == 0 && r.dups == 0)) {
+            toast("导入失败：未解析到任何电台（识别为 ${r?.format ?: "未知"} 格式）"); return@launch
           }
-          toast("已恢复收藏：${list.size} 个电台（其中新增收藏 $added）")
+          // 分流纯决策不变异（AIbot P1-1：收藏变异必须后置到确认——B4 取消=零副作用；原顺序逐台全量收藏会把
+          // 库外 URL 写进 favs，known 随之遮蔽一切、extra 恒空）；库内命中→favHits，库外台→extra 待确认入 my-radio
+          val sts = r.entries.map { Station(it.category, it.name, mutableListOf(it.url)) }
+          val (hits, extra) = withContext(Dispatchers.Main) {
+            runCatching { lib.partitionImport(sts) }
+              .getOrDefault(emptyList<Station>() to emptyList())
+          }
+          val known = r.entries.size - extra.size
+          pendingImp = Imp.M3U to PlaylistImp(hits, extra, r.dups, r.invalid, r.format)
+          confirmReq.value = "识别为 ${r.format} 格式，共 ${r.entries.size} 条：新增 ${extra.size}、已知 $known（将恢复收藏）、" +
+            "文件内重复 ${r.dups}、地址不合法 ${r.invalid}。\n" +
+            (if (extra.isEmpty()) "没有新电台需要写入。是否恢复已知电台的收藏？"
+             else "新增电台将写入个人列表 my-radio.txt（自带查重/清洗/封顶），导入后建议跑一次「体检」。继续？")
         }
         Imp.CFG -> {
           val j = runCatching { JSONObject(text) }.getOrNull()
@@ -675,32 +1273,87 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     }
   }.getOrNull()
 
-  fun cancelConfirm() { confirmReq.value = null; pendingImp = null }
+  fun cancelConfirm() { confirmReq.value = null; pendingImp = null; impHasQuality.value = false; impSidecar.value = false }
 
   fun applyConfirmed() {
     val p = pendingImp ?: return
+    val sidecarChoice = impSidecar.value // 同步捕获（下方立即复位，协程内只用局部值）
     confirmReq.value = null; pendingImp = null
+    impHasQuality.value = false; impSidecar.value = false
     viewModelScope.launch {
       try {
         when (p.first) {
           Imp.BACKUP -> {
             val pay = p.second as Backup.ImportPayload
-            var myOk = true
-            withContext(Dispatchers.IO) {
-              Store.applyAll(pay.data)                                    // 白名单键写入/缺键 remove
-              pay.my?.let { myOk = runCatching { myRadio.replace(it.joinToString("\n")) }.getOrDefault(false) }   // v2 含 my-radio（v1 无则不动）
+            // 三阶段纪律（B4，§13.2）：提交前快照四件（Store + my-radio + 旧质量 + 旧收听统计 sidecar），任一步
+            // 失败整体回滚——AIbot P1-1：v3 sidecar 经 QualityStore/ListenSidecar 事务式覆盖真正落盘
+            // AIbot 三轮 P1-3：sidecar 恢复是明确可选项——仅当用户在确认框勾选（impSidecar）才传 sidecar 数据，
+            // 未勾选 = 保留本机 sidecar（快照也不必留）；applyStore/rollbackStore 升级为可感知落盘失败（三轮 P1-2）
+            val restoreQ = pay.quality != null && sidecarChoice
+            val restoreL = pay.listenStats != null && sidecarChoice
+            val snap = Store.snapshot()
+            val myOld = myRadio.readText()
+            val qSnap = if (restoreQ) quality.capture() else null
+            val qData = if (restoreQ) pay.quality!!.optJSONObject("data") else null
+            val lsSnap = if (restoreL) listenSidecar.load() else null   // 旧收听统计快照（磁盘态；回滚经同通道回写）
+            val lsData = if (restoreL) pay.listenStats!!.optJSONObject("data") else null
+            val err = withContext(Dispatchers.IO) {
+              fun lsApply(): Boolean {                                   // days → 白名单解码 + trim → 快照覆盖落盘（save 回执可判定）
+                val st = ListenStatsCodec.parse(JSONObject().put("v", 1).put("days", lsData).toString())
+                return listenSidecar.save(ListenStats.trim(st))
+              }
+              val e = Backup.commitImport(pay.data, pay.my, qData, Backup.ImportIO(
+                { Store.applyAllChecked(pay.data) },                     // 白名单键写入/缺键 remove；落盘失败可感知（三轮 P1-2）
+                { Store.applyAllChecked(snap) },
+                { pay.my == null || runCatching { myRadio.replace(pay.my!!.joinToString("\n")) }.getOrDefault(false) },   // v1 无 my 不动；v2 读 my；v3 读 myRadio
+                { runCatching { myRadio.replace(myOld) } },
+                { qData == null || quality.replaceImport(qData) },        // sidecar 最后提交（覆盖语义，§13.2-6）
+                { qSnap == null || quality.restore(qSnap) },             // 失败恢复旧 quality 快照（replaceImport 内部已自恢复，此处兜底盘面）
+                { lsData == null || lsApply() },                         // 收听统计四件事务收官（B4）
+                { lsSnap == null || listenSidecar.save(lsSnap) },        // 失败恢复旧统计快照（save 回执失败仅内存不留）
+              ), lsData)
               lib.myText = myRadio.readText()
+              e
             }
+            if (err != null) { toast("导入失败：$err，已回滚到导入前状态"); return@launch }
             // AIbot P1-2：Store 已被整体替换，三层内存态必须显式刷新——缺一层 = 重启才生效，
             // 且播放层旧 volperst/srcmem 内存会在下次调音量/换源时整体回写冲掉刚导入的值（数据损坏向）
             lib.reloadStore()                                             // 收藏/最近/健康标记/cfg 内存重载
             lib.reload()                                                  // 主列表/my 层重装配 + 回绑
+            quality.keepHint = runCatching { qualityKeepSnapshot() }.getOrDefault(quality.keepHint)   // B2：收藏整体替换后保护集重算
             PlayerHolder.reloadMems()                                     // volperst/srcmem2/vol 重载（public 化入口）
+            if (restoreL && FeatureFlags.LISTEN_STATS) runCatching {     // 统计内存账对齐导入态：从磁盘重建 tracker（否则旧账
+              listenTracker = ListenTracker.restore(SystemClock::elapsedRealtime, System::currentTimeMillis, listenSidecar)
+            }                                                             // 下次 flush 会整体回写冲掉导入数据；开关关=不建不消费）
             refreshUi3()
             stamp.value++; primeAll()
-            toast(if (myOk) "已恢复完整备份" else "已恢复完整备份（my-radio 超限未恢复：500 行/64KB）")   // AIbot P3：超限失败明示不静默
+            updateShortcuts()                                             // E3：收藏已整体替换，快捷方式重建
+            toast("已恢复完整备份（v${pay.ver}）"
+              + (if (restoreQ) "，含质量 sidecar（已覆盖本机质量数据）" else if (pay.quality != null) "，本机质量数据保持不变" else "")
+              + (if (restoreL) "，含收听统计（已覆盖本机收听统计）" else if (pay.listenStats != null) "，本机收听统计保持不变" else ""))
           }
-          Imp.M3U -> {}
+          Imp.M3U -> {                                                    // B4 四桶确认后执行：已知台恢复收藏（N2 语义）+ 新台批量入 my-radio
+            val p2 = p.second as PlaylistImp                              // （append 自带查重/清洗/SafeTarget/封顶）
+            var n = 0
+            withContext(Dispatchers.Main) {
+              for (hit in p2.hits) if (!runCatching { lib.isFav(hit) }.getOrDefault(false)) {
+                runCatching { lib.favs.add(FavEntry(hit.key, hit.u.take(6))) }; n++
+              }
+              runCatching { lib.rebind() }                                // 回绑 + 收藏增量一次写齐（AIbot P2-5/P3：改名台休眠条目不等下次 reload 自愈）
+              stamp.value++
+            }
+            updateShortcuts()                                             // E3：收藏可能新增，快捷方式刷新
+            var ok = 0; var skip = 0
+            withContext(Dispatchers.IO) {
+              for (s in p2.extra) {
+                if (runCatching { myRadio.append(s.n, s.c, s.u0) }.getOrDefault(false)) ok++ else skip++
+              }
+              if (ok > 0) lib.myText = myRadio.readText()
+            }
+            if (ok > 0) { lib.reload(); stamp.value++; primeAll() }
+            toast((if (n > 0) "已恢复收藏 $n 个。" else "") + "已写入自定义电台 $ok 个" +
+              (if (skip > 0) "，跳过 $skip 个（重复/封顶/地址不合规）" else "") + "——可到设置跑一次体检验证")
+          }
           Imp.CFG -> {
             val c = p.second as Cfg
             withContext(Dispatchers.IO) { Store.set(C.K_CFG, CfgCodec.toJson(c)) }
@@ -713,5 +1366,16 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       } catch (e: Exception) { toast("导入失败：${e.message ?: e.toString()}") }
     }
   }
+
+  companion object {
+    const val EXTRA_SC = "vradio.shortcut"   // E3 快捷方式 extra 键（MainActivity 路由进 handleIntent）
+  }
+}
+
+/** 详情诊断分批（B1 review P1-7，Web checkStationSources ≤4/批口径）：n 条启用源切成 ≤4 条的下标区间，
+    批间串行推进——单次探活放大面恒 ≤4。Top-level 纯函数 JVM 直测。 */
+fun diagBatches(n: Int): List<IntRange> {
+  if (n <= 0) return emptyList()
+  return (0 until n).chunked(4).map { it.first()..it.last() }
 }
 

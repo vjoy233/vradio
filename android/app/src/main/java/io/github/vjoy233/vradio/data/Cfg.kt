@@ -23,12 +23,18 @@ object CfgCodec {
 
   fun parse(raw: String?): Cfg {
     val o = raw?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return Cfg() // 坏 JSON/数组/字面量 → 空配置
+    // 版本迁移（B0 契约）：无 v / v=1 视为 v1 → 迁移为 v2（字段集兼容，仅补版本语义）；未知字段 org.json
+    // 只取已知键天然忽略；未来 >2 的版本按已知字段尽力读取（前向兼容），不因版本号拒载
+    val v = o.optInt("v", 1).let { if (it < 2) 2 else it }
     val moves = strMap(o.optJSONObject("moves"), false)   // URL → 字符串
     val names = strMap(o.optJSONObject("names"), false)
     val tag = strMap(o.optJSONObject("tag"), false)       // 原名快照（失配清单显示用）
     val renames = strMap(o.optJSONObject("renames"), true) // 分类名 → 分类名（键非 URL 不过滤）
     val hideS = urlBoolMap(o.optJSONObject("hideS"))      // URL → 手藏电台
     val srcs = urlArrMap(o.optJSONObject("srcs"))         // URL → 追加备选源（条 6 × 512 封顶）
+    val srcManualOrder = urlArrMap(o.optJSONObject("srcManualOrder")) // 人工顺序（B1 接线播放语义）
+    val srcDisabled = urlArrMap(o.optJSONObject("srcDisabled"))       // 手动禁用源（B1 接线）
+    val srcLabels = strMap(o.optJSONObject("srcLabels"), false)       // 源 URL → 展示标签
     val hideC = strBoolMap(o.optJSONObject("hideC"))      // 分类名 → 藏分类
     var cats = emptyList<String>()
     val ca = o.optJSONArray("cats")
@@ -43,11 +49,12 @@ object CfgCodec {
       }
       cats = seen.toList()
     }
-    return Cfg(moves, names, tag, renames, hideS, hideC, srcs, cats)
+    return Cfg(v, moves, names, tag, renames, hideS, hideC, srcs, srcManualOrder, srcDisabled, srcLabels, cats)
   }
 
   fun toJson(c: Cfg): String {
     val o = JSONObject()
+    o.put("v", c.v)
     o.put("moves", JSONObject(c.moves))
     o.put("names", JSONObject(c.names))
     o.put("tag", JSONObject(c.tag))
@@ -55,11 +62,15 @@ object CfgCodec {
     val hs = JSONObject(); for ((k, v) in c.hideS) hs.put(k, v); o.put("hideS", hs)
     val hc = JSONObject(); for ((k, v) in c.hideC) hc.put(k, v); o.put("hideC", hc)
     val sp = JSONObject(); for ((k, v) in c.srcs) sp.put(k, JSONArray(v)); o.put("srcs", sp)
+    val smo = JSONObject(); for ((k, v) in c.srcManualOrder) smo.put(k, JSONArray(v)); o.put("srcManualOrder", smo)
+    val sd = JSONObject(); for ((k, v) in c.srcDisabled) sd.put(k, JSONArray(v)); o.put("srcDisabled", sd)
+    o.put("srcLabels", JSONObject(c.srcLabels))
     o.put("cats", JSONArray(c.cats))
     return o.toString()
   }
 
-  fun count(c: Cfg): Int = c.moves.size + c.names.size + c.hideS.size + c.renames.size + c.hideC.size + c.srcs.size + c.cats.size
+  fun count(c: Cfg): Int = c.moves.size + c.names.size + c.hideS.size + c.renames.size + c.hideC.size + c.srcs.size +
+    c.srcManualOrder.size + c.srcDisabled.size + c.srcLabels.size + c.cats.size
 
   /* 字符串映射：值须非空字符串；anyKey=false 时键须 http(s)（存入前 trim，Web 同款） */
   private fun strMap(o: JSONObject?, anyKey: Boolean): Map<String, String> {

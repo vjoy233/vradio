@@ -4,11 +4,13 @@ import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
 import android.net.Uri
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C as M3C
+import androidx.media3.common.TrackSelectionParameters.AudioOffloadPreferences
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -24,12 +26,20 @@ import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import androidx.media3.extractor.metadata.icy.IcyHeaders
 import androidx.media3.extractor.metadata.icy.IcyInfo
+import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaController
 import androidx.media3.session.MediaSession
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionResult
 import androidx.media3.session.SessionToken
+import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import io.github.vjoy233.vradio.R
 import io.github.vjoy233.vradio.consts.C
 import io.github.vjoy233.vradio.data.Store
+import io.github.vjoy233.vradio.timeshift.Timeshift
+import io.github.vjoy233.vradio.metadata.MetadataNormalizer
+import io.github.vjoy233.vradio.model.MetadataEvent
 import io.github.vjoy233.vradio.model.PState
 import io.github.vjoy233.vradio.model.PlayerUiState
 import io.github.vjoy233.vradio.model.SrcMem
@@ -51,6 +61,10 @@ import org.json.JSONObject
 @androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 object PlayerHolder {
 
+  private const val ACTION_REFRESH = "io.github.vjoy233.vradio.REFRESH" // 通知栏「刷新」自定义 action（plan-refresh-live §4.3）
+  const val ACT_W_TOGGLE = "io.github.vjoy233.vradio.WIDGET_TOGGLE"    // 桌面 Widget 播放/暂停（B5 §9.1：经 SessionCommand 送进本层）
+  const val ACT_W_STEP = "io.github.vjoy233.vradio.WIDGET_STEP"        // 桌面 Widget 收藏间切台（dir 见 EXTRA_W_DIR）
+  const val EXTRA_W_DIR = "dir"                                        // 切台方向（1=下一收藏 -1=上一收藏）
   private const val TICK_MS = 2000L         // 看门狗巡检粒度（阈值 C.WATCHDOG_MS=12s）
   private const val VOL_DEBOUNCE_MS = 300L  // volperst 攒批落盘（player.js:100-103 写放大护栏同款）
   private const val SLEEP_TICK_MS = 1000L   // 睡眠定时秒级心跳（player.js:284）
@@ -75,7 +89,9 @@ object PlayerHolder {
 
   var onStepFav: ((Int) -> Unit)? = null                     // ⏮⏭ 收藏间切台（player.js:71-72）
   var onPlayLast: (() -> Unit)? = null                       // 媒体键 play 无台 → 续播上次（player.js:66）
-  var onSong: ((u0: String, title: String) -> Unit)? = null  // ICY 换歌：被替换下的旧曲名入史（app.js:611 口径）
+  // B3-A（plan-expansion-r4 §7.1）：ICY 曲讯只产事件（normalize 后的 MetadataEvent），消费（当前曲讯
+  // 显示/歌史/统计）在 AppVm 侧 Legacy/MetadataV2 sink——播放层不直接操作 radio.songs（模块边界）
+  var onMetadata: ((MetadataEvent) -> Unit)? = null
   var logoProvider: ((Station) -> String)? = null            // 锁屏 artwork 同步窥探（player.js:30 onlogo）
 
   private var token = 0                    // 世代令牌防串台（player.js:137）
@@ -87,7 +103,7 @@ object PlayerHolder {
   private var retried = false              // 当前源是否已「先重连一次」（player.js:16）
   private var curSi = -1                   // 正在试的源序号（player.js:20）
   private var curPlay = ""                 // 当前装载的 variant URL（player.js:21）
-  private var lastSong = ""                // 本台最近曲名（换歌判定，app.js:609-612 同款）
+  private var lastKbps = 0                 // 最近 icy-br（事件随行字段；换源清零与 ui.kbps 同口径）
   private var lastPos = 0L                 // 上次采样位置（进展检测）
   private var wdAt = 0L                    // 最近进展时刻（看门狗基准）
   private var vol = 0.9f                   // 逻辑音量（渐弱/取消的恢复基准，player.js:8）
@@ -108,21 +124,37 @@ object PlayerHolder {
     // DefaultMediaSourceFactory 按 URI 形态自动识别直流/HLS（三级塌缩为一级）
     val ds = OkHttpDataSource.Factory(OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).build())
       .setDefaultRequestProperties(mapOf("Icy-MetaData" to "1")) // 主动要 ICY 元数据（Icecast 需请求头）
-    val msf = DefaultMediaSourceFactory(ds).setLoadErrorHandlingPolicy(FastFailPolicy())
-    exo = ExoPlayer.Builder(appCtx)
+    val msf = DefaultMediaSourceFactory(Timeshift.factory(ds))   // B7 Spike 挂点①：时移 tee 工厂包装
+      .setLoadErrorHandlingPolicy(FastFailPolicy())              // （开关关闭/非直流时纯透传，零行为变化）
+    val pb = ExoPlayer.Builder(appCtx)
       .setMediaSourceFactory(msf)
       .setAudioAttributes(AudioAttributes.Builder().setUsage(M3C.USAGE_MEDIA)
         .setContentType(M3C.AUDIO_CONTENT_TYPE_MUSIC).build(), true) // 焦点自动处理：transient 暂停/can_duck 降音量/永久停止，全默认不自研
       .setHandleAudioBecomingNoisy(true)  // 拔耳机自动暂停（Web 无此问题域）
       .setWakeMode(M3C.WAKE_MODE_NETWORK) // 锁屏继续拉流
-      .build()
+    exo = pb.build()
+    if (io.github.vjoy233.vradio.Prefs.get(appCtx, io.github.vjoy233.vradio.Prefs.OFFLOAD, false)) {
+      // E5 音频卸载（batch1，默认关的实验开关）：Media3 1.11.1 单开关即全链路——AudioOffloadPreferences
+      //   由 DefaultTrackSelector.maybeConfigureRendererForOffload 写进 RendererConfiguration.offloadModePreferred
+      //   → audioSink.setOffloadMode → AudioTrack setEnableOffload（1.11.1 源码实证；ExoPlayer 2.x 时代的
+      //   DefaultRenderersFactory.setEnableAudioOffload 双开关在本版 API 不存在，勿按旧博客加回）。
+      //   开关在 ensure() 读一次，改开关须重启应用生效；ENABLED 模式下不支持的流自动回退软解（非 REQUIRED）
+      exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+        .setAudioOffloadPreferences(AudioOffloadPreferences.Builder()
+          .setAudioOffloadMode(AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_ENABLED).build())
+        .build()
+    }
+    Timeshift.attach(ctx, exo) // B7 Spike 挂点②：回听控制器（读实验开关 + ENDED/error 监听；先于 listener
+                               // 注册——ENDED 先到才能判「快照播完」转 CATCHING_UP）
     exo.addListener(listener)
     fwd = Fwd(exo, this)
     val launch = appCtx.packageManager.getLaunchIntentForPackage(appCtx.packageName)
     val pi = launch?.let { PendingIntent.getActivity(appCtx, 0, it, PendingIntent.FLAG_IMMUTABLE) }
     val sb = MediaSession.Builder(appCtx, fwd)
     if (pi != null) sb.setSessionActivity(pi)
+    sb.setCallback(sessionCb) // 通知栏「刷新」自定义 action（plan-refresh-live §4.3）：onConnect 放行 + onCustomCommand 派发
     sess = sb.build()
+    sess.setCustomLayout(listOf(refreshBtn())) // 标准媒体键后追加「刷新」（锁屏/通知栏直达）
     reloadMems() // player.js:35（Store 收敛层出口；调用前 Store.init 已由 VRadioApp 完成）
     vol = gvol; exo.volume = gvol
     uiMut.update { it.copy(volPct = (gvol * 100).roundToInt()) }
@@ -139,26 +171,40 @@ object PlayerHolder {
 
   /* ---------- 播放决策链 ---------- */
 
-  fun play(s: Station, prefer: Int = -1) { // 总入口（player.js:128-150）
+  fun play(s: Station, prefer: Int = -1) { // 总入口（player.js:128-150 的 B1 扩展：基座换人工序+禁用剔除）
     if (!inited) return
     markProgress()
     halt = false; heldNext = false // 清上一轮守卫标记（player.js:130）
-    val order = srcOrder(s).toMutableList() // ④ 启发式基座：直流形态优先（player.js:131）
+    val order = srcOrder(s).toMutableList() // ④ 启发式对 mo 序遍历：直流形态优先（player.js:131；禁用已剔除）
+    if (order.isEmpty()) { noEnabledSrc(s); return } // B1：全部源已手动禁用——不建流不建 pctx
     val mem = srcMem[s.u0]
-    if (mem != null && mem.i in s.u.indices) { order.remove(mem.i); order.add(0, mem.i) } // ③ 记忆先行（player.js:133）
-    if (prefer in s.u.indices) { order.remove(prefer); order.add(0, prefer) }             // ② 手动当次最高（player.js:134）
+    if (mem != null && mem.i in order) { order.remove(mem.i); order.add(0, mem.i) } // ③ 记忆须在有效序内；禁用源忽略（player.js:133）
+    if (prefer in order) { order.remove(prefer); order.add(0, prefer) }             // ② 手动当次最高（禁用源不播，player.js:134）
     val urls = ArrayList<Variant>(order.size * 2)
     for (si in order) for (v in variants(s.u[si])) urls.add(Variant(v, si)) // 三级展开序（player.js:135-136）
     pctx = Pctx(urls, ++token)
     station = s; connecting = s
-    lastSong = "" // 切台曲讯清零（app.js:569 切台防串台）
+    lastKbps = 0 // 换台旧码率/曲讯随 ui 清零（app.js:569 切台防串台；曲讯管线 reset 在消费侧看 CONNECTING+空 song）
     val pv = volMem[s.u0]
     val want = if (pv != null) pv / 100f else gvol // 有记忆用记忆、无记忆用全局（player.js:141-142）
     if (vol > 0f) { vol = want; exo.volume = want } // 静音态切台保持静音（player.js:143-144）
     pushMeta(s.n) // 锁屏台名（player.js:145-147）
-    uiMut.update { it.copy(st = PState.CONNECTING, station = s, song = "", kbps = 0, srcIdx = -1,
+    uiMut.update { it.copy(st = PState.CONNECTING, station = s, song = "", kbps = 0, srcIdx = -1, mode = "", noSrc = false,
       volPct = (vol * 100).roundToInt()) }
     next()
+  }
+
+  /** NO_ENABLED_SOURCE（B1，plan-expansion-r4 §5.4）：该台所有源都已手动禁用——不建流不建 pctx、
+   *  保持停播；不写 radio.health、不自动复活、不换 identityUrl；UI 经 ui.noSrc + status 文案可区分。 */
+  private fun noEnabledSrc(s: Station) {
+    token++ // 作废在飞链（切换意图生效：原台停播，本台保持停播）
+    halt = false; heldNext = false
+    exo.stop(); exo.clearMediaItems()
+    station = s; connecting = null
+    curSi = -1; curPlay = ""; retried = false; lastKbps = 0
+    markProgress()
+    uiMut.update { it.copy(st = PState.IDLE, station = s, song = "", kbps = 0, srcIdx = -1, mode = "", noSrc = true,
+      status = "该台所有源都已手动禁用，请先启用一个源") }
   }
 
   fun pause() { // 有意暂停（player.js:272-277）
@@ -171,6 +217,7 @@ object PlayerHolder {
   fun resume() { // player.js:264-271
     if (!inited) return
     val s = station ?: return // 无台可续：媒体键路径已转 onPlayLast（player.js:265）
+    if (s.effOrder().isEmpty()) { play(s); return } // B1：全禁台恢复 = 仍 NO_ENABLED_SOURCE（重进提示路径，不复活）
     halt = false
     connecting = s; say("连接中…"); syncState()
     if (heldNext) { heldNext = false; retryOrNext(); return } // 暂停期级联搁浅接回（player.js:269）
@@ -185,16 +232,24 @@ object PlayerHolder {
     if (exo.playWhenReady) pause() else resume()
   }
 
+  fun refresh() { // 手动刷新回直播头（docs/plan-refresh-live.md §2，Web player.js refresh 同语义）：当前赢家源
+    // 整链重开——play 自带 token 作废在飞链/清 halt·heldNext/prefer 提首/台记忆音量/锁屏元数据/连接中指示；
+    // 暂停态直接起播（刷新=要听最新的，直播流停在直播头不是稳定态）；空台无响应；不写 srcmem（onAir 未变早退）
+    val s = station ?: return
+    play(s, if (curSi in s.u.indices) curSi else -1)
+  }
+
   fun stop() { // player.js:214-220
     if (!inited) return
     token++
     halt = false; heldNext = false
     exo.stop(); exo.clearMediaItems()
+    Timeshift.reset() // B7 Spike 挂点④：停播彻底复位
     station = null; connecting = null
     cancelSleep()
-    curSi = -1; curPlay = ""
+    curSi = -1; curPlay = ""; lastKbps = 0
     markProgress()
-    uiMut.update { it.copy(st = PState.IDLE, station = null, song = "", kbps = 0, srcIdx = -1,
+    uiMut.update { it.copy(st = PState.IDLE, station = null, song = "", kbps = 0, srcIdx = -1, mode = "", noSrc = false,
       status = "") } // 清引擎文案：无台时 PlayerBar 第二行会永久残留「已暂停」等旧状态（G P3）
   }
 
@@ -229,8 +284,11 @@ object PlayerHolder {
 
   /* ---------- 成功源记忆 srcmem2 ---------- */
 
-  fun forgetSrc(): Boolean { // 「恢复默认源」（player.js:255-261）：true=真清了，重播由调用方发起
-    val s = station ?: return false
+  fun forgetSrc(): Boolean = station?.let { forgetSrcOf(it) } ?: false // 「恢复默认源」旧入口：当前台（选源浮层）
+
+  /** 「恢复默认播放源」（B1 恢复两动作之一，player.js:255-261）：清指定台 srcmem2；人工顺序/禁用表
+   *  保留（与「撤销人工源排序」独立）。true=真清了，重播由调用方发起。 */
+  fun forgetSrcOf(s: Station): Boolean {
     if (srcMem[s.u0] == null) return false
     srcMem.remove(s.u0)
     persistSrcmem()
@@ -239,7 +297,10 @@ object PlayerHolder {
 
   fun srcmemOf(s: Station): Int = srcMem[s.u0]?.i?.takeIf { it in s.u.indices } ?: -1 // 选源浮层「记忆」徽标
 
-  fun srcOrder(s: Station): List<Int> = s.u.indices.sortedBy { srcRank(s.u[it]) } // 稳定排序保行序（player.js:126）；UI「默认」徽标共用
+  /** 决策链基座（B1 扩展 + review P1-6）：有人工序（moManual，mo 来自 cfg.srcManualOrder）保留用户原序
+     压过启发式（player.js:131「moManual ? mo : mo.sort(srcRank)」同款）；仅无人工序时按直流优先稳定排序；
+     UI「默认」徽标共用——人工序/禁用后徽标随决策链同步，不会漂移。 */
+  fun srcOrder(s: Station): List<Int> = playSourceOrder(s.effOrder(), s.u, s.moManual) { srcRank(it) } // player.js:126
 
   /* ---------- 睡眠定时 ---------- */
 
@@ -258,9 +319,8 @@ object PlayerHolder {
     if (this::exo.isInitialized) exo.volume = vol
   }
 
-  fun setSong(t: String) { // 曲讯写锁屏 + ui（player.js setSong 208-212；台标后解析补刷共用）
+  fun setSong(t: String) { // 曲讯写锁屏 + ui（player.js setSong 208-212；台标后解析补刷共用；B3 起由 AppVm sink 调）
     val s = station ?: return
-    lastSong = t
     uiMut.update { it.copy(song = t) }
     pushMeta(t.ifEmpty { s.n }) // 空串回退台名
   }
@@ -286,7 +346,7 @@ object PlayerHolder {
       station = null; connecting = null
       markProgress()
       exo.stop(); exo.clearMediaItems()
-      uiMut.update { it.copy(st = PState.IDLE, station = null, srcIdx = -1, song = "", kbps = 0,
+      uiMut.update { it.copy(st = PState.IDLE, station = null, srcIdx = -1, mode = "", noSrc = false, song = "", kbps = 0,
         status = "⚠ 全部源失败，建议点「体检」或「同步源」") }
       return
     }
@@ -294,13 +354,17 @@ object PlayerHolder {
     val cur = p.urls[p.i++]
     curSi = cur.si; curPlay = cur.u; retried = false
     connecting = station // 换源重试期间保持连接中指示（player.js:167）
-    uiMut.update { it.copy(st = PState.CONNECTING, srcIdx = cur.si, kbps = 0, status = "连接中… 源" + p.i + "/" + p.urls.size) } // AIbot P3：换源清旧码率（无 ICY 的源残留上一源 kbps）
+    uiMut.update { it.copy(st = PState.CONNECTING, srcIdx = cur.si, noSrc = false,
+      mode = if (m3u8Re.containsMatchIn(cur.u)) "hls" else "direct", // B1：源详情面板的播放模式展示
+      kbps = 0, status = "连接中… 源" + p.i + "/" + p.urls.size) } // AIbot P3：换源清旧码率（无 ICY 的源残留上一源 kbps）
+    lastKbps = 0
     markProgress() // 看门狗计时起点：建流期连接挂死同覆盖（player.js:224-225 口径）
     loadVariant(cur.u)
   }
 
   private fun loadVariant(u: String) { // player.js load 172-200 的 media3 形态：单级、HLS 自动识别、错误经 onPlayerError 回流
     if (u.isEmpty()) { next(); return } // 兜底：无当前源可重连（理论不可达）直接续摊
+    Timeshift.onNewStream(u) // B7 Spike 挂点③：每条新连接重置时移会话（切台/刷新/自愈重连/换源全汇于此）
     lastPos = -1L
     val b = MediaItem.Builder().setUri(u)
     curMeta?.let { b.setMediaMetadata(it) } // 锁屏元数据随装载（pushMeta 先于装载的建流前调用路径）
@@ -327,9 +391,12 @@ object PlayerHolder {
   private fun onAir() { // 建流成功（≈Web 'playing'，player.js:37 + 245-254）
     connecting = null
     markProgress()
+    Timeshift.onLiveAir() // B7 Spike 挂点⑤：回放播完重连直播起播 → CATCHING_UP → CAPTURING
     val s = station
     if (s != null && pctx?.my == token) {
-      say("直播中")
+      // B7 Spike（AIbot P2-2）：回放期状态明示「回听中」——快照起播也走 onAir（复用既有事件），
+      // 若照旧说「直播中」用户会误以为仍在实时收听；回放结束重连起播时 isReplaying 已翻 false，自然恢复「直播中」
+      say(if (Timeshift.isReplaying()) "回听中…" else "直播中")
       if (s.u.size >= 2 && curSi in s.u.indices) { // 成功源记忆写回（仅多源台）
         val prev = srcMem[s.u0]
         if (prev == null || prev.i != curSi) { // 未变不写（resume 也触发，player.js:249）
@@ -352,7 +419,7 @@ object PlayerHolder {
     logoProvider?.invoke(s)?.takeIf { it.isNotEmpty() }?.let { b.setArtworkUri(Uri.parse(it)) }
     curMeta = b.build()
     // 已在播的 item 用 replaceMediaItem 原位换元数据（同 URI 不触发重载，ICY 换歌不重启流）
-    if (curPlay.isNotEmpty()) runCatching {
+    if (curPlay.isNotEmpty() && !Timeshift.isReplaying()) runCatching { // B7：回放中替换会顶掉快照 item，拦掉
       exo.replaceMediaItem(0, MediaItem.Builder().setUri(curPlay).setMediaMetadata(curMeta!!).build())
     }
   }
@@ -406,16 +473,16 @@ object PlayerHolder {
         when (val e = metadata.get(i)) {
           is IcyInfo -> {
             val t = e.title?.trim().orEmpty()
-            if (t.isEmpty() || t == lastSong) continue // 换歌判定：去重（onMetadata 频率高于 Web 15s 轮询，A6）
-            val old = lastSong
-            lastSong = t
-            uiMut.update { it.copy(song = t) }
-            pushMeta(t) // 锁屏歌名
-            if (old.isNotEmpty()) onSong?.invoke(s.u0, old) // 换歌旧曲入史（app.js:611；键=台主 URL 身份公理）
+            if (t.isEmpty()) continue // 空曲讯不覆盖有效曲名（契约 normalizeRules；HLS 不猜歌名）——事件都不发
+            // B3-A：只产事件不消费——normalize（清洗/台名前缀/拆分/置信度）后回调，当前曲讯/歌史/统计
+            // 归 AppVm 侧 sink（dedup 也在那）；世代令牌已在上面验过，迟到事件由管线 identityUrl/at 再拦
+            onMetadata?.invoke(MetadataNormalizer.normalize(
+              MetadataNormalizer.IcyRaw(t, "", lastKbps, "icy", System.currentTimeMillis()),
+              MetadataNormalizer.IcyCtx(s.u0, s.n)))
           }
           is IcyHeaders -> {
             val br = e.bitrate
-            if (br > 0) uiMut.update { it.copy(kbps = br / 1000) } // media3 bitrate 是 bps（icy-br×1000，源码实证），显示口径 = 原始 icy-br kbps（app.js:614 同款）
+            if (br > 0) { lastKbps = br / 1000; uiMut.update { it.copy(kbps = lastKbps) } } // media3 bitrate 是 bps（icy-br×1000，源码实证），显示口径 = 原始 icy-br kbps（app.js:614 同款）
           }
         }
       }
@@ -558,6 +625,35 @@ object PlayerHolder {
     override fun stop() { h.stop() }   // player.js:68
   }
 
+  /* 通知栏「刷新」自定义 action（plan-refresh-live §4.3）：Fwd 先例是占标准命令位（⏮⏭），但标准位语义不合
+     （seek 系已禁用、stop 是停播）——custom command 是 CONTRACTS 硬点 9 预留的另一条合规路 */
+  private fun refreshBtn() = CommandButton.Builder()
+    .setDisplayName("刷新")
+    .setIconResId(R.drawable.ic_refresh)
+    .setSessionCommand(SessionCommand(ACTION_REFRESH, Bundle.EMPTY))
+    .build()
+
+  private val sessionCb = object : MediaSession.Callback {
+    override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo) =
+      MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+        .setAvailableSessionCommands( // 自定义 sessionCommand 必须显式放行，否则通知栏按钮静默不渲染（方案审计 R1-9）
+          MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
+            .add(SessionCommand(ACTION_REFRESH, Bundle.EMPTY))
+            .add(SessionCommand(ACT_W_TOGGLE, Bundle.EMPTY))   // Widget 控制面（B5 §9.1，refresh 同款接线）
+            .add(SessionCommand(ACT_W_STEP, Bundle.EMPTY)).build())
+        .build()
+    override fun onCustomCommand(session: MediaSession, controller: MediaSession.ControllerInfo,
+      customCommand: SessionCommand, args: Bundle): ListenableFuture<SessionResult> {
+      when (customCommand.customAction) {
+        ACTION_REFRESH -> refresh() // 回调在主线程（ExoPlayer 要求面）；暂停态直接起播，与播放栏按钮同语义
+        ACT_W_TOGGLE -> toggle()    // Widget 播放/暂停：空台走 onPlayLast（VRadioApp 装配的兜底或 AppVm 的续播）
+        ACT_W_STEP -> onStepFav?.invoke(args.getInt(EXTRA_W_DIR, 1))   // ⏮⏭ 收藏间切台（同通知栏线控语义）
+        else -> return super.onCustomCommand(session, controller, customCommand, args)
+      }
+      return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+    }
+  }
+
   /* 快速失败：库内重试压到 hls.js 同款小档（player.js:185），让错误尽早回 onPlayerError 走应用层级联；
      media3 默认重试会让死源拖半分钟。errorCount 从 1 计：<3 即最多重试 2 次、1s 间隔 */
   private class FastFailPolicy : DefaultLoadErrorHandlingPolicy() {
@@ -569,3 +665,8 @@ object PlayerHolder {
   private class Variant(val u: String, val si: Int)
   private class Pctx(val urls: List<Variant>, val my: Int) { var i = 0 } // player.js:14
 }
+
+/** 播放源顺序决策（B1 review P1-6，player.js srcOrder 纯逻辑镜像）：manual=true 保留用户序（启发式让位，
+    同级保持行序）；manual=false 按直流优先稳定排序。Top-level 纯函数 JVM 直测；PlayerHolder.srcOrder 委派至此。 */
+fun playSourceOrder(eff: List<Int>, u: List<String>, manual: Boolean, rank: (String) -> Int): List<Int> =
+  if (manual) eff.toList() else eff.sortedBy { rank(u[it]) }

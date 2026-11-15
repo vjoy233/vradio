@@ -29,6 +29,7 @@ import io.github.vjoy233.vradio.data.SafeTarget
 import io.github.vjoy233.vradio.data.Store
 import io.github.vjoy233.vradio.check.OkHttpRaw
 import io.github.vjoy233.vradio.data.OkHttpText
+import io.github.vjoy233.vradio.media.CarBrowse
 import io.github.vjoy233.vradio.model.Cfg
 import io.github.vjoy233.vradio.model.FavEntry
 import io.github.vjoy233.vradio.model.PState
@@ -217,6 +218,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   init {
     wirePlayer()
+    CarBrowse.attach(lib) { s -> runCatching { logos.get(s) }.getOrDefault("") }   // B6：车机媒体树活数据源（onCleared 回兜底）
     resumeOnStart.value = Prefs.get(ctx, Prefs.RESUME, false)   // N4
     audioOffload.value = Prefs.get(ctx, Prefs.OFFLOAD, false)   // E5
     netFullCheck.value = Prefs.get(ctx, Prefs.NET_FULL_CHECK, "confirm")   // B5 网络策略三键
@@ -241,6 +243,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   override fun onCleared() {   // VM 亡后通知栏/Widget 的 ⏮⏭ 与空台续播仍可用：回装文件侧兜底（VRadioApp 同款）
     WidgetCommands.wireFallback(ctx)
+    CarBrowse.wireFallback(ctx)   // B6：车机点播解析同回文件侧兜底（BootLib，与 Widget 共享实例）
   }
 
   /* ---------- boot 编排（app.js boot + sync.js bootQuiet 平移；安卓不跑首启基线，plan M3 拍板）：
@@ -355,10 +358,23 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   private fun wirePlayer() {
     PlayerHolder.onStepFav = { d -> stepFav(d) }                          // ⏮⏭ / ←→ 收藏间切台
     PlayerHolder.onPlayLast = { resumeLast() }                            // 媒体键 play 空台 → 续播上次
+    PlayerHolder.onCarStation = { u0 -> carStation(u0) }                  // B6：车机点播解析（u0 → 库内可见台）
     PlayerHolder.onSong = { u0, t ->                                     // ICY 换歌（PlayerHolder 已做换歌判定）：入史
       viewModelScope.launch(Dispatchers.IO) { runCatching { lib.pushSong(u0, t) }; stamp.value++ }
     }
     PlayerHolder.logoProvider = { s -> logos.get(s) }                     // 锁屏 artwork 同步窥探口径
+  }
+
+  /** 车机点播解析（B6）：仅收库内可见台（手藏/死台不收，与树同口径）+ 记最近 + 台标补全——
+   *  startPlay 的车机面（无 UI 反馈通道，通知权限只在手机首播问一次，车机起播不重复问）。 */
+  private fun carStation(u0: String): Station? {
+    val s = runCatching { lib.visible(false, playKey(), connKey()).firstOrNull { it.u0 == u0 } }.getOrNull() ?: return null
+    viewModelScope.launch {                                               // 记最近归 Main（审计 P2：Library 变异单线程化）
+      runCatching { lib.recordRecent(s) }
+      stamp.value++
+    }
+    viewModelScope.launch(Dispatchers.IO) { if (logoAllowed()) runCatching { logos.prime(s, true) } }
+    return s
   }
 
   /* 台标预取（收藏 + 正在播优先，请求量可控）；完成后重渲一次取新解析到的 URL。

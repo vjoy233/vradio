@@ -68,6 +68,7 @@ app/src/main/java/io/github/vjoy233/vradio/
   sync/    Gh（api.github.com 客户端）/ ClassifyCn（金样平价移植）/ LightUpdate（D7 轻更新）/ SyncEngine（M4 端内同步）
   widget/  桌面 Widget（B5）：RadioWidgetProvider/WidgetCommands/WidgetPush + WidgetState（纯 JVM 快照/节流/切台逻辑）
   network/ 网络策略与流量估算（B5，纯 JVM）：NetworkPolicy（NetProbe 注入）/ TrafficEstimator
+  media/   车机媒体树（B6）：MediaTree（纯 JVM：四层树/mediaId 编解码/可见性口径）+ CarBrowse（库回调接线）
 ```
 
 数据层/体检同步层/widget 纯逻辑/网络策略层为纯 JVM（不 import android.*），单测离线秒级（对齐 Web 侧 `npm test` 口径）。
@@ -83,6 +84,21 @@ app/src/main/java/io/github/vjoy233/vradio/
   全量体检/主库同步在移动数据下默认「每次确认」（可改允许/禁止）；台标补全 Wi-Fi 优先（可关）。
   会话级流量估算按已知码率（无 ICY 码率时按 128kbps 并标注「估算」）30 秒采样累计，非精确计费。
   策略设置存私有键 `net.*`（同样不进契约/备份）。
+
+## Android Auto / 车载模式（B6，plan-expansion-r4 §10）
+
+- **范围**：车机上发现应用、浏览四层媒体树（收藏/最近/分类/自定义电台）、点选播放、
+  ⏮⏭ 收藏间切台（与通知栏线控同语义）、台名/曲讯/台标随 MediaSession 元数据展示。
+  **不在车机提供**维护、导入、体检、源地址和复杂搜索。
+- **形态**：PlaybackService 基类升 MediaLibraryService（Media3 1.11.1，无新依赖）；媒体树与
+  mediaId 编码是纯 JVM 逻辑（`media/MediaTree.kt`，`MediaTreeTest` 覆盖）；播放经既有
+  PlayerHolder.play 决策链（**不复制播放决策**）。App 未打开时车机照常可用（文件侧兜底库 BootLib，
+  与桌面 Widget 共享；此时起播不记最近播放属已知取舍）。
+- **manifest**：service exported=true + `androidx.media3.session.MediaLibraryService` 与
+  `android.media.browse.MediaBrowserService` 双 action；application meta-data
+  `com.google.android.gms.car.application` → `res/xml/automotive_app_desc.xml`（media 能力声明）。
+- **验收边界**：车机发现服务、实际播放、断网恢复、源级联、重复建流等**须 DHU（Desktop Head Unit）
+  或实车/实机验收**——本仓库 CI 只有 JVM 单测，无 DHU 环境无法覆盖；详见 plan-expansion-r4 §10。
 
 ## 发布（M5）
 

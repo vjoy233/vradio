@@ -17,6 +17,13 @@
     android:theme="@style/Theme.VRadio"
     android:usesCleartextTraffic="true">
 
+    <!-- Android Auto 发现声明（B6，官方口径 developer.android.com/training/cars/media/auto）：媒体 App
+         经 automotive_app_desc 声明 media 能力；无需 android.permission.automotive（那是 AAOS 发行面）、
+         无需 car_ui category（那是 Car App Library 模板 App 的渲染面）。 -->
+    <meta-data
+      android:name="com.google.android.gms.car.application"
+      android:resource="@xml/automotive_app_desc" />
+
     <activity
       android:name=".MainActivity"
       android:exported="true"
@@ -66,13 +73,18 @@
       </intent-filter>
     </activity>
 
-    <!-- Media3 会话服务：通知栏/锁屏/耳机线控（通知权限 13+ 首播时运行时申请，拒绝不阻断播放） -->
-    <service
+    <!-- Media3 库会话服务（B6 升 MediaLibraryService）：通知栏/锁屏/耳机线控 + 车机媒体树。
+         action 双声明（media3 SessionToken 按 manifest 解析组件类型；legacy action 供 Auto/AAOS 的
+         MediaBrowserCompat 客户端绑定——MediaLibraryServiceLegacyStub 自动适配；MediaLibraryService
+         action 取代旧 MediaSessionService action，不再并申以避开 androidx/media#3158 的启停循环）。
+         exported=true：车机（跨 App）绑定必需；控制器面由 media3 onConnect 收口（媒体 App 常态）。
+         通知权限 13+ 首播时运行时申请，拒绝不阻断播放。 -->    <service
       android:name=".player.PlaybackService"
-      android:exported="false"
+      android:exported="true"
       android:foregroundServiceType="mediaPlayback">
       <intent-filter>
-        <action android:name="androidx.media3.session.MediaSessionService" />
+        <action android:name="androidx.media3.session.MediaLibraryService" />
+        <action android:name="android.media.browse.MediaBrowserService" />
       </intent-filter>
     </service>
 

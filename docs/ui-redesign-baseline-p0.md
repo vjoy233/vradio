@@ -21,3 +21,7 @@
 2. **基线并入 b3 整线而非摘 B4**：B4 提交与 B2/B3 同在 b3 堆叠链上，摘樱桃会造成双历史；b3 的 B2/B3 均为默认关的独立发布单元，符合 §7「保留已发布功能及开关」。B6（Android Auto）不在两线任一，不并入（Android-only，本轮不动 android 功能）。
 3. **Android 冲突 get/set vs getStr/setStr 两对并存**：B2/B3 链把 String 版改名 getStr/setStr，B5/B7 调用点用 get/set。并集期两对并存语义一致，改名清扫留给后续批次（本轮不做无关重构）。gradle 因本机无 JDK 未跑，CI（android/** path filter）会触发验证。
 4. **用户 WIP 文档随本 PR 入库**：规划文档 v2.2、历史草案、PR20-27 审计、ui-redesign-assets（截图/对比度脚本/handoff-helpers）、ui-demo、AGENTS.md 台标描述修正——即用户「暂存不要弄丢」的处置方式：入库保全 + 主工作区另行 stash 双保险。
+
+## CI 干净环境 Gradle 验证记录（2026-11-15 review 补充）
+
+判定记录 3 预告的 CI 验证已实际完成：PR #28 因改动含 `android/**` 命中 `android.yml` path filter，workflow **android** run `43680072039` 在 **head `f9b6565`**（=本 PR 当前 head）触发，job **build**（ubuntu-latest + temurin JDK 17）**SUCCESS**（05:12:32Z→05:17:49Z，5m17s），覆盖 `testDebugUnitTest`（parser/classifyCn 金样/store/cfg/backup/health/myradio 单测）、`assembleDebug` + 20MB 哨兵、`assembleRelease`（R8）+ 5MB 哨兵全绿。job 链接：https://github.com/vjoy233/vradio/actions/runs/43680072039/job/132708566173 。本机无 JDK、AGENTS.md 既定纪律「CI 是唯一干净环境验证」，以本记录为准；`radio.*` 白名单/备份 v3 契约/B4 恢复接口的真实符号核对见上方核验表「契约基线」「备份真实接口」两行。

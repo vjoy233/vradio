@@ -34,7 +34,7 @@ const pickPort = () => new Promise((resolve, reject) => { // 82xx 段随机起�
 (async () => {
   // —— Playwright 加载收口（AIbot 二次复核 P2）：干净环境缺 Playwright 也写 FAIL 报告 + 非零退出，不裸崩 ——
   let chromium = null;
-  try { chromium = require(process.env.VRADIO_PLAYWRIGHT || 'playwright'); }
+  try { chromium = require(process.env.VRADIO_PLAYWRIGHT || 'playwright').chromium; } // playwright 包导出命名属性 chromium（与原顶层解构同义）
   catch (e) {
     const report = { capturedAt: new Date().toISOString(), result: 'FAIL', failure: 'Playwright 加载失败（本机需已安装；用 VRADIO_PLAYWRIGHT 指向全局安装路径，非项目依赖）: ' + e.message, assertions: [], screenshots: [], errors: [], notes: [] };
     fs.writeFileSync(path.join(output, 'validation.json'), JSON.stringify(report, null, 2) + '\n');

@@ -13,6 +13,7 @@ npm run test:contract   # 定向 L0：contracts.js（三侧键白名单/fixture�
 npm run test:unit       # 定向 L1：纯函数/状态机/fake browser（player/store/sync/logos/listen-stats/ui-* 等 20 文件，不起长驻服务）
 npm run test:api        # 定向 L2：真服务矩阵（smoke/quality/listen-stats-api/myradio-api/station-api/np-proxy/sync-api）
 npm run test:browser    # 正式页面 Chromium PR smoke（ui-demo/pr-smoke.cjs，需 VRADIO_PLAYWRIGHT，CI 走 .ci/browser/）
+npm run test:nightly    # 夜间层编排（test/nightly/run.js）：默认 drills+soak60s；--real 加真实源抽样、--soak=N 调时长、--quick 只 drills
 ```
 
 - **零依赖是核心设计**：只用 Node ≥ 14 内置模块 + 本地化的 hls.min.js，不要引入任何 npm 依赖。
@@ -38,6 +39,8 @@ npm run test:browser    # 正式页面 Chromium PR smoke（ui-demo/pr-smoke.cjs�
 | `test/player.js` 等 L1 矩阵 | `player.js`（62 断言：决策链/令牌防串台/error·看门狗·ended 自愈+halt 守卫/srcmem FIFO/每台音量/多标签让位/睡眠渐弱/曲讯不串台）/ `store.js`（32 断言：合批/dirty 对账/flush 三规则/多标签 LWW/apply 键级合并/file:// 降级）/ `sync.js`（45 用例：runCheck/四通道编排/基线确认门槛+续跑+25 台落盘/两步协议/toast·status 分流）/ `logos.js`（34 用例：三级来源零请求断言/负缓存 7 天/在飞去重/解析校验/tone·wrap 单层外框）——vm 沙箱 + FakeClock + fake browser，Node 14 兼容零依赖 |
 | `test/*-api.js` 等 L2 矩阵 | `station-api.js`（mystation 探活写入/封顶/串行化 + boot bootstrap/prev 恢复，isolated 临时应用根视角）/ `np-proxy.js`（nowplaying ICY 换歌/负缓存/冷却/封顶 + proxy 逐跳/断流/回收）/ `sync-api.js`（强制两步协议离线全链：token 单次消费/forced 真发布链/busy 409）/ `myradio-api.js`（/api/myradio 高风险矩阵：全量替换语义/500 行与 64KB 封顶/与 mystation 共用写队列并发/rename 失败保旧/空列表清空/备份恢复联动）/ `listen-stats-api.js`（/api/listenstats 端点：条件获取/幂等/双标签并发/409 code/replace 导入/损坏恢复；纯状态机在 `listen-stats.js` 进 unit）/ `assets.js`（生成资产/manifest 一致性：四资产哈希/行协议/radio-data 等价/发布容错）。服务端测试缝：`VR_TEST_GUARD`（放行回环 fixture）/`VR_TEST_SYNC_STASH`/`VR_TEST_SYNC_STALL`（env 显式设置才生效，生产不设，同 `VR_TEST_Q_MAX` 先例） |
 | `.ci/browser/` + `ui-demo/pr-smoke.cjs` | 浏览器 E2E 供给与正式页 PR 门（P0b）：`.ci/browser` 独立 Playwright 工具目录（package.json 钉版 + lockfile，node_modules gitignored——根项目零 npm 依赖不破，CI 用 `npm ci --prefix .ci/browser`）；`pr-smoke.cjs` = PR 门矩阵（启动/筛选/主题/播放 connecting/维护三选/390 档/H1 render 中位 <100ms/Z1 pageerror 零容忍/Z2 宿主哈希/Z3 清理门，自举隔离同 p6：worktree 临时检出 + 82xx 随机端口），产物 docs/test-reports/pr-smoke/validation.json |
+| `ui-demo/multi-tab.cjs` + `ui-demo/browser-matrix.cjs` | 夜间浏览器扩展层（P2，Chromium；Firefox/Edge 待脚本参数化）：multi-tab = 多标签真实页面对抗（Store 活广播/跨浏览器 LWW/质量统计合流/维护冲突三选/断网 dirty 重推，46 断言）；browser-matrix = 十视口 320–1920 + 200% 缩放双口径 + forced-colors + 窄高 + 键盘完整路径 + aria（68 断言）；产物 docs/test-reports/{multi-tab,browser-matrix}/ |
+| `test/nightly/` | 夜间/发布前演练层（P3，`npm run test:nightly` 编排；子目录不进 run.js 自动发现；报告 docs/test-reports/nightly/）：`drills.js`（故障注入——上游 404/假流/畸形 Location/写盘 EPERM（目标换目录稳定复现）/kill 中断发布重启恢复/资产两代 prev 轮换/8 路并发压力，29 断言全离线）/ `real-sources.js`（真实源抽样——radio.txt 实时抽取按类别固定索引，数据健康类失败只进报告，先探公网连通性区分环境 vs 漂移）/ `soak.js`（长时播放 SOAK_SECONDS 可配——nowplaying 轮询/quality/store/check 定时混合 + 零 5xx + 连接受回收 + Linux RSS 哨兵）/ `run.js`（--quick/--real/--soak=N 子进程编排聚合退出码）|
 | `radio.txt` | 电台数据库（1600+ 台）。**数据文件，由同步生成**，不要手工维护 |
 | `radio-data.js` | radio.txt 的经典 script 包装（`window.RADIO_DATA`=全文，同步随行生成，tmp+rename 原子写）。**数据文件，由同步生成**，file:// 降级模式的全库数据源 |
 | `logos.txt` | 台标数据（欧美音乐/国际新闻·谈话两分类，同步自动生成/`--logos` 重建），行格式 `分类|台名,图片URL`。**数据文件，勿手工维护** |

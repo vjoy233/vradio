@@ -1,19 +1,25 @@
 /* P6 验收矩阵驱动（ui-redesign §9.2 浏览器手动验收的可复现子集）：驱动**正式业务页面**（非隔离 demo）。
    仅开发工具，需要本机已有 Playwright（不是项目运行依赖，同 ui-demo/capture.cjs 先例）：
    PowerShell: $env:VRADIO_PLAYWRIGHT='C:/Users/Administrator/AppData/Roaming/npm/node_modules/playwright'
-   自举隔离（AIbot PR#34 P0）：默认自行 spawn `node server.js`（82xx 随机高位端口、cwd=本 worktree、
-   就绪探活后开跑、结束 kill）——脚本 clr() 会 POST /api/store {data:{}} 清空 radio.* 持久键，只准打在
-   自举隔离实例上（data/ 落 worktree 自身，gitignored）。VRADIO_URL 指向外部实例时必须显式
-   VRADIO_ALLOW_EXTERNAL=1（醒目警告后继续），否则拒绝退出——防清空普通 npm start 实例的用户数据。
-   断言失败 exitCode=1（AIbot PR#34 P2）。产物：docs/ui-redesign-assets/p6/*.png + validation.json。
-   真实音频不可保证（沙箱网络），播放仅验证 connecting 阶段与记住最近，随后 Player.stop() 收尾。 */
-const fs = require('fs'), path = require('path'), assert = require('assert'), http = require('http'), net = require('net');
-const { spawn } = require('child_process');
-const { chromium } = require(process.env.VRADIO_PLAYWRIGHT || 'playwright');
+   自举隔离（AIbot PR#34 P0 + 二次复核 P2）：默认先 git worktree add 临时检出 HEAD、在被测实例 spawn
+   `node server.js`（82xx 随机高位端口、cwd=临时 worktree、就绪探活后开跑、结束 kill+移除）——server 的
+   data/store.json 与 my-radio.txt 全锚 __dirname，cwd=宿主会把验收写入污染宿主持久面，cwd=临时 worktree
+   使宿主零接触且天然空 fixture；运行前后校验宿主两文件哈希不变（Z2 终检）。脚本 clr() 会 POST
+   /api/store {data:{}} 清空 radio.*，只准打在自举隔离实例上。VRADIO_URL 指向外部实例时必须显式
+   VRADIO_ALLOW_EXTERNAL=1（醒目警告后继续），否则拒绝退出。提交态门：未提交改动拒跑（产物目录豁免）。
+   断言失败 exitCode=1（AIbot PR#34 P2）；Playwright 加载失败也写 FAIL 报告而非裸崩（二次复核 P2）。
+   产物：docs/ui-redesign-assets/p6/*.png + validation.json。真实音频不可保证（沙箱网络），播放仅验证
+   connecting 阶段与记住最近，随后 Player.stop() 收尾。 */
+const fs = require('fs'), path = require('path'), assert = require('assert'), http = require('http'), net = require('net'), os = require('os'), crypto = require('crypto');
+const { spawn, execSync } = require('child_process');
 const output = path.resolve(__dirname, '../docs/ui-redesign-assets/p6');
 const fixdir = path.join(__dirname, 'p6-fixtures');
+const ROOT = path.resolve(__dirname, '..');
 fs.mkdirSync(output, { recursive: true });
 fs.mkdirSync(fixdir, { recursive: true });
+const git = a => execSync('git ' + a, { cwd: ROOT, stdio: 'pipe' }).toString();
+const sha1 = f => { try { return crypto.createHash('sha1').update(fs.readFileSync(f)).digest('hex'); } catch (_) { return 'absent'; } };
+const hostSnap = () => ['data/store.json', 'my-radio.txt'].map(p => sha1(path.join(ROOT, p))).join('|'); // Z2 终检：宿主持久面
 // cfg 导入 fixture：当前 cfg 为空 → 预览应显示全新增计数
 fs.writeFileSync(path.join(fixdir, 'cfg-in.json'), JSON.stringify({
   v: 1, cfg: { names: { 'http://example.invalid/a.mp3': '验收改名' }, cats: ['验收分类'], hideS: { 'http://example.invalid/b.mp3': 1 } },
@@ -26,8 +32,20 @@ const pickPort = () => new Promise((resolve, reject) => { // 82xx 段随机起�
   tryOne();
 });
 (async () => {
-  // —— 自举隔离（AIbot PR#34 P0）：默认 spawn 隔离实例；VRADIO_URL 外部目标须 VRADIO_ALLOW_EXTERNAL=1 显式确认 ——
-  let srv = null, base = process.env.VRADIO_URL || '';
+  // —— Playwright 加载收口（AIbot 二次复核 P2）：干净环境缺 Playwright 也写 FAIL 报告 + 非零退出，不裸崩 ——
+  let chromium = null;
+  try { chromium = require(process.env.VRADIO_PLAYWRIGHT || 'playwright'); }
+  catch (e) {
+    const report = { capturedAt: new Date().toISOString(), result: 'FAIL', failure: 'Playwright 加载失败（本机需已安装；用 VRADIO_PLAYWRIGHT 指向全局安装路径，非项目依赖）: ' + e.message, assertions: [], screenshots: [], errors: [], notes: [] };
+    fs.writeFileSync(path.join(output, 'validation.json'), JSON.stringify(report, null, 2) + '\n');
+    console.error('FAIL: Playwright 加载失败——', e.message); process.exitCode = 1; return;
+  }
+  // —— 提交态门：未提交改动拒跑（证据只采自提交态；p6 产物目录豁免——跑脚本→改产物自循环）——
+  const dirty = git('status --porcelain').split('\n').map(l => { const m = l.trim().match(/^(..)\s+(.+)$/); return m ? m[2].replace(/"/g, '') : ''; }).filter(p => p && !p.startsWith('docs/ui-redesign-assets/p6/'));
+  if (dirty.length) { console.error('存在未提交改动（证据只采自提交态）：\n' + dirty.join('\n')); process.exitCode = 1; return; }
+  const before = hostSnap();
+  // —— 自举隔离（AIbot PR#34 P0 + 二次复核 P2 my-radio）：临时 worktree 被测实例；外部目标须显式确认 ——
+  let srv = null, base = process.env.VRADIO_URL || '', wt = null, wtAlive = false;
   if (base) {
     if (process.env.VRADIO_ALLOW_EXTERNAL !== '1') {
       console.error(`拒绝运行：VRADIO_URL=${base} 指向非本脚本自举的实例，而本脚本会清空目标实例全部 radio.* 持久数据（不可恢复）。\n确属有意为之，请加 VRADIO_ALLOW_EXTERNAL=1 后重跑。`);
@@ -37,13 +55,15 @@ const pickPort = () => new Promise((resolve, reject) => { // 82xx 段随机起�
   } else {
     const port = await pickPort();
     base = `http://127.0.0.1:${port}/`;
+    wt = fs.mkdtempSync(path.join(os.tmpdir(), 'vradio-p6-'));
+    git(`worktree add --detach "${wt}" HEAD`); wtAlive = true;
     const env = { ...process.env, PORT: String(port), HOST: '127.0.0.1' };
     delete env.VR_TEST_Q_MAX; // 防外部测试注入缝串进验收实例（容量被压小会令页面质量 flush 频繁 409）
-    srv = spawn(process.execPath, ['server.js'], { cwd: path.resolve(__dirname, '..'), env, stdio: 'ignore' });
+    srv = spawn(process.execPath, ['server.js'], { cwd: wt, env, stdio: 'ignore' });
     let ready = false;
     for (let i = 0; i < 120 && !ready; i++) { await new Promise(r => setTimeout(r, 100)); if (srv.exitCode !== null) break; try { ready = (await httpGet(base)) === 200; } catch (_) {} }
     if (!ready) { srv.kill(); console.error(`自举隔离服务未就绪（127.0.0.1:${port}）`); process.exit(1); }
-    console.log(`自举隔离实例 ${base}（data/ 落本 worktree，结束即 kill）`);
+    console.log(`自举隔离实例 ${base}（cwd=临时 worktree：data/my-radio 全落临时检出，宿主零接触）`);
   }
   let browser = null;
   const report = { capturedAt: new Date().toISOString(), url: base, assertions: [], screenshots: [], perf: {}, errors: [], notes: [] };
@@ -287,9 +307,14 @@ const pickPort = () => new Promise((resolve, reject) => { // 82xx 段随机起�
   report.result = 'FAIL'; report.failure = String(e && e.stack || e); process.exitCode = 1; // AIbot PR#34 P2：断言失败必须非零退出——validation.json 之外，退出码是 CI/编排脚本的成败信号
   console.error('FAIL:', e.message);
 } finally {
+  if (!base) { // 自举实例才做宿主不变终检（外部实例本就有 VRADIO_ALLOW_EXTERNAL 确认在先）
+    if (hostSnap() === before) report.notes.push('Z2 宿主 data/store.json + my-radio.txt 运行前后哈希不变');
+    else { report.result = 'FAIL'; report.failure = (report.failure || '') + ' Z2 宿主持久面被改动: ' + before + ' → ' + hostSnap(); process.exitCode = 1; }
+  }
   fs.writeFileSync(path.join(output, 'validation.json'), JSON.stringify(report, null, 2) + '\n');
-  if (browser) await browser.close();
-  if (srv) srv.kill();
+  try { if (browser) await browser.close(); } catch (_) {}
+  try { if (srv) { srv.kill(); await new Promise(r => { const t = setTimeout(r, 3000); srv.once('exit', () => { clearTimeout(t); r(); }); }); } } catch (_) {}
+  if (wtAlive) { try { git(`worktree remove --force "${wt}"`); } catch (_) { await new Promise(r => setTimeout(r, 800)); try { git(`worktree remove --force "${wt}"`); } catch (e2) { console.error('临时 worktree 清理失败（请手动 git worktree remove --force）:', wt); } } }
   console.log(JSON.stringify({ result: report.result, assertions: report.assertions.length, screenshots: report.screenshots.length, errors: report.errors }, null, 1));
 }
 })().catch(e => { console.error('p6-verify 异常：', e); process.exitCode = 1; });

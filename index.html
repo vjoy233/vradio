@@ -122,7 +122,7 @@
   .cfoot { margin-top:auto; display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
   .cfoot .badge, .cfoot .srcs { font-size:11px; }
   /* 列表视图：两行详情（l1 台名 + 体检；meta 分类/源数）；宽屏限宽居中不浪费视口（UI 审计 P2-4） */
-  #list:not(.grid) { max-width:900px; margin:0 auto; }
+  #list:not(.grid) { width:100%; max-width:900px; margin:0 auto; } /* width:100%（§6.11 基线修复，不在 @media 内修）：缺它窄屏列表收缩到内容宽（390px 视口仅 ~337px），补全宽规则覆盖紧凑布局与桌面开关关闭态 */
   .row .col { flex:1; min-width:0; display:flex; flex-direction:column; gap:1px; }
   .row .l1 { display:flex; align-items:center; gap:10px; min-width:0; }
   .row .meta { font-size:12px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

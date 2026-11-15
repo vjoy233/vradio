@@ -5,9 +5,9 @@ name: android
 on:
   push:
     branches: [main]
-    paths: ['android/**', '.github/workflows/android.yml']
+    paths: ['android/**', 'contracts/**', 'radio.txt', 'logos.txt', 'radio-meta.json', '.github/workflows/android.yml', '.github/workflows/android-instrumented-draft.yml']
   pull_request:
-    paths: ['android/**', '.github/workflows/android.yml']
+    paths: ['android/**', 'contracts/**', 'radio.txt', 'logos.txt', 'radio-meta.json', '.github/workflows/android.yml', '.github/workflows/android-instrumented-draft.yml']
 
 jobs:
   build:

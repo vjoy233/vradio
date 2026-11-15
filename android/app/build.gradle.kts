@@ -20,6 +20,7 @@ android {
     targetSdk = 36
     versionCode = 1
     versionName = "0.1.0"
+    testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
   // 签名：keystore.properties 存在则用正式密钥（gitignored，见 README 发布节），否则 release 退回 debug 签名保 CI 可出包
@@ -82,6 +83,10 @@ dependencies {
   // 同理（B4）：android.jar 的 org.xmlpull.v1.XmlPullParserFactory 也是抛异常桩——data/PlaylistParser.kt 的
   // XML 解析在单测环境须挂真实现（kxml2 = Android 平台内置的同一解析器，设备运行时用平台实现不进 APK）
   testImplementation("net.sf.kxml:kxml2:2.3.0")
+  // instrumented smoke（当前仅手动/夜间草案，不进入普通 PR 硬门）
+  androidTestImplementation("androidx.test.ext:junit:1.2.1")
+  androidTestImplementation("androidx.test:runner:1.6.2")
+  androidTestImplementation("androidx.test:rules:1.6.1")
 }
 
 // —— 数据文件打包：仓库根 radio.txt/logos.txt（update-sources.js 产出的单一数据源）→ assets，随行写 data-stamp.txt

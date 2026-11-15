@@ -1,7 +1,8 @@
 {
   "phase": "p2",
-  "head": "39fabbb",
-  "started": "2026-11-15T10:56:05.210Z",
+  "head": "924a59b",
+  "headNote": "head = 采证时的代码提交；承载本文件的产物提交不改代码，git log 验证：产物提交父 == head 且 diff 仅 evidence/**",
+  "started": "2026-11-15T11:10:54.071Z",
   "pass": 13,
   "fail": 0,
   "assertions": [

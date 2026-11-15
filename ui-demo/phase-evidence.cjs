@@ -297,7 +297,7 @@ async function main() {
         return t ? { has: true, fn: !!(t.closest('[data-k]') && t.closest('[data-k]').dataset.fn), tt: !!document.querySelector('#namett') } : { has: false }; }); // data-fn 挂在行/卡容器（app.js:680），非 span 自身
       (st.has && st.fn && st.tt) ? ok('G6', '行/卡名称 .station-title[data-fn] + #namett 单例 tooltip 就位', JSON.stringify(st)) : bad('G6', 'station-title', JSON.stringify(st));
       await on.screenshot({ path: path.join(OUT, 'p3-1440-hero.png') });
-    }
+    }
     if (FAULT_CLEANUP && wtAlive) faultPin = spawn(process.execPath, ['-e', 'setTimeout(()=>{},120000)'], { cwd: wt, stdio: 'ignore' }); // 钉住目录令 worktree remove 必败
 
 
@@ -322,9 +322,13 @@ async function main() {
       ? ok('Z3', '清理失败门：browser 关闭 / server 退出 / worktree 移除全部成功（零泄漏成立）', '')
       : bad('Z3', '清理失败门未过（不得宣称零泄漏，需手动回收）', cleanupErr.join(' | ') + (srvGone ? '' : ' [server未退出]') + (wtGone ? '' : ' [worktree未移除]'));
     if (faultPin) { try { faultPin.kill(); await sleep(500); git(`worktree remove --force "${wt}"`); console.error('（注入钉已拔除并补清理，临时 worktree 已回收——Z3 失败记录保留为门验证证据）'); } catch (_) { try { faultPin.kill(); } catch (_) {} console.error('注入钉拔除后仍需手动清理:', wt); } }
-    fs.writeFileSync(path.join(OUT, 'evidence.json'), JSON.stringify({ phase: PHASE, head: git('rev-parse --short HEAD').trim(), started, pass, fail, assertions: rec }, null, 2));
+    // head 不变式（AIbot 四轮可追溯性意见）：head = 采证时刻的代码提交；本 evidence.json 自身的提交只改产物不改代码，
+    // 验证 = 产物提交的父提交 === head 且产物提交 diff 仅 docs/ui-redesign-assets/evidence/**（详见 evidence/README.md）
+    fs.writeFileSync(path.join(OUT, 'evidence.json'), JSON.stringify({ phase: PHASE, head: git('rev-parse --short HEAD').trim(),
+      headNote: 'head = 采证时的代码提交；承载本文件的产物提交不改代码，git log 验证：产物提交父 == head 且 diff 仅 evidence/**',
+      started, pass, fail, assertions: rec }, null, 2));
     if (fail) process.exitCode = 1;
     console.log(`phase-evidence(${PHASE}): ${pass} 通过, ${fail} 失败 → ${path.relative(ROOT, OUT)}`);
   }
 }
-main().catch(e => { console.error('phase-evidence 挂了:', e); process.exitCode = 1; });
+main().catch(e => { console.error('phase-evidence 挂了:', e); process.exitCode = 1; });

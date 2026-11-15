@@ -119,10 +119,12 @@ function uiPhaseRunning(phase, hidden, reduce) {
   return phase === 'playing' && !hidden && !reduce;
 }
 
-/* ---------- 数据分区预览纯函数（ui-redesign §5.5，P5）：cfg 差异计数——只算数不触 DOM，test/ui-data.js
-   直测。uiCfgDiff 逐字段统计 增/删/改 键数（cats 数组按去重集合差、无「改」态；其余数组值整值比较——
-   srcs/srcManualOrder 等元素顺序有意义）；计数可交换 → 键序无关。空 incoming（重置/空配置导入）= 全清
-   计数，是「将清空全部 N 项」明示的依据。 ---------- */
+/* ---------- 数据分区预览纯函数（ui-redesign §5.5，P5）：cfg 差异计数与备份覆盖预览组装——只算数不触 DOM，
+   test/ui-data.js 直测。uiCfgDiff 逐字段统计 增/删/改 键数（cats 数组按去重集合差、无「改」态；其余数组值
+   整值比较——srcs/srcManualOrder 等元素顺序有意义）；计数可交换 → 键序无关；空 incoming（重置/空配置导入）
+   = 全清计数，是「将清空全部 N 项」明示的依据。uiBackupPreview 把 BackupV3.read 的 info 组装成面板行/
+   版本兼容说明/本形态不可用项/sidecar 可恢复性（质量 sidecar 仅 http 形态可恢复，收听统计双形态——
+   file:// 走本地快照；与 BackupV3.commitImport 的 io.http 分支严格同口径）。 ---------- */
 const UI_CFG_FIELDS = [ // 预览展示序 + 中文标签（cfg 字段 → 面板行；tag = 失配清单用的默认名快照，一并计入）
   ['moves', '电台移动分类'], ['names', '电台改名'], ['hideS', '隐藏电台'], ['renames', '分类改名'],
   ['hideC', '隐藏分类'], ['cats', '自建分类'], ['srcs', '追加备选源'], ['srcManualOrder', '源手动排序'],
@@ -1503,7 +1505,13 @@ const App = {
     }
     $('mCats').hidden = tab !== 'cats'; $('mStations').hidden = tab !== 'st'; $('mData').hidden = tab !== 'data';
     this.renderMiss();
-    if (tab === 'cats') this.renderMCats(); else if (tab === 'st') this.renderMStations();
+    if (tab === 'cats') this.renderMCats(); else if (tab === 'st') this.renderMStations(); else this.renderDataEnv();
+  },
+  renderDataEnv() { // 数据分区能力矩阵（§5.5 file:// 诚实降级）：就地明示可用/不可用项，不用 toast 轰炸；按钮现状保持（动作自身已有降级）
+    const el = $('mDataEnv'); if (!el) return;
+    el.innerHTML = location.protocol.startsWith('http') ? ''
+      : '<div class="miss"><b>file:// 降级形态能力说明</b>：可用——备份导出（含本地收听统计）/维护配置导出·导入·重置/歌单与粘贴导入（纯本地解析）/收听统计 sidecar 恢复（写本地快照）。'
+      + '不可用（需 npm start 的 http 形态）——恢复备份中的个人电台列表与质量 sidecar 写入、添加自定义电台（探活）、同步与体检、曲讯显示。</div>';
   },
   askName(title, def = '') { // 弹名 + 校验：非空、无 |（keyOf 分隔符）、24 字内
     let v = null; try { v = prompt(title + '（不能含 |，24 字以内）', def); } catch (_) { return ''; }

@@ -39,6 +39,13 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.
 // 数据根（test/harness/api-client.js 临时应用根），单写进程是支持形态。
 let tmpSeq = 0;
 const tmpOf = f => f + '.' + process.pid + '-' + (++tmpSeq) + '.tmp';
+// rename 短重试（Windows 环境性瞬时锁：杀毒/索引器摸目标文件 → EPERM/EACCES，实测并发写 1/30 命中）——
+// 3 次 × 50ms 内自愈，避免把瞬态锁当真写失败（200 ok:false → 客户端置 dirty 重推，数据不丢但白折腾）；
+// 其余错误码照旧直通。
+const renameRetry = (from, to, cb, n = 3) => fs.rename(from, to, e => {
+  if (e && (e.code === 'EPERM' || e.code === 'EACCES') && n > 0) return setTimeout(() => renameRetry(from, to, cb, n - 1), 50);
+  cb(e);
+});
 // Host 头白名单（audit A3，防 DNS rebinding）：回环监听（默认）下只认本机名——rebinding 攻击里页面
 // Origin==Host==攻击者域名，所有 Origin 比对失效，从握手层直接拒绝；HOST=0.0.0.0 显式局域网档自担
 // 风险不校验；HOST 指定具体地址时该地址随行放行（127.0.0.2 等其它环回变形会被拒，属可接受收紧）
@@ -97,7 +104,7 @@ function myStationWrite(n, u, c) {
     const out = lines.join('\r\n').replace(/^\r\n/, '') + '\r\n';
     const tmp = tmpOf(MY_FILE);
     fs.writeFile(tmp, out, e => e ? done({ ok: false, error: '写入失败' })
-      : fs.rename(tmp, MY_FILE, e2 => done(e2 ? { ok: false, error: '写入失败' } : { ok: true })));
+      : renameRetry(tmp, MY_FILE, e2 => done(e2 ? { ok: false, error: '写入失败' } : { ok: true })));
   })).catch(() => ({ ok: false, error: '写入失败' }));
 }
 
@@ -108,7 +115,7 @@ function myRadioReplace(lines) {
     const out = lines.length ? lines.join('\r\n') + '\r\n' : '';
     const tmp = tmpOf(MY_FILE);
     fs.writeFile(tmp, out, e => e ? done({ ok: false, error: '写入失败' })
-      : fs.rename(tmp, MY_FILE, e2 => done(e2 ? { ok: false, error: '写入失败' } : { ok: true })));
+      : renameRetry(tmp, MY_FILE, e2 => done(e2 ? { ok: false, error: '写入失败' } : { ok: true })));
   })).catch(() => ({ ok: false, error: '写入失败' }));
 }
 
@@ -136,7 +143,7 @@ function storeWrite(data) {
     fs.mkdir(DATA_DIR, { recursive: true }, e => {
       if (e) return done({ ok: false, error: '写入失败' });
       fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
-        : fs.rename(tmp, STORE_FILE, e3 => {
+        : renameRetry(tmp, STORE_FILE, e3 => {
           if (e3) return done({ ok: false, error: '写入失败' });
           storeRev = rev; storeCache = { rev, data };
           done({ ok: true, rev });
@@ -233,7 +240,7 @@ function qReplace(clean) { // 覆盖写 data（去重日志保留：旧 op 重�
     fs.mkdir(DATA_DIR, { recursive: true }, e => {
       if (e) return done({ ok: false, error: '写入失败' });
       fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
-        : fs.rename(tmp, QUALITY_FILE, e3 => {
+        : renameRetry(tmp, QUALITY_FILE, e3 => {
           if (e3) return done({ ok: false, error: '写入失败' });
           qCache = st; qCache.rev = rev; done({ ok: true, rev });
         }));
@@ -270,7 +277,7 @@ function qCommit(ops, keep) { // 串行：克隆当前态 → 应用（qApplyOp�
     fs.mkdir(DATA_DIR, { recursive: true }, e => {
       if (e) return done({ ok: false, error: '写入失败' });
       fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
-        : fs.rename(tmp, QUALITY_FILE, e3 => {
+        : renameRetry(tmp, QUALITY_FILE, e3 => {
           if (e3) return done({ ok: false, error: '写入失败' });
           qCache = st; qCache.rev = rev; done({ ok: true, rev, applied, rejected });
         }));
@@ -343,7 +350,7 @@ function lsCommit(ops) { // 串行：克隆当前态 → op.id 去重 + 日桶�
     fs.mkdir(DATA_DIR, { recursive: true }, e => {
       if (e) return done({ ok: false, error: '写入失败' });
       fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
-        : fs.rename(tmp, LS_FILE, e3 => {
+        : renameRetry(tmp, LS_FILE, e3 => {
           if (e3) return done({ ok: false, error: '写入失败' });
           lsCache = st; lsCache.rev = rev; done({ ok: true, rev, applied });
         }));
@@ -388,7 +395,7 @@ function lsReplace(clean) { // 覆盖写 days（op 去重日志保留：旧 op �
     fs.mkdir(DATA_DIR, { recursive: true }, e => {
       if (e) return done({ ok: false, error: '写入失败' });
       fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
-        : fs.rename(tmp, LS_FILE, e3 => {
+        : renameRetry(tmp, LS_FILE, e3 => {
           if (e3) return done({ ok: false, error: '写入失败' });
           lsCache = st; lsCache.rev = rev; done({ ok: true, rev });
         }));

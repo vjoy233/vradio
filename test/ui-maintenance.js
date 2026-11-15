@@ -595,6 +595,112 @@ okA('P2 详情源行重绘：草稿动作经 mEditorPaint 驱动 renderDetail，
   } finally { el('detail').hidden = true; Object.assign(App, keep); }
 });
 
+/* ============================================================ [8] PR#32 AIbot 二次 review P1：待保存追加源可见可管 */
+console.log('[8] review-r2 P1：追加源探活通过即入草稿有效集合（原生−移除+追加）——行可见序一致、四项操作生效、取消丢弃/保存入 cfg');
+// 本组跑真实渲染链（mEditorPaint→renderEditor→mEditorSrcHtml）：补 Player/location 桩（编辑器行渲染的触点）
+sandbox.Player = { station: null, srcOrder: () => [0], curSi: -1 };
+sandbox.location = { protocol: 'http:' };
+// 与 [7] 同 gate 法串行：先等 P2（p1gate 后的微任务链）跑完再动共享 App.* 槽位；组内两用例再串一道
+let t8done; const t8gate = new Promise(r => { t8done = r; });
+okA('P1 待保存追加可见可管：行可见带徽标序一致；标签/上移/禁用/移除四项生效于草稿且绝不触碰 s.u', async () => {
+  await p1gate.then(() => new Promise(r => setTimeout(r, 0))); // 宏任务边界：等 [7] P2 的微任务链全部落地
+  const A = mkSt('台A', '新闻', ['http://a/1', 'http://a/2']);
+  A.mo = [0, 1]; A.dis = [];
+  App.state = { stations: [A] };
+  App.cfg = App.normCfg(null);
+  const cfgBox = { cfg: App.cfg };
+  el('detail').hidden = true; // 编辑器落 #mEdit 宿主（本组不开详情浮层）
+  const keep = { renderDetail: App.renderDetail, mEditor: App.mEditor };
+  App.renderDetail = () => {};
+  try {
+    const ed = uiCreateEditor(makeIo(cfgBox, [A], { render: (d, saving) => App.mEditorPaint(d, saving) })); // 同 boot io.render 接线
+    App.mEditor = ed;
+    ed.begin('http://a/1', 'src');
+    ed.mutate(p => { p.appends.push('http://app/1'); }); // = mSrcProbe 探活通过后的等价草稿态（探活请求属服务端测试面）
+    // 可见性：dSrcRows（详情行数据源）与编辑器行都含待保存追加，序一致
+    let dv = App.dSrcRows(A);
+    assert.deepStrictEqual(snap(dv.urls), ['http://a/1', 'http://a/2', 'http://app/1']);
+    assert.deepStrictEqual(snap(dv.order), [0, 1, 2]);
+    assert.deepStrictEqual(snap(dv.pends), ['http://app/1']);
+    const html = el('mEdit').innerHTML;
+    assert.ok(html.includes('http://app/1'), '编辑器行渲染待保存追加（review 点名：旧代码只有顶部计数、无行）');
+    assert.match(html, /追加·待保存/);
+    assert.match(html, /共 3 条/);
+    assert.match(html, /1 条待保存追加/);
+    assert.ok(html.includes('data-u="http://app/1"'), '行内移除入口');
+    assert.deepStrictEqual([...html.matchAll(/<i class="idx">(\d+)<\/i>/g)].map(m => +m[1]), [1, 2, 3], '行展示序 = dSrcRows order+dis（data-i 同空间）');
+    assert.ok(!/data-sact="play"[^>]*data-i="2"/.test(html), '待保存行不出 ▶（保存后才可试听）');
+    // ① 标签：逐键入草稿（待保存行同样可标）
+    App.mSrcLabelInput('http://app/1', '车机');
+    assert.strictEqual(ed.getDraft().patch.labels['http://app/1'], '车机');
+    // ② 上移：材料化完整人工序（含待保存 URL——保存落 srcManualOrder，落库后即在集合内）
+    App.mSrcMove(A, 2, -1);
+    assert.deepStrictEqual(snap(App.dSrcRows(A).order), [0, 2, 1]);
+    assert.deepStrictEqual(snap(ed.getDraft().patch.manual), ['http://a/1', 'http://app/1', 'http://a/2']);
+    // ③ 禁用：禁位殿后（srcDisabled 可含待保存 URL，同上落库即生效）
+    App.mSrcToggleDis(A, 2);
+    dv = App.dSrcRows(A);
+    assert.deepStrictEqual(snap(dv.order), [0, 1]); assert.deepStrictEqual(snap(dv.dis), [2]);
+    assert.deepStrictEqual(snap(ed.getDraft().patch.disabled), ['http://app/1']);
+    assert.strictEqual(App.mSrcValidate(A, ed.getDraft().patch), ''); // 草稿有效集合内全部合法（人工序/禁用表点名通过）
+    // ④ 移除 = 从 patch.appends 删（材料化序/禁用/标签草稿一并清，不留幽灵键），s.u 绝不动
+    App.mSrcRemoveAppend(A, 'http://app/1');
+    const p = ed.getDraft().patch;
+    assert.deepStrictEqual(snap(p.appends), []);
+    assert.deepStrictEqual(snap(p.manual), ['http://a/1', 'http://a/2']); // 幽灵 URL 已剔（否则校验假报「源集合已变化」）
+    assert.deepStrictEqual(snap(p.disabled), []);
+    assert.ok(!('http://app/1' in p.labels));
+    assert.deepStrictEqual(snap(App.dSrcRows(A).urls), ['http://a/1', 'http://a/2']);
+    assert.deepStrictEqual(A.u, ['http://a/1', 'http://a/2'], 's.u 未被物理触碰（身份公理）');
+    assert.strictEqual(App.mSrcValidate(A, p), '');
+    // 纯追加→移除：草稿回到无调整（旧代码 removes 吃进幽灵键会假脏、保存写空变更）
+    ed.begin('http://a/1', 'src');
+    ed.mutate(pp => { pp.appends.push('http://app/2'); });
+    App.mSrcRemoveAppend(A, 'http://app/2');
+    assert.strictEqual(ed.getDraft().dirty, false);
+  } finally { Object.assign(App, keep); t8done(); }
+});
+okA('P1 保存/取消：待保存追加经 uiBuildSrcNext 落 cfg（行为不变）；取消即丢弃、行集回装配态', async () => {
+  await t8gate;
+  const B = mkSt('台B', '音乐', ['http://b/1', 'http://b/2']);
+  App.state = { stations: [B] };
+  const cfgBox = { cfg: App.normCfg(null) };
+  App.cfg = cfgBox.cfg;
+  const keep = { renderDetail: App.renderDetail, mEditor: App.mEditor };
+  App.renderDetail = () => {};
+  try {
+    const ed = uiCreateEditor(makeIo(cfgBox, [B], { validate: (subj, patch) => App.mSrcValidate(subj, patch) })); // 接真实校验（同 boot 接线）
+    App.mEditor = ed;
+    ed.begin('http://b/1', 'src');
+    ed.mutate(p => { p.appends.push('http://app/1'); });
+    App.mSrcToggleDis(B, 2); // 禁用待保存追加
+    App.mSrcLabelInput('http://app/1', '车机');
+    assert.strictEqual(await ed.save(), true);
+    assert.deepStrictEqual(snap(cfgBox.cfg.srcs['http://b/1']), ['http://app/1']); // 追加源写入 cfg（uiBuildSrcNext 行为不变）
+    assert.deepStrictEqual(snap(cfgBox.cfg.srcDisabled['http://b/1']), ['http://app/1']); // 禁用表可含新追加 URL（落库即在集合内）
+    assert.strictEqual(cfgBox.cfg.srcLabels['http://app/1'], '车机');
+    assert.strictEqual(cfgBox.cfg.tag['http://b/1'], '台B'); // 有源调整 → tag 落默认名（既有口径）
+    // 取消丢弃：重开草稿再追加后 end()——cfg 不动、行集回装配态（既有语义）
+    ed.begin('http://b/1', 'src');
+    ed.mutate(p => { p.appends.push('http://app/2'); });
+    ed.end();
+    assert.deepStrictEqual(snap(cfgBox.cfg.srcs['http://b/1']), ['http://app/1'], '取消不落盘');
+    const dv = App.dSrcRows(B);
+    assert.deepStrictEqual(snap(dv.urls), ['http://b/1', 'http://b/2'], '待保存追加随草稿丢弃');
+    assert.deepStrictEqual(snap(dv.pends), []);
+  } finally { Object.assign(App, keep); }
+});
+ok('P1 校验扩容：人工序/禁用表对草稿有效集合点名——待保存追加 URL 合法在列；未追加即引用仍是未知地址', () => {
+  App.state = { stations: [mkSt('台A', '新闻', ['http://a/1'])] };
+  App.cfg = App.normCfg(null);
+  const A = App.state.stations[0];
+  const P = over => Object.assign({ manual: null, disabled: null, labels: {}, appends: [], removes: [] }, over);
+  assert.strictEqual(App.mSrcValidate(A, P({ appends: ['http://app/1'], manual: ['http://a/1', 'http://app/1'] })), ''); // 待保存 URL 入序合法
+  assert.strictEqual(App.mSrcValidate(A, P({ appends: ['http://app/1'], disabled: ['http://app/1'] })), ''); // 入禁用表合法
+  assert.match(App.mSrcValidate(A, P({ manual: ['http://app/1'] })), /未知源地址/); // 未追加却在序中 = 未知（防幽灵键落库）
+  assert.strictEqual(App.mSrcValidate(A, P({ appends: ['http://new/1'], manual: null, disabled: null })), ''); // 兜底：纯追加仍通过
+});
+
 (async () => { // 等齐全部异步用例再汇总（okA 已在调用时启动，引擎 save/depart 走微任务）
   await Promise.all(pending);
   console.log(`\n${pass} 通过，${fail} 失败`);

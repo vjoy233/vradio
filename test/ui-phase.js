@@ -1,7 +1,7 @@
 // UI 播放阶段/台标外框测试（ui-redesign P3 §4.2/§6.10）：零依赖离线，npm test 随跑。
 // ① logos.js 经 vm 沙箱直测（classic script 无模块出口，读源码取 Logos）：tone() 分类固定色板覆盖 radio.txt
-//    全部真实分类、未知分类中性兜底、data-tone 只出安全 token；visual() 统一外框结构（有图/无图同框同 token）、
-//    坏图回退 phf 只换内层节点不再带 inline 底色（色全由外框 CSS 给，同框同色）。
+//    全部真实分类、未知分类中性兜底、data-tone 只出安全 token；visual() 统一外框结构（有图/无图同框同 token、
+//    恰好一层 exact-one-wrapper——AIbot PR#31 P1）、坏图回退 phf 只换内层节点不再带 inline 底色（色全由外框 CSS 给，同框同色）。
 // ② app.js 剥尾部 boot 块后取顶层纯函数 uiPhaseRunning（唱片旋转判定三态：真实 playing × 页面可见 × 未减动效）。
 const assert = require('assert'), fs = require('fs'), path = require('path'), vm = require('vm');
 
@@ -50,6 +50,14 @@ ok('img() 同款外框（Logos.img 直用点不脱框）', () => {
   const h = Logos.img({ c: '财经', n: '第一财经', l: 'http://img/b.png', u: ['http://a/3'] });
   assert.match(h, /^<span class="station-logo" data-tone="gold" aria-hidden="true"><img class="logo"/);
   assert.strictEqual(Logos.img({ c: '财经', n: '无图台', u: ['http://a/4'] }), ''); // 无 URL 仍回空串（visual 负责兜底）
+});
+ok('exact-one-wrapper：visual 有图/无图、img 三形态恰好一层 .station-logo 外框（AIbot PR#31 review P1：嵌套双框叠加 border/底色/尺寸）', () => {
+  const layers = h => (String(h).match(/class="station-logo"/g) || []).length;
+  const withImg = Logos.visual({ c: '华语音乐', n: 'Test', l: 'http://img/x', u: ['http://a/1'] }); // review 复现样本
+  assert.strictEqual(layers(withImg), 1, 'visual 有图应恰好一层外框');
+  assert.strictEqual(layers(Logos.visual({ c: '华语音乐', n: 'Test', u: ['http://a/2'] })), 1, 'visual 无图应恰好一层外框');
+  assert.strictEqual(layers(Logos.img({ c: '财经', n: '第一财经', l: 'http://img/b.png', u: ['http://a/3'] })), 1, 'img 应恰好一层外框');
+  assert.strictEqual(Logos.visual({ c: '华语音乐', n: 'Test', l: 'http://img/x', u: ['http://a/1'] }), Logos.img({ c: '华语音乐', n: 'Test', l: 'http://img/x', u: ['http://a/1'] }), 'visual 有图须直接复用 img() 产物（单一拼装路径）');
 });
 ok('phf() 坏图只换内层节点：不再带 inline 底色（改由外框 data-tone CSS 上色，同框同色）', () => {
   let replaced = null;

@@ -490,6 +490,111 @@ ok('uiSameProj：任一同对象字段变化 → 投影不等（M02 检测面）
   assert.strictEqual(uiSameProj(uiSrcProjection(cfg, SA), p0), true);
 });
 
+/* ============================================================ [7] PR#32 AIbot review 回归（2×P1+P2） */
+console.log('[7] PR#32 review 修复：openDetail 草稿三选门 / 失配清理 reapply 链 / 详情源行随草稿重绘');
+// DOM 最小桩（openDetail/mEditorPaint 的触点）：contextified 对象上后补全局对 VM 内运行时可见
+const els = {};
+const el = id => els[id] || (els[id] = { hidden: true, focus() {}, textContent: '', innerHTML: '', dataset: {}, querySelector: () => null });
+sandbox.document = { activeElement: null, getElementById: el };
+
+// 注意：本组两用例都改写共享的 App.* 槽位（detail/mEditor/渲染方法），异步用例经微任务交错会互踩——
+// 用 gate 串行（P1 跑完才放行 P2），与 [4] 各用例自带局部 cfgBox 的隔离法不同但同样显式
+let p1done; const p1gate = new Promise(r => { p1done = r; });
+okA('P1 openDetail：他台 dirty 草稿先过三选——stay 中止不打开不丢草稿；放弃/保存后才换台；同台 src 草稿不弹门', async () => {
+  const keep = { renderDetail: App.renderDetail, mEditorRepaint: App.mEditorRepaint, checkStationSources: App.checkStationSources, mEditor: App.mEditor };
+  try {
+    const A = mkSt('台A', '新闻', ['http://a/1']), B = mkSt('台B', '音乐', ['http://b/1']);
+    App.state = { stations: [A, B] };
+    const SENT = { stationKey: 'SENTINEL', results: [], loading: false, error: '', openedAt: 0 };
+    App.detail = { ...SENT };
+    let opened = 0;
+    App.renderDetail = () => { opened++; }; App.mEditorRepaint = () => {}; App.checkStationSources = () => {};
+    // stay：编辑台A（st 草稿改名）时开台B 详情 → 三选选「继续编辑」→ 中止不打开、草稿原样（不被静默丢弃）
+    let choice = 'stay';
+    const cfgBox = { cfg: App.normCfg(null) };
+    App.cfg = cfgBox.cfg;
+    const ed = uiCreateEditor(makeIo(cfgBox, [A, B], { confirmLeave: async () => choice }));
+    App.mEditor = ed;
+    ed.begin('http://a/1', 'st'); ed.change('name', '草稿名');
+    await App.openDetail(B);
+    assert.strictEqual(App.detail.stationKey, 'SENTINEL');
+    assert.strictEqual(ed.getDraft().patch.name, '草稿名'); // AIbot P1 核心：旧代码此处直接 mEditorEnd 丢草稿
+    // discard：明确放弃后才关旧草稿并打开台B
+    choice = 'discard';
+    await App.openDetail(B);
+    assert.strictEqual(ed.getDraft(), null);
+    assert.strictEqual(App.detail.stationKey, keyOf(B));
+    assert.ok(opened >= 1);
+    // save：保存并继续 → 先落盘再换台
+    App.detail = { ...SENT };
+    const ed2 = uiCreateEditor(makeIo(cfgBox, [A, B], { confirmLeave: async () => 'save' }));
+    App.mEditor = ed2;
+    ed2.begin('http://a/1', 'st'); ed2.change('category', '音乐');
+    await App.openDetail(B);
+    assert.strictEqual(cfgBox.cfg.moves['http://a/1'], '音乐'); // 保存成功才继续
+    assert.strictEqual(App.detail.stationKey, keyOf(B));
+    // 同台 src 草稿：开本台详情不过三选（草稿随宿主迁入 #dEdit，既有语义不变）
+    let asked = 0;
+    const ed3 = uiCreateEditor(makeIo(cfgBox, [A, B], { confirmLeave: async () => { asked++; return 'stay'; } }));
+    App.mEditor = ed3;
+    ed3.begin('http://b/1', 'src');
+    App.detail = { ...SENT };
+    await App.openDetail(B);
+    assert.strictEqual(asked, 0);
+    assert.strictEqual(App.detail.stationKey, keyOf(B));
+  } finally { Object.assign(App, keep); p1done(); }
+});
+ok('P1 失配清理：走 saveCfg→reapplyCfg 完整链（同正常提交，主列表随行重套/重渲），命中台的有效调整不误删', () => {
+  App.state = { stations: [mkSt('台A', '新闻', ['http://a/1'])] };
+  App.cfg = App.normCfg({ v: 2, names: { 'http://a/1': '有效名', 'http://ghost/1': '幽灵名' },
+    srcDisabled: { 'http://gone/0': ['http://gone/1'] }, srcLabels: { 'http://ghost/2': '幽灵标签' }, tag: { 'http://ghost/1': '幽灵台' } });
+  const calls = [];
+  const keep = { saveCfg: App.saveCfg, reapplyCfg: App.reapplyCfg };
+  App.saveCfg = () => calls.push('saveCfg'); App.reapplyCfg = () => calls.push('reapplyCfg');
+  try {
+    App.missClear();
+    assert.deepStrictEqual(calls, ['saveCfg', 'reapplyCfg']); // AIbot P1：旧代码只 saveCfg+renderManage，漏 reapply/render
+    assert.strictEqual(App.cfg.names['http://ghost/1'], undefined); // 失配键全清（含生命周期三字段/标签/tag）
+    assert.strictEqual(App.cfg.srcDisabled['http://gone/0'], undefined);
+    assert.strictEqual(App.cfg.srcLabels['http://ghost/2'], undefined);
+    assert.strictEqual(App.cfg.tag['http://ghost/1'], undefined);
+    assert.strictEqual(App.cfg.names['http://a/1'], '有效名'); // 命中台的有效调整不误删
+  } finally { Object.assign(App, keep); }
+});
+okA('P2 详情源行重绘：草稿动作经 mEditorPaint 驱动 renderDetail，行序 dSrcRows 随草稿实时重算（data-i 一致）', async () => {
+  await p1gate; // 等 P1 释放 App.* 槽位（见上方串行说明）
+  const A = mkSt('台A', '新闻', ['http://a/1', 'http://a/2']);
+  A.mo = [0, 1]; A.dis = [];
+  App.state = { stations: [A] };
+  App.cfg = App.normCfg(null);
+  const cfgBox = { cfg: App.cfg };
+  App.detail = { stationKey: keyOf(A), results: [], loading: false, error: '', openedAt: 0 };
+  el('detail').hidden = false; // VM 无 UI：直接模拟详情浮层已开
+  let paints = 0;
+  const keep = { renderDetail: App.renderDetail, renderEditor: App.renderEditor, mEditor: App.mEditor };
+  App.renderDetail = () => { paints++; }; App.renderEditor = () => {}; // 编辑器区渲染依赖完整 DOM，桩掉；只证 detail 行重绘被驱动
+  App.mEditor = uiCreateEditor(makeIo(cfgBox, [A], {
+    render: (d, saving) => App.mEditorPaint(d, saving), // 同 boot io.render 接线（AIbot P2 修复点）
+  }));
+  try {
+    await App.mSrcDetailOp(A, 1, 'up'); // 首次动作：begin + mutate 两次重绘
+    assert.strictEqual(paints, 2);
+    assert.deepStrictEqual(snap(App.dSrcRows(A).order), [1, 0]); // 行序=草稿新有效序（源2 在前）——data-i 重算
+    await App.mSrcDetailOp(A, 0, 'dis'); // 禁用主源：禁位殿后、行内禁用态随草稿
+    assert.strictEqual(paints, 3);
+    const dv = App.dSrcRows(A);
+    assert.deepStrictEqual(snap(dv.order), [1]); assert.deepStrictEqual(snap(dv.dis), [0]);
+    await App.mSrcDetailOp(A, 1, 'label'); // 只聚焦编辑器标签输入：草稿未变不重绘
+    assert.strictEqual(paints, 3);
+    App.mSrcLabelInput('http://a/2', '车机'); // 标签逐键入草稿：同样驱动重绘 + 草稿标签入行序数据
+    assert.strictEqual(paints, 4);
+    assert.strictEqual(App.dSrcRows(A).labels['http://a/2'], '车机');
+    App.mEditor = null; // 草稿关闭（保存/取消后）：回装配态，不残留草稿序
+    assert.deepStrictEqual(snap(App.dSrcRows(A).order), [0, 1]);
+    assert.deepStrictEqual(snap(App.dSrcRows(A).dis), []);
+  } finally { el('detail').hidden = true; Object.assign(App, keep); }
+});
+
 (async () => { // 等齐全部异步用例再汇总（okA 已在调用时启动，引擎 save/depart 走微任务）
   await Promise.all(pending);
   console.log(`\n${pass} 通过，${fail} 失败`);

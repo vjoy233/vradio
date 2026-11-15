@@ -1,7 +1,8 @@
 // 质量客户端纯函数测试（B2，契约 contracts/quality-summary.json；口径对齐 Android QualityStore.kt 冻结语义，
 // android/CONTRACTS.md B2 节四拍板：30 天窗近似/台级 cf/metadata 派生/trim 下钻式）：
 // 覆盖 qApplyOp 聚合应用（含每台 6 源封顶）、qStability 四档判定次序、qSummary 聚合形态与派生字段、
-// qTrim 下钻淘汰序 + keep 保护集、QualityStore 本地 op 构建/rebase 重放（ops 重试不重复计数）。
+// qTrim 下钻淘汰序 + keep 保护集、QualityStore 本地 op 构建/rebase 重放（ops 重试不重复计数）、
+// flush 409/网络失败分类处置（fake fetch 注入：schema 丢批留痕 / batch-limit 减半分批 / 其余保留 pending）。
 // Node 直跑：quality-store.js 双兼容（经典 script + CommonJS），浏览器 API 全在函数体内守卫。
 const assert = require('assert');
 const { QualityStore, QCAPS, qNormMode, qApplyOp, qTrim, qSummary, qStability } = require('../quality-store');
@@ -219,6 +220,64 @@ const newStations = () => ({});
     const qa = qSummary(stations, fx.identityUrl, null, fx.expected.lastObservedAt);
     assert.notStrictEqual(qa, null);
     assert.deepStrictEqual(qa, fx.expected);
+  });
+
+  console.log('[8] flush 409/失败分类处置（AIbot PR#26 复核 P2：schema 丢批留痕、batch-limit 减半分批、容量/网络保留 pending）');
+  const newSQ = () => { const Q = Object.create(QualityStore); Q.mode = 'server'; Q.stations = {}; Q.pend = []; Q.keepHint = []; Q.seq = 0; Q.sid = 'tq8'; Q.rev = 0; return Q; };
+  const res409 = code => ({ status: 409, json: async () => Object.assign({ ok: false, error: 'e' }, code ? { code } : {}) });
+  const resOK = rev => ({ status: 200, json: async () => ({ ok: true, rev, applied: 1 }) });
+  const stubFetch = fn => { const orig = global.fetch; global.fetch = fn; return () => { global.fetch = orig; }; }; // flush 走全局 fetch，注入 fake 服务端
+  await ok('schema 409 → 整批丢弃不留 pending + console.warn 留痕（不可恢复）', async () => {
+    const Q = newSQ(); Q.pend = [op({}), op({}), op({})];
+    const warns = [], cw = console.warn; console.warn = m => warns.push(String(m));
+    const undo = stubFetch(async () => res409('schema'));
+    await Q.flush();
+    undo(); console.warn = cw;
+    assert.strictEqual(Q.pend.length, 0, '非法批丢弃后 pend 清空（旧版无条件丢批，现仅 schema 才丢）');
+    assert.strictEqual(warns.length, 1); assert.ok(warns[0].includes('schema'), '丢批留痕');
+  });
+  await ok('batch-limit 409 → 减半分批重试成功（批宽 4→2，成功后续投沿用 2 不回弹）', async () => {
+    const Q = newSQ(); Q.pend = [op({}), op({}), op({}), op({})];
+    const sizes = [];
+    const undo = stubFetch(async (u, opt) => {
+      const ops = JSON.parse(opt.body).ops; sizes.push(ops.length);
+      return ops.length > 2 ? res409('batch-limit') : { status: 200, json: async () => ({ ok: true, rev: 9, applied: ops.length }) };
+    });
+    await Q.flush();
+    undo();
+    assert.deepStrictEqual(sizes, [4, 2, 2], '首撞 409 减半 → 半批成功 → 剩余续投同宽');
+    assert.strictEqual(Q.pend.length, 0);
+    assert.strictEqual(Q.rev, 9);
+  });
+  await ok('batch-limit 409 减半到单条仍被拒 → 停手保留 pending（不无限递归）', async () => {
+    const Q = newSQ(); Q.pend = [op({}), op({})];
+    let n = 0;
+    const undo = stubFetch(async () => { n++; return res409('batch-limit'); });
+    await Q.flush();
+    undo();
+    assert.strictEqual(n, 2, '2 条批被拒 → 1 条批仍被拒 → 不再减半');
+    assert.strictEqual(Q.pend.length, 2, 'pend 原样保留待下次重试');
+  });
+  await ok('too-large 409 / 无 code 409 → 保留 pending（容量/暂时失败可恢复）', async () => {
+    const codes = ['too-large', ''];
+    const undo = stubFetch(async () => res409(codes.shift()));
+    const Q1 = newSQ(); Q1.pend = [op({})]; await Q1.flush();
+    assert.strictEqual(Q1.pend.length, 1, 'too-large：pend 保留');
+    const Q2 = newSQ(); Q2.pend = [op({})]; await Q2.flush();
+    assert.strictEqual(Q2.pend.length, 1, '无 code（旧版/畸形响应）：按容量/暂时保守保留');
+    undo();
+  });
+  await ok('网络失败 → 保留 pending；下次 flush 重试成功清空并更新 rev', async () => {
+    const Q = newSQ(); Q.pend = [op({}), op({})];
+    let down = true;
+    const undo = stubFetch(async () => { if (down) throw new TypeError('fetch failed'); return resOK(5); });
+    await Q.flush();
+    assert.strictEqual(Q.pend.length, 2, '断网不出批：pend 保留（计划 §6.1 语义）');
+    down = false;
+    await Q.flush();
+    undo();
+    assert.strictEqual(Q.pend.length, 0);
+    assert.strictEqual(Q.rev, 5);
   });
 
   console.log(`\n${pass} 通过，${fail} 失败`);

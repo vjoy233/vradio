@@ -1,6 +1,7 @@
 // 质量 sidecar API 测试（B0 骨架 + B2 聚合形态，契约 contracts/quality-summary.json）：真服务端到端——
 // 方法校验、跨源拒绝、rev 发号/条件获取（notModified）、op.id 幂等（重试不重复计数）、
-// 多标签同 baseRev 并发合流、keep 保护集附带（B2 trim 落地）、schema/批量上限 409、损坏文件按空库恢复；
+// 多标签同 baseRev 并发合流、keep 保护集附带（B2 trim 落地）、schema/批量/字节上限 409 均带机器可读
+// code=schema|batch-limit|too-large（AIbot PR#26 复核 P2，客户端 flush 分类处置的契约面）、损坏文件按空库恢复；
 // 耗尽/断流路径空 mode 事件经客户端入口归一后不再 409（AIbot P1-1）、服务端枚举保持严格。
 // /api/myradio 行清洗与封顶。B2 起服务端聚合走 quality-store.js 纯函数（每台 {cf, sources:{源URL:{…}}}
 // 内层形态与 Android 一致；包装层 {v,rev,ops,data} vs {v,stations} 见契约 files 节）；纯函数单测见 test/quality-store.js。
@@ -102,9 +103,16 @@ const op = (id, ok, at, extra = {}) => Object.assign({
       const j = JSON.parse(r.body);
       assert.strictEqual(j.ok, true); assert.ok(j.rev >= 2);
     });
-    await ok('schema 违规 op → 409（kind 不合法）', async () => {
+    await ok('schema 违规 op → 409 code=schema（kind 不合法；AIbot PR#26 复核 P2 机器可读错误码）', async () => {
       const r = await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ baseRev: 0, ops: [op('t9', true, 1, { kind: 'vacuum' })] }));
       assert.strictEqual(r.status, 409);
+      assert.strictEqual(JSON.parse(r.body).code, 'schema');
+    });
+    await ok('ops 非数组/空数组 → 409 code=schema（列表形态不合法）', async () => {
+      const r1 = await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ baseRev: 0, ops: 'nope' }));
+      assert.strictEqual(r1.status, 409); assert.strictEqual(JSON.parse(r1.body).code, 'schema');
+      const r2 = await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ baseRev: 0, ops: [] }));
+      assert.strictEqual(r2.status, 409); assert.strictEqual(JSON.parse(r2.body).code, 'schema');
     });
     await ok('耗尽/断流路径空 mode 事件经客户端入口归一后不再 409（AIbot P1-1；服务端枚举保持严格）', async () => {
       const { QualityStore } = require('../quality-store');
@@ -119,11 +127,22 @@ const op = (id, ok, at, extra = {}) => Object.assign({
       assert.strictEqual(JSON.parse(r.body).applied, 2);
       const r2 = await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ baseRev: 0, ops: [op('tbad', true, 1, { mode: '' })] }));
       assert.strictEqual(r2.status, 409, '裸空 mode op 仍被服务端拒（契约枚举不动，无 unknown）');
+      assert.strictEqual(JSON.parse(r2.body).code, 'schema');
     });
-    await ok('单批 33 条 → 409（批量上限）', async () => {
+    await ok('单批 33 条 → 409 code=batch-limit（批量上限与 schema 拆分报码）', async () => {
       const ops = Array.from({ length: 33 }, (_, i) => op(`bx${i}`, true, 4000 + i));
       const r = await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, JSON.stringify({ baseRev: 0, ops }));
       assert.strictEqual(r.status, 409);
+      assert.strictEqual(JSON.parse(r.body).code, 'batch-limit');
+    });
+    await ok('请求体超 256KB → 409 code=too-large（字节超限与批量/schema 分开报码）', async () => {
+      const big = 'x'.repeat(300 * 1024); // 未到 JSON 解析即拒：纯字节维度（合法 ops≤32 恒到不了，防御性护栏）
+      // Connection:close = 独占短连：服务端超限先答 409 再断连（与 store 同口径），RST 只落在本请求 socket，
+      // 不污染全局 agent 的 keep-alive 连接池（Node 19+ 默认 keepAlive，复用半死 socket 会误伤下一用例）
+      const r = await req('POST', '/api/quality', { 'Content-Type': 'application/json', Connection: 'close' }, big);
+      assert.strictEqual(r.status, 409);
+      let code = ''; try { code = JSON.parse(r.body).code; } catch (_) {} // 断连后响应体尽力读（读不到不误判）
+      assert.strictEqual(code, 'too-large');
     });
     await ok('裸 JSON 解析失败 → 400', async () => {
       assert.strictEqual((await req('POST', '/api/quality', { 'Content-Type': 'application/json' }, 'not json')).status, 400);

@@ -237,19 +237,29 @@ const QualityStore = {
       localStorage.setItem('quality.local', JSON.stringify({ v: 1, stations: this.stations }));
     } catch (_) {} // 配额满等：丢样本不影响播放
   },
-  async flush(keepalive) { // POST {baseRev, ops, keep}：baseRev 只是观测版本不作覆盖条件；keep = trim 保护集 ≤64。
-    clearTimeout(this.flushT); // 服务端单批 32 条上限（契约）：积压分批送，送完即止（keepalive 请求不带分批续投）
+  async flush(keepalive, chunk) { // POST {baseRev, ops, keep}：baseRev 只是观测版本不作覆盖条件；keep = trim 保护集 ≤64。
+    // chunk = 本批条数上限（batch-limit 409 减半重试时收紧；默认/续投不超服务端单批 32 条契约上限）
+    clearTimeout(this.flushT); // 积压分批送，送完即止（keepalive 请求不带分批续投）
     if (this.mode !== 'server' || !this.pend.length) return;
-    const batch = this.pend.slice(0, 32);
+    const batch = this.pend.slice(0, Math.min(chunk || 32, 32));
     const body = JSON.stringify({ baseRev: this.rev, ops: batch, keep: this.keepHint.slice(0, 64) });
     try {
       const x = await fetch('/api/quality', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: !!keepalive });
-      if (x.status === 409) { this.pend = this.pend.slice(batch.length); return; } // 本批被拒（schema/超限）：丢本批防无限重试
-      const r = await x.json();
+      let r = null; try { r = await x.json(); } catch (_) {}       // 409 响应体尽力读（超限断连可能读不到 → 按无 code 保守处置）
+      if (x.status === 409) { // 机器可读 code 分类处置（AIbot PR#26 复核 P2）：只丢不可恢复批，容量/暂时失败保留重试
+        if (r && r.code === 'schema') {                            // 客户端产非法 op（不可恢复）：保守丢整批留痕，防无限重试
+          console.warn('[quality] 本批 op schema 被服务端拒，丢弃 ' + batch.length + ' 条：' + (r.error || ''));
+          this.pend = this.pend.slice(batch.length);
+          if (this.pend.length) await this.flush();                // 后续批是另产的 op，恢复默认批宽重试
+        } else if (r && r.code === 'batch-limit' && batch.length > 1) {
+          await this.flush(false, Math.max(1, batch.length >> 1));  // 单批超限（可恢复）：减半分批重试；单条仍超限则停手留 pend
+        }
+        return;                                                    // too-large/无 code（容量/暂时）：pend 保留，下次 load/pull/record 重试
+      }
       if (r && r.ok) {
         this.rev = r.rev; this.pend = this.pend.slice(batch.length);
         if (this.bc) this.bc.postMessage('rev');
-        if (this.pend.length) this.flush();
+        if (this.pend.length) await this.flush(false, chunk);      // 续投沿用收紧后的批大小（batch-limit 后不回弹）；await = 调用方 await flush() 即完整清仓
       }
       // 网络失败/写失败：pend 保留，下次 load/pull/record 重试（服务端 op.id 幂等兜底）
     } catch (_) {}

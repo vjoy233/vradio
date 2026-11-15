@@ -96,6 +96,10 @@ for (const f of ['backup-v2.json', 'backup-v3.json']) {
   const qc = JSON.parse(fs.readFileSync('contracts/quality-summary.json', 'utf8'));
   assert.ok(qc.files && qc.files.web.includes('{ v:1, rev') && qc.files.android.includes('{ v:1, stations'),
     'quality-summary 缺 files 双包装形态描述（Web {v,rev,ops,data} vs Android {v,stations}）');
+  // 409 机器可读 code 契约点（AIbot PR#26 复核 P2）：api 描述必须点名三类 code（行为断言在 test/quality.js 三处 409）
+  assert.ok(qc.api && qc.api['POST /api/quality'] && ['schema', 'batch-limit', 'too-large']
+    .every(c => qc.api['POST /api/quality'].includes('code=' + c)),
+    'quality-summary POST api 描述缺三类 409 code（schema/batch-limit/too-large）枚举点名');
   const fx = JSON.parse(fs.readFileSync('contracts/fixtures/quality-aggregate.json', 'utf8'));
   assert.ok(Array.isArray(fx.events) && fx.events.length >= 5, 'quality-aggregate 样本不足');
   const kinds = new Set(['diagnostic', 'playback']), modes = new Set(['direct', 'hls', 'proxy']);

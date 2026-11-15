@@ -10,7 +10,8 @@
 // /api/store       前端持久层主源（GET 全量 / POST 覆盖写 data/store.json）：rev 服务端唯一发号（方案二/R4），
 //                  localStorage 只作镜像；白名单键集合 STORE_KEYS 与 store.js 的 KEYS 同步扩（AGENTS.md 契约）
 // /api/quality     质量聚合 sidecar（B0/B2）：GET ?rev= 条件获取 / POST {baseRev,ops,keep} 操作事件合并（op.id 幂等去重，
-//                  rev 唯一发号，409 仅限 schema/批量超限/超 2MB；keep=trim 保护集 ≤64；契约 contracts/quality-summary.json）
+//                  rev 唯一发号，409 仅限 schema/批量超限/超 2MB，三类均带机器可读 code=schema|batch-limit|too-large
+//                  供客户端 flush 分类处置；keep=trim 保护集 ≤64；契约 contracts/quality-summary.json）
 // /api/myradio     my-radio.txt 全量替换（B0）：v2+ 备份恢复通道，行形态清洗 + 500 行/64KB 封顶 + tmp+rename
 // 安全：默认仅监听 127.0.0.1；proxy/check 仅允许公网 http(s) 目标 —— safeTarget 字符串校验 + guardLookup
 //       连接级 IP 校验（防 DNS rebinding/TOCTOU），重定向逐跳复查；/proxy 与全部 /api/* 校验
@@ -133,7 +134,9 @@ function storeWrite(data) {
 // 仲裁模型 = 操作事件合并（非 last-write-wins，契约 contracts/quality-summary.json）：POST {baseRev, ops[, keep]} 逐条
 // 应用，同一 op.id 已处理则跳过——网络重试/页面刷新/多标签重复提交不重复计数；去重日志 FIFO（512 条）淘汰时
 // 推进 at 水位线 floorAt，旧于水位线的重试显式拒绝（响应 rejected 计数）而非静默重算，幂等边界可证明；baseRev 只是客户端观测版本，
-// 不作整段覆盖条件、版本落后不拒绝合并；仅 schema 错误/单批超限/无法合并（含 2MB 硬上限）返回 409。
+// 不作整段覆盖条件、版本落后不拒绝合并；仅 schema 错误/单批超限/无法合并（含 2MB 硬上限）返回 409——
+// 三类 409 均带机器可读 code（schema|batch-limit|too-large，AIbot PR#26 复核 P2）：客户端只丢不可恢复的
+// schema 批、容量类保留 pending 重试（quality-store.js flush 分类处置）。
 // rev 服务端唯一发号（成功应用 ≥1 条才 +1，纯去重命中不动号）。安全边界复用 store 口径：跨源拒绝、
 // 请求体/单批操作数封顶、tmp+rename + 串行队列、坏文件按空库恢复。
 // B2 落地：聚合应用走 quality-store.js 纯函数 qApplyOp（每台 {cf, sources:{源URL:{聚合值…}}} 内层形态与
@@ -167,6 +170,10 @@ function qCommit(ops, keep) { // 串行：克隆当前态 → 应用（qApplyOp�
     for (const op of ops) {
       if (st.ops.includes(op.id)) continue;          // 窗口内命中：幂等跳过
       if (+op.at <= st.floorAt) { rejected++; continue; } // 旧于淘汰水位线：显式拒绝（响应带 rejected 计数），绝不重复计数——容量裁剪可丢聚合样本，不得破坏幂等语义（AIbot B0-P1）
+      // 设计边界（AIbot #20 复核 P2 设计清单留档）：floorAt 以事件时间为水位线——客户端时钟回拨/离线队列
+      // 延迟可能令合法新事件被拒计入 rejected（误伤上限 = 淘汰窗口外的少量新样本，不破坏幂等语义）；
+      // B2 后续完整实现的改进方向 = 持久哈希/分区去重索引（精确区分「已淘汰旧重试」与「迟到的合法新事件」），
+      // 当前语义已由 test/quality.js「超过 512 条后：淘汰旧 op 重试被显式拒绝」测试钉死。
       qApplyOp(st.data, op);                        // B2 纯函数应用（与客户端/Android 同语义）
       st.ops.push(op.id);
       st.ats.push(+op.at || 0);
@@ -182,7 +189,7 @@ function qCommit(ops, keep) { // 串行：克隆当前态 → 应用（qApplyOp�
     const serialize = () => JSON.stringify({ v: 1, rev, ops: st.ops, ats: st.ats, floorAt: st.floorAt, data: st.data }); // 水位线随盘持久
     qTrim(st.data, keep, () => Buffer.byteLength(serialize()), Q_MAX); // 2MB 逼近时按淘汰序裁（每 2 步复核防过冲）
     const out = serialize(), tmp = QUALITY_FILE + '.tmp';
-    if (Buffer.byteLength(out) > Q_MAX) return done({ ok: false, error: 'quality sidecar 超过 2MB 硬上限' });
+    if (Buffer.byteLength(out) > Q_MAX) return done({ ok: false, error: 'quality sidecar 超过 2MB 硬上限', code: 'too-large' }); // 无法合并（含 2MB 硬上限）→ 409（路由按 code 映射；写失败仍 200 ok:false——临时错误非协议拒）
     fs.mkdir(DATA_DIR, { recursive: true }, e => {
       if (e) return done({ ok: false, error: '写入失败' });
       fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
@@ -389,16 +396,19 @@ http.createServer((req, res) => {
     }
     if (req.method === 'POST') {
       let body = '', big = false;
-      req.on('data', c => { body += c; if (body.length > Q_BODY_MAX) { big = true; json(409, { ok: false, error: '请求体过大' }); req.destroy(); } }); // 超限先写响应再断连（与 store 同口径）
+      req.on('data', c => { body += c; if (body.length > Q_BODY_MAX) { big = true; json(409, { ok: false, error: '请求体过大', code: 'too-large' }); req.destroy(); } }); // 超限先写响应再断连（与 store 同口径）；字节超限 → code=too-large
       req.on('end', () => {
         if (big) return;
         let j; try { j = JSON.parse(body); } catch (_) { return json(400, { ok: false, error: 'bad request' }); }
         const ops = j && j.ops;
-        if (!Array.isArray(ops) || !ops.length || ops.length > Q_OPS_MAX || !ops.every(qValidOp))
-          return json(409, { ok: false, error: '操作事件不合法或超过单批上限（32 条）' }); // 契约：仅 schema 错误/批量超限/无法合并 → 409；baseRev 落后不拒
+        // 三类 409 各带机器可读 code（AIbot PR#26 复核 P2）：schema=op 事件校验失败（不可恢复，客户端丢批）；
+        // batch-limit=单批 32 条超限（可恢复，客户端减半分批）；契约口径不变——仅 schema/批量超限/无法合并 → 409
+        if (!Array.isArray(ops) || !ops.length) return json(409, { ok: false, error: '操作事件列表不合法', code: 'schema' });
+        if (ops.length > Q_OPS_MAX) return json(409, { ok: false, error: '单批操作事件超过上限（32 条）', code: 'batch-limit' });
+        if (!ops.every(qValidOp)) return json(409, { ok: false, error: '操作事件 schema 校验失败', code: 'schema' }); // baseRev 落后不拒
         // keep = 收藏+最近保护集（B2 临场设计：客户端每次 POST 附带 ≤64 条 http(s) URL，服务端 trim 时保留）
         const keep = Array.isArray(j.keep) ? [...new Set(j.keep.filter(u => typeof u === 'string' && u.length <= 512 && /^https?:\/\//.test(u)))].slice(0, 64) : [];
-        qCommit(ops, keep).then(r => json(200, r));
+        qCommit(ops, keep).then(r => json(r && r.code ? 409 : 200, r)); // qCommit 唯一带 code 的失败 = 2MB 无法合并（too-large）；写失败 200 ok:false
       });
       return;
     }

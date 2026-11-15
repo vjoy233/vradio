@@ -853,7 +853,7 @@ object ListenStats {
 }
 ```
 
-统计状态机必须区分：`IDLE`、`CONNECTING`、`PLAYING`、`PAUSED`、`FAILED`。只有 `PLAYING` 累加；切源时结束旧 session 并在新源真正进入 `PLAYING` 后创建新 session；同一自然日的连续切源可以累计到同一台，但 `sessions` 按进入 `PLAYING` 次数计数。Android 使用 `SystemClock.elapsedRealtime()` 计算增量，另取 wall clock 做日期分桶；Web 使用 `performance.now()` 计算增量，另取 `Date.now()` 做日期分桶。系统时间回拨不能产生负时长；跨午夜必须把一个 tick 拆分到两个自然日。
+统计状态机必须区分：`IDLE`、`CONNECTING`、`PLAYING`、`PAUSED`、`FAILED`。只有 `PLAYING` 累加；切源时结束旧 session 并在新源真正进入 `PLAYING` 后创建新 session；同一自然日的连续切源可以累计到同一台。`sessions` 计数口径（AIbot review P2-6 拍板为精确定义，双端实现/测试/android CONTRACTS.md 同文验收）：**session = 从非 `PLAYING` 状态进入 `PLAYING`、且不属于「同一台同一源」的暂停恢复**——play、切台、切源、断流重连后首次到达 `PLAYING` 均计一次；暂停后续播（同台同源 resume 重锚）不开新 session、暂停时长不计；连接中/失败/停机彻底关会话。Android 使用 `SystemClock.elapsedRealtime()` 计算增量，另取 wall clock 做日期分桶；Web 使用 `performance.now()` 计算增量，另取 `Date.now()` 做日期分桶。系统时间回拨不能产生负时长；跨午夜必须把一个 tick 拆分到两个自然日。
 
 ### 7.3 本地发现页
 

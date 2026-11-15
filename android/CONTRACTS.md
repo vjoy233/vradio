@@ -27,8 +27,10 @@
 
 - **仓库根 `contracts/` 是 Web/Android 双端共同契约面**：`radio-keys.json`（13 键白名单单一来源，三侧
   store.js KEYS / server.js STORE_KEYS / C.KEYS 漂移由 Web `test/contracts.js` 与 Android `ContractTest.kt`
-  双端拦截）、`source-diagnostic.json`、`quality-summary.json`、`metadata-event.json`、`backup-v3.schema.json`
-  及 `fixtures/` 黄金样本（backup-v2/v3、metadata-golden、playlist-pls/xspf/asx、diagnostic-results）。
+  双端拦截）、`source-diagnostic.json`、`quality-summary.json`、`metadata-event.json`、`backup-v3.schema.json`、
+  `listen-stats-summary.json`（B3 收听统计：days 双端同构/写失败落盘确认模型/GET ?rev= 条件获取/409 机器可读
+  code，AIbot 复核 P1/P2）及 `fixtures/` 黄金样本（backup-v2/v3、metadata-golden、playlist-pls/xspf/asx、
+  diagnostic-results）。
   Android 经 `app/build.gradle.kts` 的 test resources 接线读取（`getResource("radio-keys.json")` /
   `getResource("fixtures/…")`），改契约文件两侧行为都会被测试点名。
 - **`radio.cfg` v2**：新增 `v`（无 v 视为 v1，迁移 = 补版本语义不动字段）与源生命周期三字段
@@ -63,6 +65,36 @@
     存 Android 私有 SharedPreferences（`Prefs`，文件 "vradio"），**`widget.*`/`net.*` 不进 radio.*
     三侧契约、不进 vradio-backup.json/v3 extensions**。JVM 测试：`WidgetStateTest`/
     `NetworkPolicyTest`/`TrafficEstimatorTest`。
+
+- **B4 API 面（歌单多格式导入 + 备份 v3，2026-11-15 落地）**：
+  - `model/ImportedStation.kt`：`data class ImportedStation(name, category, url, logo, externalId, sourceFormat)`
+    ——与 Web playlist-import.js 条目同构；logo/externalId 仅供预览/未来扩展（my-radio.txt 行格式冻结无此列，入库不落盘）。
+  - `data/PlaylistParser.kt`：`parse(text, format? = null, baseUrl? = null): Result(format, entries, invalid, dups)`
+    ——PLS/XSPF/ASX(WAX/WMX)/m3u(csv 收敛)/纯 URL 五格式；识别顺序 = 显式提示 → 文件头 → 内容特征 → 纯 URL
+    （`detect`/`normHint` 与 Web 同序同果）；条目封顶 500、台名 40 字/分类 24 字、URL 只收 http(s)、文件内按
+    URL 去重；XmlPullParser 显式关 DOCTYPE 处理（外部实体/外部 DTD 不解析，未声明实体引用不展开）、XML 文本
+    2MB 先钳；ENTRYREF 不递归；**纯 JVM 零网络、不 import android.***（单测挂 kxml2 真实现——android.jar 的
+    XmlPullParserFactory 是抛异常桩，同 org.json 先例，仅 testImplementation 不进 APK）。
+  - `data/Backup.kt` v3：`exportAll(lib, myText, at, qualityExt?, listenExt?)` → `{format:"vradio-backup",
+    version:3,createdAt,app:"android",data,myRadio,extensions:{sidecars:{quality,listenStats}}}`（双 sidecar
+    各自可选，双 null = extensions 空）；`parseImport` 兼容 v1/v2/v3，`ImportPayload` 持 `quality`/
+    `listenStats`（v3 extensions.sidecars.* 经 `qualityTrim`/`lsTrim` 白名单裁剪后交提交段落盘——AIbot
+    review P1-1：确认即真提交；listenStats 裁空 = null 与 Web「含 0 天无确认意义」同判）；`qualityTrim`/
+    `lsTrim` 与 Web backup.js 同款白名单（quality：contracts/quality-summary.json aggregate 面 2000 封顶；
+    ls：日 90/每日台分类 64/512KB、台键 http(s)≤512、分类 ≤24）。`commitImport(data, my, qualityData,
+    ImportIO, listenData?)`：applyConfirmed 提交段抽离（四步覆盖 Store→my→quality→listenStats，任一步失败
+    整体回滚），协作方函数注入可 JVM 测试（fake 断言写入/回滚序）。
+  - 导入 UI（SettingsScreen「导入歌单」/AppVm `Imp.M3U`）：PlaylistParser 解析 → `Library.partitionImport`
+    分流（纯决策不变异，取消=零副作用）→ 四桶计数 confirm（新增/已知/重复/非法）→ 确认后已知台恢复收藏
+    （N2 语义）+ 新台批量 `MyRadio.append`（自带查重/清洗/SafeTarget/封顶）。注意 SafeTarget 非对称：Web
+    合并写只验 http(s)，内网地址在 Android 侧会被 append 拒（文案计入「跳过」）。
+  - 备份导入三阶段回滚（AppVm `Imp.BACKUP`，AIbot review P1-1/P2-1；B4 起四件事务）：提交前快照四件
+    `Store.snapshot()` + `myRadio.readText()` + `QualityStore.capture()` + `ListenSidecar.load()`（含对应
+    sidecar 才留），经 `Backup.commitImport` 四步覆盖（Store → my → 质量 sidecar → 收听统计 sidecar），任一步
+    失败整体回滚；quality 经 `replaceImport` 事务式覆盖（内存原地换 = 缓存即时重载），listenStats 经
+    `ListenSidecar.save(ListenStats.trim(Codec.parse(days)))` 覆盖写（回滚 = 旧快照同通道回写）；导入成功且
+    开关开时 tracker 从磁盘重建（防旧内存账下次 flush 整体回写冲掉导入数据），开关关不建不消费。确认弹层与
+    Web 同口径：双 sidecar 一个复选整体覆盖（「恢复备份内 sidecar（质量/收听统计）」）。
 
 ---
 
@@ -389,3 +421,200 @@ class LightUpdate(private val gh: Gh, private val filesDir: File) {
   三个必选回调按 §5.5 签名；带默认值的可选参数（fav/checking/onSongs/logo/onDismiss）由 AppRoot 注入，
   浮层本身不持 vm。手动禁用的源点诊断**不发请求**，显示「该源已被手动禁用，不能诊断」+「取消禁用」。
   入口：SrcSheet 尾行「ⓘ 源详情」+ PlayerBar 台名长按（单击仍=回到正在播 N5；列表行长按保留 N7 收藏语义）。
+
+---
+
+## B2 API 面（r4 扩展契约·Android 侧，2026-11-15，plan-expansion-r4 §6）
+
+> B2 批次落地后的冻结接口；聚合/淘汰序以 `contracts/quality-summary.json` 为单一语义源，与 Web 侧
+> `quality-store.js` / `update-sources.js` 候选管线必须镜像，冲突以 plan-expansion-r4 §6 为准。
+
+- **`filesDir/quality.json` sidecar 声明**：源质量数据落本机 `filesDir/quality.json`（Web HTTP 走
+  `/api/quality` → `data/quality.json`）。**不进 `radio.*` 主 Store、不占 /api/store 2MB 配额**；备份 v3
+  默认不含、勾选「包含本机 sidecar」经 `qualityTrim` 白名单可选迁移（B4 已落地，见上方 B4 API 面）；与
+  `radio.health`（死台/停运）永不合并、聚合结果不得直接改写
+  死台隐藏条件。坏文件按空库恢复。文件硬上限 2MB（`C.QUALITY_MAX_BYTES`），每台源聚合封顶 6。
+  **包装层分层（AIbot P1-2，契约 quality-summary.json `files` 节冻结）**：两侧文件包装不同——本文件
+  `{v:1,stations:…}`（纯本机）vs Web 服务端 `data/quality.json` `{v:1,rev,ops,data:…}`（rev/ops 是
+  Web 服务端并发机器）；跨端一致的是 stationRecord 内层聚合形态（双端黄金样本
+  `contracts/fixtures/quality-aggregate.json` round-trip 锁定：Web test/quality-store.js 与
+  ContractTest 同源消费）。
+- **mode 归一（AIbot P1-1）**：`recordDiagnostic`/`recordPlayback` 入口对 mode 归一永不为空
+  （`normMode`：合法枚举原样；缺失/非法按实际尝试过的 variant URL 形态兜底——m3u8→hls、其余→direct；
+  归不出即丢弃该事件，契约无 unknown 值）。Web 侧 `quality-store.js qNormMode` 同款镜像——服务端
+  `/api/quality` 枚举校验保持严格，空 mode 不再引发 409 整批丢样本。
+- **`data/QualityStore.kt`**（纯 JVM）：
+  ```kotlin
+  class QualityStore(dir: File, clock: () -> Long = System::currentTimeMillis, capBytes: Int = C.QUALITY_MAX_BYTES) {
+    fun load()                                                                  // 坏文件按空库恢复
+    fun summary(identityUrl: String, sources: List<String> = emptyList()): QualityAggregate?   // 无记录 null
+    fun recordDiagnostic(identityUrl: String, r: DiagnosticResult, trigger: String)             // trigger=manual|boot|sync
+    fun recordPlayback(identityUrl: String, sourceUrl: String, ok: Boolean, latencyMs: Long, mode: String, trigger: String)  // play|watchdog|switch|error
+    fun trim(keep: Set<String>); fun save(); fun sizeBytes(): Int
+    @Volatile var keepHint: Set<String>                                         // 收藏+最近保护集（AppVm Main 快照回填）
+    data class QualityAggregate(identityUrl, sourceCount, directCount, okCount, failCount,
+      lastOkAt, lastFailAt, lastPlaybackAt, lastObservedAt, avgLatencyMs, disconnects, metadata, stability)
+  }
+  ```
+  存储形态：`{v:1, stations:{身份URL:{cf, sources:{源URL:{okCount,failCount,lastOkAt,lastFailAt,
+  lastPlaybackAt,latSum,latN,disconnects,modes[],lastDiag,lastPlayFail}}}}}`——每源聚合值 + 最近一次
+  诊断 + 最近一次播放失败，不留完整历史。**与 Web 侧需要对齐的四个拍板（Web quality-store.js 实现
+  时逐条对齐，不一致以本节修订为准）**：
+  1. **30 天窗近似**：存储无逐样本时间戳，「近 30 天成功率/样本数」= lastObservedAt 新鲜度门控
+     （行超 30 天无观察 → unknown）+ 全量计数器近似；
+  2. **连续失败** = 台级 `cf` 计数器（任一源 ok 清零、fail +1），`cf≥3` 一票否决进 poor；
+  3. **metadata(icy|none|mixed)** 由观测 modes 派生（op 事件无 icy 字段）：纯 direct → icy、纯
+     hls → none、混合 → mixed；
+  4. **trimOrder 下钻实现**：受害台 = 非保护集优先、再最久未访问（同刻 identityUrl 字典序）→
+     先清该台最大历史源的 lastDiag/lastPlayFail（旧者先）→ 再丢该源 → 台空才整台丢。
+- **样本来源接线（AppVm，PlayerHolder 不感知 QualityStore）**：probe/体检三通道（手动 manual /
+  boot 静默 boot / 同步后增量 sync）与源详情逐源诊断（manual）写 diagnostic；PlayerUiState 流映射写
+  playback——CONNECTING→PLAYING = 成功（play；同台换源到达 = switch，延迟 = 该源连接锚起算）、
+  PLAYING→CONNECTING 同台 = 断流（同源重连 watchdog / 级联换源 error，均计 disconnects）、级联耗尽
+  （CONNECTING→IDLE 清台 + ⚠ 文案）= error。**自动体检绝不产 playback**；写失败只丢样本不影响播放。
+- **`SourceDetailSheet` B2 扩展参数**：`quality: QualityStore.QualityAggregate? = null`（默认 null 保
+  §5.5 兼容，AppRoot 经 `vm.qualitySummaryOf(ds)` 注入）——NO_ENABLED_SOURCE 文案下方渲染稳定性徽标行
+  （● 稳定/● 一般/● 不稳定/○ 样本不足 + 成功率/平均延迟/断流/样本数）；质量只做展示，永不替代死台
+  隐藏判定（契约硬点）。
+- **`sync/Candidates.kt`**（纯 JVM，镜像 Web 候选管线纯函数）：
+  ```kotlin
+  data class SyncCandidate(stationName, category, url, upstream, upstreamId = "", logoUrl = "",
+    normalizedUrl = "", duplicateKey = "", validationResult: String? = null)
+  object Candidates {
+    fun normalizeUrl(raw: String): String?      // 保守归一化：去空白/scheme·host 小写/删默认端口；保留 path·query·尾斜杠；只用于比对不替换原 URL
+    fun fromLine(cat: String, line: String, upstream: String, upstreamId: String = "", logoUrl: String = ""): SyncCandidate?
+    fun dedupe(candidates: List<SyncCandidate>): List<SyncCandidate>   // 精确 URL → 归一化 URL → 同分类同名（duplicateKey=「分类|台名」共享=多源合并，不同分类同名不并）
+    fun toLine(c: SyncCandidate): String
+  }
+  ```
+  SyncEngine 国内节经此去重（跨节全局 URL 去重是 B2 新增能力；分类/装配口径不变）；`validationResult`
+  预留 null（国内节不探活，欧美节实测已有）。
+- **`sync/RadioMeta.kt` + radio-meta.json 消费**（生成在 Web 同步侧，Android 只消费）：
+  ```kotlin
+  class RadioMeta { companion object { val EMPTY; fun parse(text: String?): RadioMeta? } }   // null=非法/v≠1（更新通道保留旧 meta）；消费侧 ?: EMPTY 兜底
+  data class MetaStation(name, category, sources: List<MetaSource>)
+  data class MetaSource(url, upstream, upstreamId, kind, firstSeenAt)
+  ```
+  - `app/build.gradle.kts` copyRadioData 打包清单**可选包含** radio-meta.json：仓库根缺文件**跳过不报错**
+    （Web 侧生成落地后自然带上），data-stamp 仍只看 radio/logos 两文件提交（meta 单独晚提交不触发
+    D7 误报）。
+  - LightUpdate.apply() 主库与 meta **分开落盘**：下载到但 v≠1/不可解析（`metaInvalid`）→ 保留旧 meta +
+    toast 明示不阻断主库；下载失败/仓库未提供（null）→ 静默保留旧 meta（防 Web 侧未落地期间误报）。
+    `Result` 增 `metaChanged/metaInvalid` 两默认参数；新增 `metaText()` 读 filesDir 副本。
+  - 内容 hash 校验：下载通道仍不带 hash（GitHub contents 无内容哈希，Web sync-manifest.json 落地后再挂）；
+    **本地批次见证已补位（AIbot 三轮 P1）**——apply 末位写 stamp.json 三重见证（`meta` 布尔 + `radioHash`/
+    `metaHash` = SHA-256 内容哈希），`stampHashOk()` boot 核对当前 filesDir 两文件与 stamp 记录一致，
+    任一写失败残留的「新文件 + 旧 stamp」由哈希核对拦下（meta 写失败同批删旧件、radio 写失败整体失败）。
+    B2/早期旧 stamp 无哈希字段 → 保守不绑定（同既有拍板）。
+- **测试面**：`QualityAggregateTest`（四档/聚合计数/lastObservedAt/分流/trim/坏件/往返/源封顶）、
+  `SyncCandidateTest`（归一化/三层去重/同名合并/来源保留/行序）、`LightUpdateTest` 增 meta 四例 +
+  批次提交协议三例（AIbot 三轮 P1：meta 写失败注入→删旧件/见证失效、新 radio 配残留旧 stamp 哈希拦截、
+  旧 stamp 无哈希保守不绑定）；
+  `capBytes` 构造注入令 trim 测试不必造 2MB 数据。
+
+---
+
+## B3 API 面（r4 扩展契约·Android 侧，2026-11-15，plan-expansion-r4 §7）
+
+> B3 独立发布单元（可单独回滚）：元数据管线 / 收听统计 / 本地发现三个 feature flag 全默认关，
+> 门槛（§7.4 双端黄金样本全绿）过后才翻 true。开关不新增 `radio.*` 键；关闭任一开关不清数据、
+> 不影响主列表/播放/健康/QualityStore/备份 v3 主流程。语义源 = `contracts/metadata-event.json`
+> + `contracts/fixtures/metadata-golden.json`（双端逐字段硬验收），冲突以 plan-expansion-r4 §7 为准。
+
+- **`FeatureFlags`（根包 `FeatureFlags.kt`）**：`const val METADATA_V2/LISTEN_STATS/DISCOVERY = false`
+  ——由版本发布配置提供默认值；开发构建可临时改 true 自测，发布默认关。
+- **`model/MetadataEvent.kt`**：`data class MetadataEvent(stationIdentityUrl, title, artist, track,
+  program, bitrateKbps, source, at, confidence)`——契约 event 节九字段；`Confidence.PARSED/STREAM`。
+- **`metadata/MetadataNormalizer.kt`（纯 JVM）**：
+  ```kotlin
+  object MetadataNormalizer {
+    fun parseIcyTitle(rawTitle: String?, stationName: String = ""): IcyParts   // 空白清理(JS \s 同集含全角空格) +
+    fun normalize(raw: IcyRaw, ctx: IcyCtx, now: Long): MetadataEvent          // 半/全角连接号分隔 + 重复台名前缀只剥一层
+    fun isDuplicate(prev: MetadataEvent?, next: MetadataEvent, windowMs = 30_000L): Boolean   // 同名 30s 窗
+    data class IcyRaw(title, program, bitrateKbps, source = "none", at = 0)   // at<=0 回退 now；source 空回退 none
+    data class IcyCtx(identityUrl, stationName)
+  }
+  ```
+  黄金样本 `fixtures/metadata-golden.json` 全 case 逐字段断言在 `MetadataNormalizerTest`。
+- **`MetadataPipeline`（同文件，纯 JVM；AIbot P1-2 起 v2 专用）**：eventOrder 固定序的状态机——
+  `State(station, last, display)` / `accept(s, ev): Pair<State, Decision>` /
+  `reset(s, station)`；Decision = `Drop | Show(title) | +Archive(u0, 被替换旧曲)`。
+  空曲讯 Drop 不覆盖；`stationIdentityUrl` 不匹配（串台/旧世代）Drop；`at < last.at`（迟到）Drop；
+  同曲去重（连续同名 + 30s 窗）；换曲 Archive 旧曲——v2 入史窗口簿记 `State.hist`
+  （同名 30s 内已入史不再入，A-B-A-B 抖动防重复刷史，Web mpHistDecide 同语义）。
+  切台/刷新/全部失败先 reset（PlayerHolder ui 的 CONNECTING+空 song / 清台形态驱动，AppVm.mapMetaReset）。
+- **`LegacyMetadataSink`（同文件；flag 关闭时 AppVm 专用独立分支，AIbot P1-2——不再借道管线）**：
+  feat/r4-b2 PlayerHolder ICY 段语义原样（仅事件源改为契约 MetadataEvent）：`accept(u0, ev)`——
+  空曲讯不动作（发射侧已拦）/ 连续同名去重（`last` = B2 lastSong 等价物）/ 换歌先 `show(t)`
+  （= PlayerHolder.setSong：ui.song + MediaSession）再 `archive(u0, old)`（old 空不归档，radio.songs
+  键=台主 URL 格式不变）；切台/刷新/全部失败 `reset()` 清 last（mapMetaReset 随行调用，旧世代不串台）。
+  footer/icy-br 不经本类（IcyHeaders 路径 B2 起未动）。Web 侧对应 `metaSinkLegacy`（管线 dedup30s=false，
+  换歌一律入史——无 30s 窗，B2 前语义）。
+- **PlayerHolder B3 改造**：`onSong` 回调移除，改 `var onMetadata: ((MetadataEvent) -> Unit)?`
+  ——ICY 只产事件（`MetadataNormalizer.normalize` 后回调，`IcyHeaders` 只更新 `ui.kbps` 与事件随行
+  `lastKbps`），世代令牌在发射侧验；播放层不碰 radio.songs/统计（模块边界）。消费在 AppVm 两 sink：
+  **LegacyMetadataSink**（flag 关）= 现状（setSong 路径的当前曲讯/MediaSession + lib.pushSong 入史，
+  格式不变）；**MetadataV2Sink**（flag 开）= 同路径 + 30s 去重 + `AppVm.curMetadata`
+  （规范化事件 StateFlow，供统计/发现派生）。两者不得同时写历史（flag 单选接线）。
+  `source` 严格枚举 icy|none（AIbot P2-5）：非法来源字符串 normalize 归一为 none（契约 event.source 措辞已收紧）。
+- **`stats/ListenStats.kt`（纯 JVM）**：
+  ```kotlin
+  object ListenStats {
+    fun enter(state, u0, cat, wallNow)                       // sessions 只在「新建流 PLAYING」+1（与质量采样同锚）
+    fun add(state, session, nowMono, nowWall): StatsState     // 增量入账：mono 回拨重锚钳 0；跨午夜按 wall 占比拆两日
+    fun trim(state, keepDays = 90, maxBytes = 512KB, measure 注入): StatsState   // 90 天 + 512KB 先删最早日
+    fun summary(state, days = 7): StatsSummary
+  }
+  class ListenTracker(mono, wall, initial)                   // 状态机（fake clock 双注入）：onState(PState/台/源URL)、
+                                                             // settle() 收账（≥1s 才入账，Web tickMin 同款）、
+                                                             // pending（未确认增量在账）/flush(sidecar)（AIbot 复核 P1）
+  class ListenSidecar(dir, writeFn 注入) { load()/save(): Boolean }   // 坏文件空库恢复；写失败回执 false（增量保内存重试）
+  ```
+  会话语义（双端冻结；AIbot P2-6 起 plan §7.2 已同步同文）：**只在「新建流到达 PLAYING」建立 session**
+  （play/切台/切源/重连首达，sessions+1）——精确定义：session = 从非 PLAYING 进入 PLAYING 且不属于
+  「同一台同一源」的暂停恢复；**暂停关账但保留 resume 资格**——续播同台同源重锚不开新 session
+  （暂停时长绝不计入：暂停期无会话，tick 不产账）；连接中/失败（善后 IDLE+清台映射）/停机彻底关。
+  日期键历法严格校验（AIbot P1-1）：`ListenStats.validDay`（YYYY-MM-DD 且月/日真实存在，02-31/13-01/
+  非闰 02-29 拒绝）——`ListenStatsCodec.parse` 坏键丢弃、`bucket` 坏键不入账（Web lsDayKeyOk 同规则，
+  /api/listenstats schema 校验同源）。Android 无「他页复测对账」路径（单进程），
+  复活记录只走体检通道。sidecar `filesDir/listen-stats.json`：`{v:1, days:{yyyy-MM-dd:{ms, stations{u0:ms},
+  categories{cat:ms}, sessions}}}`（days 部分与 Web 同构；Web HTTP 侧 AIbot P1-3 起 /api/listenstats 升级
+  ops+op.id 幂等增量合并——多标签同 base 各自 POST 不同增量不互相覆盖；AIbot 复核 P2 起 GET ?rev= 条件获取
+  （命中回 notModified，BC 重拉零全量传输）、P1 起 409 响应带机器可读 code（schema 丢批留痕/batch-limit 收窄
+  批宽重试），契约描述 `contracts/listen-stats-summary.json`——Android 单进程 filesDir 不受影响）
+  ——不进 radio.* 主 Store/2MB 配额；备份 v3
+  默认不含、勾选「包含本机 sidecar」经 `Backup.lsTrim` 白名单可选迁移（B4：导出取内存账 settle 后 ⊇ 磁盘、
+  导入四件事务收官位 + tracker 重建；Web 侧 http 走 `POST /api/listenstats {replace:true,days}` 覆盖通道、
+  file:// 走 localStorage 快照）；flush = 30s tick + MainActivity.onStop；**落盘确认模型（AIbot 复核 P1，§7.2「写失败只保留
+  内存增量并在下次 flush/启动重试」）**：tracker 持确认快照（最近一次成功落盘），flush 只在有未确认增量时写、
+  写成功才推进确认——失败增量保留内存，下次 flush 快照覆盖一次写入全部（不重放不双计，幂等）；**启动重试
+  （AIbot 三轮 P1）**：写失败同时把含未确认增量的快照落独立临时文件 `filesDir/listen-stats.pending.json`
+  （tmp+rename、IO 线程 flush 内 best-effort 不碰播放线程），进程重启 `ListenTracker.restore` 以主快照为
+  确认基线、pending 经 `ListenStats.merge`（日键并集/数值取大）幂等合流入账——增量转入待确认走既有 flush
+  链路，成功写主快照后原子清理 pending（残留/清理失败由合流幂等消化不双计，坏 pending 丢弃按主快照冷启）；
+  开关关不消费不 flush 不清数据。
+- **`discovery/Discovery.kt`（纯 JVM）**：`build(DiscoveryInput): Groups` 六分组（精选/稳定直连/最近新增/
+  最近恢复/有曲讯/未听过）+ `noQualityData` 名单（不进质量分组的无记录台，UI 在「稳定直连」组头显示
+  「另有 N 台暂无质量数据」提示行，不单列分组）；规则：过滤 hidden/隐藏分类（无例外）/dead（正在播·
+  连接中例外 = visible 同口径）；无质量记录不进质量分组、不误判 poor；稳定直连 = good 且 directCount>0；
+  有曲讯 = metadata==icy；最近新增 = radio-meta.firstSeenAt（**挂 sources[] 为主、台级直挂容错、取最早**，
+  `MetaStation.firstSeenAt` 旁挂字段；无 meta 组空；AIbot P1-4 混态拦截——消费前须过 `RadioMeta.bound`
+  同批绑定校验：filesDir/assets 来源配对 + stamp.json 三重见证 = `meta` 布尔 + `radioHash`/`metaHash`
+  内容哈希（AIbot 三轮 P1：LightUpdate.apply 批次提交协议——stamp 末位写，radio 写失败整体失败、
+  meta 写失败删旧件且不记见证，「新文件 + 残留旧 stamp」由哈希核对拦下；SyncEngine 端内同步后删 meta+
+  写 meta=false+radioHash；B2/早期旧 stamp 无字段或无哈希一律按混态保守不绑定），
+  不绑定整组置空不猜，其余分组不受影响）；最近恢复 = `RecoveryLog`（dead→alive 转移 Map +
+  `Prefs.RECOVERED` 运行时缓存 7 天过期，键非 radio.*；同步重建不产生记录——只有体检通道 wasDead→ok 才记）；
+  未听过 = 不在 radio.recents；精选 = `Station.starter`（originMask 位，双端口径 = **STARTER URL 命中或
+  精确同名**：Library.reload 装配时打，URL 命中只打标记不动装配，运行时不持久化、不按 u[0] 现场比对）；
+  排序 = 组内时间降序（新增用 firstSeenAt 其余 lastObservedAt）+ identityUrl 字典序；每组 ≤20；同台可跨组。
+  UI：StationList「✦ 发现」入口（开关关隐藏）+ `DiscoverySheet` 简单列表浮层（AppVm.discovery StateFlow
+  派生，stamp 哨兵驱动）；点击走 `AppVm.startPlay` 既有通道。
+- **测试面**：`MetadataNormalizerTest`（黄金样本逐字段 + 连接号/空白/前缀/去重边界）、
+  `MetadataEventTest`（事件形态 + 管线固定序：空曲讯/迟到/串台/去重/入史/reset/v2 入史窗去重）、
+  `ListenStatsTest`（fake clock 全矩阵：播放/暂停/续播重锚/连接中/失败/切源/切台/跨午夜/双回拨/
+  1s 阈值/90 天/512KB/幂等/写失败/连续写失败→成功增量完整不重复计数（AIbot 复核 P1 确认快照模型）/
+  写失败→pending 落盘→重启恢复不丢不双计→成功清理（AIbot 三轮 P1 启动重试，ListenSidecar.pending/
+  ListenStats.merge/ListenTracker.restore）/
+  坏件/summary）、`DiscoveryTest`（六分组矩阵 + originMask
+  装配打点（同名/URL 命中）+ starter 位不参与 equals）。全量 251 用例离线秒级。

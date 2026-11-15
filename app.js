@@ -26,6 +26,53 @@ const DAY = 86400000; // 死台分档各时间阈值共用（TTL/升级跨度/�
 const SRC_CAP = 6; // 每台最终源集合统一封顶（plan §5.4「每台最多 6 条」，review P1：装配 applyCfg 收口、
                    // 详情/批量诊断同口径；Android 侧 C.SRC_TOTAL_CAP 镜像，双端不漂移）
 
+/* ---------- 发现页纯派生（B3-C，plan-expansion-r4 §7.3）：本地字段六分组——不联网、不改主列表排序、
+   不复制播放决策（点击统一走 Player.play）。纯函数（数据全注入，test/discovery.js 直测）：
+   input = { rows:[{k,n,c,u0,u,hidden,dead,om}], quality:(u0,u)=>QualityAggregate|null,
+             meta:{stations:{u0:{firstSeenAt}}}|null, recents:[{k,u:[]}], revives:Map(u0→ts),
+             playingKey, connectingKey }
+   规则固定：手动隐藏台一律过滤（无正在播例外——手动是明确意图）；dead 台默认过滤（正在播/连接中例外，
+   沿用 visible() 口径）；QualityStore 无记录不进任何质量分组（unknown 计数供 UI「暂无质量数据」提示，
+   绝不误判进 poor）；精选按 originMask（om 位，applySources 装配时打、不持久化）；
+   排序 = 「最近新增」按 firstSeenAt 降序、其余按 lastObservedAt（B2 已派生字段，绝不引入 lastSeenAt 别名）
+   降序，再 identityUrl 字典序稳定排序；每组 ≤20、组内不重复（构造即保证）、同一台可跨组。 ---------- */
+function buildDiscovery(input) {
+  const q = input.quality || (() => null);
+  const metaSt = input.meta && input.meta.stations && typeof input.meta.stations === 'object' ? input.meta.stations : null;
+  // radio-meta 的 firstSeenAt 挂在每个 source 上（继承上一份）：台级取最早源；容错直挂台级的形态
+  const firstSeen = m => {
+    if (!m) return 0;
+    if (m.firstSeenAt) return m.firstSeenAt;
+    if (Array.isArray(m.sources)) { let mn = 0; for (const x of m.sources) if (x && x.firstSeenAt && (!mn || x.firstSeenAt < mn)) mn = x.firstSeenAt; return mn; }
+    return 0;
+  };
+  const heard = new Set();
+  for (const r of input.recents || []) { if (r.k) heard.add(r.k); for (const u of r.u || []) heard.add(u); }
+  const pk = input.playingKey || '', ck = input.connectingKey || '';
+  const g = { starter: [], stable: [], fresh: [], revived: [], icy: [], unheard: [] };
+  let unknown = 0;
+  for (const r of input.rows || []) {
+    if (!r || !r.u0) continue;
+    if (r.hidden) continue;                                   // ① 手动隐藏台：彻底过滤
+    if (r.dead && r.k !== pk && r.k !== ck) continue;         // ② dead 默认过滤（正在播/连接中例外口径沿用）
+    const qa = q(r.u0, r.u);
+    if (!qa) unknown++;                                       // ③ 无质量记录：不进质量分组、不误判
+    const row = { k: r.k, n: r.n, c: r.c, u0: r.u0, obs: qa ? (qa.lastObservedAt || 0) : 0 };
+    if (r.om) g.starter.push(row);                            // ④ 精选 = originMask（同名但 URL 由主列表提供的精选台也命中）
+    if (qa && qa.stability === 'good' && qa.directCount > 0) g.stable.push(row); // 稳定直连：good 且有直流源（B2 directCount 口径）
+    const at = metaSt ? firstSeen(metaSt[r.u0]) : 0;
+    if (at) g.fresh.push(Object.assign({ at }, row));         // ⑤ 最近新增：radio-meta firstSeenAt（无 meta 该组为空）
+    if (input.revives && input.revives.get(r.u0)) g.revived.push(row);               // ⑥ 最近恢复：只认明确转移记录
+    if (qa && qa.metadata === 'icy') g.icy.push(row);                                // 有曲讯：metadata==icy
+    if (!heard.has(r.k) && !(r.u || []).some(u => heard.has(u))) g.unheard.push(row); // 未听过：不在 radio.recents（键/URL 双口径）
+  }
+  const byObs = (a, b) => (b.obs - a.obs) || (a.u0 < b.u0 ? -1 : a.u0 > b.u0 ? 1 : 0);
+  const byAt = (a, b) => ((b.at || 0) - (a.at || 0)) || (a.u0 < b.u0 ? -1 : a.u0 > b.u0 ? 1 : 0);
+  for (const key of ['starter', 'stable', 'revived', 'icy', 'unheard']) g[key] = g[key].sort(byObs).slice(0, 20);
+  g.fresh = g.fresh.sort(byAt).slice(0, 20);
+  return { groups: g, unknown };
+}
+
 const App = {
   /* 集中状态（docs/review.md 架构-风险 2）：stations 数据 + 渲染哨兵 + 行索引（体检增量更新用，去 O(n²)）
      view：网格/列表视图（boot 从 localStorage 恢复，网格为默认——单列长列表浪费纵向空间）
@@ -37,7 +84,12 @@ const App = {
   recents: [], // [{k, n, u:[…]}] 最近在前、≤20；队首即「上次收听」（E3 与 lastKey 合并为单一队列）
   cfg: null,   // 个人维护层（radio.cfg，owner 三批拍板）：分类重命名/隐藏/自建 + 电台移动/重命名/隐藏 + 追加备选源（P1-a/r2 ⑨）。
                // 键 = 源 URL（身份公理），同步重建后自动复用；tag = URL→原始台名快照，仅供失配清单显示
-  songFor: '', lastSong: '', // 曲讯（B-6/B-7）：songFor=曲讯归属台（切台即清零重取）；lastSong=最近一次拿到的曲名（换歌时旧歌入史）
+  songFor: '',   // 曲讯归属台（B-6/B-7）：切台/刷新即清零重取（当前曲名本体在 B3 管线 metaPipe.last）
+  metaPipe: null,  // 曲讯事件管线（B3-A）：boot 创建（Metadata.mpCreate）——世代校验/清洗/同曲去重/入史决策的唯一所在
+  metaV2: false,   // sink 选择（boot 按 FEATURES.metadataV2 定格）：false=Legacy（现状行为）/true=V2（归一化字段消费），绝不双写
+  metaLast: null,  // V2 sink 记的最近一次归一化事件（artist/track/program 供统计/发现派生；Legacy 不写）
+  metaCache: null, // radio-meta.json 懒加载缓存（B3-C 发现页「最近新增」；file:// 无 script 包装 → null 该组为空）
+  revives: new Map(), // dead→可用 状态转移记录（B3-C「最近恢复」唯一依据）：身份 URL → 时间戳，7 天过期，无记录不猜测
 
   /* ---------- 持久化（localStorage 全部容错读取 + 旧格式迁移） ---------- */
   loadStore() {
@@ -69,6 +121,28 @@ const App = {
     let n1 = 0, n2 = 0;
     for (const k of ks) { if (this.healthMarks[k].perm) { if (++n2 > 1000) delete this.healthMarks[k]; } else if (++n1 > 1000) delete this.healthMarks[k]; }
     Store.set('radio.health', JSON.stringify(this.healthMarks));
+  },
+
+  /* ---------- 「最近恢复」记录（B3-C 发现页）：health dead→可用 的明确状态转移——体检复活（patchHealth）
+     与他页复测对账（applyServerStore）两路径落账；内存 Map + localStorage 运行时缓存（键 discovery.revives，
+     非 radio.*，7 天过期）。无转移记录绝不猜测（同步重建/换名不产生复活）。 ---------- */
+  loadRevives() {
+    this.revives = new Map();
+    try {
+      const j = JSON.parse(localStorage.getItem('discovery.revives') || '{}');
+      const now = Date.now();
+      for (const [u, t] of Object.entries(j || {})) if (Number.isFinite(t) && now - t < 7 * DAY) this.revives.set(u, t);
+    } catch (_) {}
+  },
+  markRevive(s) {
+    const u = s && s.u && s.u[0]; if (!u) return;
+    this.revives.set(u, Date.now());
+    while (this.revives.size > 200) { // 与健康标记 FIFO 同量级兜底：丢最旧
+      let old = null;
+      for (const [k, v] of this.revives) if (!old || v < old[1]) old = [k, v];
+      this.revives.delete(old[0]);
+    }
+    try { localStorage.setItem('discovery.revives', JSON.stringify(Object.fromEntries(this.revives))); } catch (_) {}
   },
 
   /* ---------- 维护配置（radio.cfg）：localStorage 全部容错读取，结构与导入共用一套校验 ---------- */
@@ -137,6 +211,8 @@ const App = {
   /* ---------- 数据装配（决策 B/C）：主列表 replace + STARTER 精选层（按精确名去重）+ 个人层常驻 ---------- */
   applySources(mainList, myList) {
     const byKey = new Map(), byName = new Set();
+    const starterNames = new Set(STARTER.map(x => x.n)), starterUrls = new Set(); // B3 originMask：精选身份 URL/精确名集合
+    for (const st of STARTER) for (const u of st.u) starterUrls.add(u);
     for (const s of mainList) { byKey.set(keyOf(s), s); byName.add(s.n); }
     for (const st of STARTER) if (!byName.has(st.n)) { // 决策 C：与主列表精确重名的精选台不再并入（http 模式下常听=纯重复）
       byKey.set(keyOf(st), { c: st.c, n: st.n, u: st.u.slice(), l: st.l }); byName.add(st.n);
@@ -147,7 +223,12 @@ const App = {
       else { byKey.set(keyOf(s), s); byName.add(s.n); }
     }
     this.state.stations = [...byKey.values()];
-    for (const s of this.state.stations) { s.dCat = s.c; s.dName = s.n; s.dU = s.u.slice(); } // 同步默认口径留底（面板 ↺恢复/撤回移动/撤回追加源用）
+    for (const s of this.state.stations) {
+      s.dCat = s.c; s.dName = s.n; s.dU = s.u.slice(); // 同步默认口径留底（面板 ↺恢复/撤回移动/撤回追加源用）
+      // B3 originMask：STARTER 身份 URL 命中、或与精选台精确同名（同名台 URL 由主列表提供）→ 打 starter 位。
+      // 运行时字段不持久化（radio.txt/radio.*/备份均不带）——发现页「精选」分组按 om 位判定，不按 u[0] 字面比对
+      s.om = starterUrls.has(s.u[0]) || starterNames.has(s.n) ? 1 : 0;
+    }
     this.applyCfg(); // 维护层最后套用（覆盖分类/台名/隐藏，收藏随后按 URL 回绑不受影响）
     this.rebind(); // 收藏/最近按 URL 回绑（债务 1）——一轮即够（audit B1：历史双调，幂等但白做一遍全量回绑 + 3 次落盘）
     this.render();
@@ -234,6 +315,7 @@ const App = {
     }
     this.healthMarks = hm; this.saveHealth();
     this.saveFavs(); this.saveRecents();
+    this.qualityKeep(); // B2：收藏/最近回绑后刷新 trim 保护集
   },
   favKeys() { return new Set(this.favs.map(f => f.k)); },
   /* Store 对账后的内存全量重载（方案二：boot 异步对账/多标签重拉/恢复备份共用）——station 对象本身不动
@@ -263,11 +345,13 @@ const App = {
     this.syncViewUI(); this.syncDeadUI(); this.syncThemeUI();
   },
   applyServerStore() {
+    const wasDead = new Set(this.state.stations.filter(s => s.health === 'dead').map(s => s.u[0])); // B3：他页复测复活（healthMarks 消失）的转移证据快照
     this.loadStore(); this.loadCfg();
     Player.reloadMems();
     for (const s of this.state.stations) { s.health = ''; s.perm = 0; this.srcLife(s); } // 清旧标记由 rebind 按 healthMarks 重挂；源生命周期随对账联动（他页禁用/排序即刻生效，B1）
     this.loadUi3(); // view/showdead/theme 三 UI 态随对账联动（audit C4）
     this.rebind(); this.render(); this.renderManage();
+    for (const s of this.state.stations) if (wasDead.has(s.u[0]) && s.health !== 'dead') this.markRevive(s); // B3：dead→无标记 = 有明确转移，落「最近恢复」
   },
   /* 同步消失名单 × 收藏比对（N4/r2 ⑥）：双通道——显示名 + 消失台 URL 集合（AIbot P3-1：经维护面板本地
      改名的收藏台键名已换、按名会漏，URL 快照按身份公理仍对得上）。必须在 reloadMain 之后调用——
@@ -485,8 +569,9 @@ const App = {
      复活即撤销标记，体检结束的兜底 render 会让它回归列表。返回档位（'ok'|'sus'|'perm'）供编排方分档统计 */
   patchHealth(s, ok, stamp) {
     const k = keyOf(s);
+    const wasDead = s.health === 'dead';
     s.health = ok ? 'ok' : 'dead';
-    if (ok) { s.perm = 0; delete this.healthMarks[k]; }
+    if (ok) { s.perm = 0; delete this.healthMarks[k]; if (wasDead) this.markRevive(s); } // B3：dead→可用 状态转移落「最近恢复」（无转移不记）
     else {
       const old = this.healthMarks[k], now = Date.now();
       const t0 = old ? old.t0 : now, n = old ? (old.n || 1) + 1 : 1;
@@ -569,16 +654,20 @@ const App = {
     const seen = new Set(), list = [];
     for (const f of this.favs) { const s = this.resolve(f); if (s && !seen.has(keyOf(s))) { seen.add(keyOf(s)); list.push(s); } }
     if (Player.station && !seen.has(keyOf(Player.station))) list.push(Player.station);
-    Logos.ensure(list, () => { this.render(); if (Player.station) Player.setSong(this.lastSong); });
+    Logos.ensure(list, () => {
+      this.render();
+      if (Player.station) { const cur = Metadata.mpCurrent(this.metaPipe); Player.setSong(cur && cur.title || ''); } // B3：当前曲名在管线
+    });
   },
   /* 底部栏刷新（Player.onstate 用）：当前台名 + 播放/暂停态 + 均衡器动画 */
   playerNow() {
     const s = Player.station;
     if (s) {
       const k = keyOf(s);
-      if (this.songFor !== k) { // 切台：曲讯清零（新台从零取，旧曲名不得串台）
-        this.songFor = k; this.lastSong = '';
-        $('song').hidden = true; $('song').textContent = '';
+      if (this.songFor !== k) { // 切台/刷新：曲讯清零（新台从零取，旧曲名不得串台）——B3 管线世代重置，旧事件一律丢弃
+        this.songFor = k;
+        Metadata.mpReset(this.metaPipe, Player.srcToken(), s.u[0]);
+        this.metaClearUI();
       }
       $('nowline').textContent = s.n;
       $('nowline').classList.add('canfind'); $('nowline').title = '点击回到正在播的电台（N5）'; // 台名可点定位（r2 ⑦）
@@ -595,6 +684,36 @@ const App = {
     if (!Player.station) return; // 空台/全部源失败：无响应（状态矩阵见方案 §2）
     this.songFor = '';
     Player.refresh();
+  },
+
+  /* ---------- 源质量样本接线（B2，plan-expansion-r4 §6.1）：Player 原始转换 → QualityStore op ----------
+     映射口径与 Android 冻结一致：playing 到达 = play/switch（ok 样本，延迟 = 建流锚起算）；disconnect =
+     watchdog（同源重连）/error（级联换源），均计 disconnects；级联耗尽 = error。自动体检绝不产 playback——
+     本方法只接 Player 回调，体检通道走 Sync.runCheck 的 diagnostic。 */
+  qosMap(ev) {
+    const s = ev && ev.station;
+    if (!s || !s.u || !s.u.length) return;
+    const su = s.u[ev.si] || s.u[0]; // 身份键与源 URL 分离记录（聚合按源、淘汰按台）
+    if (ev.phase === 'playing')
+      QualityStore.recordPlayback(s.u[0], { sourceUrl: su, ok: true, latencyMs: ev.lat || 0, mode: ev.mode || '', trigger: ev.trig || 'play' });
+    else if (ev.phase === 'disconnect')
+      QualityStore.recordPlayback(s.u[0], { sourceUrl: su, ok: false, latencyMs: 0, mode: ev.mode || '', trigger: ev.reason || 'error' });
+    else if (ev.phase === 'exhaust')
+      QualityStore.recordPlayback(s.u[0], { sourceUrl: su, ok: false, latencyMs: 0, mode: ev.mode || '', trigger: 'error' });
+  },
+  qualityKeep() { // trim 保护集（B2）：收藏+最近解析出的台身份 URL（≤64；boot/rebind 随行刷新，服务端 trim 与本地降级共用）
+    const set = [];
+    const push = e => { const s = this.resolve(e); if (s && s.u[0] && !set.includes(s.u[0])) set.push(s.u[0]); };
+    for (const f of this.favs) push(f);
+    for (const r of this.recents) push(r);
+    QualityStore.keepHint = set.slice(0, 64);
+  },
+  fmtAgo(ts) { // 相对时间（详情质量摘要「最近播放」用）
+    const m = Math.max(0, Date.now() - ts);
+    if (m < 60000) return '刚刚';
+    if (m < 3600000) return Math.floor(m / 60000) + ' 分钟前';
+    if (m < 86400000) return Math.floor(m / 3600000) + ' 小时前';
+    return Math.floor(m / 86400000) + ' 天前';
   },
 
   /* ---------- footer 选源浮层（②a/grill 拍板）：正在听时发现源不好，四步深的 ⚙ 面板救不了急——
@@ -636,22 +755,48 @@ const App = {
     $('status').textContent = had ? '已恢复默认源，从默认源重播' : '本无源记忆，按默认序重播';
   },
 
-  /* ---------- 曲讯（B-6）：轮询 /api/nowplaying 取正在播台的 ICY 曲名 ----------
-     只对「正在播 + 未暂停 + 页面可见」的台取（http 形态）；m3u8 结构性无 ICY 不空耗探活；
-     换歌时旧曲名入史（B-7）+ 曲名写 MediaSession（锁屏同步显示） */
+  /* ---------- 曲讯事件管线接线（B3-A，契约 contracts/metadata-event.json）：/api/nowplaying 轮询结果先转
+     MetadataEvent 再进管线（固定顺序：世代校验→清洗→丢过旧→当前曲讯→与上一曲比较→必要时写 radio.songs→
+     MediaSession/UI）；管线只出决策，消费由当前生效的 sink 执行——Legacy/V2 二选一（metaV2 定格于 boot），
+     绝不双写历史。m3u8 结构性无 ICY：不轮询、保持空曲讯不猜歌。 ---------- */
+  /* 双 sink 显式分支（AIbot P1-2；boot 按 FEATURES.metadataV2 定格二选一，绝不双写）：
+     LegacyMetadataSink = B2 前行为逐项保留（footer 曲名+icy-br 同格式 / MediaSession setSong / radio.songs
+     {t,at} 格式与键不变）；MetadataV2Sink = 同一显示 + 归一化字段留 metaLast（统计/发现消费）。 */
+  metaSinkLegacy: {
+    current(ev) { // 新曲上屏（title = 清洗后完整显示文本；icy-br 随帧显示——仅 ICY 直流有；B2 同款文案格式）
+      $('song').textContent = '♪ ' + ev.title + (ev.bitrateKbps > 0 ? ' · ' + ev.bitrateKbps + 'kbps' : '');
+      $('song').hidden = false;
+      Player.setSong(ev.title);
+    },
+    hist(h) { App.pushSongHist(h.u, h.t); }, // 换歌旧曲入史（B-7，键=台主 URL——身份公理；radio.songs 现有格式不变）
+  },
+  metaSinkV2: {
+    current(ev) { App.metaSinkLegacy.current(ev); App.metaLast = ev; }, // 同一显示 + 归一化事件留底（v2 新消费面）
+    hist(h) { App.metaSinkLegacy.hist(h); },
+  },
+  get metaSink() { return this.metaV2 ? this.metaSinkV2 : this.metaSinkLegacy; },
+  metaClearUI() { // 切台/刷新/全部失败：先清空旧曲讯再接受新世代事件（MediaSession 回台名，play 会随新台重写）
+    $('song').hidden = true; $('song').textContent = '';
+    if (Player.station) Player.setSong('');
+  },
+  /* 轮询（B-6 语义不变：正在播 + 未暂停 + 页面可见 + 直流形态；15s 常驻轮）。
+     世代快照（gen + 身份 URL）在 fetch 前捕获——响应迟到时旧世代事件由管线丢弃（切台/刷新后不串台） */
   async tickSong() {
     const s = Player.station;
     if (!s || Player.isPaused() || document.hidden || !location.protocol.startsWith('http')) return;
     const raw = Player.curUrl;
     if (!raw || /\.m3u8(\?|$)/i.test(raw)) return;
+    const gen = Player.srcToken(), u0 = s.u[0];
     let j;
     try { j = await fetch('/api/nowplaying?url=' + encodeURIComponent(raw)).then(x => x.json()); } catch (_) { return; }
     const t = (j && j.title) || '';
-    if (!Player.station || keyOf(Player.station) !== this.songFor) return; // 轮询期间切台：丢弃过期结果
-    if (t === this.lastSong) return;
-    if (this.lastSong && t) this.pushSongHist(s.u[0], this.lastSong); // 换歌：旧歌入史（B-7，键=台主 URL——身份公理，改名/换分类不丢）
-    this.lastSong = t;
-    if (t) { $('song').textContent = '♪ ' + t + (j && +j.br > 0 ? ' · ' + j.br + 'kbps' : ''); $('song').hidden = false; Player.setSong(t); } // 码率（③）：ICY 直流才有，随曲讯同帧到达
+    const ev = Metadata.normalizeMetadata( // 统一事件入口：轮询结果 → MetadataEvent（黄金样本口径归一化）
+      { title: t, bitrateKbps: j && +j.br > 0 ? +j.br : 0, source: t ? 'icy' : 'none', at: Date.now() },
+      { identityUrl: u0, stationName: s.n });
+    ev.token = gen;
+    const d = Metadata.mpAccept(this.metaPipe, ev);
+    if (d.hist) this.metaSink.hist(d.hist);        // 换歌：旧曲入史（gap/空曲讯不入史——现状语义）
+    if (d.st === 'new') this.metaSink.current(ev); // 新曲上屏；空曲讯（noop/gap）不覆盖有效曲名
   },
 
   /* ---------- 歌曲历史（B-7）：换歌时旧歌入史（当前曲只显示不入史），按台主 URL 存 localStorage（radio.songs，身份公理——AIbot P3-6） ---------- */
@@ -1005,7 +1150,11 @@ const App = {
     } catch (e) {
       if (this.detail.stationKey === k) this.detail.error = '诊断请求失败：' + (e && e.message || e);
     }
-    if (this.detail.stationKey === k) { this.detail.loading = false; this.renderDetail(); }
+    if (this.detail.stationKey === k) {
+      this.detail.loading = false;
+      for (const r of this.detail.results) if (r) QualityStore.recordDiagnostic(s.u[0], r, 'manual'); // B2：手动逐源诊断样本
+      this.renderDetail();
+    }
   },
   async recheckSource(s, i) { // 单源复诊（详情源行「诊断」）：禁用源不发请求（B1 拍板——显示禁用原因 + 取消禁用入口）
     if ((s.dis || []).includes(i)) return;
@@ -1016,7 +1165,7 @@ const App = {
       const j = await fetch('/api/check?detail=1&url=' + encodeURIComponent(s.u[i])).then(x => x.json());
       if (this.detail.stationKey !== k) return;
       const r = j && Array.isArray(j.results) && j.results[0];
-      if (r) { this.detail.results = this.detail.results.slice(); this.detail.results[i] = r; }
+      if (r) { this.detail.results = this.detail.results.slice(); this.detail.results[i] = r; QualityStore.recordDiagnostic(s.u[0], r, 'manual'); } // B2 诊断样本
       else this.detail.error = '诊断无结果';
     } catch (e) { if (this.detail.stationKey === k) this.detail.error = '诊断请求失败：' + (e && e.message || e); }
     if (this.detail.stationKey === k) { this.detail.loading = false; this.renderDetail(); }
@@ -1034,6 +1183,22 @@ const App = {
     t.remove();
   },
   playSource(s, i) { this.startPlay(s, i); this.renderDetail(); }, // 详情不关：底部栏可见连接进展，可连续试源
+  /* 质量摘要片段（B2）：QualityStore.summary（与 Android 冻结口径一致的四档稳定性）——稳定性徽标 +
+     成功率/平均延迟/断流/最近播放；质量只做展示，永不替代死台隐藏判定（契约硬点） */
+  qualityHtml(s) {
+    const qa = QualityStore.summary(s.u[0], s.u);
+    if (!qa) return '<div class="srcs" style="padding:2px 0 6px">暂无质量样本（播放与体检后自动累计）</div>';
+    const Q_TXT = { good: '稳定', fair: '一般', poor: '不稳定', unknown: '样本不足' };
+    const cls = qa.stability === 'good' ? 'okb' : qa.stability === 'poor' ? 'badb' : '';
+    const total = qa.okCount + qa.failCount;
+    const rate = total ? Math.round(100 * qa.okCount / total) : 0;
+    const icy = { icy: '有曲讯（直流）', none: '无曲讯', mixed: '混合源' }[qa.metadata] || qa.metadata;
+    return `<div class="srcs" style="padding:2px 0 6px">
+      <span class="badge ${cls}" title="stability: ${this.esc(qa.stability)}（近 30 天成功率/延迟/连续失败综合）">● ${Q_TXT[qa.stability] || qa.stability}</span>
+      成功率 ${rate}%（${qa.okCount}/${total}）· 平均延迟 ${qa.avgLatencyMs}ms · 断流 ${qa.disconnects} 次 · ${icy}
+      · 最近播放 ${qa.lastPlaybackAt ? this.fmtAgo(qa.lastPlaybackAt) : '—'}
+    </div>`;
+  },
   /* 详情渲染（唯一入口）：code 徽标走固定文案表（UI 不反推 why），质量摘要 B2 接线前先占位 */
   renderDetail() {
     if ($('detail').hidden) return;
@@ -1083,9 +1248,70 @@ const App = {
         <button type="button" class="btn mbtn" data-act="dClearOrder" title="删除人工源排序，恢复同步原始顺序">撤销人工源排序</button>
       </div>
       <div class="dsec"><b>质量摘要</b></div>
-      <div class="srcs" style="padding:2px 0 6px">质量数据将随 B2 提供</div>
+      ${this.qualityHtml(s)}
       <div class="dsec"><b>歌曲历史（本台最近）</b></div>
       ${songs.length ? songs.map(x => `<div class="shrow">${this.esc(x.t)}</div>`).join('') : '<div class="srcs" style="padding:2px 0 6px">暂无历史（换歌后自动记录）</div>'}`;
+  },
+
+  /* ---------- 发现页（B3-C）：独立浮层视图（#detail 同范式），入口 = header「发现」按钮（features.discovery
+     关时隐藏）。纯本地派生——buildDiscovery 数据注入（质量摘要/健康/最近/radio-meta/revives 全本地），不联网、
+     不改主列表排序；点击行统一 startPlay→Player.play（不复制播放决策）。 ---------- */
+  dscOpener: null,
+  async openDiscovery() {
+    this.dscOpener = document.activeElement;
+    $('discovery').hidden = false;
+    $('discBody').innerHTML = '<div class="empty">正在生成推荐…</div>';
+    $('discClose').focus();
+    if (!this.metaCache) this.metaCache = await this.loadMeta(); // 懒加载一次（radio-meta.json 静态文件，非 dotfile/data 段天然可 GET）
+    this.renderDiscovery();
+  },
+  async loadMeta() { // file://：meta 无经典 script 包装不可读 → null（「最近新增」为空，其余组不受影响）
+    if (!location.protocol.startsWith('http')) return null;
+    try { return await fetch('radio-meta.json').then(r => r.ok ? r.json() : null); } catch (_) { return null; }
+  },
+  closeDiscovery() {
+    if ($('discovery').hidden) return;
+    $('discovery').hidden = true;
+    const b = this.dscOpener && this.dscOpener.isConnected ? this.dscOpener : null;
+    if (b && b.focus) b.focus();
+  },
+  renderDiscovery() {
+    const d = buildDiscovery({
+      rows: this.state.stations.map(s => ({ k: keyOf(s), n: s.n, c: s.c, u0: s.u[0] || '', u: s.u,
+        hidden: !!(s.hidden || this.cfg.hideC[s.c]), dead: s.health === 'dead', om: s.om ? 1 : 0 })),
+      quality: (u0, u) => QualityStore.summary(u0, u),
+      meta: this.metaCache, recents: this.recents, revives: this.revives,
+      playingKey: Player.station && keyOf(Player.station), connectingKey: Player.connecting && keyOf(Player.connecting),
+    });
+    const GROUPS = [ // 固定六组（§7.3）；只渲染非空组——发现是「给灵感」，空组不出占位噪音
+      ['starter', '精选电台', '内置实测精选层'],
+      ['stable', '稳定直连', '近 30 天稳定性 good 且有直流源'],
+      ['fresh', '最近新增', '同步新进电台'],
+      ['revived', '最近恢复', '从失效标记复活的电台'],
+      ['icy', '有曲讯', '直流 ICY——播放时可显示歌名'],
+      ['unheard', '未听过', '还从未播放过'],
+    ];
+    let html = '';
+    for (const [id, t, desc] of GROUPS) {
+      const list = d.groups[id];
+      if (!list.length && !(id === 'stable' && d.unknown)) continue;
+      html += `<div class="dsec"><b>${t}</b><span class="srcs">${desc}</span></div>`;
+      if (!list.length) { html += `<div class="srcs" style="padding:2px 0 8px">暂无质量数据（播放与体检后自动累计）</div>`; continue; }
+      html += list.map(r => `<button type="button" class="btn mbtn discrow" data-k="${this.esc(r.k)}" title="播放：${this.esc(r.n)}">
+        <span class="dn">${this.esc(r.n)}</span><span class="badge">${this.esc(r.c)}</span>
+        ${id === 'fresh' ? `<span class="srcs">${this.fmtAgo(r.at)}</span>` : r.obs ? `<span class="srcs">${this.fmtAgo(r.obs)}</span>` : ''}
+      </button>`).join('');
+    }
+    $('discBody').innerHTML = html || '<div class="empty">暂无推荐——收藏/播放/体检后这里会越来越准</div>';
+  },
+
+  /* ---------- B3-B 收听统计接线：Player 派生态 → ListenStats 状态机（只读快照推导，不复制播放决策）。
+     IDLE/CONNECTING/PAUSED/PLAYING 由 onstate 推导；FAILED 由 onfail 显式给；PLAYING 的 session 建立
+     只认 Player.onqos phase='playing'（新建流到达——resume 不经 load 不采样，重锚不开新 session）。 ---------- */
+  lsState() {
+    if (!Player.station) return ListenStats.onState('IDLE');
+    if (Player.connecting) return ListenStats.onState('CONNECTING');
+    ListenStats.onState(Player.isPaused() ? 'PAUSED' : 'PLAYING');
   },
 
   stMove(s, v) {
@@ -1160,41 +1386,154 @@ const App = {
     $('status').textContent = '已重置维护配置';
   },
 
-  /* —— 完整备份导出/导入（方案二/R4 拍板）：全部 radio.* 打包单 JSON——不走后端的迁移通道（换浏览器/换机兜底，
-     与既有三个单项导出并存：m3u 给外部播放器、songs 给音乐 App、config 给轻量迁移，本项给完整恢复） —— */
-  exportAll() {
+  /* —— 完整备份导出/导入（R4 拍板 → r4/B4 升 v3，BackupV3 纯逻辑内核）：全部 radio.* + 个人电台行
+     （+ 可选质量 sidecar）打包单 JSON——换浏览器/换机的兜底通道；与既有单项导出并存（m3u/songs/config）。
+     导入三阶段（§13.2）：parse → validate/preview（版本/键白名单/sidecar 明示「含 N 台质量数据、将覆盖
+     本机质量数据」）→ commit（BackupV3.commitImport：先快照 Store/my-radio/旧质量三件，任一步失败整体
+     回滚——质量旧快照经 replace 尽力回写，二次失败文案如实点名「可能停留在导入状态」） —— */
+  async exportAll() {
+    const http = location.protocol.startsWith('http');
+    let myRadio = [], myNote = '';
+    if (http) {
+      const t = await fetch('my-radio.txt?t=' + Date.now()).then(r => r.ok ? r.text() : null).catch(() => null);
+      if (t == null) myNote = '（个人电台列表拉取失败，本次备份未含）';
+      else myRadio = t.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    }
+    const ext = {};
+    if ($('mSidecar') && $('mSidecar').checked) { // 「包含本机 sidecar」复选（默认关）：只留迁移字段
+      ext.sidecars = {};
+      if (http) { // 质量 sidecar 仅 http 形态（服务端 quality.json）
+        const q = await fetch('/api/quality').then(r => r.json()).catch(() => null);
+        if (q && q.data && !q.notModified) {
+          const d = BackupV3.qualityTrim(q.data);
+          if (Object.keys(d).length) ext.sidecars.quality = { v: 1, data: d };
+        }
+      }
+      // 收听统计 sidecar 双形态（B4）：http 读服务端 /api/listenstats、file:// 读本地快照——裁剪后随行
+      const lsRaw = http
+        ? await fetch('/api/listenstats').then(r => r.json()).then(j => j && j.days && !j.notModified ? j.days : null).catch(() => null)
+        : (() => { try { const j = JSON.parse(localStorage.getItem('listenstats.local') || 'null'); return j && j.days ? j.days : null; } catch (_) { return null; } })();
+      if (lsRaw) {
+        const d = BackupV3.lsTrim(lsRaw);
+        if (Object.keys(d).length) ext.sidecars.listenStats = { v: 1, data: d };
+      }
+      if (!Object.keys(ext.sidecars).length) delete ext.sidecars;
+    }
+    const o = BackupV3.build({ at: Date.now(), app: 'web', data: Store.snapshot(), myRadio, extensions: ext });
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([JSON.stringify({ v: 1, at: Date.now(), data: Store.snapshot() }, null, 2)], { type: 'application/json' }));
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(o, null, 2)], { type: 'application/json' }));
     a.download = 'vradio-backup.json'; a.click(); URL.revokeObjectURL(a.href);
-    $('status').textContent = '已导出完整备份（vradio-backup.json：收藏/配置/健康标记/歌曲历史等持久数据；台标缓存可重建不包含）';
+    const sc = ext.sidecars
+      ? '，含' + [ext.sidecars.quality ? `质量 sidecar ${Object.keys(ext.sidecars.quality.data).length} 台` : '',
+          ext.sidecars.listenStats ? `收听统计 ${Object.keys(ext.sidecars.listenStats.data).length} 天` : ''].filter(Boolean).join('、')
+      : '';
+    $('status').textContent = `已导出完整备份 v3（收藏/配置/健康标记/歌曲历史${myRadio.length ? '/个人电台' : ''}${sc}${myNote}；台标缓存可重建不包含）`;
   },
-  importAll(text) {
-    let j; try { j = JSON.parse(text); } catch (_) { alert('导入失败：不是合法 JSON 文件'); return; }
-    const d = j && j.data && typeof j.data === 'object' ? j.data : null;
-    if (!d) { alert('导入失败：不是 vradio 完整备份文件'); return; }
-    const n = Store.KEYS.filter(k => typeof d[k] === 'string').length;
-    if (!n) { alert('导入失败：备份中无有效数据'); return; }
-    // 版本映射（B0 契约）：v1 无 my 不动 my-radio.txt；v2 读取 my 数组（含空数组 = 恢复为空）
-    const ver = j.v | 0 || 1;
-    const my = ver >= 2 && Array.isArray(j.my) ? j.my.filter(x => typeof x === 'string' && x.trim()) : null;
-    const myNote = my ? `、个人电台 ${my.filter(l => !l.endsWith('#genre#')).length} 台` : '';
-    if (!confirm(`导入将覆盖本地全部数据（备份 v${ver}，含 ${n} 个数据项${myNote}：收藏/维护配置/健康标记/歌曲历史全部替换）。继续？`)) return;
-    for (const k of Store.KEYS) { if (typeof d[k] === 'string') localStorage.setItem(k, d[k]); else localStorage.removeItem(k); } // 白名单键直接落镜像（原生写）
-    Store.flush(); // 推后端（http 形态）；file:// 下 no-op
-    if (my) this.restoreMyRadio(my); // v2 起带个人电台行（async 失败仅提示，不回滚 Store——预览/事务三阶段在 B4 v3 落地）
-    this.applyServerStore();
-    $('status').textContent = '已恢复完整备份';
+  async importAll(text) {
+    // 阶段一/二：parse + validate/preview（BackupV3.read：版本识别 + 键白名单过滤 + sidecar 判定）
+    const info = BackupV3.read(text, Store.KEYS);
+    if (!info) { alert('导入失败：不是 vradio 完整备份文件'); return; }
+    if (!info.n) { alert('导入失败：备份中无有效数据'); return; }
+    const http = location.protocol.startsWith('http');
+    // sidecar 选择（B4 起双 sidecar 一次确认整体覆盖；schema importRules 同口径）：质量仅 http、收听统计双形态
+    const scParts = [info.quality && http ? `质量数据 ${Object.keys(info.quality.data).length} 台` : '',
+      info.ls ? `收听统计 ${Object.keys(info.ls.data).length} 天` : ''].filter(Boolean);
+    let sc = false;
+    if (scParts.length) sc = confirm(`备份含 sidecar（${scParts.join('、')}）。是否一并恢复？\n（将覆盖本机对应数据；取消恢复则本机保持不变）`);
+    const myNote = info.my ? `、个人电台 ${info.my.filter(l => !l.endsWith('#genre#')).length} 台` : '';
+    if (!confirm(`导入将覆盖本地全部数据（备份 v${info.ver}${info.app ? '，来源 ' + info.app : ''}，含 ${info.n} 个数据项${myNote}${sc ? `、sidecar（${scParts.join('、')}，将覆盖本机对应数据）` : ''}：收藏/维护配置/健康标记/歌曲历史全部替换${info.ver === 1 ? '；v1 备份不动个人电台列表' : ''}）。继续？`)) return;
+    // 阶段三 commit（BackupV3.commitImport，AIbot P1-2 抽离可测）：先快照四件（Store + my-radio + 旧质量 +
+    // 旧收听统计 sidecar——确认恢复即先读留存，无快照不提交），任一步失败整体回滚（sidecar 旧快照经各自通道
+    // 尽力回写，二次失败文案如实点名）；取消在上一步 = 零副作用。io 注入真实现（fetch/localStorage/QualityStore/ListenStats）。
+    const lsLocalRead = () => { try { const j = JSON.parse(localStorage.getItem('listenstats.local') || 'null'); return j && j.days && typeof j.days === 'object' ? j.days : {}; } catch (_) { return null; } };
+    const r = await BackupV3.commitImport(info, sc, {
+      http,
+      storeSnap: () => { const s = {}; for (const k of Store.KEYS) s[k] = localStorage.getItem(k); return s; },
+      storeApply: d => { for (const k of Store.KEYS) { if (d[k] != null) localStorage.setItem(k, d[k]); else localStorage.removeItem(k); } },
+      storeFlush: async () => { await Store.flush(); return !Store.dirty; }, // 可等待可判定成功（AIbot 三轮 P1-1）：flush 后 dirty=false 才算落盘成功（file:// 恒成功）
+      getMy: () => fetch('my-radio.txt?t=' + Date.now()).then(r => r.status === 404 ? '' : r.ok ? r.text() : null).catch(() => null), // 404=空列表合法；其余失败 null 中止（三轮 P2-1，不再误当空文件清掉 my-radio）
+      postMy: lines => this.postMyRadio(lines),
+      getQuality: () => fetch('/api/quality').then(r => r.json()).then(j => j && j.data && typeof j.data === 'object' && !Array.isArray(j.data) ? j.data : null).catch(() => null),
+      postQuality: data => fetch('/api/quality', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ replace: true, data }) })
+        .then(x => x.json()).then(j => !!(j && j.ok)).catch(() => false),
+      refreshQuality: () => { QualityStore.pend.length = 0; QualityStore.pull(); }, // 覆盖后缓存对齐服务端：丢弃未确认旧样本（导入=明确覆盖）再重拉
+      getListenStats: () => http // 收听统计双形态：http 读服务端日桶、file:// 读本地快照（缺数据 = 空 days 合法快照；null 仅读失败）
+        ? fetch('/api/listenstats').then(r => r.json()).then(j => j && j.days && typeof j.days === 'object' && !Array.isArray(j.days) ? j.days : null).catch(() => null)
+        : Promise.resolve(lsLocalRead()),
+      postListenStats: days => http // replace 覆盖通道（server B4：{replace:true,days}，与 quality 同纪律）
+        ? fetch('/api/listenstats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ replace: true, days }) })
+            .then(x => x.json()).then(j => !!(j && j.ok)).catch(() => false)
+        : new Promise(res => { try { localStorage.setItem('listenstats.local', JSON.stringify({ v: 1, days })); res(true); } catch (_) { res(false); } }),
+      refreshListenStats: () => { ListenStats.pend.length = 0; ListenStats.dirty = false; ListenStats.pull(); }, // 同 refreshQuality 纪律：丢弃未确认旧增量（防重放复活旧账）再重拉
+    });
+    if (r.ok) this.applyServerStore();
+    $('status').textContent = r.msg;
   },
-  restoreMyRadio(lines) { // v2+ 备份的 my-radio.txt 恢复（B0 最小实现：http 形态经 /api/myradio 全量替换；file:// 无个人文件概念仅提示）
-    if (!location.protocol.startsWith('http')) { $('status').textContent = '已恢复完整备份（file:// 形态无法恢复个人电台列表）'; return; }
-    fetch('/api/myradio', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lines }) })
-      .then(r => r.json()).then(r => { if (!r.ok) $('status').textContent = `已恢复完整备份（个人电台恢复失败：${r.error || '写入失败'}）`; })
-      .catch(() => { $('status').textContent = '已恢复完整备份（个人电台恢复失败：网络错误）'; });
+  postMyRadio(lines) { // my-radio.txt 全量替换（备份恢复/歌单合并写共用）：返回是否成功；file:// 无后端恒 false
+    if (!location.protocol.startsWith('http')) return Promise.resolve(false);
+    return fetch('/api/myradio', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lines }) })
+      .then(r => r.json()).then(r => !!(r && r.ok)).catch(() => false);
+  },
+
+  /* —— 歌单多格式导入（r4/B4，PlaylistImport 解析 + 四桶预览 + my-radio 合并写）：新增/已知/重复/非法四桶；
+     已知台（库内或已在个人列表）不重复入库——收藏恢复走既有 header「导入列表」的 #VRADIO:FAV 通道；
+     新台按分类合并进 my-radio.txt（读-改-写：GET 文本 → 内存查重合并 → POST /api/myradio 全量替换）；
+     file:// 无后端时明确提示不可批量入库。取消 = 零副作用 —— */
+  async importPlaylist(text, fname) {
+    const list = PlaylistImport.parse(text, { format: fname });
+    const inv = list.invalid, dup = list.dups, fmt = list.format;
+    if (!list.length && !inv && !dup) { $('status').textContent = `导入失败：未解析到任何电台（识别为 ${fmt} 格式）`; return; }
+    const known = new Set();
+    for (const s of this.state.stations) for (const u of s.u) known.add(u);
+    const http = location.protocol.startsWith('http');
+    let myLines = [];
+    if (http) {
+      // 拉取失败必须中止（null ≠ 空文件）：合并写是全量替换，拿不到现有行就贸然 POST 会清掉既有个人电台
+      const t = await fetch('my-radio.txt?t=' + Date.now()).then(r => r.ok ? r.text() : '').catch(() => null);
+      if (t === null) { $('status').textContent = '导入失败：无法读取当前个人电台列表，请重试'; return; }
+      myLines = t.split(/\r?\n/).filter(l => l.trim());
+    }
+    for (const l of myLines) { const u = l.slice(l.lastIndexOf(',') + 1).trim(); if (/^https?:\/\//.test(u)) known.add(u); }
+    const fresh = list.filter(e => !known.has(e.url));
+    const knownN = list.length - fresh.length;
+    if (!fresh.length) { $('status').textContent = `导入完成：${list.length} 条均为已知电台（重复 ${dup}、地址不合法 ${inv}），未写入`; return; }
+    const cats = [...new Set(fresh.map(e => e.category))].slice(0, 3).join('/');
+    const sample = fresh.slice(0, 3).map(e => e.name).join('、') + (fresh.length > 3 ? ' 等' : '');
+    if (!confirm(`识别为 ${fmt} 格式，共解析 ${list.length} 条：\n新增 ${fresh.length}（${sample}）· 已知 ${knownN} · 文件内重复 ${dup} · 地址不合法 ${inv}\n\n新增电台将按「${cats}」分类写入个人列表 my-radio.txt（同步不覆盖），已知电台不重复入库；导入后建议跑一次「体检」验证可用性。继续？`)) return;
+    if (!http) { $('status').textContent = 'file:// 降级模式无后端，无法写入个人列表——npm start 后再导入'; return; }
+    const merged = this.mergeMyRadio(myLines, fresh);
+    if (!await this.postMyRadio(merged.lines)) { $('status').textContent = '导入失败：个人列表写入失败（my-radio.txt）'; return; }
+    await this.reloadMain(); // 重拉重并：新台入列表（个人层常驻）
+    $('status').textContent = `已导入 ${merged.added} 台到个人列表（${fmt}：新增 ${merged.added}、已知 ${knownN}、重复 ${dup}、不合法 ${inv}）——可跑「体检」验证可用性`;
+  },
+  mergeMyRadio(lines, entries) { // 内存合并（server.js myStationWrite 同款插入算法）：分类节内插入/尾部开节，URL 查重，500 行/64KB 封顶
+    const out = lines.slice();
+    let added = 0;
+    for (const e of entries) {
+      if (out.length >= 500 || out.join('\r\n').length >= 65536) break; // 封顶后剩余丢弃（与 /api/myradio 同护栏）
+      if (out.some(l => l.trim().endsWith(',' + e.url))) continue; // 同 URL 换名也不双开（装配按键合并会出两行）
+      const head = e.category + ',#genre#';
+      const at = out.findIndex(l => l.trim() === head);
+      if (at >= 0) out.splice(at + 1, 0, `${e.name},${e.url}`); // 已有该分类节：节内插入
+      else out.push('', head, `${e.name},${e.url}`); // 新分类：尾部开节（空行分隔）
+      added++;
+    }
+    return { lines: out, added };
   },
 
   boot() {
     Store.init(); // 存储收敛层（方案二）：BC 监听 + 关页 flush 兜底，须在 Player.init 读记忆之前
+    QualityStore.init(); // 质量侧车（B2）：BC('quality') 他页重拉 + 关页 flush；load() 异步随行
+    // B3 曲讯管线（元数据事件唯一通路，sink 二选一）：metaV2 装载时定格——发布配置非用户数据，切页不重读。
+    // dedup30s 随 flag（AIbot P1-2）：关 = B2 前入史语义（换歌一律入史，无 30s 窗）；开 = 契约 30s 窗去重
+    this.metaV2 = !!(window.FEATURES && FEATURES.metadataV2);
+    this.metaPipe = Metadata.mpCreate({ dedup30s: this.metaV2 });
+    this.metaLast = null;
+    // B3-B 收听统计：开关开才 init（装载快照 + 定时/隐藏/关页 flush + 多标签重拉）；关 = 不消费不 flush、不清已有数据
+    if (FEATURES.listenStats) ListenStats.init().catch(() => {});
     this.loadStore();
+    this.loadRevives(); // B3：「最近恢复」运行时缓存（discovery.revives，非 radio.*，7 天过期）
+    this.qualityKeep(); // trim 保护集（收藏+最近身份 URL ≤64；rebind 随行刷新）
     localStorage.removeItem('radio.epg'); // 节目单（EPG）功能已移除：顺手清掉旧版留下的缓存（不存在则 no-op）
     // 音量持久化（读取夹取 0-100，坏值回退 90）
     const savedVol = Store.get('radio.vol'), vol0 = +savedVol;
@@ -1203,11 +1542,20 @@ const App = {
     Player.init($('audio'), vol / 100);
 
     // Player 状态回调：full=true 需整表重渲（行高亮/连接中变化），否则只轻量更新底部
-    Player.onstate = full => { this.playerNow(); if (full) this.render(); };
+    Player.onstate = full => { this.playerNow(); if (full) this.render(); if (FEATURES.listenStats) this.lsState(); };
     Player.onstatus = t => { $('status').textContent = t; };
-    Player.onfail = () => this.showLast();
+    Player.onfail = () => { this.showLast(); if (FEATURES.listenStats) ListenStats.onState('FAILED'); }; // 全部源失败：曲讯/统计一并收口
     Player.onlogo = s => Logos.get(s); // 锁屏 artwork 台标（r2 ⑩）：同步窥探绝不发请求，无台标回空数组静默缺省
     Player.onstepfav = d => this.stepFav(d); // 锁屏/媒体键 ⏮⏭ = 收藏间切台（r2 ①）：无收藏时 stepFav 自身走状态栏提示
+    Player.onqos = ev => { // 播放质量样本（B2）：Player 只发状态机原始转换，trigger 映射在此完成；
+      this.qosMap(ev); //  B3-B：phase='playing'（新建流到达）= 收听统计 session 建立（诊断成功不算收听）
+      if (FEATURES.listenStats && ev.phase === 'playing') ListenStats.enterPlaying(ev.station, ev.station && ev.station.u[ev.si]);
+    };
+    // 质量侧车装载（异步，不阻塞首屏）：详情中心质量摘要/发现侧数据源；装载后补渲染一次打开中的详情
+    QualityStore.load().then(() => { this.qualityKeep(); if (!$('detail').hidden) this.renderDetail(); }).catch(() => {});
+    if (location.protocol.startsWith('http')) fetch('/api/boot').then(r => r.json()).then(b => { // 启动资产状态（§13.3）：不完整不静默混态
+      if (b && b.ok === false) this.toast('数据资产不完整（' + (b.missing || []).join('、') + '），请运行 npm run sync', { ms: 8000 });
+    }).catch(() => {});
     // 睡眠定时（E2 + UI 审计 P3-7）：菜单一次点选 15/30/60（循环模式要点三下才到 60）；进行中点击按钮直接取消
     $('sleepBtn').onclick = () => {
       if (Player.sleepId) { Player.sleep(0); return; }
@@ -1248,6 +1596,17 @@ const App = {
       else if (act === 'dClearOrder') this.clearSrcOrder(s);
     };
     $('dClose').onclick = () => this.closeDetail();
+    // 发现页（B3-C）：header「发现」入口（features.discovery 关时隐藏——发布配置非用户数据）；行点击统一 startPlay→Player.play
+    $('discBtn').hidden = !FEATURES.discovery;
+    $('discBtn').onclick = () => this.openDiscovery();
+    $('discClose').onclick = () => this.closeDiscovery();
+    $('discovery').onclick = e => {
+      if (e.target === $('discovery')) return this.closeDiscovery(); // 点遮罩关闭
+      const b = e.target.closest('[data-k]'); if (!b) return;
+      this.closeDiscovery();
+      const s = this.state.stations.find(x => keyOf(x) === b.dataset.k);
+      if (s) this.startPlay(s);
+    };
     Player.ontick = ms => {
       const b = $('sleepBtn'), lab = $('sleepLab');
       if (ms > 0) { const s = Math.ceil(ms / 1000); lab.textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); b.title = '睡眠定时进行中，点击取消'; }
@@ -1395,13 +1754,14 @@ const App = {
       if (e.key === 'Escape') {
         keysClose(); // 快捷键浮层（N8）：最上层，先关
         if (!$('detail').hidden && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) this.closeDetail(); // 详情中心（B1）
+        if (!$('discovery').hidden && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) this.closeDiscovery(); // 发现页（B3）
         if (!$('manage').hidden && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) this.manageClose();
         $('lowfreq').classList.remove('open'); $('moreBtn').setAttribute('aria-expanded', 'false');
         $('sleepMenu').hidden = true;
         this.srcPopClose(); // 选源浮层（AIbot P2-1）：Esc 收起 + 焦点归还，与 ? 帮助的 Esc 自述一致
       }
-      if (e.key === 'Tab' && (!$('manage').hidden || !$('detail').hidden)) { // 焦点困在弹窗内（UI 审计 P2-7）：aria-modal 此前 Tab 可穿透到被遮罩的主页（B1 扩到详情）
-        const dlg = $('manage').hidden ? $('detail') : $('manage');
+      if (e.key === 'Tab' && (!$('manage').hidden || !$('detail').hidden || !$('discovery').hidden)) { // 焦点困在弹窗内（UI 审计 P2-7）：aria-modal 此前 Tab 可穿透到被遮罩的主页（B1 扩到详情、B3 扩到发现页）
+        const dlg = !$('manage').hidden ? $('manage') : !$('detail').hidden ? $('detail') : $('discovery');
         const f = [...dlg.querySelectorAll('button,input,select')].filter(x => !x.disabled && x.offsetParent !== null);
         if (!f.length) return;
         const first = f[0], last = f[f.length - 1];
@@ -1476,11 +1836,19 @@ const App = {
     };
     $('mExport').onclick = () => this.exportCfg();
     $('mImport').onclick = () => $('mfile').click();
-    $('mfile').onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => this.importCfg(String(r.result)); r.readAsText(f, 'utf-8'); e.target.value = ''; };
+    $('mfile').onchange = e => { const f = e.target.files[0]; if (!f) return; if (f.size > 2 * 1024 * 1024) { $('status').textContent = '导入失败：文件超过 2MB 上限'; e.target.value = ''; return; } const r = new FileReader(); r.onload = () => this.importCfg(String(r.result)); r.readAsText(f, 'utf-8'); e.target.value = ''; };
     $('mReset').onclick = () => this.resetCfg();
     $('mBackup').onclick = () => this.exportAll();
     $('mRestore').onclick = () => $('mfile2').click();
-    $('mfile2').onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => this.importAll(String(r.result)); r.readAsText(f, 'utf-8'); e.target.value = ''; };
+    $('mfile2').onchange = e => { const f = e.target.files[0]; if (!f) return; if (f.size > 2 * 1024 * 1024) { $('status').textContent = '导入失败：备份文件超过 2MB 上限'; e.target.value = ''; return; } const r = new FileReader(); r.onload = () => this.importAll(String(r.result)); r.readAsText(f, 'utf-8'); e.target.value = ''; };
+    // 歌单多格式导入（r4/B4）：文件（m3u/pls/xspf/asx/txt）+ 纯 URL 文本粘贴两入口，四桶预览后合并入 my-radio
+    $('mPlaylist').onclick = () => $('mfile3').click();
+    $('mfile3').onchange = e => { const f = e.target.files[0]; if (!f) return; if (f.size > 2 * 1024 * 1024) { $('status').textContent = '导入失败：文件超过 2MB 上限'; e.target.value = ''; return; } const r = new FileReader(); r.onload = () => this.importPlaylist(String(r.result), f.name); r.readAsText(f, 'utf-8'); e.target.value = ''; };
+    $('mPaste').onclick = () => {
+      let v = null; try { v = prompt('粘贴流地址（每行一个 http(s) 链接，最多 500 条）：'); } catch (_) { return; }
+      if (v == null) return;
+      this.importPlaylist(v, '');
+    };
 
     // 添加自定义电台（A-2）：面板内表单 → /api/mystation（服务端先探活拒绝假流/死链，再原子写 my-radio.txt；
     // 与 cfg 的分工 = cfg 调整既有台的显示层（localStorage），这里新增列表里不存在的台（数据层文件，跨浏览器持久））
@@ -1547,6 +1915,7 @@ const App = {
     $('exportBtn').onclick = () => this.exportFavs();
     $('file').onchange = e => {
       const f = e.target.files[0]; if (!f) return;
+      if (f.size > 2 * 1024 * 1024) { $('status').textContent = '导入失败：文件超过 2MB 上限'; e.target.value = ''; return; } // AIbot 三轮 P2-2：读取前按 file.size 拒（对齐 Android readUri 2MB）
       const r = new FileReader();
       r.onload = async () => {
         const text = String(r.result);
@@ -1588,4 +1957,7 @@ const App = {
   },
 };
 
-App.boot();
+/* B3 双兼容出口：浏览器经典 script 照常 boot（document 恒在）；Node 侧（test/discovery.js require 纯函数）
+   不 boot 只导出——app.js 顶层无 DOM 访问，方法体内的 DOM/Player/Store 引用只在调用时触达 */
+if (typeof document !== 'undefined') App.boot();
+if (typeof module !== 'undefined') module.exports = { App, STARTER, buildDiscovery };

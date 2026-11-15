@@ -8,13 +8,15 @@ const Sync = {
   abort: false,   // 手动体检取消标志
   silentAbort: false, // 静默版让位/退出标志（与 abort 分开，避免「取消静默」误伤随后启动的手动体检）
 
-  /* 探活执行器（四通道共用）：逐台 /api/check（前 4 源，任一活即 OK）；网络层失败不是探活结论不落标记（P3-12）。
+  /* 探活执行器（四通道共用）：逐台 /api/check?detail=1（前 4 源，任一活即 OK；结构化结果逐源落质量样本——
+     B2 diagnostic/trigger = manual|boot|sync）；网络层失败不是探活结论不落标记（P3-12）。
      手动禁用源不体检（B1 拍板：播放与自动探活都跳过）；全禁用台直接跳过——不请求也不落健康标记。
      返回 { ok, sus, perm, done }——sus/perm 为分档计数（D12 统计用）；onTick(s, 档位) 供基线续跑记进度 */
   async runCheck(list, opt = {}) {
     const stamp = App.state.stamp, q = list.slice(), conc = opt.conc || 5, cnt = { ok: 0, sus: 0, perm: 0, done: 0 };
     const t0 = Date.now();
     const stop = () => opt.silent ? this.silentAbort : this.abort;
+    const norm = x => { try { return new URL(x).href; } catch (_) { return null; } }; // 结果按 new URL 归一化回绑原源（与详情中心同口径）
     const worker = async () => {
       while (q.length && !stop()) {
         const s = q.shift();
@@ -25,7 +27,10 @@ const Sync = {
         let ok = false, marked = true;
         try {
           const qs = urls.map(u => 'url=' + encodeURIComponent(u)).join('&');
-          ok = (await fetch('/api/check?' + qs).then(x => x.json())).ok;
+          const j = await fetch('/api/check?detail=1&' + qs).then(x => x.json());
+          ok = !!(j && j.ok);
+          if (j && Array.isArray(j.results)) for (const r of j.results)
+            QualityStore.recordDiagnostic(s.u[0], Object.assign({}, r, { url: urls.find(u => norm(u) === r.url || u === r.url) || r.url }), opt.trigger || 'manual');
         } catch (_) { marked = false; }
         if (marked) { const r = App.patchHealth(s, ok, stamp); cnt[r]++; if (opt.onTick) opt.onTick(s, r); }
       }
@@ -34,35 +39,63 @@ const Sync = {
     return cnt;
   },
 
-  /* ---------- 一键同步最新源（国内上游 + 欧美台逐个实测重建，约1分钟） ---------- */
+  /* ---------- 一键同步最新源（国内上游 + 欧美台逐个实测重建，约1分钟）。
+     B2 强制两步协议：被决策门拦截 → #status 报告摘要 + toast 确认 → force-token → 带 token 强制发布 ---------- */
   async doSync() {
     const b = $('syncBtn'), lab = b.querySelector('span'); b.disabled = true; lab.textContent = '同步中…'; $('prog').hidden = false;
     $('status').textContent = '同步中：国内上游 + 欧美台逐个实测，约 1 分钟…';
     try {
       const r = await fetch('/api/sync', { method: 'POST' }).then(x => x.json());
-      if (r.error) throw new Error(r.error);
-      if (r.aborted) {
-        $('status').textContent = `同步中止：合并结果异常（仅 ${r.total} 台），已保留原列表`;
-      } else {
-        await App.reloadMain(); // 决策 B：主列表 replace + 个人层常驻（radio.txt 与 my-radio.txt 重拉重并）
-        const eu = r.euKept != null ? `欧美音乐 ${r.euKept} 个实测可用` : '欧美音乐未更新（已保留旧列表）';
-        const dd = (r.added || r.removed) ? `；新增 ${r.added} 台、消失 ${r.removed} 台` : ''; // 同步 diff 摘要（N4/r2 ⑥）
-        let msg = `同步完成：共 ${r.total} 台（${r.delta >= 0 ? '+' : ''}${r.delta}${dd}；${eu}）`;
-        const gone = r.removedNames && App.favsGone(r.removedNames, r.removedUrls); // 消失台含收藏台单独点名（收藏在 localStorage，比对必须在前端；名+URL 双通道，AIbot P3-1）
-        if (gone && gone.length) {
-          const show = gone.length > 5 ? gone.slice(0, 5).join('、') + ` 等 ${gone.length} 个` : gone.join('、');
-          msg += ` ⚠ 收藏台已不在新列表：${show}`; // textContent 直写不经 HTML，注入面不存在
-        }
-        $('status').textContent = msg;
-        // 同步后增量体检（D4/R4 拍板）：本次 diff 新增的国内台静默探活（欧美台同步期已实测不在名单），
-        // 自动跑 + toast 两态；手动体检在跑则本次放弃（下次同步再测）
-        if (r.addedCheck && r.addedCheck.length) setTimeout(() => this.incHealth(r.addedCheck), 800);
-      }
+      if (r && r.gated && !r.ok) await this.gateConfirm(r);
+      else if (r.error) throw new Error(r.error);
+      else await this.syncDone(r);
     } catch (e) {
       const msg = String(e.message || e);
       $('status').textContent = msg.includes('同步已在进行中') ? msg : '同步失败（file:// 或无后端时请在项目目录跑 node update-sources.js）：' + msg;
     }
     b.disabled = false; lab.textContent = '同步源'; $('prog').hidden = true;
+  },
+  async gateConfirm(g) { // 质量门拦截（B2 §6.4）：展示旧/新数量、触发原因、将绕过的规则 → 确认后两步强制
+    const rep = g.report || {};
+    const reasons = (rep.reasons || []).map(x => x.msg).join('；');
+    const bypass = (rep.reasons || []).filter(x => x.bypassable);
+    $('status').textContent = `同步被质量门拦截：旧 ${rep.oldTotal} 台 → 新 ${rep.newTotal} 台（${reasons}）${bypass.length ? '——可确认强制替换' : '（门槛不可绕过，已保留原列表）'}`;
+    if (!bypass.length || !g.reportHash) return;
+    App.toast(`同步被质量门拦截：旧 ${rep.oldTotal} → 新 ${rep.newTotal} 台。将绕过：${bypass.map(x => x.msg).join('；')}`, {
+      ms: 0, // 常驻直到选择；报告变化/令牌过期都会在强制阶段显式失败
+      action: { label: '强制同步', fn: () => this.forceSync(g.reportHash) },
+      dismiss: '暂不',
+    });
+  },
+  async forceSync(reportHash) { // 两步协议：申请一次性 token（绑定报告指纹）→ 带 token 的 /api/sync 复用 stash 原料强制发布
+    $('status').textContent = '强制同步中…';
+    try {
+      const t = await fetch('/api/sync/force-token', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reportHash }) }).then(x => x.json());
+      if (!t || !t.token) throw new Error((t && t.error) || '令牌申请失败');
+      const r = await fetch('/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ forceToken: t.token }) }).then(x => x.json());
+      if (r && r.gated && !r.ok) throw new Error('同步报告已变化，请重新同步确认');
+      if (r.error) throw new Error(r.error);
+      await this.syncDone(r);
+    } catch (e) { $('status').textContent = '强制同步失败：' + (e && e.message || e); }
+  },
+  async syncDone(r) { // 同步完成态（普通/强制共用）：reloadMain + diff 摘要 + 消失收藏点名 + 同步后增量体检
+    if (r.aborted) {
+      $('status').textContent = `同步中止：合并结果异常（仅 ${r.total} 台），已保留原列表`;
+      return;
+    }
+    await App.reloadMain(); // 决策 B：主列表 replace + 个人层常驻（radio.txt 与 my-radio.txt 重拉重并）
+    const eu = r.euKept != null ? `欧美音乐 ${r.euKept} 个实测可用` : '欧美音乐未更新（已保留旧列表）';
+    const dd = (r.added || r.removed) ? `；新增 ${r.added} 台、消失 ${r.removed} 台` : ''; // 同步 diff 摘要（N4/r2 ⑥）
+    let msg = `同步完成：共 ${r.total} 台（${r.delta >= 0 ? '+' : ''}${r.delta}${dd}；${eu}${r.replacement === 'forced' ? '；已强制替换' : r.replacement === 'kept' ? '；欧美层保留旧数据' : ''}）`;
+    const gone = r.removedNames && App.favsGone(r.removedNames, r.removedUrls); // 消失台含收藏台单独点名（收藏在 localStorage，比对必须在前端；名+URL 双通道，AIbot P3-1）
+    if (gone && gone.length) {
+      const show = gone.length > 5 ? gone.slice(0, 5).join('、') + ` 等 ${gone.length} 个` : gone.join('、');
+      msg += ` ⚠ 收藏台已不在新列表：${show}`; // textContent 直写不经 HTML，注入面不存在
+    }
+    $('status').textContent = msg;
+    // 同步后增量体检（D4/R4 拍板）：本次 diff 新增的国内台静默探活（欧美台同步期已实测不在名单），
+    // 自动跑 + toast 两态；手动体检在跑则本次放弃（下次同步再测）
+    if (r.addedCheck && r.addedCheck.length) setTimeout(() => this.incHealth(r.addedCheck), 800);
   },
 
   /* ---------- 手动体检：当前列表逐台探测（UI 态编排：按钮/状态栏/ETA）——用户主动操作，反馈走 #status ---------- */
@@ -77,7 +110,7 @@ const Sync = {
     this.busy = 'manual'; this.abort = false; lab().textContent = '取消体检'; $('prog').hidden = false;
     try {
       const list = App.visible(true); // visible(true)：连默认隐藏的死台一起复查，复活即自动回归列表
-      const cnt = await this.runCheck(list, { conc: 5, onProgress: (c, left, t0) => {
+      const cnt = await this.runCheck(list, { conc: 5, trigger: 'manual', onProgress: (c, left, t0) => {
         if (c.done % 10 && left) return; // P3-8：按实测速率外推 ETA（按小时级最坏校准），每 10 台刷一次
         const rate = c.done / Math.max(1, (Date.now() - t0) / 1000);
         const eta = left && rate > 0 ? Math.ceil(left / rate / 60) : 0;
@@ -105,7 +138,7 @@ const Sync = {
     for (const s of [...App.scopeFavRecent(30), ...App.scopeDead()]) { const k = keyOf(s); if (!seen.has(k)) { seen.add(k); list.push(s); } }
     if (!list.length) return;
     this.busy = 'silent'; this.silentAbort = false;
-    try { await this.runCheck(list, { conc: 2, silent: true }); if (!this.silentAbort) { App.saveHealth(); App.render(); } } // 被手动接管时跳过：手动跑完自己收尾
+    try { await this.runCheck(list, { conc: 2, silent: true, trigger: 'boot' }); if (!this.silentAbort) { App.saveHealth(); App.render(); } } // 被手动接管时跳过：手动跑完自己收尾
     catch (_) {} finally { if (this.busy === 'silent') this.busy = ''; }
   },
 
@@ -117,7 +150,7 @@ const Sync = {
     this.busy = 'silent'; this.silentAbort = false;
     App.toast(`后台体检新增电台 ${list.length} 台…`, { ms: 0 }); // ms=0 常驻，完成态接管；让位/异常分支显式收起（AIbot P2-2）
     try {
-      const cnt = await this.runCheck(list, { conc: 2, silent: true });
+      const cnt = await this.runCheck(list, { conc: 2, silent: true, trigger: 'sync' });
       if (this.silentAbort) { $('toast').hidden = true; return; } // 让位给手动：已测的标记有效（幂等），未测的下次同步再覆盖
       App.saveHealth(); App.render();
       App.toast(`新增 ${list.length} 台体检完成，${cnt.sus + cnt.perm} 台无效已隐藏`, { ms: 5000 });
@@ -147,7 +180,7 @@ const Sync = {
     App.toast(`基线体检进行中：剩余 ${list.length} 台（后台静默，可随时关页中断、下次自动续跑）`, { ms: 6000 });
     let pend = 0;
     try {
-      const cnt = await this.runCheck(list, { conc: 2, silent: true, onTick: s => {
+      const cnt = await this.runCheck(list, { conc: 2, silent: true, trigger: 'boot', onTick: s => {
         prog.add(keyOf(s));
         if (++pend >= 25) { pend = 0; Store.set('radio.baselineProg', JSON.stringify([...prog])); App.saveHealth(); } // 每 25 台落盘一次：进度与已确认标记必须同批持久化（AIbot P1-1——否则关页中断时 prog 说测过、死标只在内存，续跑跳过 + 基线置 done 后这批台永久无标记且不在任何自动复查通道里）
       } });

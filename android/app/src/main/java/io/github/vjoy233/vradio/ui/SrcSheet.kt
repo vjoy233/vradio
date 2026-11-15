@@ -37,7 +37,9 @@ import io.github.vjoy233.vradio.model.DiagnosticResult
 import io.github.vjoy233.vradio.model.PlayerUiState
 import io.github.vjoy233.vradio.model.Station
 import io.github.vjoy233.vradio.player.PlayerHolder
+import io.github.vjoy233.vradio.data.QualityStore
 import io.github.vjoy233.vradio.ui.theme.LocalVrPalette
+import kotlin.math.roundToInt
 
 /* 选源浮层（web footer #srcMenu 平移，②a/grill 拍板）：正在听的多源台一键切源——
    整行点选立即切播（一律立即起播，暂停态同）、徽标（默认/正在用/追加）、底部「↺ 恢复默认源」
@@ -143,7 +145,7 @@ fun sourceRowActs(cur: Boolean, off: Boolean): List<SourceRowAct> {
 /** 源详情：台名/分类/台标/收藏态 + 每源探活结果（code 徽标/why/延迟/字节/模式）+ 复制/播放此源/
  *  人工排序/启用禁用 + 恢复默认两动作 + 歌史入口。诊断经 CheckStream 直连（Android 无 /api）；
  *  手动禁用的源不发请求，显示「不能诊断」+「取消禁用」，且禁用行不渲染播放/重播（B1 review P1，
- *  可见性走 sourceRowActs 纯函数）。fav/checking/onSongs 为可选扩展参数
+ *  可见性走 sourceRowActs 纯函数）。fav/checking/onSongs/quality 为可选扩展参数
  *  （默认值保 §5.5 签名兼容），由 AppRoot 接线时注入。 */
 @Composable
 fun SourceDetailSheet(
@@ -157,6 +159,7 @@ fun SourceDetailSheet(
   checking: Boolean = false,
   onSongs: (() -> Unit)? = null,
   logo: String = "",
+  quality: QualityStore.QualityAggregate? = null,   // B2 质量摘要（null=无样本不渲染）
   onDismiss: () -> Unit = {},
 ) {
   val pal = LocalVrPalette.current
@@ -187,6 +190,23 @@ fun SourceDetailSheet(
       if (station.effOrder().isEmpty())   // NO_ENABLED_SOURCE 明示（B1 硬文案）
         Text("该台所有源都已手动禁用，请先启用一个源", fontSize = 13.sp, color = pal.warn,
           modifier = Modifier.padding(vertical = 4.dp))
+      // B2 稳定性徽标行（QualityStore 聚合；质量只做展示，永不替代死台隐藏判定——契约硬点）
+      if (quality != null) {
+        val (badge, kind) = when (quality.stability) {
+          "good" -> "● 稳定" to 1
+          "fair" -> "● 一般" to 0
+          "poor" -> "● 不稳定" to 2
+          else -> "○ 样本不足" to 0
+        }
+        val rate = if (quality.samples > 0) (quality.rate() * 100).roundToInt() else 0
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+          modifier = Modifier.padding(vertical = 2.dp)) {
+          VrBadge(badge, kind)
+          Text(
+            "成功率 $rate% · 平均延迟 ${quality.avgLatencyMs}ms · 断流 ${quality.disconnects} 次 · 样本 ${quality.samples}",
+            fontSize = 11.sp, color = pal.dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+      }
       // 逐源列表（顺序 = 人工有效序 mo，含禁用位；序号显示 u 空间原序号+1）
       val order = station.mo ?: station.u.indices.toList()
       Text("源诊断（诊断顺序 = 人工顺序；禁用源不诊断）", fontSize = 12.sp, color = pal.dim,

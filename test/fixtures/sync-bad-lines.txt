@@ -1,0 +1,14 @@
+华语音乐,#genre#
+好台一,http://example.stream.cn/a1/64.mp3
+好台二,http://example.stream.cn/a2/64.mp3
+坏行三字段,http://example.stream.cn/a3/64.mp3,多余字段
+坏行无URL,不是地址
+坏行字段多,http://example.stream.cn/a4/64.mp3,附注,再来
+好台五,http://example.stream.cn/a5/64.mp3
+坏行缺逗号http://example.stream.cn/x
+好台七,http://example.stream.cn/a7/64.mp3
+坏行坏协议,ftp://example.stream.cn/a8/live
+好台九,http://example.stream.cn/a9/64.mp3
+好台十,http://example.stream.cn/a10/64.mp3
+坏行又三字段,http://example.stream.cn/a11/64.mp3,extra
+好台十二,http://example.stream.cn/a12/64.mp3

@@ -90,4 +90,49 @@ for (const f of ['backup-v2.json', 'backup-v3.json']) {
   }
 }
 
+// 双端质量聚合黄金样本形状冻结（AIbot P1-2：round-trip 驱动在 test/quality-store.js 与 Android ContractTest，
+// 此处只验形态——events 覆盖契约 opEvent 必填枚举、expected 覆盖 aggregate 全字段、files 节双包装描述在位）
+{
+  const qc = JSON.parse(fs.readFileSync('contracts/quality-summary.json', 'utf8'));
+  assert.ok(qc.files && qc.files.web.includes('{ v:1, rev') && qc.files.android.includes('{ v:1, stations'),
+    'quality-summary 缺 files 双包装形态描述（Web {v,rev,ops,data} vs Android {v,stations}）');
+  // 409 机器可读 code 契约点（AIbot PR#26 复核 P2）：api 描述必须点名三类 code（行为断言在 test/quality.js 三处 409）
+  assert.ok(qc.api && qc.api['POST /api/quality'] && ['schema', 'batch-limit', 'too-large']
+    .every(c => qc.api['POST /api/quality'].includes('code=' + c)),
+    'quality-summary POST api 描述缺三类 409 code（schema/batch-limit/too-large）枚举点名');
+  const fx = JSON.parse(fs.readFileSync('contracts/fixtures/quality-aggregate.json', 'utf8'));
+  assert.ok(Array.isArray(fx.events) && fx.events.length >= 5, 'quality-aggregate 样本不足');
+  const kinds = new Set(['diagnostic', 'playback']), modes = new Set(['direct', 'hls', 'proxy']);
+  for (const e of fx.events) {
+    for (const k of ['kind', 'trigger', 'sourceUrl', 'ok', 'latencyMs', 'bytes', 'mode', 'at'])
+      assert.ok(k in e, `quality-aggregate 事件缺 ${k}`);
+    assert.ok(kinds.has(e.kind) && modes.has(e.mode), `quality-aggregate 事件枚举越界：${e.kind}/${e.mode}`);
+  }
+  for (const k of Object.keys(qc.aggregate))
+    assert.ok(k in fx.expected, `quality-aggregate expected 缺聚合字段 ${k}`);
+}
+
+// 收听统计 sidecar 契约形状冻结（B3，AIbot 复核 P1/P2：rev 条件获取 + 409 机器可读 code + 落盘确认模型；
+// 行为驱动在 test/listen-stats.js 与 Android ListenStatsTest/ContractTest 双端点名——此处只验契约描述在位）
+{
+  const lc = JSON.parse(fs.readFileSync('contracts/listen-stats-summary.json', 'utf8'));
+  assert.ok(lc.files.web.includes('{ v:1, rev') && lc.files.android.includes('{ v:1, days'),
+    'listen-stats-summary 缺 files 双包装形态描述（Web {v,rev,ops,days} vs Android {v,days}）');
+  assert.ok(lc.files.shared.includes('YYYY-MM-DD'), 'listen-stats-summary 缺 days 共享形态/日期键规则描述');
+  assert.ok(lc.files.writeFailure.includes('下次 flush'), 'listen-stats-summary 缺写失败保留增量重试语义');
+  // AIbot 三轮 P1：Android pending 启动恢复语义在位（Web 侧无 pending 文件消费——服务端 op 日志已覆盖同语义，
+  // 此处只点名契约描述，行为测试在 Android ListenStatsTest 重启恢复用例）
+  assert.ok(lc.files.android.includes('listen-stats.pending.json') && lc.files.writeFailure.includes('不双计'),
+    'listen-stats-summary 缺 Android 写失败 pending 持久化/启动恢复语义（AIbot 三轮 P1）');
+  for (const k of ['id', 'day', 'ms', 'sess'])
+    assert.ok(k in lc.opEvent, `listen-stats-summary opEvent 缺 ${k}`);
+  assert.ok(lc.api['GET /api/listenstats?rev=<optional>'].includes('notModified'),
+    'listen-stats-summary 缺 GET ?rev= 条件获取语义（AIbot 复核 P2）');
+  const post = lc.api['POST /api/listenstats'];
+  assert.ok(post.includes("'schema'") && post.includes("'batch-limit'"),
+    'listen-stats-summary 缺 409 机器可读 code 分类语义（AIbot 复核 P1）');
+  assert.ok(lc.tests.web.includes('test/listen-stats.js') && lc.tests.android.includes('ListenStatsTest')
+    && lc.tests.contract.includes('ContractTest'), 'listen-stats-summary 缺双端测试点名');
+}
+
 console.log(`contract keys OK: ${expected.length}（web/server/android 三侧一致；excluded ${spec.excluded.length}）`);

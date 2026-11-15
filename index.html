@@ -327,6 +327,10 @@
      ui-* token 色值原样抄自 §4.1（24 组平面配对已验证 ≥5.19:1，见 ui-redesign-assets/review-v22/contrast-results.json） */
   html.ui-refresh { --ui-bg:#111916; --ui-surface:#19231e; --ui-raised:#223029; --ui-text:#e8f0ea; --ui-muted:#a9bbb0; --ui-accent:#93dbb4; --ui-on-accent:#112419; --ui-favorite:#e4c36f; --ui-danger:#f1a9a3; --ui-line:#40584a; }
   html.ui-refresh[data-theme="light"] { --ui-bg:#f3f6f3; --ui-surface:#ffffff; --ui-raised:#e8efea; --ui-text:#16251d; --ui-muted:#53675b; --ui-accent:#246344; --ui-on-accent:#ffffff; --ui-favorite:#78560d; --ui-danger:#a4322b; --ui-line:#849b8c; }
+  /* P6 验收修正：桌面壳基底面重指 ui-* token（旧语义变量在桌面作用域别名，一处生效全组件——
+     否则 body/header/footer/分类条仍是旧配色，P6 实测 body 残留 #101418） */
+  html.ui-refresh { --bg:var(--ui-bg); --panel:var(--ui-surface); --line:var(--ui-line); --tx:var(--ui-text); --dim:var(--ui-muted); --acc:var(--ui-accent); }
+  html.ui-refresh[data-theme="light"] { --bg:var(--ui-bg); --panel:var(--ui-surface); --line:var(--ui-line); --tx:var(--ui-text); --dim:var(--ui-muted); --acc:var(--ui-accent); }
   /* 结构壳（§6.5 骨架）：wrapper 对布局透明——否则开关关闭时 body 的 flex 子级被 div 隔断、#list flex:1 失效；
      aside 常隐（新元素，桌面 media 内再放行）；这两条不带 ui-refresh 前缀是刻意的（结构中性，双模式零布局影响） */
   .desktop-sidebar { display:none; }

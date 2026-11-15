@@ -2074,7 +2074,7 @@ const App = {
       ].join('');
       return `<div class="dsrc${d ? ' off' : ''}${on && st.sourceIndex === i ? ' cur' : ''}">
         <i class="idx">${i + 1}</i>
-        <div class="dsrc-m"><div class="dsrc-u" title="${this.esc(u)}">${this.esc(u)} ${tag}</div><div class="dsrc-i">${state}</div></div>
+        <div class="dsrc-m"><div class="dsrc-u" title="${this.esc(u)}">${this.esc(u)}</div><div class="dsrc-i">${tag}${state}</div></div>
         <span class="dsrc-a">${acts}</span>
       </div>`;
     }).join('');
@@ -2271,7 +2271,7 @@ const App = {
         sum.textContent = `覆盖后共 ${newN} 项（当前 ${curN} 项，含 ${c.cats.length} 个自建分类）。`;
         body.appendChild(sum);
       } }).then(ok => {
-        if (!ok) return;
+        if (ok !== 'ok') return; // 严格按值判定（P6 验收抓到的真实缺陷：Esc/取消 resolve 'stay' 是真值字符串，布尔判定会把「取消」当「确认」执行导入）
         this.cfg = c; this.saveCfg(); this.reapplyCfg();
         $('status').textContent = `已导入维护配置（覆盖后 ${newN} 项）`;
       }).catch(() => {}); // 确认层被占用（理论罕见）：静默放弃，不打断既有弹窗

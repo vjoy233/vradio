@@ -343,7 +343,11 @@
     html.ui-refresh { scroll-padding-bottom:calc(var(--dock-h,100px) + 24px); } /* 焦点行滚入视口不被固定 footer 遮挡（--dock-h 由 app uiWatchDock 实测） */
     html.ui-refresh .dashboard-shell { display:grid; grid-template-columns:200px minmax(0,1fr); position:relative; }
     html.ui-refresh .dashboard-shell::before { content:''; position:absolute; left:0; top:0; bottom:0; width:200px; border-right:1px solid var(--ui-line); pointer-events:none; } /* 全高侧栏分隔线（参考图 01/15） */
-    html.ui-refresh .desktop-sidebar { display:flex; flex-direction:column; gap:24px; position:sticky; top:0; align-self:start; max-height:100dvh; padding:20px 14px 16px; min-width:0; }
+    /* 层级（更多工具弹层遮挡修复）：sticky 必自建层叠上下文且 z-index:auto 时按树序先画——主列的层叠创建者
+       （#cats 的 mask-image 渐隐、header/.card.playing 的 relative、播放中唱片 .vinyl.running 的 transform
+       动画）都按树序后画、整体盖过侧栏，#sideTools 的 z:6 被困在侧栏上下文里，弹层下缘被压不可点。
+       z-index:1 抬侧栏到主列内容之上；toast(11)/维护面板(10)/详情(10) 等根级固定层仍在其上，紧凑布局不受影响 */
+    html.ui-refresh .desktop-sidebar { display:flex; flex-direction:column; gap:24px; position:sticky; top:0; align-self:start; max-height:100dvh; padding:20px 14px 16px; min-width:0; z-index:1; }
     html.ui-refresh .side-brand { padding:0 10px 4px; }
     html.ui-refresh .side-brand b { display:block; font-size:22px; font-weight:700; letter-spacing:.02em; }
     html.ui-refresh .side-brand span { display:block; font-size:12px; color:var(--ui-muted); margin-top:2px; }

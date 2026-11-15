@@ -737,16 +737,18 @@ const App = {
     if (t) t.textContent = (names[this.state.scope] || '全部电台') + (this.state.cat !== '全部' ? ' · ' + this.state.cat : '');
   },
   /* 续听卡（§3.3/§6.3）：候选 = 当前播放/暂停 → 最近前 20 → STARTER 精选（uiChooseResume 纯函数）；
-     eligible 走 uiStationShown（all=false：手动隐藏永不复活、自动死台遵守 showDead——正在播的隐藏台
-     不豁免，首页改用下一候选）。显示条件 = ui-refresh 开 + scope=all + cat=全部 + 无关键词（<1024px
+     eligible 走 uiStationShown（all=false：手动隐藏永不复活——正在播也不豁免、首页改用下一候选；自动
+     死台遵守 showDead，正在播/连接中的死台例外保留，与主列表 visible 同口径，AIbot P1 修复）。显示条件 =
+     ui-refresh 开 + scope=all + cat=全部 + 无关键词（<1024px
      由 CSS display:none 拦截）。渲染用维护后现名 + Logos.visual 现有链（同步读缓存，绝不发新请求）；
-     只更新自身节点不整表重渲，签名未变直接返回（防无谓重建与焦点丢失）；唱片为静态装饰（旋转 P3） */
+     只更新自身节点不整表重渲，签名未变直接返回（防无谓重建与焦点丢失；隐藏时清签名——否则同候选
+     回显时签名早退抢在 hidden=false 复位前，hero 会保持隐藏，AIbot P1 修复）；唱片为静态装饰（旋转 P3） */
   heroK: '', // 候选 URL 锚点（u[0]）：点击时重新解析最新对象，防渲染后台名/装配变化错台（§6.3）
   renderHero() {
     const hero = $('resumeHero');
     const on = document.documentElement.classList.contains('ui-refresh')
       && this.state.scope === 'all' && this.state.cat === '全部' && !this.state.keyword.trim();
-    if (!on) { hero.hidden = true; this.heroK = ''; return; }
+    if (!on) { hero.hidden = true; this.heroK = ''; delete hero.dataset.sig; return; }
     const self = this;
     const pick = uiChooseResume({
       current: Player.station || Player.connecting || null,
@@ -759,7 +761,9 @@ const App = {
       recents: this.recents, resolveRecent: r => this.resolve(r),
       starters: this.state.stations.filter(s => s.om),
       eligible: s => uiStationShown(s, { hiddenCategories: this.cfg.hideC, key: keyOf, all: false,
-        showDead: this.state.showDead, playingKey: null, connectingKey: null }),
+        showDead: this.state.showDead,
+        playingKey: Player.station ? keyOf(Player.station) : null,   // 在播/连接中的自动死台例外（同主列表口径）
+        connectingKey: Player.connecting ? keyOf(Player.connecting) : null }),
     });
     const conn = pick && Player.connecting && keyOf(Player.connecting) === keyOf(pick.station);
     const cur = pick && Player.station && keyOf(Player.station) === keyOf(pick.station);

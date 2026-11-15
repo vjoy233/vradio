@@ -9,7 +9,9 @@
    （失败路径也落盘 + exitCode=1）；Playwright 加载失败同样写 FAIL 报告而非裸崩。
    Playwright 为全局 npm 安装的外部工具（VRADIO_PLAYWRIGHT 可覆盖路径），非仓库依赖。
    用法：node ui-demo/phase-evidence.cjs --phase=p1（P2/P3 断言组随各自分支扩展本文件）；
-   故障注入：--fault 首组断言后强制抛错，验证失败路径的退出码/浏览器回收/worktree 清理/宿主不变。
+   故障注入：--fault 首组断言后强制抛错，验证失败路径的退出码/浏览器回收/worktree 清理/宿主不变；
+   --fault-cleanup 持锁令 worktree 移除两连败，验证清理失败门（AIbot 三次复核 P2：清理失败必须置 FAIL +
+   非零退出 + 落盘，不能只 console 警告后返回成功）。
    产物：docs/ui-redesign-assets/evidence/<phase>/（截图 PNG + evidence.json，随 PR 提交）。
    boot 预置 radio.baseline='done' 跳过首启基线确认门槛。 */
 const { spawn, execSync } = require('child_process');
@@ -17,6 +19,7 @@ const fs = require('fs'), path = require('path'), http = require('http'), os = r
 
 const PHASE = ((process.argv.find(a => a.startsWith('--phase=')) || '').split('=')[1] || 'p1');
 const FAULT = process.argv.some(a => a === '--fault' || a.startsWith('--fault='));
+const FAULT_CLEANUP = process.argv.some(a => a === '--fault-cleanup'); // 清理失败门注入（AIbot 三次复核 P2）
 const ROOT = path.join(__dirname, '..');
 const OUT = path.join(ROOT, 'docs', 'ui-redesign-assets', 'evidence', PHASE);
 const PORT = 8240 + Math.floor(Math.random() * 39);
@@ -43,7 +46,7 @@ async function main() {
   if (dirty.length) { console.error('存在未提交改动（证据只采自提交态）：\n' + dirty.join('\n')); process.exitCode = 1; return; }
   const before = hostSnap(), started = new Date().toISOString();
   const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'vradio-evidence-'));
-  let srv = null, browser = null, wtAlive = false;
+  let srv = null, browser = null, wtAlive = false, faultPin = null; // faultPin：--fault-cleanup 注入的目录钉子进程（cwd 不可删，文件句柄带 FILE_SHARE_DELETE 拦不住 git）
   try {
     git(`worktree add --detach "${wt}" HEAD`); wtAlive = true; // 被测实例检出：数据面全在临时 worktree
     srv = spawn(process.execPath, ['server.js'], { cwd: wt, env: Object.assign({}, process.env, { PORT: String(PORT) }), stdio: 'ignore' });
@@ -170,6 +173,7 @@ async function main() {
     catReset ? ok('E6d', `切范围重置分类（§3.2，原=${catChip}）`, '') : bad('E6d', '切范围重置 cat', '分类 chip 仍高亮');
     } // —— P1 断言组结束 ——
 
+
     if (PHASE === 'p2') { /* PR#30 验收证据：uiRefresh 开关关零回归 / 开关开桌面壳与 1023/1024 断点 / 双主题 / dock 焦点 */
       const snap = p => p.evaluate(() => ({ shell: document.documentElement.classList.contains('ui-refresh'),
         hero: getComputedStyle(document.querySelector('#resumeHero')).display, heroHidden: document.querySelector('#resumeHero').hidden,
@@ -236,6 +240,7 @@ async function main() {
     }
 
 
+
     if (PHASE === 'p3') { /* PR#31 验收证据：组件层——台标单层外框/双视图/详情浮层遮罩/底栏三组/onphase 接线与减动效/长名 */
       const on = await open('1');
       await on.setViewportSize({ width: 1440, height: 900 }); await sleep(400);
@@ -292,17 +297,31 @@ async function main() {
         return t ? { has: true, fn: !!(t.closest('[data-k]') && t.closest('[data-k]').dataset.fn), tt: !!document.querySelector('#namett') } : { has: false }; }); // data-fn 挂在行/卡容器（app.js:680），非 span 自身
       (st.has && st.fn && st.tt) ? ok('G6', '行/卡名称 .station-title[data-fn] + #namett 单例 tooltip 就位', JSON.stringify(st)) : bad('G6', 'station-title', JSON.stringify(st));
       await on.screenshot({ path: path.join(OUT, 'p3-1440-hero.png') });
-    }
+    }
+    if (FAULT_CLEANUP && wtAlive) faultPin = spawn(process.execPath, ['-e', 'setTimeout(()=>{},120000)'], { cwd: wt, stdio: 'ignore' }); // 钉住目录令 worktree remove 必败
+
 
     if (FAULT) throw new Error('故障注入：验证失败路径的退出码/浏览器回收/worktree 清理/宿主不变');
   } catch (e) {
     bad('Z0', '运行期异常（失败路径也落盘报告）', String(e && e.message || e).split('\n')[0]);
     process.exitCode = 1;
   } finally {
-    try { if (browser) await browser.close(); } catch (_) {} // 断言抛错也不泄漏 Chromium（AIbot 二次 P2）
-    try { if (srv) { srv.kill(); await new Promise(r => { const t = setTimeout(r, 3000); srv.once('exit', () => { clearTimeout(t); r(); }); }); } } catch (_) {}
-    if (wtAlive) { try { git(`worktree remove --force "${wt}"`); } catch (_) { await sleep(800); try { git(`worktree remove --force "${wt}"`); } catch (e2) { console.error('临时 worktree 清理失败（请手动 git worktree remove --force）:', wt); } } }
+    const cleanupErr = []; let srvGone = !srv, wtGone = !wtAlive; // 清理失败门（AIbot 三次复核 P2）：任何未回收都置失败
+    try { if (browser) await browser.close(); } catch (e) { cleanupErr.push('browser:' + String(e.message || e).split('\n')[0]); }
+    try { if (srv) {
+      const waitExit = ms => new Promise(r => { const t = setTimeout(r, ms); srv.once('exit', () => { clearTimeout(t); r(); }); });
+      srv.kill(); await waitExit(3000);
+      if (srv.exitCode === null && !srv.signalCode) { srv.kill('SIGKILL'); await waitExit(2000); } // 高负载下 exit 事件偶发迟到：超时补杀再等
+      srvGone = srv.exitCode !== null || !!srv.signalCode; // 成功退出（信号或码）即置真——初值只覆盖无 server 形态
+      if (!srvGone) cleanupErr.push('server: kill 后 5s 无退出信号'); } } catch (e) { srvGone = false; cleanupErr.push('server:' + String(e.message || e).split('\n')[0]); }
+    if (wtAlive) { try { git(`worktree remove --force "${wt}"`); wtGone = true; }
+      catch (_) { await sleep(800); try { git(`worktree remove --force "${wt}"`); wtGone = true; }
+        catch (e2) { cleanupErr.push('worktree remove 两连败:' + String(e2.message || e2).split('\n')[0]); } } }
     (hostSnap() === before) ? ok('Z1', '宿主 data/store.json + my-radio.txt 运行前后哈希不变（真隔离终检）', '') : bad('Z1', '宿主持久面被改动', `${before} → ${hostSnap()}`);
+    (cleanupErr.length === 0 && srvGone && wtGone)
+      ? ok('Z3', '清理失败门：browser 关闭 / server 退出 / worktree 移除全部成功（零泄漏成立）', '')
+      : bad('Z3', '清理失败门未过（不得宣称零泄漏，需手动回收）', cleanupErr.join(' | ') + (srvGone ? '' : ' [server未退出]') + (wtGone ? '' : ' [worktree未移除]'));
+    if (faultPin) { try { faultPin.kill(); await sleep(500); git(`worktree remove --force "${wt}"`); console.error('（注入钉已拔除并补清理，临时 worktree 已回收——Z3 失败记录保留为门验证证据）'); } catch (_) { try { faultPin.kill(); } catch (_) {} console.error('注入钉拔除后仍需手动清理:', wt); } }
     fs.writeFileSync(path.join(OUT, 'evidence.json'), JSON.stringify({ phase: PHASE, head: git('rev-parse --short HEAD').trim(), started, pass, fail, assertions: rec }, null, 2));
     if (fail) process.exitCode = 1;
     console.log(`phase-evidence(${PHASE}): ${pass} 通过, ${fail} 失败 → ${path.relative(ROOT, OUT)}`);

@@ -1,8 +1,8 @@
 {
   "phase": "p2",
-  "head": "66aa1b2",
-  "started": "2026-11-15T10:08:07.605Z",
-  "pass": 12,
+  "head": "39fabbb",
+  "started": "2026-11-15T10:56:05.210Z",
+  "pass": 13,
   "fail": 0,
   "assertions": [
     {
@@ -74,6 +74,12 @@
     {
       "id": "Z1",
       "name": "宿主 data/store.json + my-radio.txt 运行前后哈希不变（真隔离终检）",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "id": "Z3",
+      "name": "清理失败门：browser 关闭 / server 退出 / worktree 移除全部成功（零泄漏成立）",
       "pass": true,
       "detail": ""
     }

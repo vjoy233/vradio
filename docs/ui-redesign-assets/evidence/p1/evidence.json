@@ -1,9 +1,9 @@
 {
   "phase": "p1",
-  "head": "e98f0a7",
-  "started": "2026-11-15T10:07:11.708Z",
+  "head": "14be5f5",
+  "started": "2026-11-15T10:50:07.129Z",
   "pass": 17,
-  "fail": 0,
+  "fail": 1,
   "assertions": [
     {
       "id": "E1",
@@ -106,6 +106,12 @@
       "name": "宿主 data/store.json + my-radio.txt 运行前后哈希不变（真隔离终检）",
       "pass": true,
       "detail": ""
+    },
+    {
+      "id": "Z3",
+      "name": "清理失败门未过（不得宣称零泄漏，需手动回收）",
+      "pass": false,
+      "detail": "worktree remove 两连败:Command failed: git worktree remove --force \"C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\vradio-evidence-hh9qiG\" [worktree未移除]"
     }
   ]
 }

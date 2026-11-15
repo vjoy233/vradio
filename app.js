@@ -737,11 +737,18 @@ const App = {
   /* 主列表（radio.txt）+ 个人层（my-radio.txt）重拉重并；仅 http:// 下可用（file:// 下 fetch 必失败，P3-12 同源守卫） */
   async reloadMain() {
     if (!location.protocol.startsWith('http')) return false;
-    const get = f => fetch(f + '?t=' + Date.now()).then(r => r.ok ? r.text() : Promise.reject()).catch(() => null); // 双文件同口径穿透缓存（audit D2：添台后 my-radio 旧缓存会让新台不出现）
+    const get = f => fetch(f + '?t=' + Date.now()).then(r => r.ok ? r.text() : Promise.reject()).catch(() => null); // 穿透缓存（audit D2：添台后 my-radio 旧缓存会让新台不出现）；my 层走下方三态通道
     const main = await get('radio.txt');
     if (main === null) return false; // 主列表拉不到就不动（保底，绝不清空）
-    const my = await get('my-radio.txt');
-    this.applySources(this.parse(main), my ? this.parse(my) : []);
+    // 个人层三态（AIbot PR#33 P1，与 commitImport getMy 同口径）：'' = 404 合法空列表 / 文本 = 有内容 /
+    // null = 网络错·5xx——失败绝不按空列表 replace（旧口径会把既有/刚恢复的个人台从列表静默清掉）：改用
+    // 最近一次成功的个人层缓存 _myKeep 重并（主 radio.txt 成功部分照常应用）+ toast 提示一次（后台任务
+    // 走 toast 的既有口径，单轮只提示一条防风暴）；成功才刷新缓存（404 空列表也刷——空也是磁盘真态）
+    const my = await fetch('my-radio.txt?t=' + Date.now()).then(r => r.status === 404 ? '' : r.ok ? r.text() : null).catch(() => null);
+    let myL;
+    if (my === null) { myL = this._myKeep || []; this.toast('个人电台列表刷新失败，已保留当前显示'); }
+    else { myL = this.parse(my); this._myKeep = myL; }
+    this.applySources(this.parse(main), myL);
     return true;
   },
 
@@ -2457,17 +2464,21 @@ const App = {
       this._restoreBusy = false;
       btn.disabled = false; btn.textContent = oldLabel;
     }
-    if (r.ok) await this.afterRestore(); // 恢复成功才即时生效（AIbot P1：Store 对账 + 主列表重拉重并，不触发自动播放）
+    if (r.ok) await this.afterRestore(info && info.my); // 恢复成功才即时生效（AIbot P1：Store 对账 + 主列表重拉重并，不触发自动播放）；my = 备份个人行兜底（见 afterRestore）
     $('status').textContent = r.msg; // 结果 = commitImport 的 r.msg 原样展示（成功/回滚/回滚失败文案在 backup.js 内如实区分）
     const title = r.ok ? '备份恢复完成'
       : r.msg.includes('已回滚') ? '恢复失败——已回滚到导入前状态' : '恢复失败——未提交（本机数据未改动）';
     const hint = r.ok ? '' : '\n\n既有恢复路径：用同一备份文件重新导入重试；如担心当前数据状态，可先「备份全部」导出保全。';
     uiChooseDialog(title, r.msg + hint, [{ value: 'x', label: '知道了' }], { safe: 'x' }).catch(() => {});
   },
-  async afterRestore() { // 恢复成功的即时生效（AIbot P1，importAll r.ok 专用）：先 Store 对账重渲（收藏/配置/记忆，
+  async afterRestore(myLines) { // 恢复成功的即时生效（AIbot P1，importAll r.ok 专用）：先 Store 对账重渲（收藏/配置/记忆，
     // 不触发自动播放），再主列表重拉重并——commitImport 已把备份的 my-radio.txt 全量替换落盘，applyServerStore
     // 不重读个人层，缺这步则恢复出的个人台要整页刷新才出现。reloadMain 仅 http（file:// 恒 false 协议门直返：
-    // 该形态个人台本就不可恢复、commitImport 文案已明示）；拉不到主列表时 stations 停留在对账态，绝不清空
+    // 该形态个人台本就不可恢复、commitImport 文案已明示）；拉不到主列表时 stations 停留在对账态，绝不清空。
+    // myLines = 备份的个人电台行（truthy 才动缓存：v1 备份/字段缺失=不动 my-radio.txt，缓存亦不动）：磁盘确定
+    // 就是它（postMy 刚落盘成功），先写 _myKeep——紧随的 reloadMain 若遇 my-radio.txt 瞬态拉取失败，按缓存兜底
+    // 重并，刚恢复的个人台仍即时入列而非退回恢复前的旧个人层（AIbot PR#33 P1）
+    if (myLines) this._myKeep = this.parse(myLines.join('\r\n'));
     this.applyServerStore();
     await this.reloadMain();
   },

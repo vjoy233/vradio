@@ -1,0 +1,105 @@
+{
+  "phase": "p1",
+  "head": "d36137d",
+  "started": "2026-11-15T09:28:42.013Z",
+  "pass": 16,
+  "fail": 0,
+  "assertions": [
+    {
+      "id": "E1",
+      "name": "390px 列表全宽（容器≈视口，无死空白）",
+      "pass": true,
+      "detail": "list=390 vw=390"
+    },
+    {
+      "id": "E2",
+      "name": "768px 列表全宽",
+      "pass": true,
+      "detail": "list=768 vw=768"
+    },
+    {
+      "id": "E7",
+      "name": "两侧同宽 900 封顶居中、无横向溢出、边界无跳变",
+      "pass": true,
+      "detail": "1023:{\"w\":900,\"x\":62,\"ov\":0} 1024:{\"w\":900,\"x\":62,\"ov\":0}"
+    },
+    {
+      "id": "E3",
+      "name": "641 在顶栏 / 639 收进 lowfreq 且「主题：」文字可见",
+      "pass": true,
+      "detail": "wide=true narrow=true text=true"
+    },
+    {
+      "id": "E4a",
+      "name": "三选菜单展开",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "id": "E4b",
+      "name": "light 生效",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "id": "E4c",
+      "name": "dark 生效",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "id": "E4d",
+      "name": "auto 跟随系统（dark）",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "id": "E4e",
+      "name": "auto 跟随系统（light）实时切换",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "id": "E5",
+      "name": "Esc 收起且焦点归还 #themeBtn",
+      "pass": true,
+      "detail": "{\"hidden\":true,\"ae\":\"themeBtn\"}"
+    },
+    {
+      "id": "E6a0",
+      "name": "行内 ☆ 收藏写入（aria-pressed=true）",
+      "pass": true,
+      "detail": "k=华语音乐|500首华语经典"
+    },
+    {
+      "id": "E6a",
+      "name": "收藏范围列表含刚收藏台",
+      "pass": true,
+      "detail": "n=1"
+    },
+    {
+      "id": "E6b1",
+      "name": "组合筛选（收藏×分类）空态呈现",
+      "pass": true,
+      "detail": "cat=欧美音乐"
+    },
+    {
+      "id": "E6b2",
+      "name": "带词空态出现「搜全部电台」",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "id": "E6c",
+      "name": "搜全部保词：#q 保留、范围解除、结果非空",
+      "pass": true,
+      "detail": "{\"q\":\"新闻\",\"n\":224,\"all\":true,\"cat\":false}"
+    },
+    {
+      "id": "E6d",
+      "name": "切范围重置分类（§3.2，原=欧美音乐）",
+      "pass": true,
+      "detail": ""
+    }
+  ]
+}

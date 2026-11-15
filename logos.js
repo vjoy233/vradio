@@ -53,11 +53,14 @@ const Logos = {
   /* 渲染片段（P3/§6.10 统一外框）：.station-logo 外框负责尺寸/圆角/边框/底色（data-tone 上色），
      内部 img 100% contain 不裁宽图；loading=lazy 离屏不拉流量；坏图 onerror 换首字而非裸删（AIbot
      PR#9 review P2-c）——phf() 用 textContent 重建、不经 HTML 解析，注入面不扩大 */
+  /* 外框唯一出口（AIbot PR#31 review P1）：.station-logo 外框只在 wrap() 拼一层，img/visual 复用，
+     不得各自再包——嵌套双框会让 border/底色/尺寸规则叠加 */
+  wrap(s, inner) { return `<span class="station-logo" data-tone="${this.tone(s)}" aria-hidden="true">${inner}</span>`; },
   img(s) {
     const u = this.get(s);
     if (!u) return '';
     const d = this.phd(s);
-    return `<span class="station-logo" data-tone="${this.tone(s)}" aria-hidden="true"><img class="logo" src="${this.esc(u)}" alt="" loading="lazy" data-ch="${this.esc(d.ch)}" onerror="Logos.phf(this)"></span>`;
+    return this.wrap(s, `<img class="logo" src="${this.esc(u)}" alt="" loading="lazy" data-ch="${this.esc(d.ch)}" onerror="Logos.phf(this)">`);
   },
   /* 坏图 onerror：img 就地换首字兜底（aria-hidden 纯装饰）——只换内层节点，外框与 data-tone 底色不动，
      与无台标分支同框同色（色全由外框 CSS 给，内层不再带 inline 背景） */
@@ -68,11 +71,10 @@ const Logos = {
     el.replaceWith(sp);
   },
   /* 渲染入口（UI 审计 P2-3，owner 拍板）：有台标出图，无台标出首字兜底——有图无图同一外框同一 tone 底色，
-     卡片节奏统一 */
+     卡片节奏统一；有图直接用 img() 产物（外框已在内、不再包第二层，AIbot PR#31 review P1） */
   visual(s) {
     const d = this.phd(s);
-    const inner = this.img(s) || `<span class="logo ph">${this.esc(d.ch)}</span>`;
-    return `<span class="station-logo" data-tone="${this.tone(s)}" aria-hidden="true">${inner}</span>`;
+    return this.img(s) || this.wrap(s, `<span class="logo ph">${this.esc(d.ch)}</span>`);
   },
   freshNeg(s) { const e = this.mem[this.ekey(s.c, s.n)]; return !!(e && e.x && Date.now() - e.t < this.NEG); },
 

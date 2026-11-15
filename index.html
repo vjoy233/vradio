@@ -249,6 +249,62 @@
     #moreBtn { display:inline-block; }
     .fav { font-size:19px; padding:8px 9px; margin:-8px 0; } /* 触屏命中区 ~37px（原 ~26px 达标偏小，UI 审计 P2-6 备注） */
   }
+  /* ===== 桌面新版壳（ui-redesign P2/§4.1/§6.5，FEATURES.uiRefresh 开关 + ≥1024px 断点）=====
+     开关关或 <1024px：下列规则一律不生效（结构壳 wrapper display:contents 对布局透明），紧凑布局零回归。
+     ui-* token 色值原样抄自 §4.1（24 组平面配对已验证 ≥5.19:1，见 ui-redesign-assets/review-v22/contrast-results.json） */
+  html.ui-refresh { --ui-bg:#111916; --ui-surface:#19231e; --ui-raised:#223029; --ui-text:#e8f0ea; --ui-muted:#a9bbb0; --ui-accent:#93dbb4; --ui-on-accent:#112419; --ui-favorite:#e4c36f; --ui-danger:#f1a9a3; --ui-line:#40584a; }
+  html.ui-refresh[data-theme="light"] { --ui-bg:#f3f6f3; --ui-surface:#ffffff; --ui-raised:#e8efea; --ui-text:#16251d; --ui-muted:#53675b; --ui-accent:#246344; --ui-on-accent:#ffffff; --ui-favorite:#78560d; --ui-danger:#a4322b; --ui-line:#849b8c; }
+  /* 结构壳（§6.5 骨架）：wrapper 对布局透明——否则开关关闭时 body 的 flex 子级被 div 隔断、#list flex:1 失效；
+     aside 常隐（新元素，桌面 media 内再放行）；这两条不带 ui-refresh 前缀是刻意的（结构中性，双模式零布局影响） */
+  .desktop-sidebar { display:none; }
+  .dashboard-shell, .dashboard-main { display:contents; }
+  /* 续听卡兜底隐藏（显隐以 JS hidden 为主，此处兜底开关关闭态）与紧凑/窄于断点态 */
+  html:not(.ui-refresh) #resumeHero { display:none !important; }
+  html.ui-refresh #resumeHero, html.ui-refresh .scope-title { display:none; }
+  @media (min-width:1024px) {
+    html.ui-refresh body { height:auto; min-height:100dvh; display:block; overflow:visible; } /* 解除定高：滚动统一走文档流（§6.5），主库与 body 不再双滚动 */
+    html.ui-refresh { scroll-padding-bottom:calc(var(--dock-h,100px) + 24px); } /* 焦点行滚入视口不被固定 footer 遮挡（--dock-h 由 app uiWatchDock 实测） */
+    html.ui-refresh .dashboard-shell { display:grid; grid-template-columns:200px minmax(0,1fr); position:relative; }
+    html.ui-refresh .dashboard-shell::before { content:''; position:absolute; left:0; top:0; bottom:0; width:200px; border-right:1px solid var(--ui-line); pointer-events:none; } /* 全高侧栏分隔线（参考图 01/15） */
+    html.ui-refresh .desktop-sidebar { display:flex; flex-direction:column; gap:24px; position:sticky; top:0; align-self:start; max-height:100dvh; padding:20px 14px 16px; min-width:0; }
+    html.ui-refresh .side-brand { padding:0 10px 4px; }
+    html.ui-refresh .side-brand b { display:block; font-size:22px; font-weight:700; letter-spacing:.02em; }
+    html.ui-refresh .side-brand span { display:block; font-size:12px; color:var(--ui-muted); margin-top:2px; }
+    html.ui-refresh .side-group { display:flex; flex-direction:column; gap:4px; position:relative; }
+    html.ui-refresh .side-link { display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%; min-height:36px; padding:7px 12px; border:none; border-radius:8px; background:none; color:var(--ui-muted); font:inherit; font-size:14px; text-align:left; cursor:pointer; transition:background-color .15s, color .15s; }
+    html.ui-refresh .side-link:hover { background:var(--ui-raised); color:var(--ui-text); }
+    html.ui-refresh .side-link.on { background:var(--ui-raised); color:var(--ui-accent); font-weight:600; }
+    html.ui-refresh .side-link .n { font-style:normal; font-size:12px; color:var(--ui-muted); font-variant-numeric:tabular-nums; }
+    html.ui-refresh .side-link.on .n { color:inherit; opacity:.75; }
+    /* 更多工具 popover（§6.6）：宿主 #sideTools 锚在 .side-group 右侧；#lowfreq 原样搬入（display:contents，按钮即弹层项） */
+    html.ui-refresh #sideTools { position:absolute; left:calc(100% + 12px); bottom:-6px; display:none; flex-direction:column; gap:2px; background:var(--ui-surface); border:1px solid var(--ui-line); border-radius:10px; padding:6px; min-width:11em; box-shadow:0 8px 24px rgba(0,0,0,.25); z-index:6; }
+    html.ui-refresh #sideTools.open { display:flex; }
+    html.ui-refresh #sideTools .btn { border:none; background:none; justify-content:flex-start; }
+    html.ui-refresh #sideTools .btn:hover { background:var(--ui-raised); }
+    html.ui-refresh #manageBtn { display:none; } /* 侧栏已有维护入口：桌面隐藏 header 版避免双触发器 */
+    html.ui-refresh .scope-title { display:inline; font-size:14px; color:var(--ui-muted); white-space:nowrap; }
+    html.ui-refresh .dashboard-main { display:block; box-sizing:border-box; min-width:0; width:100%; max-width:1440px; margin-inline:auto; padding:20px 24px calc(var(--dock-h,100px) + 24px); } /* padding-bottom = 实际 footer 占位（紧凑态 #list 的 90px 规则保持不动，不叠加） */
+    html.ui-refresh #cats, html.ui-refresh #hint { width:100%; max-width:1328px; margin-inline:auto; } /* 分类条/提示与网格同宽对齐 */
+    html.ui-refresh #list { width:100%; min-width:0; flex:none; overflow:visible; } /* 滚动交还文档流；#list 自身 padding 不动 */
+    html.ui-refresh #list.grid { display:grid; max-width:1328px; margin-inline:auto; grid-template-columns:repeat(auto-fill,minmax(216px,1fr)); gap:16px; } /* 1024≈3 列 / 1280≈4 列 / ≥1440 最多 5 列（§4.2） */
+    /* 续听卡（§3.3）：壳级面板底色；唱片为静态圆盘装饰（旋转接线是 P3） */
+    html.ui-refresh #resumeHero { display:flex; gap:24px; align-items:center; max-width:1328px; margin:4px auto 28px; padding:28px 32px; background:var(--ui-surface); border:1px solid var(--ui-line); border-radius:16px; }
+    html.ui-refresh .vinyl { width:112px; height:112px; flex:none; border-radius:50%; border:1px solid var(--ui-line); background:repeating-radial-gradient(circle, var(--ui-raised) 0 3px, var(--ui-surface) 3px 7px); display:grid; place-items:center; }
+    html.ui-refresh .vinyl .logo { width:56px; height:56px; border-radius:50%; object-fit:cover; }
+    html.ui-refresh .vinyl .logo.ph { font-size:20px; }
+    html.ui-refresh .hero-info { min-width:0; display:flex; flex-direction:column; gap:6px; align-items:flex-start; }
+    html.ui-refresh .hero-kicker { font-size:12px; color:var(--ui-accent); }
+    html.ui-refresh .hero-name { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:30px; line-height:1.25; font-weight:700; }
+    html.ui-refresh .hero-meta { font-size:13px; color:var(--ui-muted); }
+    html.ui-refresh .hero-actions { display:flex; gap:12px; margin-top:8px; }
+    html.ui-refresh #heroPlay { background:var(--ui-accent); border-color:var(--ui-accent); color:var(--ui-on-accent); font-weight:600; padding:9px 18px; }
+    html.ui-refresh #heroPlay:disabled { opacity:.6; cursor:wait; }
+    /* 卡片/行壳级底色（ui-* token；卡片精致化是 P3） */
+    html.ui-refresh #list .card { background:var(--ui-surface); }
+    html.ui-refresh #list .card:hover, html.ui-refresh #list .row:hover { background:var(--ui-raised); }
+    html.ui-refresh :focus-visible { outline:2px solid var(--ui-accent); outline-offset:3px; }
+  }
+  @media (prefers-reduced-motion:reduce) { html.ui-refresh .vinyl { animation:none !important; } } /* 唱片旋转为 P3 接线，先立规约（§6.5） */
 </style>
 </head>
 <body>
@@ -288,14 +344,38 @@
 <symbol id="i-compass" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" /><path d="M8 16l2 -6l6 -2l-2 6l-6 2" /></symbol>
 </svg>
 
+<!-- 桌面新版壳（ui-redesign P2/§6.1）：aside+main 包进 .dashboard-shell；compact（开关关或 <1024px）下
+     wrapper display:contents、aside display:none——header/cats/list 仍是 body 的有效布局子级，零回归。
+     audio/浮层（#manage/#detail/#discovery/#songhist/#toast/#keys）与 footer 留在 shell 外原位 -->
+<div class="dashboard-shell">
+<aside class="desktop-sidebar" aria-label="电台导航">
+  <div class="side-brand"><b>VRadio</b><span>把世界，听近一点。</span></div>
+  <!-- 范围导航（§3.2 单一筛选状态）：data-scope 委托给 App.setScope；计数角标 render 内随 catCounts 刷新 -->
+  <div class="side-group" role="group" aria-label="收听范围">
+    <button type="button" class="side-link on" data-scope="all" aria-current="true"><span>全部电台</span><i class="n">0</i></button>
+    <button type="button" class="side-link" data-scope="favorites"><span>我的收藏</span><i class="n">0</i></button>
+    <button type="button" class="side-link" data-scope="recent"><span>最近收听</span><i class="n">0</i></button>
+  </div>
+  <div class="side-group" role="group" aria-label="管理">
+    <button type="button" class="side-link" id="sideManage"><span>维护</span></button>
+    <button type="button" class="side-link" id="sideMore" aria-haspopup="true" aria-expanded="false"><span>更多工具</span></button>
+    <!-- 更多工具 popover 宿主（P2/§6.6）：ui-refresh + ≥1024px 时 #lowfreq 整体搬入（uiPlaceTools，节点唯一监听随行）；
+         hidden 仅占首屏，boot 后改由 .open 类控显隐（不对 display:contents 的 #lowfreq 误加 hidden） -->
+    <div id="sideTools" hidden></div>
+  </div>
+</aside>
+<main class="dashboard-main" id="mainContent">
 <header>
   <h1><span class="live" aria-hidden="true">●</span> VRadio</h1>
+  <!-- 范围标题（P2/§3.1 顶栏）：紧凑态 hidden（boot 后显隐由 CSS 断点接管），桌面显示「范围 · 分类」 -->
+  <span id="scopeTitle" class="scope-title" hidden></span>
   <input id="q" type="search" aria-label="搜索电台" title="按 / 快速聚焦，Esc 清空，↓ 进列表，? 全部快捷键" placeholder="搜索电台名，如：中国之声 / Love / NHK">
   <span class="seg" role="group" aria-label="视图切换">
     <button class="btn" id="gridBtn" aria-pressed="true" title="网格视图：精简卡片，一页看更多"><svg class="ic"><use href="#i-grid"/></svg><span>网格</span></button>
     <button class="btn" id="listBtn" aria-pressed="false" title="列表视图：两行详情（分类/源数）"><svg class="ic"><use href="#i-list"/></svg><span>列表</span></button>
   </span>
-  <!-- 低频操作收组（UI 审计 P2-6）：桌面 display:contents 原样排布；≤640px 收进「⋯ 更多」菜单，header 压回两行 -->
+  <!-- 低频操作收组（UI 审计 P2-6）：桌面 display:contents 原样排布；≤640px 收进「⋯ 更多」菜单，header 压回两行；
+       ui-refresh 桌面壳（≥1024px）下整体搬进侧栏 #sideTools popover（uiPlaceTools） -->
   <span id="lowfreq">
     <button class="btn" id="discBtn" hidden title="发现电台：本地派生推荐（精选/稳定直连/最近新增与恢复/有曲讯/未听过）"><svg class="ic"><use href="#i-compass"/></svg><span>发现</span></button>
     <button class="btn" id="syncBtn" title="同步上游国内源 + 实测重建欧美音乐台"><svg class="ic"><use href="#i-sync"/></svg><span>同步源</span></button>
@@ -317,9 +397,13 @@
   </span>
   <input type="file" id="file" accept=".txt,.csv,.m3u" hidden aria-label="导入电台列表文件">
 </header>
+<!-- 续听卡（P2/§3.3）：仅桌面新版壳显示（ui-refresh + ≥1024px），scope=all + cat=全部 + 无关键词时由 renderHero 渲染 -->
+<section id="resumeHero" aria-label="继续收听" hidden></section>
 <div id="cats" role="group" aria-label="电台分类"></div>
 <div id="hint">radio.txt 未加载（file:// 下 fetch 受限）——点右上「导入列表」选择本目录的 radio.txt 即可获得全部电台；当前为内置精选。</div>
 <div id="list" role="list" aria-label="电台列表"></div>
+</main>
+</div>
 <footer>
   <div id="prog" hidden><i></i></div>
   <button class="btn" id="pp" aria-label="播放 / 暂停"><svg class="ic"><use href="#i-play"/></svg></button>

@@ -9,7 +9,9 @@
    （失败路径也落盘 + exitCode=1）；Playwright 加载失败同样写 FAIL 报告而非裸崩。
    Playwright 为全局 npm 安装的外部工具（VRADIO_PLAYWRIGHT 可覆盖路径），非仓库依赖。
    用法：node ui-demo/phase-evidence.cjs --phase=p1（P2/P3 断言组随各自分支扩展本文件）；
-   故障注入：--fault 首组断言后强制抛错，验证失败路径的退出码/浏览器回收/worktree 清理/宿主不变。
+   故障注入：--fault 首组断言后强制抛错，验证失败路径的退出码/浏览器回收/worktree 清理/宿主不变；
+   --fault-cleanup 持锁令 worktree 移除两连败，验证清理失败门（AIbot 三次复核 P2：清理失败必须置 FAIL +
+   非零退出 + 落盘，不能只 console 警告后返回成功）。
    产物：docs/ui-redesign-assets/evidence/<phase>/（截图 PNG + evidence.json，随 PR 提交）。
    boot 预置 radio.baseline='done' 跳过首启基线确认门槛。 */
 const { spawn, execSync } = require('child_process');
@@ -17,6 +19,7 @@ const fs = require('fs'), path = require('path'), http = require('http'), os = r
 
 const PHASE = ((process.argv.find(a => a.startsWith('--phase=')) || '').split('=')[1] || 'p1');
 const FAULT = process.argv.some(a => a === '--fault' || a.startsWith('--fault='));
+const FAULT_CLEANUP = process.argv.some(a => a === '--fault-cleanup'); // 清理失败门注入（AIbot 三次复核 P2）
 const ROOT = path.join(__dirname, '..');
 const OUT = path.join(ROOT, 'docs', 'ui-redesign-assets', 'evidence', PHASE);
 const PORT = 8240 + Math.floor(Math.random() * 39);
@@ -43,7 +46,7 @@ async function main() {
   if (dirty.length) { console.error('存在未提交改动（证据只采自提交态）：\n' + dirty.join('\n')); process.exitCode = 1; return; }
   const before = hostSnap(), started = new Date().toISOString();
   const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'vradio-evidence-'));
-  let srv = null, browser = null, wtAlive = false;
+  let srv = null, browser = null, wtAlive = false, faultLock = null; // faultLock：--fault-cleanup 注入的清理失败句柄
   try {
     git(`worktree add --detach "${wt}" HEAD`); wtAlive = true; // 被测实例检出：数据面全在临时 worktree
     srv = spawn(process.execPath, ['server.js'], { cwd: wt, env: Object.assign({}, process.env, { PORT: String(PORT) }), stdio: 'ignore' });
@@ -170,15 +173,23 @@ async function main() {
     catReset ? ok('E6d', `切范围重置分类（§3.2，原=${catChip}）`, '') : bad('E6d', '切范围重置 cat', '分类 chip 仍高亮');
     } // —— P1 断言组结束 ——
 
+    if (FAULT_CLEANUP && wtAlive) faultLock = fs.openSync(path.join(wt, 'z3-cleanup-lock'), 'w'); // 持句柄：Windows 下目录 remove 必败
     if (FAULT) throw new Error('故障注入：验证失败路径的退出码/浏览器回收/worktree 清理/宿主不变');
   } catch (e) {
     bad('Z0', '运行期异常（失败路径也落盘报告）', String(e && e.message || e).split('\n')[0]);
     process.exitCode = 1;
   } finally {
-    try { if (browser) await browser.close(); } catch (_) {} // 断言抛错也不泄漏 Chromium（AIbot 二次 P2）
-    try { if (srv) { srv.kill(); await new Promise(r => { const t = setTimeout(r, 3000); srv.once('exit', () => { clearTimeout(t); r(); }); }); } } catch (_) {}
-    if (wtAlive) { try { git(`worktree remove --force "${wt}"`); } catch (_) { await sleep(800); try { git(`worktree remove --force "${wt}"`); } catch (e2) { console.error('临时 worktree 清理失败（请手动 git worktree remove --force）:', wt); } } }
+    const cleanupErr = []; let srvGone = !srv, wtGone = !wtAlive; // 清理失败门（AIbot 三次复核 P2）：任何未回收都置失败
+    try { if (browser) await browser.close(); } catch (e) { cleanupErr.push('browser:' + String(e.message || e).split('\n')[0]); }
+    try { if (srv) { srv.kill(); await new Promise(r => { const t = setTimeout(() => { srvGone = false; r(); }, 3000); srv.once('exit', () => { clearTimeout(t); r(); }); }); } } catch (e) { srvGone = false; cleanupErr.push('server:' + String(e.message || e).split('\n')[0]); }
+    if (wtAlive) { try { git(`worktree remove --force "${wt}"`); wtGone = true; }
+      catch (_) { await sleep(800); try { git(`worktree remove --force "${wt}"`); wtGone = true; }
+        catch (e2) { cleanupErr.push('worktree remove 两连败:' + String(e2.message || e2).split('\n')[0]); } } }
     (hostSnap() === before) ? ok('Z1', '宿主 data/store.json + my-radio.txt 运行前后哈希不变（真隔离终检）', '') : bad('Z1', '宿主持久面被改动', `${before} → ${hostSnap()}`);
+    (cleanupErr.length === 0 && srvGone && wtGone)
+      ? ok('Z3', '清理失败门：browser 关闭 / server 退出 / worktree 移除全部成功（零泄漏成立）', '')
+      : bad('Z3', '清理失败门未过（不得宣称零泄漏，需手动回收）', cleanupErr.join(' | ') + (srvGone ? '' : ' [server未退出]') + (wtGone ? '' : ' [worktree未移除]'));
+    if (faultLock) { try { fs.closeSync(faultLock); git(`worktree remove --force "${wt}"`); console.error('（注入锁已释放并补清理，临时 worktree 已回收——Z3 失败记录保留为门验证证据）'); } catch (_) { console.error('注入锁释放后仍需手动清理:', wt); } }
     fs.writeFileSync(path.join(OUT, 'evidence.json'), JSON.stringify({ phase: PHASE, head: git('rev-parse --short HEAD').trim(), started, pass, fail, assertions: rec }, null, 2));
     if (fail) process.exitCode = 1;
     console.log(`phase-evidence(${PHASE}): ${pass} 通过, ${fail} 失败 → ${path.relative(ROOT, OUT)}`);

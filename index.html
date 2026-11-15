@@ -127,14 +127,26 @@
   .row .l1 { display:flex; align-items:center; gap:10px; min-width:0; }
   .row .meta { font-size:12px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .row .meta .badge, .row .meta .srcs { font-size:11px; }
-  /* 台标：网格 40px / 列表 22px；img 直连加载不受 CORS 限制，坏图 onerror 换首字母色块（AIbot PR#9 review P2-c）。
-     色块兜底（UI 审计 P2-3，owner 拍板）：底色=台名 hash 确定性生成，白字双主题稳，有图无图节奏统一 */
-  .logo { flex:0 0 auto; object-fit:cover; border:1px solid var(--line); background:var(--panel); }
-  .card .logo { width:40px; height:40px; border-radius:10px; }
-  .row .logo { width:22px; height:22px; border-radius:4px; }
-  .logo.ph { display:flex; align-items:center; justify-content:center; color:#fff; font-weight:600; border:none; }
+  /* 台标（P3/§4.2/§6.10 统一外框）：.station-logo 外框负责尺寸/圆角/边框/底色——底色走 data-tone 分类
+     固定色板（低饱和、白字双主题可读；未知/自建分类中性灰，不做全色相 hash），内部 .logo img 100% contain
+     不裁宽图；无图/坏图同框同色（兜底首字 span 只出字，色全由外框给）。img 直连加载不受 CORS 限制，
+     坏图 onerror 换首字（AIbot PR#9 review P2-c）。双布局共用同一结构：网格 40px / 列表 22px（紧凑视觉不变） */
+  .station-logo { --lg:hsl(210 10% 44%); flex:0 0 auto; display:grid; place-items:center; overflow:hidden; border:1px solid var(--line); background:var(--lg); }
+  .station-logo[data-tone="green"] { --lg:hsl(150 28% 34%); }
+  .station-logo[data-tone="blue"] { --lg:hsl(210 32% 40%); }
+  .station-logo[data-tone="teal"] { --lg:hsl(175 28% 33%); }
+  .station-logo[data-tone="orange"] { --lg:hsl(28 45% 42%); }
+  .station-logo[data-tone="steel"] { --lg:hsl(215 16% 44%); }
+  .station-logo[data-tone="amber"] { --lg:hsl(40 42% 40%); }
+  .station-logo[data-tone="plum"] { --lg:hsl(300 22% 38%); }
+  .station-logo[data-tone="gold"] { --lg:hsl(50 42% 36%); }
+  .station-logo .logo { width:100%; height:100%; object-fit:contain; }
+  .logo.ph { display:flex; align-items:center; justify-content:center; color:#fff; font-weight:600; background:var(--lg); }
+  .card .station-logo { width:40px; height:40px; border-radius:10px; }
+  .row .station-logo { width:22px; height:22px; border-radius:4px; }
   .card .logo.ph { font-size:17px; }
   .row .logo.ph { font-size:11px; }
+  .dheadinfo .station-logo { width:40px; height:40px; border-radius:8px; } /* 详情中心头部（B1）：原为自然尺寸，统一 40px 外框 */
   #hint { padding:6px 14px; color:var(--warn); font-size:12px; display:none; }
   .empty { padding:30px; color:var(--dim); }
   #list.grid .empty { grid-column:1 / -1; } /* 空态文案占满整行（UI 审计 P1-3：否则被压成 160px 网格窄条逐字折行） */
@@ -289,8 +301,11 @@
     html.ui-refresh #list.grid { display:grid; max-width:1328px; margin-inline:auto; grid-template-columns:repeat(auto-fill,minmax(216px,1fr)); gap:16px; } /* 1024≈3 列 / 1280≈4 列 / ≥1440 最多 5 列（§4.2） */
     /* 续听卡（§3.3）：壳级面板底色；唱片为静态圆盘装饰（旋转接线是 P3） */
     html.ui-refresh #resumeHero { display:flex; gap:24px; align-items:center; max-width:1328px; margin:4px auto 28px; padding:28px 32px; background:var(--ui-surface); border:1px solid var(--ui-line); border-radius:16px; }
-    html.ui-refresh .vinyl { width:112px; height:112px; flex:none; border-radius:50%; border:1px solid var(--ui-line); background:repeating-radial-gradient(circle, var(--ui-raised) 0 3px, var(--ui-surface) 3px 7px); display:grid; place-items:center; }
-    html.ui-refresh .vinyl .logo { width:56px; height:56px; border-radius:50%; object-fit:cover; }
+    html.ui-refresh .vinyl { width:112px; height:112px; flex:none; border-radius:50%; border:1px solid var(--ui-line); background:repeating-radial-gradient(circle, var(--ui-raised) 0 3px, var(--ui-surface) 3px 7px); display:grid; place-items:center; overflow:hidden; }
+    /* 唱片内嵌台标（P3 外框迁移）：station-logo 外框退为透明定尺寸容器，唱片质感由 .vinyl 底色承担；
+       兜底首字 span 自带 tone 底色（--lg 继承自外框 data-tone），坏图/无图仍是圆形色块 */
+    html.ui-refresh .vinyl .station-logo { width:56px; height:56px; padding:0; border:none; border-radius:50%; background:none; }
+    html.ui-refresh .vinyl .station-logo .logo { width:100%; height:100%; border-radius:50%; object-fit:cover; }
     html.ui-refresh .vinyl .logo.ph { font-size:20px; }
     html.ui-refresh .hero-info { min-width:0; display:flex; flex-direction:column; gap:6px; align-items:flex-start; }
     html.ui-refresh .hero-kicker { font-size:12px; color:var(--ui-accent); }
@@ -303,6 +318,9 @@
     html.ui-refresh #list .card { background:var(--ui-surface); }
     html.ui-refresh #list .card:hover, html.ui-refresh #list .row:hover { background:var(--ui-raised); }
     html.ui-refresh :focus-visible { outline:2px solid var(--ui-accent); outline-offset:3px; }
+    /* 台标外框桌面规格（§6.5 骨架）：48px + padding4 + 圆角8（网格/列表/详情统一，骨架原样） */
+    html.ui-refresh .station-logo { width:48px; height:48px; padding:4px; border-radius:8px; }
+    html.ui-refresh .card .logo.ph, html.ui-refresh .row .logo.ph, html.ui-refresh .dheadinfo .logo.ph { font-size:18px; }
   }
   @media (prefers-reduced-motion:reduce) { html.ui-refresh .vinyl { animation:none !important; } } /* 唱片旋转为 P3 接线，先立规约（§6.5） */
 </style>

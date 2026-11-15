@@ -33,34 +33,46 @@ const Logos = {
   get(s) { return s.l || this.file.get(this.ekey(s.c, s.n)) || (this.mem[this.ekey(s.c, s.n)] || {}).u || ''; },
   /* 上游可控数据（URL/台名首字符）拼进 HTML 属性前必须转义，防属性逃逸 */
   esc(v) { return String(v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); },
-  /* 首字母色块参数：剥离 [国别] 后取首字符，色相 = 台名 hash 确定性生成（同一台永远同色），白字双主题稳 */
+  /* 首字兜底参数：剥离 [国别] 后取首个 Unicode 字符大写（禁完整英文 wordmark，ui-redesign §4.2）。
+     hue 仅供旧缓存兼容读取，兜底底色已改走 tone() 分类固定色板（§6.10：不做全色相 hash） */
   phd(s) {
     const n = s.n.replace(/\s*\[[^\]]+\]\s*$/, '');
     let h = 0; for (const c of s.c + '|' + s.n) h = (h * 31 + c.charCodeAt(0)) | 0;
     return { ch: ([...n][0] || '?').toUpperCase(), hue: ((h % 360) + 360) % 360 };
   },
-  /* 渲染片段：loading=lazy 离屏不拉流量；坏图 onerror 换首字母色块而非裸删（AIbot PR#9 review P2-c，
-     文档声称的回退自此为真）——phf() 用 textContent 重建、不经 HTML 解析，注入面不扩大 */
+  /* 分类 → 低饱和固定色 token（ui-redesign §4.2/§6.10）：按「当前分类」查表，未知/自建分类中性灰兜底，
+     不做全色相 hash；data-tone 只存安全 token（固定枚举，非分类名本身），上色全在 CSS [data-tone=…]。
+     表覆盖 radio.txt 全部真实分类（2026-11 取证：亚洲·港台/交通广播/华语音乐/国际新闻·谈话/文艺·生活/
+     新闻资讯/欧美音乐/综合·其他/财经）；分类重命名后查不中即中性，无第三态 */
+  TONES: {
+    '华语音乐': 'green', '欧美音乐': 'blue', '亚洲·港台': 'teal',
+    '新闻资讯': 'orange', '国际新闻·谈话': 'steel', '交通广播': 'amber',
+    '文艺·生活': 'plum', '财经': 'gold', '综合·其他': 'neutral',
+  },
+  tone(s) { return this.TONES[s.c] || 'neutral'; },
+  /* 渲染片段（P3/§6.10 统一外框）：.station-logo 外框负责尺寸/圆角/边框/底色（data-tone 上色），
+     内部 img 100% contain 不裁宽图；loading=lazy 离屏不拉流量；坏图 onerror 换首字而非裸删（AIbot
+     PR#9 review P2-c）——phf() 用 textContent 重建、不经 HTML 解析，注入面不扩大 */
   img(s) {
     const u = this.get(s);
     if (!u) return '';
     const d = this.phd(s);
-    return `<img class="logo" src="${this.esc(u)}" alt="" loading="lazy" data-ch="${this.esc(d.ch)}" data-hue="${d.hue}" onerror="Logos.phf(this)">`;
+    return `<span class="station-logo" data-tone="${this.tone(s)}" aria-hidden="true"><img class="logo" src="${this.esc(u)}" alt="" loading="lazy" data-ch="${this.esc(d.ch)}" onerror="Logos.phf(this)"></span>`;
   },
-  /* 坏图 onerror：img 就地换首字母色块（aria-hidden 纯装饰，与无台标分支同款） */
+  /* 坏图 onerror：img 就地换首字兜底（aria-hidden 纯装饰）——只换内层节点，外框与 data-tone 底色不动，
+     与无台标分支同框同色（色全由外框 CSS 给，内层不再带 inline 背景） */
   phf(el) {
     const sp = document.createElement('span');
     sp.className = 'logo ph'; sp.setAttribute('aria-hidden', 'true');
-    sp.style.background = `hsl(${el.dataset.hue} 42% 44%)`;
     sp.textContent = el.dataset.ch || '?';
     el.replaceWith(sp);
   },
-  /* 渲染入口（UI 审计 P2-3，owner 拍板）：有台标出图，无台标出首字母色块兜底——
-     台标只覆盖欧美系（实测 44%/35%，国内台 0），有图无图卡片节奏断裂 */
+  /* 渲染入口（UI 审计 P2-3，owner 拍板）：有台标出图，无台标出首字兜底——有图无图同一外框同一 tone 底色，
+     卡片节奏统一 */
   visual(s) {
-    if (this.get(s)) return this.img(s);
     const d = this.phd(s);
-    return `<span class="logo ph" style="background:hsl(${d.hue} 42% 44%)" aria-hidden="true">${this.esc(d.ch)}</span>`;
+    const inner = this.img(s) || `<span class="logo ph">${this.esc(d.ch)}</span>`;
+    return `<span class="station-logo" data-tone="${this.tone(s)}" aria-hidden="true">${inner}</span>`;
   },
   freshNeg(s) { const e = this.mem[this.ekey(s.c, s.n)]; return !!(e && e.x && Date.now() - e.t < this.NEG); },
 

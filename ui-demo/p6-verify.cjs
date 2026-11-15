@@ -40,8 +40,8 @@ const pickPort = () => new Promise((resolve, reject) => { // 82xx 段随机起�
     fs.writeFileSync(path.join(output, 'validation.json'), JSON.stringify(report, null, 2) + '\n');
     console.error('FAIL: Playwright 加载失败——', e.message); process.exitCode = 1; return;
   }
-  // —— 提交态门：未提交改动拒跑（证据只采自提交态；p6 产物目录豁免——跑脚本→改产物自循环）——
-  const dirty = git('status --porcelain').split('\n').map(l => { const m = l.trim().match(/^(..)\s+(.+)$/); return m ? m[2].replace(/"/g, '') : ''; }).filter(p => p && !p.startsWith('docs/ui-redesign-assets/p6/'));
+  // —— 提交态门：未提交改动拒跑（证据只采自提交态；产物目录与运行时 fixture 目录豁免——跑脚本→改产物自循环）——
+  const dirty = git('status --porcelain').split('\n').map(l => { const m = l.trim().match(/^(..)\s+(.+)$/); return m ? m[2].replace(/"/g, '') : ''; }).filter(p => p && !p.startsWith('docs/ui-redesign-assets/p6/') && !p.startsWith('ui-demo/p6-fixtures'));
   if (dirty.length) { console.error('存在未提交改动（证据只采自提交态）：\n' + dirty.join('\n')); process.exitCode = 1; return; }
   const before = hostSnap();
   // —— 自举隔离（AIbot PR#34 P0 + 二次复核 P2 my-radio）：临时 worktree 被测实例；外部目标须显式确认 ——

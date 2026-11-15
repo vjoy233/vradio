@@ -38,8 +38,8 @@ const hostSnap = () => HOST_FILES.map(sha1).join('|');
 
 async function main() {
   fs.mkdirSync(OUT, { recursive: true });
-  const dirty = git('status --porcelain').split('\n').map(l => l.trim()).filter(l =>
-    l && !l.slice(3).replace(/"|\r/g, '').startsWith('docs/ui-redesign-assets/evidence/')); // 产物目录豁免（tracked 也豁：跑脚本→改产物自循环，门只拦代码/文档改动）
+  const dirty = git('status --porcelain').split('\n').map(l => { const m = l.trim().match(/^(..)\s+(.+)$/); return m ? m[2].replace(/"/g, '') : ''; }).filter(p =>
+    p && !p.startsWith('docs/ui-redesign-assets/evidence/')); // 产物目录豁免（tracked 也豁：跑脚本→改产物自循环，门只拦代码/文档改动；porcelain 的 XY 状态码宽度不定，正则取路径）
   if (dirty.length) { console.error('存在未提交改动（证据只采自提交态）：\n' + dirty.join('\n')); process.exitCode = 1; return; }
   const before = hostSnap(), started = new Date().toISOString();
   const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'vradio-evidence-'));

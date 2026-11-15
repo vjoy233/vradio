@@ -24,7 +24,7 @@ const els = {};
 const mkEl = () => ({ classList: { toggle() {}, add() {}, remove() {} }, setAttribute() {}, removeAttribute() {},
   innerHTML: '', hidden: false, dataset: {}, contains: () => false, querySelector: () => null, querySelectorAll: () => [] });
 sandbox.document = { activeElement: null, documentElement: { classList: { contains: () => true } },
-  getElementById: id => els[id] || (els[id] = mkEl()) };
+  getElementById: id => els[id] || (els[id] = mkEl()), querySelector: () => null }; // querySelector：P3 syncVinyl 用（null 早退，不触 matchMedia）
 sandbox.Player = { station: null, connecting: null, isPaused: () => false };
 sandbox.Logos = { visual: () => '<i class="stub-logo"></i>' };
 const App = sandbox.App;
@@ -45,6 +45,7 @@ console.log('[H1] AIbot P1-①：自动 dead 台正在播 → hero 仍是该台�
 reset();
 ok('在播死台成为 hero 当前候选（heroK 锚定该台、按钮=暂停、不显示精选兜底）', () => {
   sandbox.Player.station = deadA;
+  App.phase = 'playing'; // P3 起按钮四态走真实 phase（isPaused 代理已收敛，§6.10）：playing → 暂停
   App.renderHero();
   assert.strictEqual(hero().hidden, false);
   assert.strictEqual(App.heroK, deadA.u[0]);

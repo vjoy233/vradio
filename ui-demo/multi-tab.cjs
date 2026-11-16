@@ -15,6 +15,10 @@
    播放样本：脚本自建本地静音 WAV 流（127.0.0.1 83xx 端口，真机 headless Chromium 实测可到 playing；
    真实公网流不可保证），点播 → playing → quality/listenstats 服务端样本全走真实客户端链。
    产物：docs/test-reports/multi-tab/validation.json（失败截图 docs/test-reports/multi-tab/）。
+   已知缺陷豁免（review#40 P2）：KNOWN_FAILURES/BLOCKED_REQUIREMENTS 结构化数组随报告输出——同页内存
+   reload 兜底（KF1）/跨浏览器陈旧 unload 覆盖（KF2）/M6 旧投影名（KF3）/生产修复挂账（KF4），
+   全 PASS 不代表活广播/App 收敛/真实 reload LWW 已验收；expectBuggy 运行期守卫：特征化场景意外转绿
+   即报错提示移除豁免。
    Playwright 为外部工具（VRADIO_PLAYWRIGHT 指向安装路径），非仓库依赖。
    跑法：VRADIO_PLAYWRIGHT=".../playwright" node ui-demo/multi-tab.cjs */
 const assert = require('assert');
@@ -39,6 +43,26 @@ function wavBuf() { const rate = 8000, secs = 240, pcm = Buffer.alloc(rate * 2 *
   h.write('RIFF', 0); h.writeUInt32LE(36 + pcm.length, 4); h.write('WAVE', 8); h.write('fmt ', 12); h.writeUInt32LE(16, 16);
   h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22); h.writeUInt32LE(rate, 24); h.writeUInt32LE(rate * 2, 28);
   h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34); h.write('data', 36); h.writeUInt32LE(pcm.length, 40); return Buffer.concat([h, pcm]); }
+// —— 已知缺陷结构化豁免（review#40 P2）：以下四项是既有生产缺陷的特征化测试，全部 PASS **不能**解读为
+//    「活广播收敛 / App 收敛 / 真实 reload LWW 已验收」。machine-readable，随 validation.json 输出；
+//    意外转绿守卫见 expectBuggy（运行期 probe，转绿即报错提示移除豁免，防豁免腐化）。 ——
+const KNOWN_FAILURES = [
+  { id: 'KF1', scenario: 'SA 段（同浏览器双标签）', expected: '他页写 → 广播到达 → 本页 App 内存态即时收敛（活广播重载内存）',
+    actual: 'App 内存态不随广播重载——store.js apply() 以「镜像 ≠ 后端」为重载门槛，共享镜像下两者恒等；内存收敛只能 reload 兜底（SA5/SA8/SB2 按 reload 断言）',
+    tracking: 'issue #42 + 生产修复批次（Store 广播内存收敛）' },
+  { id: 'KF2', scenario: 'SD 段（跨浏览器第二浏览器）', expected: '他端写入后本端自动收敛；陈旧 unload 不覆盖他端写入',
+    actual: '跨浏览器无 BC 通道：reload/关闭的 beforeunload flush 以本页陈旧快照覆盖他端写入（空覆盖门只在服务端拦全空快照，非空陈旧快照仍 LWW 覆盖）；收敛须手动 Store.pull()+flush 舞步（SD5/SD5a/SD6 按显式 pull 断言）',
+    tracking: 'issue #42 + 生产修复批次（跨端收敛协议）' },
+  { id: 'KF3', scenario: 'M6（维护冲突「重新加载最新值」）', expected: '重载后输入框显示后端权威值（B 名）',
+    actual: '输入框回到上一投影名（round1 落库的 A 名）——远程 cfg.names 改名不经 applySources 不重投 uiStationProjection 的 s.n；草稿丢弃正确但显示陈旧',
+    tracking: 'issue #42 + UI 维护面板生产修复批次' },
+  { id: 'KF4', scenario: '生产修复挂账（本矩阵范围外）', expected: '活广播内存收敛 / 跨端自动收敛 / 投影重投随生产修复落地',
+    actual: '前三项均按现状特征化断言；对应场景全部 PASS 不代表修复完成', tracking: 'issue #42（空覆盖门已落）/ 后续生产修复批次' },
+];
+const BLOCKED_REQUIREMENTS = [ // 阻塞中的验收要求：修复落地前，相关段不可解读为「已验收」
+  { req: '活广播 App 内存收敛（方案 §3 L3 数据状态节）', blockedBy: 'KF1/KF3 特征化现状（reload 兜底）', tracking: 'issue #42 + 生产修复批次' },
+  { req: '跨浏览器最终一致（陈旧 unload 不覆盖他端）', blockedBy: 'KF2 特征化现状（手动 pull/flush 收敛为临时口径）', tracking: 'issue #42 + 生产修复批次' },
+];
 (async () => {
   let chromium = null; // Playwright 加载收口（同 pr-smoke）：缺工具也写 FAIL 报告 + 非零退出，不裸崩
   try { chromium = require(process.env.VRADIO_PLAYWRIGHT || 'playwright').chromium; }
@@ -55,6 +79,12 @@ function wavBuf() { const rate = 8000, secs = 240, pcm = Buffer.alloc(rate * 2 *
   const pages = []; const report = { capturedAt: new Date().toISOString(), url: '', assertions: [], errors: [], resourceErrors: [], notes: [] };
   const check = (name, ok) => { assert(ok, name); report.assertions.push(name); console.log('  ✓', name); };
   const note = t => report.notes.push(t);
+  // 已知缺陷特征化守卫（review#40 P2）：cond=true = 现状缺陷仍在（豁免成立，记断言）；cond=false =
+  // 意外转绿（生产已修）→ 整场报错退出，提示更新对应断言并从 KNOWN_FAILURES 移除该豁免，防豁免腐化
+  const expectBuggy = (id, cond, hint) => {
+    if (!cond) throw new Error(`KNOWN_FAILURE ${id} 意外转绿：${hint}`);
+    report.assertions.push(`${id} 豁免成立`); console.log('  ✓', `${id} 豁免成立（特征化现状保留）`);
+  };
   const failShot = async name => { try { if (pages[0]) { await pages[0].screenshot({ path: path.join(output, name) }); note('失败现场截图: ' + name); } } catch (_) {} }; // 顶层定义（catch 域可见；pr-smoke 内联版有同位 ReferenceError 隐患，此处收口）
   try {
     const port = await pickPort(8200), sport = await pickPort(8300);
@@ -269,6 +299,10 @@ function wavBuf() { const rate = 8000, secs = 240, pcm = Buffer.alloc(rate * 2 *
     check('M6 重新加载后草稿丢弃（输入回上一投影名，A 草稿 ·验A2 消失）', await pa.evaluate(([cur, draft]) => { const v = (document.querySelector('#mEdit input, #dEdit input') || {}).value || ''; return v === cur && v !== draft; }, [aname1, aname1.replace('A1', 'A2')]));
     check('M7 放弃后冲突态清除 + 后端仍为 B 版本', await pa.evaluate(() => !document.querySelector('#mEdit .econflict, #dEdit .econflict'))
       && (JSON.parse((await srvState())['radio.cfg'] || '{}').names || {})[sa.u0] === bname2);
+    // KF3 特征化守卫（review#40 P2）：现状缺陷 = 输入框仍是旧投影名（草稿已消失）。若生产已修（投影重投、
+    // 输入框显示 B 名），此处报错提示更新 M6 断言并移除豁免
+    expectBuggy('KF3', await pa.evaluate(([cur, draft]) => { const v = (document.querySelector('#mEdit input, #dEdit input') || {}).value || ''; return v !== draft; }, [aname1, aname1.replace('A1', 'A2')]),
+      '重载后输入框已显示后端权威值（投影重投已修）——更新 M6 断言并从 KNOWN_FAILURES 移除 KF3');
     // —— Round 3：继续编辑 → 草稿原样保留回编辑态 ——
     const bname3 = sa.n + '·B改3', aname3 = bname3 + '·验A3';
     await pullThenWait(bname3);
@@ -299,6 +333,30 @@ function wavBuf() { const rate = 8000, secs = 240, pcm = Buffer.alloc(rate * 2 *
     check('X3 恢复网络 reload：boot dirty→flush 先重推，后端收到断网写（vol=0.9）', (await srvState())['radio.vol'] === '0.9');
     check('X4 重推后 dirty 复位 + 镜像保序', xa.rev === (await getJson(base + 'api/store')).rev && xa.vol === '0.9' && await pa.evaluate(() => Store.dirty === false));
 
+    // —— [KF] 已知缺陷特征化 probe（review#40 P2）：现状缺陷仍在 = 豁免成立；意外转绿 → expectBuggy 报错 ——
+    console.log('[KF] 已知缺陷 probe（豁免腐化守卫，KNOWN_FAILURES KF1/KF2）');
+    const kd = await ctx1.newPage(), ke = await ctx1.newPage(), kf = await ctx2.newPage();
+    pages.push(kd, ke, kf);
+    for (const p of [kd, ke, kf]) p.on('pageerror', e => report.errors.push('pageerror:' + e.message));
+    await boot(kd); await boot(ke); await boot(kf);
+    const stk3 = await pickSt(kd);
+    await kd.evaluate(k => App.toggleFav(App.state.stations.find(x => keyOf(x) === k)), stk3.k);
+    await ke.waitForFunction(k => (localStorage.getItem('radio.favs') || '').includes(k), stk3.k, { timeout: 5000 });
+    await new Promise(r => setTimeout(r, 1200)); // quiesce：debounce flush + 广播 + 各页 pull 全落地
+    // KF1 probe：ke 镜像已收敛（上一 waitForFunction），但 App 内存必须仍未收敛——活广播内存收敛未修（SA 段注记的 memFav 探针口径）
+    expectBuggy('KF1', !(await ke.evaluate(k => App.favKeys().has(k), stk3.k)),
+      'ke App 内存已随广播收敛（活广播内存收敛已修）——更新 SA5/SA8/SB2 断言并从 KNOWN_FAILURES 移除 KF1');
+    // KF2 probe：第二浏览器新页（快照 = 启动时全量、不含 kd 的新写）陈旧 reload 的 beforeunload flush
+    // （keepalive fetch，可穿 unload）以本页快照覆盖他页写入——跨端收敛协议未修（SD 段实测语义）
+    await kd.evaluate(() => { Store.set('radio.vol', '0.66'); Store.flush(); });
+    await new Promise(r => setTimeout(r, 600));
+    check('KF2 前置：kd 写 vol=0.66 已落服务端', (await srvState())['radio.vol'] === '0.66');
+    await kf.reload(); await waitBoot(kf);
+    await new Promise(r => setTimeout(r, 1200)); // beforeunload flush POST 落地
+    expectBuggy('KF2', (await srvState())['radio.vol'] === '0.9',
+      '陈旧 unload flush 未再覆盖他页写入（跨端收敛协议已修）——更新 SD 段断言并从 KNOWN_FAILURES 移除 KF2');
+    await kd.close(); await ke.close(); await kf.close();
+
     check('Z1 全程零 pageerror / 非资源 console error（三页）', report.errors.length === 0);
     note(`资源加载噪音 ${report.resourceErrors.length} 条（自举实例合法 404 只记不判，同 pr-smoke 分流口径）`);
   } catch (e) {
@@ -319,6 +377,8 @@ function wavBuf() { const rate = 8000, secs = 240, pcm = Buffer.alloc(rate * 2 *
   else { report.result = 'FAIL'; report.failure = (report.failure || '') + ' Z2 宿主持久面被改动: ' + before + ' → ' + hostSnap(); process.exitCode = 1; }
   if (cleanupErr.length === 0 && srvGone && wtGone && streamGone) report.notes.push('Z3 清理失败门：browser/伪流服务/server/worktree 全回收（零泄漏成立）');
   else { report.result = 'FAIL'; report.failure = (report.failure || '') + ' Z3 清理失败门未过: ' + cleanupErr.join(' | ') + (srvGone ? '' : ' [server未退出]') + (wtGone ? '' : ' [worktree未移除]') + (streamGone ? '' : ' [伪流未关闭]'); process.exitCode = 1; }
+  report.knownFailures = KNOWN_FAILURES; report.blockedRequirements = BLOCKED_REQUIREMENTS; // review#40 P2：结构化豁免随报告输出
+  note('全部 PASS ≠「活广播内存收敛/跨端自动收敛/真实 reload LWW」已验收——KF1/KF2/KF3 按现状特征化断言（见 knownFailures 字段），KF4 = 生产修复挂账（issue #42）；意外转绿由 expectBuggy 现场报错');
   fs.writeFileSync(path.join(output, 'validation.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(`\n${report.result}: ${report.assertions.length} 断言（报告 ${path.relative(ROOT, path.join(output, 'validation.json'))}）`);
 })();

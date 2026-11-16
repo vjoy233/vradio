@@ -20,3 +20,11 @@
 6. **返回栈纯函数**：§8.1 `NavigationStateTest` 要求「返回栈纯函数」——新增 `Navigation.backTarget(...)`（确认弹窗/sheet 属浮层态，由 root BackHandler 顺序消费；该纯函数只裁决「次级页返回 → 来源目的地」与「目的地守卫回退」），P4 接入系统返回链时复用。
 7. **`destinationUi` 建模与接线分期**：§6.1 的按目的地保存（搜索/分类/滚动）在 P0 完成状态建模（`destinationUi: Map<Destination, DestinationUiState>` + `saveDestinationUi`），P1 搜索迁移 TopAppBar 时接线消费（§7 P1 搜索防抖随行迁移）。
 8. **浮层挂载位置**：现有 AppRoot 把 sheets 挂在 Scaffold 之外的 Box 同级；P0 重排后保持「浮层由 root 统一挂载」原则（§6.4），仅把入口状态从 `Nav` 迁到 `SecondaryRoute`，不改各 sheet 内部。
+
+## 1.x P0 实施落账（合并后补记）
+
+1. **收藏顺序**：方案 §5.5/Q16 写「最新收藏置顶」，但现有实现（Web/Android 两侧 favs 均追加式、新收藏在尾）按写入序遍历——P0 投影沿用现有写入序不发明反转；P1 全量版（FavoriteListUi）裁决：若按方案置顶则展示层反转、数据层不动。
+2. **`locatePlaying()`（回到正在播）迁移语义**：旧 `nav=LIST` → `destination=LIBRARY + closeSecondary()`（从次级页也能一键回电台）。
+3. **`VrScaffold` 无 `player` 参数**：mini player 以 slot 注入后状态源由 slot 自带（§6.2 骨架的 player 参数随之取消）。
+4. **DISCOVER 分支**：P0 为编译穷举空壳（`FeatureFlags.DISCOVERY=false` 关闭态 + `navigateGuard` 双保险不可达），P3 填 `DiscoveryScreen`。
+5. **P0 验证证据**：`./gradlew.bat test assembleDebug` BUILD SUCCESSFUL；新增 NavigationStateTest（13 断言）+ WindowClassTest（6 断言）全绿；旧 `Nav` 枚举零残留（grep 证）。

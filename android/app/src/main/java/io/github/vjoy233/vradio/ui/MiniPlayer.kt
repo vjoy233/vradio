@@ -26,6 +26,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -65,16 +69,22 @@ fun MiniPlayer(vm: AppVm, ui: PlayerUiState) {
       // 左：台标 40dp（无台不渲染）
       if (st != null) StationLogo(vm.logoOf(st), st.n, st.key, 40.dp)
       // 中列：台名 + 曲讯/状态兜底链（fillMaxHeight = 全行命中区 ≥48dp；单击展开 full player / 长按源详情）
+      // P4 a11y：合并语义「正在播放：<台名>，点按展开播放器」（§8.2.9；无台不加语义）
+      val dn = displayParts(st?.n ?: vm.lastLine()).first
       Column(
         Modifier.weight(1f).fillMaxHeight().padding(horizontal = 8.dp)
           .combinedClickable(
             enabled = st != null,
             onClick = { vm.openPlayer() },
             onLongClick = { vm.openDetailOf(ui.station?.key) },
+          )
+          .then(
+            if (st != null) Modifier.semantics(mergeDescendants = true) {
+              contentDescription = "正在播放：$dn，点按展开播放器"; role = Role.Button
+            } else Modifier
           ),
         verticalArrangement = Arrangement.Center,
       ) {
-        val (dn, _) = displayParts(st?.n ?: vm.lastLine())
         Text(
           dn, maxLines = 1, overflow = TextOverflow.Ellipsis,
           fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = pal.tx,
@@ -87,9 +97,17 @@ fun MiniPlayer(vm: AppVm, ui: PlayerUiState) {
         }
       }
       // 右：播放/暂停 48dp（连接中 spinner；未播放时 ▶ = 续播上次收听）
+      // P4 a11y：contentDescription 按态「播放/暂停/连接中」+ role Button（§8.2.9）
       Box(
         Modifier.size(48.dp).clip(CircleShape).background(pal.bg).clickable {
           if (ui.station == null) vm.resumeLast() else PlayerHolder.toggle()
+        }.semantics {
+          role = Role.Button
+          contentDescription = when (ui.st) {
+            PState.CONNECTING -> "连接中"
+            PState.PLAYING -> "暂停"
+            else -> "播放"   // PAUSED/IDLE：主动作 = 播放
+          }
         },
         contentAlignment = Alignment.Center,
       ) {

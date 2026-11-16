@@ -47,6 +47,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -164,17 +168,26 @@ fun PlayerSheet(vm: AppVm, ui: PlayerUiState) {
       )
 
       // 4. 主控制行：⏮ 上一收藏 / 主动作（按 playerVisual.action 分派）/ ⏭ 下一收藏（48dp 命中区）
+      //    P4 a11y：⏮⏭ 与重试/详情态主动作补 contentDescription + role（§8.2.9）
       Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).clickable { vm.stepFav(-1) }, contentAlignment = Alignment.Center) {
+        Box(
+          Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).clickable { vm.stepFav(-1) }
+            .semantics { role = Role.Button; contentDescription = "上一收藏台" },
+          contentAlignment = Alignment.Center,
+        ) {
           SkipIcon(true, pal.tx, Modifier.size(26.dp))
         }
         when (visual.action) {
           PlayerAction.PLAY -> PlayPauseBtn(ui, 72.dp) { if (ui.station == null) vm.resumeLast() else PlayerHolder.toggle() }
           PlayerAction.PAUSE -> PlayPauseBtn(ui, 72.dp) { PlayerHolder.toggle() }
-          PlayerAction.RETRY -> GlyphBtn("↻", pal.warn) { PlayerHolder.refresh() }
-          PlayerAction.OPEN_DETAIL -> GlyphBtn("ⓘ", pal.warn) { vm.openDetailOf(ui.station?.key) }
+          PlayerAction.RETRY -> GlyphBtn("↻", pal.warn, "重试") { PlayerHolder.refresh() }
+          PlayerAction.OPEN_DETAIL -> GlyphBtn("ⓘ", pal.warn, "打开详情") { vm.openDetailOf(ui.station?.key) }
         }
-        Box(Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).clickable { vm.stepFav(1) }, contentAlignment = Alignment.Center) {
+        Box(
+          Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).clickable { vm.stepFav(1) }
+            .semantics { role = Role.Button; contentDescription = "下一收藏台" },
+          contentAlignment = Alignment.Center,
+        ) {
           SkipIcon(false, pal.tx, Modifier.size(26.dp))
         }
       }
@@ -219,17 +232,21 @@ private fun SheetFavStar(on: Boolean, onToggle: () -> Unit) {
       modifier = Modifier.clip(RoundedCornerShape(8.dp)).combinedClickable(
         onClick = onToggle,
         onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onToggle() },
-      ).padding(6.dp),
+      ).semantics {   // P4 a11y：收藏态切换语义（§8.2.9）——sheet 头部无外层可点容器，本星独立成 TalkBack 节点
+        role = Role.Button; contentDescription = if (on) "已收藏" else "收藏"
+      }.padding(6.dp),
     )
   }
 }
 
-/* WARN 态主动作钮（重试 ↻ / 详情 ⓘ）：圆形 72dp 与 PlayPauseBtn 同形，字形色随 warn 色调 */
+/* WARN 态主动作钮（重试 ↻ / 详情 ⓘ）：圆形 72dp 与 PlayPauseBtn 同形，字形色随 warn 色调；
+   P4 a11y：自绘字形 TalkBack 读不出，desc 必填（§8.2.9） */
 @Composable
-private fun GlyphBtn(glyph: String, tint: Color, onClick: () -> Unit) {
+private fun GlyphBtn(glyph: String, tint: Color, desc: String, onClick: () -> Unit) {
   val pal = LocalVrPalette.current
   Box(
-    Modifier.size(72.dp).clip(CircleShape).background(pal.bg).clickable(onClick = onClick),
+    Modifier.size(72.dp).clip(CircleShape).background(pal.bg).clickable(onClick = onClick)
+      .semantics { role = Role.Button; contentDescription = desc },
     contentAlignment = Alignment.Center,
   ) { Text(glyph, fontSize = 30.sp, color = tint) }
 }

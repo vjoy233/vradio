@@ -35,6 +35,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -112,7 +116,9 @@ private fun FavStar(on: Boolean, onToggle: () -> Unit) {
       modifier = Modifier.clip(RoundedCornerShape(8.dp)).combinedClickable(
         onClick = onToggle,
         onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onToggle() },
-      ).padding(6.dp),
+      ).semantics {   // P4 a11y：收藏态切换语义（§8.2.9）；在卡片/行内会被合并进父语义（cd 追加进父 contentDescription 列表）
+        role = Role.Button; contentDescription = if (on) "已收藏" else "收藏"
+      }.padding(6.dp),
     )
   }
 }
@@ -149,7 +155,9 @@ private fun StationCard(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?
       .combinedClickable(
         onClick = { vm.togglePlay(k) },
         onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); vm.toggleFav(s) },
-      ).padding(10.dp),
+      ).semantics {   // P4 a11y：合并语义「台名，分类，点按播放，长按收藏」+ role Button（§8.2.9；长按收藏走 onLongClick）
+        contentDescription = "$dn，${s.c}，点按播放，长按收藏"; role = Role.Button
+      }.padding(10.dp),
   ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
       StationLogo(vm.logoOf(s), s.n, s.key, 40.dp)
@@ -188,7 +196,9 @@ private fun StationRow(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?,
       .combinedClickable(
         onClick = { vm.togglePlay(k) },
         onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); vm.toggleFav(s) },
-      ).padding(vertical = 2.dp),
+      ).semantics {   // P4 a11y：合并语义同 StationCard（§8.2.9）
+        contentDescription = "$dn，${s.c}，点按播放，长按收藏"; role = Role.Button
+      }.padding(vertical = 2.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
     FavStar(fav) { vm.toggleFav(s) }

@@ -23,6 +23,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -99,8 +103,12 @@ fun DiscoveryScreen(vm: AppVm, pad: PaddingValues) {
 @Composable
 fun DiscoveryCard(s: Station, fav: Boolean, logo: String, width: Dp, onClick: () -> Unit) {
   val pal = LocalVrPalette.current
+  // P4 a11y：合并语义「<台名>，点按播放」+ role Button（§8.2.9；卡片无独立可点子件可整体合并）
   Box(Modifier.width(width).clip(RoundedCornerShape(10.dp)).background(pal.panel)
-    .border(1.dp, pal.line, RoundedCornerShape(10.dp)).clickable(onClick = onClick)) {
+    .border(1.dp, pal.line, RoundedCornerShape(10.dp)).clickable(onClick = onClick)
+    .semantics {
+      contentDescription = displayParts(s.n).first + "，点按播放"; role = Role.Button
+    }) {
     Column(Modifier.padding(10.dp)) {
       StationLogo(logo, s.n, s.key, 40.dp)
       Text(displayParts(s.n).first, fontSize = 13.sp, color = pal.tx, maxLines = 1, overflow = TextOverflow.Ellipsis,

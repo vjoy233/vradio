@@ -42,6 +42,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -109,18 +114,28 @@ fun StationScreen(vm: AppVm, pad: PaddingValues) {
       title = { Text("电台", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
       colors = TopAppBarDefaults.topAppBarColors(containerColor = pal.bg),
       actions = {
-        Box(Modifier.size(48.dp).clickable { vm.searchExpanded.value = !vm.searchExpanded.value }, contentAlignment = Alignment.Center) {
+        // P4 a11y：自绘 Canvas 图标必须补 contentDescription + role（§8.2.9）
+        Box(
+          Modifier.size(48.dp).clickable { vm.searchExpanded.value = !vm.searchExpanded.value }
+            .semantics { role = Role.Button; contentDescription = "搜索" },
+          contentAlignment = Alignment.Center,
+        ) {
           SearchIcon(if (searchOpen) pal.acc else pal.dim)
         }
         Box(contentAlignment = Alignment.Center) {
-          Box(Modifier.size(48.dp).clickable { menuOpen = true }, contentAlignment = Alignment.Center) { MoreIcon(pal.dim) }
+          Box(
+            Modifier.size(48.dp).clickable { menuOpen = true }
+              .semantics { role = Role.Button; contentDescription = "更多" },
+            contentAlignment = Alignment.Center,
+          ) { MoreIcon(pal.dim) }
           DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
             DropdownMenuItem(text = { Text("设置") }, onClick = { menuOpen = false; vm.openSettings() })
             DropdownMenuItem(text = { Text(if (view == "grid") "切换为列表视图" else "切换为网格视图") },
               onClick = { menuOpen = false; vm.setView(if (view == "grid") "list" else "grid") })
-            DropdownMenuItem(   // 开关不收菜单：勾选态翻面可见
+            DropdownMenuItem(   // 开关不收菜单：勾选态翻面可见；P4 a11y：显示态走 stateDescription（§8.2.9）
               text = { Text("显示无效源") },
               trailingIcon = { Text(if (showDead) "✓" else "", color = pal.acc, fontSize = 14.sp) },
+              modifier = Modifier.semantics { stateDescription = if (showDead) "已显示" else "已隐藏" },
               onClick = { vm.toggleDead() },
             )
             DropdownMenuItem(text = { Text("添加电台") }, onClick = { menuOpen = false; vm.openAddStation() })

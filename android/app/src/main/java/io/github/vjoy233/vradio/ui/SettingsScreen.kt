@@ -40,6 +40,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -255,8 +260,13 @@ private fun SettingsSection(group: SettingsGroup, expanded: Boolean, onToggle: (
   val pal = LocalVrPalette.current
   val mo = LocalVrMotion.current
   Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+    // P4 a11y：组头「设置分组：<title>」+ 展开/折叠 stateDescription + role Button（§8.2.9）
     Row(
-      Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClick = onToggle),
+      Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClick = onToggle).semantics {
+        contentDescription = "设置分组：" + group.title
+        stateDescription = if (expanded) "已展开" else "已折叠"
+        role = Role.Button
+      },
       verticalAlignment = Alignment.CenterVertically,
     ) {
       Text(group.title, color = pal.acc, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))

@@ -1,6 +1,6 @@
 {
-  "capturedAt": "2026-11-16T17:41:00.570Z",
-  "url": "http://127.0.0.1:8239/",
+  "capturedAt": "2026-11-16T18:25:46.200Z",
+  "url": "http://127.0.0.1:8251/",
   "assertions": [
     "S1 pa 全库装配 >50 台",
     "S1 pb 全库装配 >50 台",
@@ -21,6 +21,7 @@
     "SC1 后端两键均落库（全量快照携对方写入，零丢失）",
     "SC2 双方 rev 收敛一致（= 后端 rev，后推者发号为准）",
     "SC3 镜像互见（A 见 B 的 showdead、B 见 A 的 view）",
+    "SD0 空库开局页 unload 不清库（issue #42）：他页写入（favs 两台/主题/视图/无效源开关）全数仍在（空覆盖门 + 服务端双保险）",
     "SD1 第二浏览器对账收敛（两收藏/主题随主源，内存经 apply diff 重载）",
     "SD2 A 写 vol 落后端",
     "SD3 后推者 pc 全量快照胜：view 翻转落库 + A 的 vol 被覆盖出局 + rev 前进（显式 LWW，无按键合并）",
@@ -63,6 +64,8 @@
     "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
     "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
     "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
     "console:Failed to load resource: net::ERR_INTERNET_DISCONNECTED",
     "console:Failed to load resource: the server responded with a status of 404 (Not Found)"
   ],
@@ -70,7 +73,7 @@
     "内存态语义（KF1 状态演进如实记录）：PR #40 原基线实测不随广播重载（apply 旧门槛「镜像 ≠ 后端」，共享镜像下恒等）；rebase 后链内 71fbdf9 review#37 P1-2 改比对内存基线，广播 pull 即收敛内存——[KF] 段 KF1 修复回归守卫实证；SA5/SB2 的 reload 保留为冗余收敛路径验证",
     "共享镜像下两页 flush 载荷恒相同（后推者胜体现为 rev 单调推进而非数据分叉）；分叉镜像的真·LWW 在 [SD] 跨浏览器档",
     "播放样本经本地静音 WAV 流真实到 playing（headless 可复现）；quality rev=2 listenstats rev=2",
-    "资源加载噪音 10 条（自举实例合法 404 只记不判，同 pr-smoke 分流口径）",
+    "资源加载噪音 12 条（自举实例合法 404 只记不判，同 pr-smoke 分流口径）",
     "Z2 宿主 data/store.json + my-radio.txt 运行前后哈希不变",
     "Z3 清理失败门：browser/伪流服务/server/worktree 全回收（零泄漏成立）",
     "全部 PASS ≠「活广播内存收敛/跨端自动收敛/真实 reload LWW」已验收——KF1/KF2/KF3 按现状特征化断言（见 knownFailures 字段），KF4 = 生产修复挂账（issue #42）；意外转绿由 expectBuggy 现场报错"
@@ -90,7 +93,7 @@
       "status": "open",
       "scenario": "SD 段（跨浏览器第二浏览器）",
       "expected": "他端写入后本端自动收敛；陈旧 unload 不覆盖他端写入",
-      "actual": "跨浏览器无 BC 通道：reload/关闭的 beforeunload flush 以本页陈旧快照覆盖他端写入（空覆盖门只在服务端拦全空快照，非空陈旧快照仍 LWW 覆盖）；收敛须手动 Store.pull()+flush 舞步（SD5/SD5a/SD6 按显式 pull 断言）",
+      "actual": "跨浏览器无 BC 通道：reload/关闭的 beforeunload flush 以本页陈旧快照覆盖他端写入（空覆盖门只在服务端拦全空快照，非空陈旧快照仍 LWW 覆盖）；收敛须手动 Store.pull()+flush 舞步（SD5/SD5a/SD6 按显式 pull 断言）。⚠ 探针两面已实证并定版加固：①Chromium unload 期 keepalive fetch 偶发不派发（陈旧 flush 没发，误读「转绿」）——rev 增量核验 + 未发重试一次、两次未发判探针失效记 note；②「陈旧覆盖发生」但被后续他页 0.66 对账写回覆盖（终态判定与写竞争天然 flaky，rev 采样实证 45→54 九连写）——判定锚点改事件级：服务端任意时点出现 vol=0.9 即覆盖发生（豁免成立），终态不再参与判定",
       "tracking": "issue #42 + 生产修复批次（跨端收敛协议）"
     },
     {

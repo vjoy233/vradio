@@ -3,7 +3,8 @@
 // audio.onerror 是属性赋值（player.js:233），用例直接 audio.onerror() 触发级联。分节 → 覆盖矩阵：
 // [1] variants 三级（直流→m3u8 直连→/proxy 兜底；蜻蜓换算 64k mp3；file:// 无代理级；xhrSetup 代理分片重写）
 // [2] 默认源决策链（prefer > srcmem2 记忆 > s.mo 人工序 > 启发式稳定排序；禁用源忽略；NO_ENABLED_SOURCE 全禁善后）
-// [3] 世代令牌防串台（切台后旧 playing/error/看门狗一律失效或归属新台，不回跳旧台）
+// [3] 世代令牌防串台（切台后旧 playing/error/看门狗一律失效或归属新台，不回跳旧台；含旧闭包/旧 HLS
+//     实例句柄的显式重放——mutation 防线：删守卫代码必须炸，review#37 P1-3）
 // [4] error 级联自愈（逐 variant 顺延→耗尽善后 onfail/状态清理；playing 写 srcmem2（键=u[0]）；跨重载记忆先行；HLS fatal；畸形 URL 代理级顺延）
 // [5] stalled/waiting 看门狗（12s 无进展→先同源重连一次，再败才顺延；timeupdate 撤表；真暂停不掺和；建流期挂死同样自愈）
 // [6] ended 自愈 + halt 守卫（有意暂停/让位后 ended、error 级联不得复活播放；resume 接回 heldNext）
@@ -39,13 +40,22 @@ const st = (u, over) => Object.assign({ c: '测试分类', n: '台', u: u }, ove
 const enc = u => '/proxy?url=' + encodeURIComponent(u);
 const approx = (a, b) => Math.abs(a - b) < 1e-9;
 
-function fakeHlsFactory() { // HLS 伪实例：单例 inst；cfg 捕获供 xhrSetup 断言；重建复位 destroyed
-  const inst = { handlers: {}, cfg: null, source: null, media: null, destroyed: false,
-    on(ev, fn) { inst.handlers[ev] = fn; }, loadSource(u) { inst.source = u; }, attachMedia(a) { inst.media = a; },
-    destroy() { inst.destroyed = true; } };
-  function Hls(cfg) { inst.cfg = cfg; inst.destroyed = false; return inst; }
+function fakeHlsFactory() { // HLS 伪实例：每次构造独立实例（review#37 P1-3——单例复用会覆盖旧实例事件，
+  // 旧实例迟到回调无法验证防串台守卫）；view 代理「最新实例」保持 p.hls.* 单实例时代的断言写法兼容
+  const insts = [];
+  function Hls(cfg) {
+    const inst = { handlers: {}, cfg: cfg, source: null, media: null, destroyed: false,
+      on(ev, fn) { inst.handlers[ev] = fn; }, loadSource(u) { inst.source = u; }, attachMedia(a) { inst.media = a; },
+      destroy() { inst.destroyed = true; } };
+    insts.push(inst);
+    return inst;
+  }
   Hls.isSupported = () => true; Hls.Events = { ERROR: 'error' };
-  return { Hls: Hls, inst: inst };
+  const view = {};
+  ['handlers', 'cfg', 'source', 'media', 'destroyed'].forEach(k => Object.defineProperty(view, k, {
+    configurable: true, get() { const l = insts[insts.length - 1]; return l ? l[k] : undefined; },
+  }));
+  return { Hls: Hls, insts: insts, view: view };
 }
 
 // 一页装置：独立 sandbox + FakeClock + Store 桩（真 localStorage 行为，记忆持久化可跨重载验证）+ Hls 桩 + spy。
@@ -71,7 +81,8 @@ function mkPage(over) {
   Player.onphase = function (p, s) { spy.phase.push({ ph: p, st: s ? s.n : null }); };
   Player.onqos = function (ev) { spy.qos.push({ ph: ev.phase, trig: ev.trig, si: ev.si, mode: ev.mode, reason: ev.reason, st: ev.station ? ev.station.n : null, lat: ev.lat }); };
   Player.init(audio, over.vol0 != null ? over.vol0 : 0.9);
-  return { sb: sb, ls: ls, store: store, Player: Player, audio: audio, spy: spy, clock: clock, hls: hl ? hl.inst : null };
+  return { sb: sb, ls: ls, store: store, Player: Player, audio: audio, spy: spy, clock: clock,
+    hls: hl ? hl.view : null, hlsAll: hl ? hl.insts : null };
 }
 const arr = r => [].slice.call(r); // vm 跨 realm 数组原型失配：deepStrictEqual 前先展开成本地数组（同 ui-scope.js 法）
 const said = p => p.spy.status[p.spy.status.length - 1];
@@ -220,6 +231,40 @@ ok('旧台武装的看门狗切台后到点：不动作（不重连旧源、不�
   assert.strictEqual(p.spy.status.indexOf('流卡住，自动恢复…'), -1);
   assert.strictEqual(p.Player.curPlay, 'http://b/z.mp3');
   assert.strictEqual(p.Player.station.n, 'V台');
+});
+// review#37 P1-3：上面三例触发的是「当前」闭包（audio.onerror 已被 B 覆写），删掉 player.js 的
+// 世代令牌守卫它们仍然全绿（mutation 实证）。以下两例直接保存并重放「A 时代的旧闭包/旧实例句柄」，
+// 是令牌守卫与 HLS 句柄守卫的 mutation 防线。
+ok('旧闭包真测：保存 A 的 onerror 闭包，play(B) 后重放 → B 零扰动（无级联/无提示/无 qos）', () => {
+  const p = mkPage();
+  p.Player.play(st(['http://a/a1.mp3', 'http://a/a2.mp3'], { n: 'A台' }));
+  const aErr = p.audio.onerror; // A 首装载的 onFail 闭包（捕获 A 世代令牌）
+  assert.strictEqual(typeof aErr, 'function', 'load 必须以属性赋值挂 onerror');
+  p.Player.play(st(['http://b/b1.mp3'], { n: 'B台' }));
+  const nStatus = p.spy.status.length, nQos = p.spy.qos.length;
+  aErr(); // 迟到旧闭包：令牌守卫必须整链吞掉（mutation 面：删 `if (my === this.token)` 此处必炸）
+  assert.strictEqual(p.Player.station.n, 'B台', '旧闭包不得动当前台');
+  assert.strictEqual(p.Player.curPlay, 'http://b/b1.mp3', 'B 首装载不得被顺延');
+  assert.strictEqual(p.audio.src, 'http://b/b1.mp3', 'B 的直流装载不得被替换');
+  assert.strictEqual(p.Player.curSi, 0, '源序号不动');
+  assert.strictEqual(p.spy.status.length, nStatus, '旧闭包不得产生任何新提示');
+  assert.strictEqual(p.spy.qos.length, nQos, '旧闭包不得产生 qos 样本');
+  assert.strictEqual(p.spy.fail, 0, '旧闭包不得触发善后');
+});
+ok('旧 HLS 实例 fatal 迟到：不销毁当前 B 实例、不级联（句柄守卫 + 令牌双防线）', () => {
+  const p = mkPage();
+  p.Player.play(st(['http://a/x.m3u8'], { n: 'A台' }));
+  const aInst = p.hlsAll[p.hlsAll.length - 1]; // A 的 HLS 实例（fatal 处理器随实例闭包）
+  p.Player.play(st(['http://b/y.m3u8'], { n: 'B台' }));
+  const bInst = p.hlsAll[p.hlsAll.length - 1];
+  assert.notStrictEqual(aInst, bInst, '两次装载必须是两个实例（真实 hls.js 语义）');
+  const nStatus = p.spy.status.length;
+  aInst.handlers['error'](null, { fatal: true }); // A 实例迟到 fatal：真实 hls.js destroy 后不再发，此处验证防御纵深
+  assert.strictEqual(bInst.destroyed, false, '旧实例 fatal 不得销毁当前实例（stopHls 句柄守卫）');
+  assert.strictEqual(p.Player.hls, bInst, 'Player.hls 仍指向 B 实例');
+  assert.strictEqual(bInst.source, 'http://b/y.m3u8', 'B 的装载不动');
+  assert.strictEqual(p.Player.station.n, 'B台');
+  assert.strictEqual(p.spy.status.length, nStatus, '令牌守卫吞掉 onFail：无级联提示');
 });
 
 // [4] error 级联自愈 + 成功源记忆 ————————————————————————————
@@ -736,17 +781,17 @@ ok('refresh：当前赢家源整链重开（prefer=curSi），暂停中直接起
   p.Player.refresh(); // 暂停中刷新 = 要听最新 → 直接起播
   assert.strictEqual(p.audio.paused, false);
 });
-ok('媒体键：空台 play 转 onplaylast；⏮⏭ 转 onstepfav（±1）', () => {
+ok('媒体键：空台 play 转 onplaylast；⏮⏭ 转 onstepfav（序列精确 [-1,1]，review#37 P3）', () => {
   const p = mkPage();
-  let last = 0, step = 0;
+  let last = 0; const seq = [];
   p.Player.onplaylast = function () { last++; };
-  p.Player.onstepfav = function (d) { step += d; };
+  p.Player.onstepfav = function (d) { seq.push(d); };
   p.Player.stop();
   p.sb.navigator.mediaSession.actions['play']();
   assert.strictEqual(last, 1);
   p.sb.navigator.mediaSession.actions['previoustrack']();
   p.sb.navigator.mediaSession.actions['nexttrack']();
-  assert.strictEqual(step, 0);
+  assert.deepStrictEqual(seq, [-1, 1], '调用序列必须精确（两 handler 都变 no-op 或乱序都必须炸）');
 });
 
 // [14] 杂项 ————————————————————————————————————————————

@@ -15,13 +15,20 @@ class FakeLS { // 内存 localStorage（store.js/player.js 只用 getItem/setIte
   get length() { return Object.keys(this.m).length; }
 }
 
-// BroadcastChannel 桩：同 hub 内同步互投（多标签对抗用例共享一个 hub：const hub = bcHub(); 两个 sandbox 各传 over.bcHub）
+// BroadcastChannel 桩：同 hub 内同步互投（多标签对抗用例共享一个 hub：const hub = bcHub(); 两个 sandbox 各传 over.bcHub）。
+// review#37 P2-1 修订：按 channel name 过滤（真实 BC 语义——异名通道绝不互通，旧桩全 hub 互投会让
+// 「probe 观察通道」类用例依赖错误语义）；不回发自身；close 后 postMessage 抛错（spec 口径）且不再接收；
+// 消息对象深拷贝投递（结构化克隆近似——接收方改写不影响他方）。异步投递语义仍是装置边界（见 test/store.js 头注）。
 function bcHub() {
   const chans = [];
   class FakeBC {
-    constructor(name) { this.name = name; this.onmessage = null; chans.push(this); }
-    postMessage(d) { for (const c of chans.slice()) if (c !== this && c.onmessage) c.onmessage({ data: d }); }
-    close() { const i = chans.indexOf(this); if (i >= 0) chans.splice(i, 1); }
+    constructor(name) { this.name = String(name); this.onmessage = null; this._closed = false; chans.push(this); }
+    postMessage(d) {
+      if (this._closed) throw new Error('BroadcastChannel 已 close：' + this.name);
+      for (const c of chans.slice()) if (c !== this && !c._closed && c.name === this.name && c.onmessage)
+        c.onmessage({ data: typeof d === 'object' && d !== null ? JSON.parse(JSON.stringify(d)) : d }); // 逐接收方克隆（结构化克隆按投递次数发生，非共享单份）
+    }
+    close() { this._closed = true; const i = chans.indexOf(this); if (i >= 0) chans.splice(i, 1); }
   }
   return { chans, FakeBC };
 }

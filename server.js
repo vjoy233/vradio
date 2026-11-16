@@ -31,11 +31,12 @@ const { qApplyOp, qTrim } = require('./quality-store'); // B2：质量聚合应�
 const { lsDayKeyOk, lsApplyOp } = require('./listen-stats'); // B3：收听统计 op 应用/日期键历法校验（与客户端同语义）
 const ROOT = __dirname, PORT = process.env.PORT || 8137, HOST = process.env.HOST || '127.0.0.1';
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.txt': 'text/plain; charset=utf-8' };
-// 写盘 tmp 名唯一化（pid+单调序号）：同目录双实例（本机 dev 服务常驻 + 测试并行是常态部署形态）共用固定
-// `文件.tmp` 会互踩——A 实例 write 未 rename 时 B 实例 write 同名 tmp 覆盖内容，rename 后落盘的是对方的
-// 数据；Windows 上还常见瞬时 EPERM。串行队列只护本进程，跨进程必须靠 tmp 名本身唯一（test/quality.js
-// 「多标签合流/512 淘汰」用例随机假红的根因，test/quality.js qCommit 2MB 用例注释 AIbot P2 排查的
-// 「写入失败临时通道」同源）。
+// 写盘 tmp 名唯一化（pid+单调序号）：同目录双实例共用固定 `文件.tmp` 会互踩——A 实例 write 未 rename 时
+// B 实例 write 同名 tmp 覆盖内容，rename 后落盘的是对方的数据（test/quality.js「多标签合流/512 淘汰」
+// 用例随机假红的根因）。串行队列只护本进程，跨进程必须靠 tmp 名本身唯一。
+// ⚠ 边界（review#37 P1-1 澄清）：tmp 唯一只消解「临时文件互踩」，**不构成同数据根双进程安全部署**——
+// rev 发号/quality/listen-stats 内存缓存是进程私有的，双进程写同根仍会互相盲写；测试一律用独立
+// 数据根（test/harness/api-client.js 临时应用根），单写进程是支持形态。
 let tmpSeq = 0;
 const tmpOf = f => f + '.' + process.pid + '-' + (++tmpSeq) + '.tmp';
 // Host 头白名单（audit A3，防 DNS rebinding）：回环监听（默认）下只认本机名——rebinding 攻击里页面

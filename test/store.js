@@ -2,8 +2,9 @@
 // 黑盒经 vm 沙箱装载 store.js（test/harness/fake-browser），FakeClock 驱动 300ms debounce，
 // 可编程 fetch 桩模拟 /api/store GET/POST（含 r.ok 假/网络断失败注入），FakeBC hub 模拟多标签同步互投。
 // 与 test/smoke.js 分工：smoke 测服务端 /api/store 侧（白名单/发号/413），本文件只测客户端 Store 模块。
-// 覆盖矩阵（13 项全落，编号 = 文件内 [N] 分节）：
-//   [1] 白名单快照：snapshot 只收 KEYS 13 键，白名单外/未写入键不入
+// 覆盖矩阵（编号 = 文件内 [N] 分节）：
+//   [0] FakeBC 装置契约：同名互投/异名隔离/不回发自身/close 语义/逐接收方深拷贝（review#37 P2-1）
+//   [1] 白名单快照：snapshot 只收 KEYS（与 contracts/radio-keys.json 逐键比对，不双硬编码键数）
 //   [2] set/remove 立即镜像（不等你 flush）
 //   [3] 300ms 合批：连续写单次 POST、tick(299) 不发/tick(1) 发、新 set 重置窗口
 //   [4] POST 成功才清 dirty/rev + 广播；失败（r.ok 假/网络断）保 dirty 保镜像
@@ -12,13 +13,18 @@
 //   [7] flush 读当前内存（规则①）
 //   [8] file:// / 后端不可用 / 响应缺 data / bc 创建失败降级
 //   [9] beforeunload/visibilitychange flush（规则③，keepalive 透传）
-//   [10] 多标签 last-write-wins（后推者胜）+ 同值幂等不重渲（P3-3 面）
+//   [10] 跨页 last-write-wins（后推者胜）+ 同值幂等不重渲（P3-3 面）
+//   [10b] 同浏览器双标签共享 FakeLS：他页直写共享镜像后本页内存基线重载（review#37 P1-2 生产修复面）
+//   [10c] 跨浏览器（独立 LS/无 BC）：显式 pull 对账收敛 LWW
 //   [11] apply 键级合并：缺键保留绝不 removeItem / 覆盖 / 仅 baselineProg 变化不触发（AIbot P3-3）
 //   [12] 服务端 rev 只存不比（客户端不做 rev 仲裁）
 //   [13] 首次迁移：后端空 + 本地有镜像 → boot 静默 flush 推上去（老用户无感）
+//   [15] flush 单飞串行 + 尾随重推：在飞不并发/补发读最新内存/旧快照终态不清新 dirty/keepalive 旁路
+//        （review#37 P1-4 生产修复面；defer 后端手动 release 模拟乱序）
 // 未覆盖项与原因：
 //   - 真实 fetch keepalive 64KB 规范上限：浏览器网络栈约束，Store 只透传标志位（[9] 断言标志），上限行为不在本层；
-//   - 真实 BroadcastChannel 跨进程/跨 origin/异步投递语义：FakeBC 为同 hub 同步互投，只验「收到广播 → pull」状态机；
+//   - 真实 BroadcastChannel 跨进程/跨 origin/异步投递语义：FakeBC 为同 hub 同步互投（装置边界——异步投递/
+//     跨进程时序不属本层，[0] 只冻结同名/异名/不回发/close/克隆五项桩契约）；
 //   - localStorage QuotaExceeded 配额满降级（set/remove 的 try/catch 吞错）：FakeLS 不抛异常，本层无法复现；
 //   - 服务端 /api/store 白名单/发号/413/重启续发号：smoke.js 已覆盖，见文件头分工说明；
 //   - Store.rev 不持久化（页面刷新即失）后的对账行为：rev 只存不比（[12]），无仲裁逻辑可测。
@@ -34,12 +40,25 @@ const ok = (name, fn) => Promise.resolve().then(fn).then(
   e => { fail++; console.error('  ✗', name, '\n     ', String(e && e.message || e).split('\n')[0]); });
 const drain = async () => { for (let i = 0; i < 2; i++) await new Promise(r => setImmediate(r)); }; // 微任务排水
 
-// 可编程假后端：GET /api/store → {data, rev}；POST 全量覆盖 + rev 发号；fail*/reject* 注入失败路径
+// 可编程假后端：GET /api/store → {data, rev}；POST 全量覆盖 + rev 发号；fail*/reject* 注入失败路径。
+// defer=true 时 POST 响应挂起不落定，由 release(i, resp) 手动放行（乱序响应矩阵——review#37 P1-4：
+// 真实 flush 可被 debounce/unload/手动重叠触发，完成顺序不受调用顺序约束）
 const mkBackend = () => {
   const be = {
     calls: [], rev: 0, data: {},
-    failGet: false, rejectGet: false, failPost: false, rejectPost: false,
+    failGet: false, rejectGet: false, failPost: false, rejectPost: false, defer: false,
     posts() { return be.calls.filter(c => c.m === 'POST'); },
+    _waiters: [],
+    release(i, resp) { // resp: 'ok' | 'fail' | 'reject'——放行第 i 个挂起的 POST（按调用序）
+      const w = be._waiters[i];
+      if (!w) throw new Error('无挂起 POST #' + i);
+      be._waiters[i] = null;
+      if (resp === 'reject') return w.res(Promise.reject(new Error('网络断（release 注入）')));
+      if (resp === 'fail') return w.res({ ok: false, status: 500, json: () => Promise.resolve({ ok: false }) });
+      try { be.data = JSON.parse(w.body).data; } catch (_) {} // 全量覆盖（服务端语义）
+      be.rev++;
+      w.res({ ok: true, json: () => Promise.resolve({ ok: true, rev: be.rev }) });
+    },
     fetch(url, opt) {
       opt = opt || {};
       const m = opt.method || 'GET';
@@ -49,6 +68,7 @@ const mkBackend = () => {
         if (be.failGet) return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: 'boom' }) }); // 缺 data 形态
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: be.data, rev: be.rev }) });
       }
+      if (be.defer) return new Promise(res => be._waiters.push({ body: opt.body, res })); // 挂起待 release
       if (be.rejectPost) return Promise.reject(new Error('网络断（POST 注入）'));
       if (be.failPost) return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ ok: false }) });
       try { be.data = JSON.parse(opt.body).data; } catch (_) {} // 全量覆盖（服务端语义）
@@ -74,13 +94,50 @@ const mkTab = async over => {
 const bodyData = p => JSON.parse(p.body).data;
 
 (async () => {
-  console.log('[1] 白名单快照：snapshot() 只收 KEYS 13 键');
-  await ok('写入全部 13 键 → 快照键集合恰为 KEYS 且值一致（白名单契约）', async () => {
+  console.log('[0] FakeBC 装置契约：同名互投/异名隔离/不回发自身/关闭语义/消息克隆（review#37 P2-1）');
+  await ok('同名互投、异名隔离：store 广播只达同名通道，异名通道零触达', async () => {
+    const hub = bcHub();
+    const a = new hub.FakeBC('vradio'), b = new hub.FakeBC('vradio'), other = new hub.FakeBC('unrelated');
+    let got = 0, noise = 0;
+    b.onmessage = () => { got++; };
+    other.onmessage = () => { noise++; };
+    a.postMessage('store');
+    assert.strictEqual(got, 1, '同名通道必须收到');
+    assert.strictEqual(noise, 0, '异名通道绝不能收到（旧桩全 hub 互投是装置缺陷）');
+  });
+  await ok('不回发自身；close 后 postMessage 抛错且不再接收', async () => {
+    const hub = bcHub();
+    const a = new hub.FakeBC('vradio'), b = new hub.FakeBC('vradio');
+    let self = 0, bGot = 0;
+    a.onmessage = () => { self++; };
+    b.onmessage = () => { bGot++; };
+    a.postMessage('store');
+    assert.strictEqual(self, 0, '不得回发自身');
+    assert.strictEqual(bGot, 1);
+    a.close();
+    assert.throws(() => a.postMessage('store'), /close/, 'close 后发送必须抛错（spec 口径）');
+    b.postMessage('store');
+    assert.strictEqual(bGot, 1, 'close 后不再接收');
+  });
+  await ok('消息对象深拷贝投递：接收方改写不影响他方（结构化克隆近似）', async () => {
+    const hub = bcHub();
+    const a = new hub.FakeBC('vradio'), b1 = new hub.FakeBC('vradio'), b2 = new hub.FakeBC('vradio');
+    let d1 = null, d2 = null;
+    b1.onmessage = e => { d1 = e.data; d1.x = 1; };
+    b2.onmessage = e => { d2 = e.data; };
+    a.postMessage({ k: 'v' });
+    assert.deepStrictEqual(d2, { k: 'v' }, '他页改写不得串扰（深拷贝语义）');
+  });
+
+  console.log('[1] 白名单快照：snapshot() 只收 KEYS 契约键');
+  const CONTRACT_KEYS = Object.keys(JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '..', 'contracts', 'radio-keys.json'), 'utf8')).keys);
+  const arr = r => [].slice.call(r); // vm 跨 realm 数组原型失配：deepStrictEqual 前先展开（同 test/player.js 法）
+  await ok('KEYS 与 contracts/radio-keys.json 逐键一致（契约单一来源，review#37 P3——不双硬编码键数）', async () => {
     const t = await mkTab({});
-    assert.strictEqual(t.Store.KEYS.length, 13, 'KEYS 白名单长度必须为 13（契约键数）');
+    assert.deepStrictEqual(arr(t.Store.KEYS), CONTRACT_KEYS, 'KEYS 必须与契约文件同序同集合');
     t.Store.KEYS.forEach((k, i) => t.sb.localStorage.setItem(k, 'v' + i));
     const sn = t.Store.snapshot();
-    assert.strictEqual(Object.keys(sn).length, 13, '快照键数应为 13');
+    assert.strictEqual(Object.keys(sn).length, CONTRACT_KEYS.length, '快照键数应为契约键数');
     t.Store.KEYS.forEach((k, i) => assert.strictEqual(sn[k], 'v' + i, '快照值应与镜像一致：' + k));
   });
   await ok('白名单外键不入快照（radio.logos/radio.storeDirty/feat.* 等）', async () => {
@@ -138,7 +195,7 @@ const bodyData = p => JSON.parse(p.body).data;
   console.log('[4] POST 成功才清 dirty/rev；失败保 dirty 保镜像');
   await ok('成功 → dirty 清 + rev 收敛响应值 + 广播 store 恰一次', async () => {
     const t = await mkTab({});
-    const probe = new t.sb.BroadcastChannel('probe');
+    const probe = new t.sb.BroadcastChannel('vradio'); // 同名观察通道（FakeBC 现按 name 过滤，异名收不到——review#37 P2-1）
     let bcs = 0; probe.onmessage = () => { bcs++; };
     t.Store.dirty = true;
     assert.strictEqual(t.sb.localStorage.getItem('radio.storeDirty'), '1', 'dirty 是持久化标记 radio.storeDirty');
@@ -152,7 +209,7 @@ const bodyData = p => JSON.parse(p.body).data;
   });
   await ok('r.ok 假（超限被拒等）→ dirty 保 + 镜像保 + rev 不动 + 不广播（AIbot P2-3）', async () => {
     const t = await mkTab({});
-    const probe = new t.sb.BroadcastChannel('probe');
+    const probe = new t.sb.BroadcastChannel('vradio'); // 同名观察通道（FakeBC 现按 name 过滤，异名收不到——review#37 P2-1）
     let bcs = 0; probe.onmessage = () => { bcs++; };
     t.Store.set('radio.favs', '["keep"]');
     t.Store.dirty = true;
@@ -332,6 +389,50 @@ const bodyData = p => JSON.parse(p.body).data;
     assert.strictEqual(B.Store.apply({ 'radio.vol': '20' }), false, 'apply 同值必须返回 changed=false（store.js:74）');
   });
 
+  console.log('[10b] 同浏览器多标签（共享 FakeLS + 共享 hub）：他页写共享镜像后本页内存基线仍须重载（review#37 P1-2）');
+  await ok('A 写+flush → B 镜像早已同步（A 直写共享 LS），B pull 后 App 内存必须重载', async () => {
+    const hub = bcHub(), clock = new FakeClock(0), be = mkBackend();
+    be.data = { 'radio.vol': '5' }; be.rev = 1;
+    const shared = new FakeLS();
+    const A = await mkTab({ hub, clock, be, ls: shared });
+    const B = await mkTab({ hub, clock, be, ls: shared }); // 同浏览器第二标签：同一 localStorage 实例（真实同源标签页形态）
+    const b0 = B.spy.n, a0 = A.spy.n;
+    assert.strictEqual(B.sb.localStorage.getItem('radio.vol'), '5', '装置前提：两页共享同一镜像');
+    A.Store.set('radio.vol', '99'); // A 写共享镜像 + A 内存基线
+    await A.Store.flush(); await drain(); // 落库 + 广播 → B pull
+    assert.strictEqual(B.sb.localStorage.getItem('radio.vol'), '99', '镜像侧早已同步（这正是旧判定漏掉内存重载的原因）');
+    assert.strictEqual(B.Store.mem['radio.vol'], '99', 'B 内存基线必须更新');
+    assert.strictEqual(B.spy.n, b0 + 1, '镜像相同但内存旧 → 必须重载 App（P1-2 修复面：只看镜像会跳过）');
+    assert.strictEqual(A.spy.n, a0, 'A 自身不受广播影响（postMessage 不回发自身）');
+  });
+  await ok('同浏览器下仅 baselineProg 变化：镜像已同步（无 LS 写入）仍抑制重载（防基线期整表重渲不回退）', async () => {
+    const hub = bcHub(), clock = new FakeClock(0), be = mkBackend();
+    const shared = new FakeLS();
+    const A = await mkTab({ hub, clock, be, ls: shared });
+    const B = await mkTab({ hub, clock, be, ls: shared });
+    const b0 = B.spy.n;
+    A.Store.set('radio.baselineProg', '25');
+    await A.Store.flush(); await drain();
+    assert.strictEqual(B.sb.localStorage.getItem('radio.baselineProg'), '25', '进度值进共享镜像');
+    assert.strictEqual(B.Store.mem['radio.baselineProg'], '25', '内存基线更新（进度本身入基线）');
+    assert.strictEqual(B.spy.n, b0, '仅 baselineProg 的内存差异不得触发重载（P3-3 语义保持）');
+  });
+
+  console.log('[10c] 跨浏览器/无 BC 通道（独立 LS + 独立 hub）：显式 pull 对账收敛 LWW');
+  await ok('两浏览器各自 LS：后写者 flush 落库，先写者显式 pull 收敛（无广播，boot/pull 是唯一入口）', async () => {
+    const clock = new FakeClock(0), be = mkBackend();
+    be.data = { 'radio.favs': '["sv"]' }; be.rev = 1;
+    const A = await mkTab({ clock, be, lsSeed: { 'radio.favs': '["a"]' } }); // A 浏览器
+    assert.strictEqual(A.sb.localStorage.getItem('radio.favs'), '["sv"]', 'A 干净 boot 后端为准');
+    const B = await mkTab({ clock, be, lsSeed: { 'radio.favs': '["b"]' } }); // B 浏览器（独立 LS、无共享 hub）
+    A.Store.set('radio.favs', '["A2"]');
+    await A.Store.flush(); await drain();
+    assert.strictEqual(be.data['radio.favs'], '["A2"]', 'A 推送落库');
+    await B.Store.pull(); await drain(); // 无 BC 通道：B 靠显式 pull（真实等价 = 下次 boot 对账）
+    assert.strictEqual(B.sb.localStorage.getItem('radio.favs'), '["A2"]', 'B 收敛到后端最新');
+    assert.strictEqual(B.Store.mem['radio.favs'], '["A2"]', 'B 内存基线同步');
+  });
+
   console.log('[11] apply 键级合并：缺键保留 / 覆盖 / 仅 baselineProg 变化不触发（AIbot P3-3）');
   await ok('后端缺键 → 本地保留绝不 removeItem（多浏览器首次迁移窗口保护，store.js:70）', async () => {
     const t = await mkTab({ noBoot: true, lsSeed: { 'radio.favs': '["x"]' } });
@@ -400,6 +501,54 @@ const bodyData = p => JSON.parse(p.body).data;
     const t = await mkTab({});
     assert.strictEqual(t.Store.mode, 'server', '仍进 server 模式');
     assert.strictEqual(t.be.posts().length, 0, '无镜像不得发迁移 POST');
+  });
+
+  console.log('[15] flush 单飞串行 + 尾随重推（review#37 P1-4：乱序响应不得清掉新改动的 dirty 资格）');
+  await ok('在飞期间新 flush 只挂尾随：POST 不并发，补发读最新内存', async () => {
+    const be = mkBackend(); be.defer = true;
+    const t = await mkTab({ be });
+    t.Store.set('radio.vol', '1');
+    const f1 = t.Store.flush(); await drain(); // POST#0 挂起（携带 vol=1）
+    assert.strictEqual(be.posts().length, 1, '第一发已出');
+    t.Store.set('radio.vol', '2');
+    const f2 = t.Store.flush(); await drain(); // 单飞：挂尾随，不发第二发
+    assert.strictEqual(be.posts().length, 1, '在飞期间不得并发第二发（乱序窗口结构性消除）');
+    be.release(0, 'ok'); await drain();
+    assert.strictEqual(be.posts().length, 2, '尾随补发自动触发');
+    assert.strictEqual(bodyData(be.posts()[1])['radio.vol'], '2', '补发读当前内存（规则①）');
+    be.release(1, 'ok');
+    await f1; await f2; await drain();
+    assert.strictEqual(t.sb.localStorage.getItem('radio.storeDirty'), null, '全部成功清 dirty');
+    assert.strictEqual(be.data['radio.vol'], '2', '服务端收敛最新值');
+  });
+  await ok('旧快照失败置 dirty → 尾随新快照成功才清：dirty 资格不被旧终态清掉', async () => {
+    const be = mkBackend(); be.defer = true;
+    const t = await mkTab({ be });
+    t.Store.set('radio.vol', '1');
+    const f1 = t.Store.flush(); await drain(); // POST#0（旧快照 vol=1）挂起
+    t.Store.set('radio.vol', '2');
+    const f2 = t.Store.flush(); await drain(); // 尾随（将携新快照 vol=2）
+    be.release(0, 'fail'); await drain(); // 旧快照失败：dirty=true + 尾随补发触发
+    assert.strictEqual(t.sb.localStorage.getItem('radio.storeDirty'), '1', '失败置 dirty');
+    assert.strictEqual(be.posts().length, 2, '尾随已发（vol=2）');
+    be.release(1, 'ok'); // 新快照成功——此时才清 dirty（旧终态不得越过新快照清 dirty）
+    await f1; await f2; await drain();
+    assert.strictEqual(t.sb.localStorage.getItem('radio.storeDirty'), null, '最新快照成功 → dirty 清');
+    assert.strictEqual(be.data['radio.vol'], '2', '服务端为最新值（本地不失去重推资格）');
+  });
+  await ok('keepalive（unload）旁路直发：在飞时也不排队（页将亡，排队=确定丢写）', async () => {
+    const be = mkBackend(); be.defer = true;
+    const t = await mkTab({ be });
+    t.Store.set('radio.vol', '1');
+    const f1 = t.Store.flush(); await drain();
+    t.Store.set('radio.vol', '2');
+    t.sb._winEv.beforeunload.forEach(fn => fn()); // unload flush(true)
+    await drain();
+    assert.strictEqual(be.posts().length, 2, 'keepalive 必须并行直发，不等在飞 POST');
+    assert.ok(be.posts()[1].keepalive, 'unload 侧 keepalive=true');
+    assert.strictEqual(bodyData(be.posts()[1])['radio.vol'], '2', '携带最新内存');
+    be.release(0, 'ok'); be.release(1, 'ok');
+    await f1; await drain();
   });
 
   console.log(`\n${pass} 通过，${fail} 失败`);

@@ -82,6 +82,13 @@ dependencies {
   // 同理（B4）：android.jar 的 org.xmlpull.v1.XmlPullParserFactory 也是抛异常桩——data/PlaylistParser.kt 的
   // XML 解析在单测环境须挂真实现（kxml2 = Android 平台内置的同一解析器，设备运行时用平台实现不进 APK）
   testImplementation("net.sf.kxml:kxml2:2.3.0")
+  // —— androidTest（P4 §8.2 instrumented smoke 新增测试依赖两条：compose ui-test，零运行时依赖）——
+  // 依赖登记（P4）：本批 androidTest 新增 compose ui-test 两件套；androidx.test ext/runner/rules 基建由测试链
+  // #36/#40 登记（本分支不编译 androidTest 源集，交叉编译验证在「本分支 × 测试链」合并 worktree 做）
+  androidTestImplementation(composeBom)                              // ui-test 版本随主源集 BOM 对齐（P4 §8.2 UI 交互用例）
+  androidTestImplementation("androidx.compose.ui:ui-test-junit4")    // BOM 对齐（P4 §8.2 UI 交互用例）
+  androidTestImplementation("androidx.compose.ui:ui-test-manifest")  // 同上
+  debugImplementation("androidx.compose.ui:ui-test-manifest")        // compose ui-test 需要的 manifest 占位（debug 源集）
 }
 
 // —— 数据文件打包：仓库根 radio.txt/logos.txt（update-sources.js 产出的单一数据源）→ assets，随行写 data-stamp.txt

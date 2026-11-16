@@ -54,7 +54,7 @@ const KNOWN_FAILURES = [
     actual: 'PR #40 原基线：内存不随广播重载（apply 旧门槛「镜像 ≠ 后端」，共享镜像下恒等）只能 reload 兜底；rebase 后已修——71fbdf9 review#37 P1-2 改比对「本页内存基线」而非共享镜像，广播 pull 即收敛（[KF] 段 KF1 探针实证）',
     tracking: '链内 71fbdf9 review#37 P1-2 已修（原挂 issue #42 关联面）；回归守卫 = expectFixed KF1' },
   { id: 'KF2', status: 'open', scenario: 'SD 段（跨浏览器第二浏览器）', expected: '他端写入后本端自动收敛；陈旧 unload 不覆盖他端写入',
-    actual: '跨浏览器无 BC 通道：reload/关闭的 beforeunload flush 以本页陈旧快照覆盖他端写入（空覆盖门只在服务端拦全空快照，非空陈旧快照仍 LWW 覆盖）；收敛须手动 Store.pull()+flush 舞步（SD5/SD5a/SD6 按显式 pull 断言）。⚠ 探针 flaky 面已实证：Chromium unload 期 keepalive fetch 偶发不派发 → 陈旧 flush 没发 → 服务端 vol 停 0.66 被误读「意外转绿」（reviewer 单次转绿 / wt40-r2 复跑 3/3 成立 / 链尾复验单次转绿，三方不一致=概率性）——probe 已加固：服务端 rev 增量核验陈旧 flush 是否真的发出，未发重试一次，两次未发判探针失效记 note（本轮不判 KF2，豁免状态维持）',
+    actual: '跨浏览器无 BC 通道：reload/关闭的 beforeunload flush 以本页陈旧快照覆盖他端写入（空覆盖门只在服务端拦全空快照，非空陈旧快照仍 LWW 覆盖）；收敛须手动 Store.pull()+flush 舞步（SD5/SD5a/SD6 按显式 pull 断言）。⚠ 探针两面已实证并定版加固：①Chromium unload 期 keepalive fetch 偶发不派发（陈旧 flush 没发，误读「转绿」）——rev 增量核验 + 未发重试一次、两次未发判探针失效记 note；②「陈旧覆盖发生」但被后续他页 0.66 对账写回覆盖（终态判定与写竞争天然 flaky，rev 采样实证 45→54 九连写）——判定锚点改事件级：服务端任意时点出现 vol=0.9 即覆盖发生（豁免成立），终态不再参与判定',
     tracking: 'issue #42 + 生产修复批次（跨端收敛协议）' },
   { id: 'KF3', status: 'open', scenario: 'M6（维护冲突「重新加载最新值」）', expected: '重载后输入框显示后端权威值（B 名）',
     actual: '输入框回到上一投影名（round1 落库的 A 名）——远程 cfg.names 改名不经 applySources 不重投 uiStationProjection 的 s.n；草稿丢弃正确但显示陈旧',
@@ -374,24 +374,26 @@ const BLOCKED_REQUIREMENTS = [ // 阻塞中的验收要求：修复落地前，�
     // 陈旧 flush 没发出 → 服务端 vol 停 0.66 被误读「协议已修」。以服务端 rev 增量核验「陈旧 flush
     // 是否真的发出」：未发出重试一次（再键入再 reload），两次都未发出判探针失效（note 记录、本轮
     // 不判 KF2，豁免状态维持——既不误报转绿也不误报腐化）
+    // 判定锚点 = 事件级（review#43 复验定版）：「陈旧 unload 覆盖他页写入」缺陷的证据是**陈旧快照
+    // （vol=0.9）落库瞬间出现过**——KF2 前置后服务端/各页内存均为 0.66，唯一能写出 0.9 的就是 kf 的
+    // 陈旧 unload flush。后续他页 0.66 快照写回（ke/d reloadMems 对账写回的合法时序）不改变缺陷是否
+    // 发生——终态判定（final vol）与该写竞争天然 flaky（rev 采样实证 45→54 九连写；reviewer 单次
+    // 转绿/wt40-r2 3/3 成立/链尾两次分裂的三方不一致），事件级判定不受其影响。
+    // 另一面：Chromium unload 期 keepalive fetch 偶发不派发 → 陈旧 flush 没发（rev 不推进）——rev
+    // 增量核验 + 未发重试一次，两次未发判探针失效记 note（本轮不判 KF2，豁免状态维持）
+    let covered = false;
     const kfAttempt = async () => {
       const rev0 = (await getJson(base + 'api/store')).rev;
-      const trace = [];
-      const poll = setInterval(() => { getJson(base + 'api/store').then(x => trace.push(x.rev + ':' + x.data['radio.vol'])).catch(() => {}); }, 100);
+      const poll = setInterval(() => { getJson(base + 'api/store').then(x => { if (x.data['radio.vol'] === '0.9') covered = true; }).catch(() => {}); }, 80);
       await kf.keyboard.press('x'); // 无副作用键（未绑定）——仅取 sticky activation，保证 reload 派发 beforeunload
       await kf.reload(); await waitBoot(kf);
       await new Promise(r => setTimeout(r, 1200)); // beforeunload flush POST 落地
       clearInterval(poll);
-      const seen = new Set(); trace.forEach(x => { if (!seen.has(x)) { seen.add(x); console.log('[KF2 trace]', x); } });
       return (await getJson(base + 'api/store')).rev > rev0; // rev 推进 = 陈旧 flush 确实发出
     };
-    const probeFull = await getJson(base + 'api/store');
-    console.log('[KF2 调试] 服务端 rev=' + probeFull.rev + ' data=' + JSON.stringify(probeFull.data));
     if (await kfAttempt() || await kfAttempt()) {
-      const full = await getJson(base + 'api/store');
-      console.log('[KF2 调试] 陈旧 flush 后 rev=' + full.rev + ' data=' + JSON.stringify(full.data));
-      expectBuggy('KF2', (await srvState())['radio.vol'] === '0.9',
-        '陈旧 unload flush 未再覆盖他页写入（跨端收敛协议已修）——更新 SD 段断言并从 KNOWN_FAILURES 移除 KF2');
+      expectBuggy('KF2', covered,
+        '陈旧 unload flush 发出后从未出现 vol=0.9 落库（跨端收敛协议已修）——更新 SD 段断言并从 KNOWN_FAILURES 移除 KF2');
     } else {
       note('KF2 探针失效：两次 reload 的 beforeunload keepalive 均未派发（flaky 面）——本轮不判 KF2，豁免状态维持');
     }

@@ -1,5 +1,8 @@
 // station-api —— /api/mystation + /api/boot 真服务端到端矩阵（docs/testing-strategy-2026-11.md §3 L2「统一 API 矩阵」P1 批）。
 // 真服务子进程（test/harness/api-client.js）+ 本地 http fixture（test/harness/http-fixture.js），全程离线（唯一网络 = 本机 fixture）。
+// 隔离（review#39 P2-适配 #37 修订版 api-client）：isolated = 复制仓库骨架到独立临时应用根再起服——服务写盘
+// （my-radio.txt、data/*.json、生成资产）全部落在临时根内，宿主用户数据与生成资产零接触；测试视角路径一律取
+// boot 返回的 root（APPROOT 随每次 boot 重绑），不再对仓库根做任何快照/还原。
 // 覆盖矩阵：
 //   A /api/mystation（真服务 + VR_TEST_GUARD=1 注入缝：safeTarget 顶替为 http(s) 形态放行、lookup 固定回环 → 探活打到本地 fixture）
 //     1 探活通过写入两态：新分类尾部开节 / 已有分类节内插入（含延迟建流 300ms——12s 探活窗口容忍）
@@ -12,7 +15,8 @@
 //     7 协议面：跨源 Origin 403（smoke 未覆盖 mystation 跨源，本批补上）/ 非法 JSON 400 / 清洗后空名空分类 400 / 请求体 >2048 413
 //   A' 无缝默认 boot（VR_TEST_GUARD 不为 1）：环回/私网/非 http URL → 403「流地址不合法」（SSRF 护栏回归；
 //     与缝内同一 URL 形态 200 ok 形成对照），文件零写入
-//   B /api/boot（操纵仓库根生成资产 + 重启服务；boot({assets}) 快照字节级还原 + 测试自持 pristine 外层快照）
+//   B /api/boot（makeRoot 建独立应用根 → 预写/操纵根内生成资产 → boot({root}) 起服 → 操纵 → boot({root}) 重启；
+//     根需测试自管清理（close 不删非自有根）；每子测先 resetArts 复位到骨架原始代，宿主资产零接触）
 //     8  全资产齐 + manifest 哈希匹配 → {ok:true, version, missing:[], restored:false}
 //     9  缺 sync-manifest.json + 四资产齐 → bootstrap 写入（ok:true version:'bootstrap'，manifest 落盘且四资产不动）
 //     10 缺 radio-meta.json + 无 manifest → ok:false missing:[radio-meta.json]（不静默混态、不写 bootstrap）
@@ -25,18 +29,19 @@
 //   - 写失败注入（writeFile/rename EPERM）→ L5 故障演练（本批任务明确不含）
 //   - /api/boot POST 405（test/smoke.js 已有）；boot 恢复「恢复中途再次失败」双故障与连续多代轮换 → L5
 //   - 探活 12s 窗口超时边界（真实等待过久；失败通道已由死端口/假流覆盖）；HLS/ICY 探活分支（test/diagnostic.js 全覆盖）
-//   - /api/myradio 全量替换（test/quality.js 已有）；/api/sync 管线（test/sources.js 注入路径）
+//   - /api/myradio 全量替换（test/myradio-api.js 专文件高风险矩阵——review#39 第 3 条）
 const assert = require('assert'), fs = require('fs'), path = require('path');
-const { boot, freePort, snapshotAssets, restoreAssets, addCleanup, ROOT } = require('./harness/api-client');
+const { boot, freePort, makeRoot, addCleanup } = require('./harness/api-client');
 const { fixture } = require('./harness/http-fixture');
 const { publishSync, readManifestOf } = require('../update-sources');
 
-const MY = path.join(ROOT, 'my-radio.txt'), MANIFEST = path.join(ROOT, 'sync-manifest.json');
 let pass = 0, fail = 0;
 const ok = (name, fn) => Promise.resolve().then(fn).then(
   () => { pass++; console.log('  ✓', name); },
   e => { fail++; console.error('  ✗', name, '\n     ', String(e && e.message || e).split('\n')[0]); });
 
+let APPROOT = null, MY = null; // 当前 boot 的应用根（isolated：服务写盘全落这里，测试断言/操纵同视角）
+const setRoot = r => { APPROOT = r; MY = path.join(r, 'my-radio.txt'); };
 const myRaw = () => { try { return fs.readFileSync(MY); } catch (_) { return null; } };
 const myLines = () => { const r = myRaw(); return r ? r.toString('utf8').split(/\r?\n/).map(s => s.trim()).filter(Boolean) : []; };
 const postMy = (req, j) => req('POST', '/api/mystation', { 'Content-Type': 'application/json' }, JSON.stringify(j));
@@ -54,7 +59,7 @@ const stream = res => { // 真流：分块持续吐 12288B（≥阈值）后收�
 const HTML_BIG = Buffer.from('<html>' + 'x'.repeat(9000) + '</html>');
 
 (async () => {
-  let srv = null;
+  let srv = null, BROOT = null; // BROOT 在 try 内创建，finally 兜删用
   const fx = fixture({
     '/ok.mp3': { headers: { 'Content-Type': 'audio/mpeg' }, stream },
     '/slow.mp3': { delay: 300, headers: { 'Content-Type': 'audio/mpeg' }, stream }, // 延迟建流（蜻蜓系建流慢的缩小版，12s 窗口内照常入库）
@@ -66,20 +71,17 @@ const HTML_BIG = Buffer.from('<html>' + 'x'.repeat(9000) + '</html>');
   const FIX = 'http://127.0.0.1:' + fport;
   const deadPort = await freePort(); // 建服后即关的端口：建连必拒（NETWORK 路径）
 
-  // B 区外层快照：仓库当前生成资产态（四资产 + manifest + .tmp）；入册 SIGINT 兜底，finally 再还原一次（幂等）
-  const pristine = snapshotAssets();
-  addCleanup(() => restoreAssets(pristine));
-
   try {
     console.log('[A] /api/mystation 真服务（VR_TEST_GUARD=1 → 探活打到本地 fixture）');
     srv = await boot({ isolated: true, env: { VR_TEST_GUARD: '1' } });
+    setRoot(srv.root);
     const req = srv.req;
 
     await ok('跨源拒绝：POST 带 Origin → 403', async () =>
       assert.strictEqual((await req('POST', '/api/mystation', { Origin: 'http://evil.com', 'Content-Type': 'application/json' }, '{}')).status, 403));
 
     await ok('探活通过 → 200 {ok:true}；新分类尾部开节（空文件起步的节结构）', async () => {
-      try { fs.unlinkSync(MY); } catch (_) {}
+      try { fs.unlinkSync(MY); } catch (_) {} // 临时根起步本就无 my-radio.txt（骨架复制排除用户数据）——语义钉死「空文件起步」
       const r = await postMy(req, { n: '台一', u: FIX + '/ok.mp3', c: '音乐' });
       assert.strictEqual(r.status, 200);
       assert.deepStrictEqual(jbody(r), { ok: true });
@@ -214,6 +216,7 @@ const HTML_BIG = Buffer.from('<html>' + 'x'.repeat(9000) + '</html>');
 
     console.log("[A'] 无缝默认 boot：SSRF 护栏回归（同一 URL 形态缝内 200 ok / 缝外 403）");
     srv = await boot({ isolated: true, env: { VR_TEST_GUARD: '' } }); // 显式清缝：宿主误导出也不假红
+    setRoot(srv.root);
     await ok('环回/私网/非 http 目标 → 403「流地址不合法」，文件零写入', async () => {
       fs.writeFileSync(MY, '音乐,#genre#\r\n哨兵,http://s/1\r\n');
       const before = myRaw();
@@ -226,7 +229,20 @@ const HTML_BIG = Buffer.from('<html>' + 'x'.repeat(9000) + '</html>');
     });
     await srv.close(); srv = null;
 
-    console.log('[B] /api/boot 真服务矩阵（操纵生成资产 + 重启服务；assets 快照字节级还原）');
+    console.log('[B] /api/boot 真服务矩阵（独立应用根内操纵生成资产 + boot({root}) 复用重启；宿主资产零接触）');
+    BROOT = makeRoot(); // 手动建根：预写/操纵资产后再起服（boot({root}) 不重新复制骨架，根由测试自管清理）
+    addCleanup(() => { try { fs.rmSync(BROOT, { recursive: true, force: true }); } catch (_) {} });
+    const ASSETS = ['radio.txt', 'radio-data.js', 'logos.txt', 'radio-meta.json', 'sync-manifest.json'];
+    const orig = {}; // 骨架复制出的「原始代」资产（prev-old 兜底恢复的对照物；必须在任何 publishSync 前捕获）
+    for (const k of ASSETS) { try { orig[k] = fs.readFileSync(path.join(BROOT, k)); } catch (_) {} }
+    const resetArts = () => { // 根资产复位到原始代：删测试发布的 manifest/.tmp 代际，五文件字节还原（等价旧 restoreAssets(pristine) 语义）
+      for (const k of ASSETS) {
+        const fp = path.join(BROOT, k);
+        if (orig[k]) fs.writeFileSync(fp, orig[k]);
+        else { try { fs.unlinkSync(fp); } catch (_) {} }
+      }
+      try { fs.rmSync(path.join(BROOT, '.tmp'), { recursive: true, force: true }); } catch (_) {}
+    };
     const makeArts = tag => { // 测试批次四资产（assetsComplete 可解析：radio.txt 有节 / data.js 含 RADIO_DATA / meta v1+stations）
       const txt = '音乐,#genre#\r\n台甲-' + tag + ',http://192.0.2.10/a.mp3\r\n台甲-' + tag + '备,http://192.0.2.11/a2.mp3\r\n新闻,#genre#\r\n台乙-' + tag + ',http://192.0.2.12/b.m3u8\r\n';
       const meta = { v: 1, generatedAt: 0, stations: {} };
@@ -239,16 +255,16 @@ const HTML_BIG = Buffer.from('<html>' + 'x'.repeat(9000) + '</html>');
         'radio-meta.json': JSON.stringify(meta),
       };
     };
-    const writeArts = arts => { for (const k of Object.keys(arts)) fs.writeFileSync(path.join(ROOT, k), arts[k]); };
-    const withBoot = async fn => { // 每轮 boot 自管 assets 快照：close 还原「本轮服务端对生成资产的写」
-      const s = await boot({ isolated: true, assets: true, env: { VR_TEST_GUARD: '' } });
+    const writeArts = arts => { for (const k of Object.keys(arts)) fs.writeFileSync(path.join(BROOT, k), arts[k]); };
+    const withBoot = async fn => { // boot({root}) 复用同一根重启（不重新复制骨架；close 只杀服不删根——根由外层清理）
+      const s = await boot({ root: BROOT, env: { VR_TEST_GUARD: '' } });
       try { return await fn(s); } finally { await s.close(); }
     };
     const readJson = p => JSON.parse(fs.readFileSync(p, 'utf8'));
 
     await ok('全资产齐 + manifest 哈希匹配 → {ok:true, version, missing:[], restored:false}', async () => {
-      restoreAssets(pristine);
-      publishSync(ROOT, makeArts('a'), { version: 'A1', ts: 1000000 }); // 发布协议：root=批A+manifest A1，prev=仓库原资产
+      resetArts();
+      publishSync(BROOT, makeArts('a'), { version: 'A1', ts: 1000000 }); // 发布协议：root=批A+manifest A1，prev=原始代
       await withBoot(async s => {
         const j = jbody(await s.req('GET', '/api/boot'));
         assert.strictEqual(j.ok, true);
@@ -259,92 +275,92 @@ const HTML_BIG = Buffer.from('<html>' + 'x'.repeat(9000) + '</html>');
     });
 
     await ok('缺 sync-manifest.json + 四资产齐 → bootstrap 写入（version:bootstrap，manifest 落盘且四资产不动）', async () => {
-      restoreAssets(pristine);
+      resetArts();
       const artsA = makeArts('a');
       writeArts(artsA);
-      try { fs.unlinkSync(MANIFEST); } catch (_) {}
+      try { fs.unlinkSync(path.join(BROOT, 'sync-manifest.json')); } catch (_) {}
       await withBoot(async s => {
         const j = jbody(await s.req('GET', '/api/boot'));
         assert.strictEqual(j.ok, true);
         assert.strictEqual(j.version, 'bootstrap');
         assert.deepStrictEqual(j.missing, []);
         assert.strictEqual(j.restored, false);
-        const m = readManifestOf(ROOT); // 四文件 bytes/sha256 全对才算有效 manifest
+        const m = readManifestOf(BROOT); // 四文件 bytes/sha256 全对才算有效 manifest
         assert.ok(m && m.version === 'bootstrap', 'bootstrap manifest 已落盘且可校验');
         for (const k of Object.keys(artsA))
-          assert.strictEqual(fs.readFileSync(path.join(ROOT, k)).toString('utf8'), artsA[k], 'bootstrap 不动四资产：' + k);
+          assert.strictEqual(fs.readFileSync(path.join(BROOT, k)).toString('utf8'), artsA[k], 'bootstrap 不动四资产：' + k);
       });
     });
 
     await ok('缺 radio-meta.json + 无 manifest → ok:false missing 命中（不静默混态、不写 bootstrap）', async () => {
-      restoreAssets(pristine);
+      resetArts();
       writeArts(makeArts('a'));
-      try { fs.unlinkSync(MANIFEST); } catch (_) {}
-      fs.unlinkSync(path.join(ROOT, 'radio-meta.json'));
+      try { fs.unlinkSync(path.join(BROOT, 'sync-manifest.json')); } catch (_) {}
+      fs.unlinkSync(path.join(BROOT, 'radio-meta.json'));
       await withBoot(async s => {
         const j = jbody(await s.req('GET', '/api/boot'));
         assert.strictEqual(j.ok, false);
         assert.deepStrictEqual(j.missing, ['radio-meta.json']);
         assert.strictEqual(j.restored, false);
-        assert.ok(!fs.existsSync(MANIFEST), '资产不全不写 bootstrap manifest');
+        assert.ok(!fs.existsSync(path.join(BROOT, 'sync-manifest.json')), '资产不全不写 bootstrap manifest');
       });
     });
 
     await ok('缺 radio-meta.json + prev 有效 → 自动恢复（restored:true，文件从 sync-prev 找回）', async () => {
-      restoreAssets(pristine);
-      publishSync(ROOT, makeArts('a'), { version: 'A1', ts: 1000000 }); // prev = 仓库原资产 + 携带的 bootstrap manifest
-      const prevVer = readJson(path.join(ROOT, '.tmp', 'sync-prev', 'sync-manifest.json')).version;
-      fs.unlinkSync(path.join(ROOT, 'radio-meta.json'));
+      resetArts();
+      publishSync(BROOT, makeArts('a'), { version: 'A1', ts: 1000000 }); // prev = 原始代 + 其携带的 manifest
+      const prevVer = readJson(path.join(BROOT, '.tmp', 'sync-prev', 'sync-manifest.json')).version;
+      fs.unlinkSync(path.join(BROOT, 'radio-meta.json'));
       await withBoot(async s => {
         const j = jbody(await s.req('GET', '/api/boot'));
         assert.strictEqual(j.ok, true);
         assert.strictEqual(j.restored, true);
         assert.strictEqual(j.version, prevVer); // 源码口径：恢复成功按 prev manifest 版本上报
         assert.deepStrictEqual(j.missing, []);  // 恢复路径不回带 missing（missing 只在 ok:false / bootstrap-缺资响应出现）
-        assert.strictEqual(fs.readFileSync(path.join(ROOT, 'radio-meta.json')).toString('utf8'),
-          pristine.files['radio-meta.json'].toString('utf8'), 'radio-meta.json 已从 prev 找回');
+        assert.strictEqual(fs.readFileSync(path.join(BROOT, 'radio-meta.json')).toString('utf8'),
+          orig['radio-meta.json'].toString('utf8'), 'radio-meta.json 已从 prev 找回');
       });
     });
 
     await ok('manifest 哈希不匹配（篡改 radio.txt 一字节）+ prev → 恢复上一批（version=A1，radio.txt 字节还原）', async () => {
-      restoreAssets(pristine);
+      resetArts();
       const artsA = makeArts('a'), artsB = makeArts('b');
-      publishSync(ROOT, artsA, { version: 'A1', ts: 1000000 });
-      publishSync(ROOT, artsB, { version: 'B1', ts: 2000000 }); // prev = 批A + A1 manifest（root manifest 有效时随行携带）
-      fs.writeFileSync(path.join(ROOT, 'radio.txt'), artsB['radio.txt'] + 'x'); // 一字节篡改 → B1 校验必失败
+      publishSync(BROOT, artsA, { version: 'A1', ts: 1000000 });
+      publishSync(BROOT, artsB, { version: 'B1', ts: 2000000 }); // prev = 批A + A1 manifest（root manifest 有效时随行携带）
+      fs.writeFileSync(path.join(BROOT, 'radio.txt'), artsB['radio.txt'] + 'x'); // 一字节篡改 → B1 校验必失败
       await withBoot(async s => {
         const j = jbody(await s.req('GET', '/api/boot'));
         assert.strictEqual(j.ok, true);
         assert.strictEqual(j.restored, true);
         assert.strictEqual(j.version, 'A1');
-        assert.strictEqual(fs.readFileSync(path.join(ROOT, 'radio.txt')).toString('utf8'), artsA['radio.txt'], 'radio.txt 从 prev 还原');
-        assert.strictEqual(readManifestOf(ROOT).version, 'A1', 'manifest 随行还原为 A1');
+        assert.strictEqual(fs.readFileSync(path.join(BROOT, 'radio.txt')).toString('utf8'), artsA['radio.txt'], 'radio.txt 从 prev 还原');
+        assert.strictEqual(readManifestOf(BROOT).version, 'A1', 'manifest 随行还原为 A1');
       });
     });
 
     await ok('prev 损坏 → .tmp/sync-prev-old 兜底恢复（代际轮换：任何时刻至少一代完整上一批）', async () => {
-      restoreAssets(pristine);
+      resetArts();
       const artsA = makeArts('a'), artsB = makeArts('b');
-      publishSync(ROOT, artsA, { version: 'A1', ts: 1000000 }); // 一代 prev = 仓库原资产 + bootstrap manifest
-      publishSync(ROOT, artsB, { version: 'B1', ts: 2000000 }); // 二代：prev=批A+A1，prev-old=仓库原资产+bootstrap
-      fs.writeFileSync(path.join(ROOT, '.tmp', 'sync-prev', 'sync-manifest.json'), '{broken'); // 打掉 prev 校验
-      fs.writeFileSync(path.join(ROOT, 'radio.txt'), artsB['radio.txt'] + 'x');
-      const oldVer = readJson(path.join(ROOT, '.tmp', 'sync-prev-old', 'sync-manifest.json')).version;
+      publishSync(BROOT, artsA, { version: 'A1', ts: 1000000 }); // 一代 prev = 原始代 + 其携带的 manifest
+      publishSync(BROOT, artsB, { version: 'B1', ts: 2000000 }); // 二代：prev=批A+A1，prev-old=原始代
+      fs.writeFileSync(path.join(BROOT, '.tmp', 'sync-prev', 'sync-manifest.json'), '{broken'); // 打掉 prev 校验
+      fs.writeFileSync(path.join(BROOT, 'radio.txt'), artsB['radio.txt'] + 'x');
+      const oldVer = readJson(path.join(BROOT, '.tmp', 'sync-prev-old', 'sync-manifest.json')).version;
       await withBoot(async s => {
         const j = jbody(await s.req('GET', '/api/boot'));
         assert.strictEqual(j.ok, true);
         assert.strictEqual(j.restored, true);
         assert.strictEqual(j.version, oldVer, '按 prev-old 的 manifest 版本上报');
-        assert.strictEqual(fs.readFileSync(path.join(ROOT, 'radio.txt')).toString('utf8'),
-          pristine.files['radio.txt'].toString('utf8'), 'radio.txt 从 prev-old（仓库原资产代）还原，非被篡改值');
+        assert.strictEqual(fs.readFileSync(path.join(BROOT, 'radio.txt')).toString('utf8'),
+          orig['radio.txt'].toString('utf8'), 'radio.txt 从 prev-old（原始代）还原，非被篡改值');
       });
     });
 
     await ok('哈希不匹配 + 无 prev → ok:false（恢复通道不可用，不静默混态）', async () => {
-      restoreAssets(pristine);
-      publishSync(ROOT, makeArts('a'), { version: 'A1', ts: 1000000 });
-      fs.rmSync(path.join(ROOT, '.tmp'), { recursive: true, force: true }); // prev/prev-old 全无
-      fs.appendFileSync(path.join(ROOT, 'radio.txt'), 'x');
+      resetArts();
+      publishSync(BROOT, makeArts('a'), { version: 'A1', ts: 1000000 });
+      fs.rmSync(path.join(BROOT, '.tmp'), { recursive: true, force: true }); // prev/prev-old 全无
+      fs.appendFileSync(path.join(BROOT, 'radio.txt'), 'x');
       await withBoot(async s => {
         const j = jbody(await s.req('GET', '/api/boot'));
         assert.strictEqual(j.ok, false);
@@ -355,7 +371,8 @@ const HTML_BIG = Buffer.from('<html>' + 'x'.repeat(9000) + '</html>');
   } finally {
     if (srv) { try { await srv.close(); } catch (_) {} }
     try { await fx.close(); } catch (_) {}
-    try { restoreAssets(pristine); } catch (_) {} // 外层快照兜底还原（各 boot 自管快照已在 close 还原）
+    // 临时根由各自 boot 自管清理（isolated close 删自有根）；BROOT 经 addCleanup 在 SIGINT 兜底，正常路径同样兜删
+    if (BROOT) { try { fs.rmSync(BROOT, { recursive: true, force: true }); } catch (_) {} }
   }
   console.log(`\n${pass} 通过，${fail} 失败`);
   process.exit(fail ? 1 : 0);

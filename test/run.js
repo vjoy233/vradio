@@ -8,10 +8,10 @@ const fs = require('fs'), path = require('path'), { spawnSync } = require('child
 
 const PROFILES = { // contract = L0 契约/资产门；unit = L1 纯函数/状态机/fake browser（不起长驻服务）；
   contract: ['contracts.js', 'assets.js'],
-  unit: ['backup-v3.js', 'contracts.js', 'assets.js', 'diagnostic.js', 'discovery.js', 'logos.js', 'metadata.js',
+  unit: ['backup-v3.js', 'contracts.js', 'assets.js', 'diagnostic.js', 'discovery.js', 'listen-stats.js', 'logos.js', 'metadata.js',
     'player.js', 'playlist-import.js', 'quality-store.js', 'source-lifecycle.js', 'sources.js', 'store.js', 'sync.js',
     'ui-data.js', 'ui-hero.js', 'ui-maintenance.js', 'ui-phase.js', 'ui-scope.js'],
-  api: ['listen-stats.js', 'np-proxy.js', 'quality.js', 'smoke.js', 'station-api.js', 'sync-api.js'], // L2 真服务矩阵（smoke 压轴不变）
+  api: ['listen-stats-api.js', 'myradio-api.js', 'np-proxy.js', 'quality.js', 'smoke.js', 'station-api.js', 'sync-api.js'], // L2 真服务矩阵（smoke 压轴不变）
 };
 const profile = process.argv[2] && !/^-/.test(process.argv[2]) ? process.argv[2] : '';
 
@@ -21,11 +21,12 @@ if (profile) {
   if (!list) { console.error('未知 profile: ' + profile + '（可用：' + Object.keys(PROFILES).join('/') + ' 或无参全量）'); process.exit(2); }
   const missing = list.filter(f => !fs.existsSync(path.join(__dirname, f)));
   if (missing.length) { console.error('profile 文件缺失: ' + missing.join(', ')); process.exit(2); }
-  files = list.slice().sort((a, b) => (b === 'smoke.js') - (a === 'smoke.js') || a.localeCompare(b));
+  files = list.slice().sort((a, b) => (a === 'smoke.js') - (b === 'smoke.js') || a.localeCompare(b)); // smoke 压轴（起服最重，旧比较号写反致 smoke 跑在最前——review#39 顺带修正）
+
 } else {
   files = fs.readdirSync(__dirname)
     .filter(f => f.endsWith('.js') && f !== 'run.js')
-    .sort((a, b) => (b === 'smoke.js') - (a === 'smoke.js') || a.localeCompare(b)); // smoke 压轴（起服最重）
+    .sort((a, b) => (a === 'smoke.js') - (b === 'smoke.js') || a.localeCompare(b)); // smoke 压轴（起服最重，旧比较号写反致 smoke 跑在最前——review#39 顺带修正）
 }
 
 let fail = 0;

@@ -103,11 +103,15 @@ const Store = {
     // 业务不可达——置 dirty 的前提是有失败期写、有写快照即非全空）
     const gate = this.snapshot();
     if (!Object.keys(gate).length && !this.sawData) {
+      // 拦下后改走 pull 对账（他端数据拉回镜像、sawData 置位恢复正常推送资格）。⚠ 该 pull 是
+      // fire-and-forget：unload/切后台窗口内浏览器可能取消在途 fetch——「拉回他页数据」是 best-effort
+      // 而非可靠保证（review#43 P2）；防 wipe 是硬保证（POST 已拦下），对账兜底靠下次 boot 重拉收敛
       if (!this.dirty) this.pull();
       return;
     }
     // keepalive（unload/切后台）直发，不进单飞状态机：页将亡，排队等价确定丢写；并行旧 POST 至多造成
-    // 一次显式 last-write-wins 退化，优于静默丢改动
+    // 一次显式 last-write-wins 退化，优于静默丢改动。组合边界（review#37 增量/#43 P2）：旧普通 POST、
+    // keepalive 快照、尾随重推三者完成顺序不定 = 最后完成者胜——显式 LWW 退化，测试冻结见 [15] 乱序矩阵
     if (keepalive) return this._postSnapshot(true);
     // 单飞串行 + 尾随重推（review#37 P1-4）：flush 无并发护栏时，乱序响应会让「旧快照的迟到成功」清掉新
     // 改动的 dirty 资格——flush A（旧快照）在飞 → 本地再改 → flush B 失败置 dirty → A 迟到成功把 dirty 清掉，
@@ -128,6 +132,10 @@ const Store = {
     try {
       const r = await fetch('/api/store', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: !!keepalive }).then(x => x.json());
       if (r && r.ok) { this.dirty = false; this.rev = r.rev; if (this.bc) this.bc.postMessage('store'); }
+      else if (r && r.code === 'empty-overwrite') { // 服务端空覆盖防呆 409（issue #42 B）：服务端「当前库非空」
+        this.dirty = false; // = 本页快照陈旧/本页是该页不该推的状态——不是失败期写，不清 dirty 会陷入
+        this.pull();        // 「boot dirty→flush→409→dirty」永久重试死锁（review#37 增量 P2：race/旧客户端
+      }                     // 仍可能收到 409）；改走 pull 对账收敛（服务端为准），rev 由 GET 响应随行
       else this.dirty = true; // 写失败（含超限被拒）：置 dirty 保镜像，下次 boot/pull 先重推（AIbot P2-3：超限拒绝必须让客户端知道，静默丢键会把镜像也一起抹掉）
     } catch (_) { this.dirty = true; }
   },

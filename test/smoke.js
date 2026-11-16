@@ -2,7 +2,7 @@
 // 覆盖面：静态拦截矩阵（dotfile/.bak/data 段的大小写与尾点变形、方法校验、nosniff）、/proxy 与 /api/* 跨源
 // 拒绝、Host 头白名单（rebinding 面）、safeTarget/guardLookup/tryUrl（畸形 Location 头归 null 不抛，audit-r2 P2-1）
 // 双层护栏、classifyCn 幂等、/api/store 白名单 + rev 发号 round-trip + 重启续发号（AIbot P2-1 回归）+ 超限显式拒绝
-// + 空覆盖防呆（issue #42 B：rev>0 拒全空快照 409 empty-overwrite，白名单滤后全空同拒；rev=0 放行）、
+// + 空覆盖防呆（issue #42 B：当前库 data 非空时拒全空快照 409 empty-overwrite，白名单滤后全空同拒；data 空放行——判据非 rev，review#43 P1）、
 // /api/check 与 /api/nowplaying 方法校验（audit-r2 P3-1）。
 // 用户数据保护（AIbot P2-4）：已有 data/store.json 先备份为 .smokebak 落盘（硬中断可恢复，SIGINT 自动还原）、
 // 只写 store.json 相关文件、跑完还原现场（原无 data/ 则整目录清掉）。跑法：npm test。全部离线。
@@ -88,7 +88,7 @@ const boot = () => new Promise(async (resolve, reject) => { // 起服 + 就绪�
     try { if (fs.existsSync(BAK)) { fs.copyFileSync(BAK, STORE); fs.unlinkSync(BAK); } } catch (_) {}
     process.exit(130);
   });
-  let srv = null, srv2 = null;
+  let srv = null, srv2 = null, srv3 = null;
   try {
     PORT = await freePort();
     srv = await boot();
@@ -195,7 +195,7 @@ const boot = () => new Promise(async (resolve, reject) => { // 起服 + 就绪�
       const big = JSON.stringify({ data: { 'radio.favs': 'x'.repeat(600 * 1024) } });
       assert.strictEqual((await req('POST', '/api/store', { 'Content-Type': 'application/json' }, big)).status, 413);
     });
-    await ok('/api/store 空覆盖防呆：rev>0 拒全空快照（409 code=empty-overwrite）且库数据原样（issue #42 B）', async () => {
+    await ok('/api/store 空覆盖防呆：非空库拒全空快照（409 code=empty-overwrite）且库数据原样（issue #42 B；判据 = data 实际非空，review#43 P1）', async () => {
       const w = await req('POST', '/api/store', { 'Content-Type': 'application/json' }, JSON.stringify({ data: {} }));
       assert.strictEqual(w.status, 409, '非空库上的全空快照必须显式拒绝（wipe 面）');
       const j = JSON.parse(w.body);
@@ -217,8 +217,21 @@ const boot = () => new Promise(async (resolve, reject) => { // 起服 + 就绪�
       const w = await req('POST', '/api/store', { 'Content-Type': 'application/json' }, JSON.stringify({ data: { 'radio.favs': '[]' } }));
       assert.strictEqual(JSON.parse(w.body).rev, 6);
     });
+    // 空覆盖防呆判据（review#43 P1）：rev>0 但 data 实际为空 → 空快照放行（幂等空写，非 wipe）。
+    // rev 是版本号不表意「数据非空」——rev=0 初始空库的一次合法空写/白名单滤后空快照也会把 rev 推到 >0，
+    // 旧判据（rev>0）会让「空库+空快照」此后永久 409，客户端 dirty→flush→409 死锁
+    PORT = await freePort();
+    fs.writeFileSync(STORE, JSON.stringify({ rev: 3, data: {} }));
+    srv3 = await boot();
+    await ok('/api/store 空覆盖防呆判据：rev>0 而 data 实际为空 → 空快照放行 200（review#43 P1）', async () => {
+      const w = await req('POST', '/api/store', { 'Content-Type': 'application/json' }, JSON.stringify({ data: {} }));
+      assert.strictEqual(w.status, 200, '库 data 为空 = 无数据可丢，全空快照不构成 wipe');
+      const j = JSON.parse(w.body);
+      assert.strictEqual(j.ok, true);
+      assert.strictEqual(j.rev, 4, '幂等空写也是一次合法提交，rev 照常推进');
+    });
   } finally {
-    if (srv) srv.kill(); if (srv2) srv2.kill();
+    if (srv) srv.kill(); if (srv2) srv2.kill(); if (srv3) srv3.kill();
     // 现场还原（AIbot P2-4）：只动测试涉及的文件，原无 data/ 才整目录清掉
     try { fs.unlinkSync(STORE); fs.unlinkSync(STORE + '.tmp'); } catch (_) {}
     if (hadStore) { try { fs.copyFileSync(BAK, STORE); fs.unlinkSync(BAK); } catch (_) {} }

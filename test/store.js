@@ -23,6 +23,8 @@
 //        （本页有写/sawData 见过非空/合法删除空值表达）+ 门后自愈
 //   [15] flush 单飞串行 + 尾随重推：在飞不并发/补发读最新内存/旧快照终态不清新 dirty/keepalive 旁路
 //        （review#37 P1-4 生产修复面；defer 后端手动 release 模拟乱序）
+//   [16] 服务端 409 empty-overwrite 兼容（清 dirty + pull 收敛，防重试死锁——review#37 增量/review#43）+
+//        keepalive 与在飞 POST 乱序完成 = 最后完成者胜（显式 LWW 退化边界冻结，#37 增量 P1）
 // 未覆盖项与原因：
 //   - 真实 fetch keepalive 64KB 规范上限：浏览器网络栈约束，Store 只透传标志位（[9] 断言标志），上限行为不在本层；
 //   - 真实 BroadcastChannel 跨进程/跨 origin/异步投递语义：FakeBC 为同 hub 同步互投（装置边界——异步投递/
@@ -51,11 +53,12 @@ const mkBackend = () => {
     failGet: false, rejectGet: false, failPost: false, rejectPost: false, defer: false,
     posts() { return be.calls.filter(c => c.m === 'POST'); },
     _waiters: [],
-    release(i, resp) { // resp: 'ok' | 'fail' | 'reject'——放行第 i 个挂起的 POST（按调用序）
+    release(i, resp) { // resp: 'ok' | 'fail' | 'reject' | 'empty409'——放行第 i 个挂起的 POST（按调用序）
       const w = be._waiters[i];
       if (!w) throw new Error('无挂起 POST #' + i);
       be._waiters[i] = null;
       if (resp === 'reject') return w.res(Promise.reject(new Error('网络断（release 注入）')));
+      if (resp === 'empty409') return w.res({ ok: false, status: 409, json: () => Promise.resolve({ ok: false, code: 'empty-overwrite', error: '拒绝以全空快照覆盖非空存储' }) });
       if (resp === 'fail') return w.res({ ok: false, status: 500, json: () => Promise.resolve({ ok: false }) });
       try { be.data = JSON.parse(w.body).data; } catch (_) {} // 全量覆盖（服务端语义）
       be.rev++;
@@ -608,6 +611,37 @@ const bodyData = p => JSON.parse(p.body).data;
     assert.strictEqual(bodyData(be.posts()[1])['radio.vol'], '2', '携带最新内存');
     be.release(0, 'ok'); be.release(1, 'ok');
     await f1; await drain();
+  });
+
+  console.log('[16] 服务端 409 empty-overwrite 兼容 + keepalive 并发乱序边界（review#37 增量 / review#43）');
+  await ok('409 code=empty-overwrite → 不置 dirty、清 dirty、改走 pull 对账（防「boot dirty→flush→409」永久重试死锁）', async () => {
+    const be = mkBackend(); be.data = { 'radio.favs': '["sv"]', 'radio.vol': '7' }; be.rev = 2; be.defer = true;
+    const t = await mkTab({ be }); // boot 见非空（sawData=true，之后镜像清空也不受客户端门拦）
+    assert.strictEqual(t.Store.sawData, true);
+    t.Store.KEYS.forEach(k => t.sb.localStorage.removeItem(k)); // 极端清空 → 快照全空（[14] 放行面②同款：sawData 页不拦）
+    const f = t.Store.flush(); await drain(); // POST#0（空快照）挂起
+    const gets0 = t.be.calls.filter(c => c.m === 'GET').length;
+    be.release(0, 'empty409'); await drain(); // 服务端回 409 empty-overwrite（race/旧客户端可达成）
+    await f; await drain();
+    assert.strictEqual(t.sb.localStorage.getItem('radio.storeDirty'), null, '409 不是失败期写：必须清 dirty（否则 boot→flush→409 死锁）');
+    assert.strictEqual(t.be.calls.filter(c => c.m === 'GET').length, gets0 + 1, '409 后必须改走 pull 对账（服务端为准收敛）');
+    assert.strictEqual(t.sb.localStorage.getItem('radio.favs'), '["sv"]', 'pull 把服务端数据拉回镜像（收敛完成）');
+    assert.strictEqual(t.Store.rev, 2, 'rev 由 GET 响应随行');
+  });
+  await ok('keepalive 与在飞 POST 乱序完成：最后完成者胜（显式 LWW 退化边界，#37 增量 P1 冻结）', async () => {
+    const be = mkBackend(); be.defer = true;
+    const t = await mkTab({ be });
+    t.Store.set('radio.vol', '1');
+    const f1 = t.Store.flush(); await drain(); // POST#0（旧快照 vol=1，普通单飞在飞）
+    t.Store.set('radio.vol', '2');
+    t.sb._winEv.beforeunload.forEach(fn => fn()); // unload flush(true) → POST#1（新快照 vol=2）旁路直发
+    await drain();
+    assert.strictEqual(be.posts().length, 2, 'keepalive 旁路直发（不排队，页将亡）');
+    be.release(1, 'ok'); await drain(); // 新快照先完成（vol=2 落库）
+    assert.strictEqual(be.data['radio.vol'], '2');
+    be.release(0, 'ok'); await f1; await drain(); // 旧快照后完成（vol=1 覆盖）——最后完成者胜
+    assert.strictEqual(be.data['radio.vol'], '1', 'keepalive 并发完成顺序不定 = 最后完成者胜（设计接受的显式 LWW 退化，store.js flush 注释）');
+    assert.strictEqual(t.sb.localStorage.getItem('radio.storeDirty'), null, '两次成功终态：dirty 收敛（不悬挂重试资格）');
   });
 
   console.log(`\n${pass} 通过，${fail} 失败`);

@@ -138,12 +138,25 @@ const ICY_B = icyBlock('歌名B', 32); // 换歌后帧块（600ms 后切换）
 
 /* ---------- 场景路由（方案 §3 L2.2 + L4 固定清单；--list 与 /__health 同源对账） ---------- */
 
+// 定时器注册表（review#40 P2，同 http-fixture 的 teardown 收口模式）：全部延迟/周期定时器统一挂表，
+// 响应 close 或 fixture close() 时统一回收。修复点：/slow.mp3 延迟 starter 的 1.5s 窗口内客户端断连，
+// 旧版 starter 照常建 interval+10 分钟 TTL 且 keepAlive 注册的 close 监听永远不会再触发（close 已过）
+// → interval 泄漏（复现实证：断连 2s 后仍剩 1 个活动 interval）。现 starter 起跑前先查 res.destroyed/
+// writableEnded（已断连不建流），且定时器挂表后任何回收路径（含 close()）都能确定性清零。
+const liveTimers = new Set();
+function untrackTimers() { // close() 全量回收：clearTimeout/clearInterval 同 ID 互调安全（Node 同一底层定时器队列）
+  for (const t of Array.from(liveTimers)) { clearTimeout(t); clearInterval(t); }
+  liveTimers.clear();
+}
 // keep-open 共用壳：首吐 + 250ms 周期续吐 + 断开/TTL 回收（直流/ICY/慢流共用）
 function keepAlive(res, tick) {
+  if (res.destroyed || res.writableEnded) return; // 已断连/已结束（含延迟 starter 起跑前）不再建 interval/TTL
   tick(true);
   const iv = setInterval(() => tick(false), 250);
-  const ttl = setTimeout(() => { try { res.end(); } catch (_) {} }, STREAM_TTL_MS);
-  res.on('close', () => { clearInterval(iv); clearTimeout(ttl); });
+  const rm = () => { clearInterval(iv); clearTimeout(ttl); liveTimers.delete(iv); liveTimers.delete(ttl); };
+  const ttl = setTimeout(() => { rm(); try { res.end(); } catch (_) {} }, STREAM_TTL_MS);
+  liveTimers.add(iv); liveTimers.add(ttl);
+  res.on('close', rm);
 }
 const audioHead = res => res.writeHead(200, { 'Content-Type': 'audio/mpeg' });
 
@@ -167,7 +180,8 @@ const HANDLERS = {
   '/icy.mp3': res => { // 首帧即达 + 600ms 换歌帧 + 周期续吐（icy-br 走响应头）
     res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'icy-metaint': String(METAINT), 'icy-br': '128' });
     res.write(ICY_A);
-    const t = setTimeout(() => { try { res.write(ICY_B); } catch (_) {} }, 600);
+    const t = setTimeout(() => { liveTimers.delete(t); try { res.write(ICY_B); } catch (_) {} }, 600);
+    liveTimers.add(t); // 挂表：close() 统一回收（600ms 单发自完成，主要防挂起响应被 close 时遗留）
     keepAlive(res, first => { if (!first) res.write(ICY_B); });
     res.on('close', () => clearTimeout(t));
   },
@@ -181,10 +195,13 @@ const HANDLERS = {
     res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
     res.end(lines.join('\n') + '\n');
   },
-  '/slow.mp3': res => { audioHead(res); setTimeout(() => keepAlive(res, first => { // 建流 1.5s 后才吐字节
-    if (first) res.write(mp3Chunk(60)); else res.write(mp3Chunk(16)); }), 1500); },
+  '/slow.mp3': res => { audioHead(res); // 建流 1.5s 后才吐字节（starter 挂表 + 起跑前查断连，review#40 P2）
+    const starter = setTimeout(() => { liveTimers.delete(starter); keepAlive(res, first => {
+      if (first) res.write(mp3Chunk(60)); else res.write(mp3Chunk(16)); }); }, 1500);
+    liveTimers.add(starter); },
   '/drop.mp3': res => { audioHead(res); res.write(Buffer.alloc(8, 0x07)); // 头部 + 几字节先出再断（destroy 过早会连头吞掉）
-    setTimeout(() => { try { res.destroy(); } catch (_) {} }, 150); },
+    const t = setTimeout(() => { liveTimers.delete(t); try { res.destroy(); } catch (_) {} }, 150);
+    liveTimers.add(t); },
   '/fake.mp3': res => { audioHead(res); res.end(Buffer.alloc(336, 0x5A)); }, // 336B：可建连、不足一帧、不可解
   '/html.mp3': res => { res.writeHead(200, { 'Content-Type': 'text/html' });
     res.end('<html><body>502 Bad Gateway</body></html>'); },
@@ -228,6 +245,7 @@ function start() { // 程序化入口（测试编排 require）：0.0.0.0 随机
         url: 'http://127.0.0.1:' + port,
         routes: ROUTES.map(r => r[0]),
         close: () => new Promise(ok => {
+          untrackTimers(); // 先清挂起定时器（延迟 starter/interval/TTL）再断连——挂起延迟响应不再复活（review#40 P2）
           for (const c of open.slice()) { try { c.destroy(); } catch (_) {} }
           server.close(ok);
         }),
@@ -236,7 +254,7 @@ function start() { // 程序化入口（测试编排 require）：0.0.0.0 随机
   });
 }
 
-module.exports = { FIXTURE_VERSION, ROUTES, start };
+module.exports = { FIXTURE_VERSION, ROUTES, start, pendingTimers: () => liveTimers.size }; // pendingTimers：测试断言定时器归零用（review#40 P2）
 
 if (require.main === module) { // 独立 CLI：--list 打印路由清单；否则常驻并打印协议行（workflow 解析口径）
   if (process.argv.indexOf('--list') >= 0) {

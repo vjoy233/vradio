@@ -46,6 +46,26 @@ const renameRetry = (from, to, cb, n = 3) => fs.rename(from, to, e => {
   if (e && (e.code === 'EPERM' || e.code === 'EACCES') && n > 0) return setTimeout(() => renameRetry(from, to, cb, n - 1), 50);
   cb(e);
 });
+// 统一原子写 helper（review#40 / #37 review P2-2 转交）：tmp+rename+短重试+失败回收一条龙，七条写路径
+// （my-radio 追加/整替、store、quality 合并/覆盖、listen-stats 合并/覆盖）全走这里——
+// · writeFile 或 rename 最终失败：unlink 本次自己拥有的 tmp（tmpOf 名含 pid+序号，只清自己的、不碰
+//   其他实例/其他进程的 tmp），data/ 不再留含个人数据的 tmp 孤儿（旧版每次 rename 最终失败遗留一个，
+//   恢复后也不回收）；unlink ENOENT（rename 恰好成功后走不到/竞态）无害；
+// · renameRetry（EPERM/EACCES 3×50ms）语义原样保留在链内；重试期间 tmp 已写出完整内容——
+//   中途进程被杀仍退化为「旧文件完好 + tmp 孤儿」，与原行为一致（tmp 由下次启动清理不在本 helper 职责）；
+// · 状态推进（rev/缓存/响应）只在各路径成功分支做——失败路径原文件字节与内存 rev 一律不动（原纪律），
+//   回调/响应语义不变（ok:false 恰一次、串行队列照常推进）。
+function atomicWrite(target, content, cb) {
+  const tmp = tmpOf(target);
+  const drop = () => fs.unlink(tmp, () => {}); // 失败回收：仅本次拥有的 tmp
+  fs.writeFile(tmp, content, e => {
+    if (e) { drop(); return cb(e); }
+    renameRetry(tmp, target, e2 => {
+      if (e2) { drop(); return cb(e2); } // rename 成功后 tmp 已不存在，不走此分支
+      cb(null);
+    });
+  });
+}
 // Host 头白名单（audit A3，防 DNS rebinding）：回环监听（默认）下只认本机名——rebinding 攻击里页面
 // Origin==Host==攻击者域名，所有 Origin 比对失效，从握手层直接拒绝；HOST=0.0.0.0 显式局域网档自担
 // 风险不校验；HOST 指定具体地址时该地址随行放行（127.0.0.2 等其它环回变形会被拒，属可接受收紧）
@@ -102,9 +122,7 @@ function myStationWrite(n, u, c) {
     if (at >= 0) lines.splice(at + 1, 0, `${n},${u}`); // 已有该分类节：节内插入
     else lines.push('', head, `${n},${u}`); // 新分类：尾部开节
     const out = lines.join('\r\n').replace(/^\r\n/, '') + '\r\n';
-    const tmp = tmpOf(MY_FILE);
-    fs.writeFile(tmp, out, e => e ? done({ ok: false, error: '写入失败' })
-      : renameRetry(tmp, MY_FILE, e2 => done(e2 ? { ok: false, error: '写入失败' } : { ok: true })));
+    atomicWrite(MY_FILE, out, e => done(e ? { ok: false, error: '写入失败' } : { ok: true }));
   })).catch(() => ({ ok: false, error: '写入失败' }));
 }
 
@@ -113,9 +131,7 @@ function myStationWrite(n, u, c) {
 function myRadioReplace(lines) {
   return myQ = myQ.then(() => new Promise(done => {
     const out = lines.length ? lines.join('\r\n') + '\r\n' : '';
-    const tmp = tmpOf(MY_FILE);
-    fs.writeFile(tmp, out, e => e ? done({ ok: false, error: '写入失败' })
-      : renameRetry(tmp, MY_FILE, e2 => done(e2 ? { ok: false, error: '写入失败' } : { ok: true })));
+    atomicWrite(MY_FILE, out, e => done(e ? { ok: false, error: '写入失败' } : { ok: true }));
   })).catch(() => ({ ok: false, error: '写入失败' }));
 }
 
@@ -139,15 +155,14 @@ function storeRead() { // 懒加载：首访问读盘；坏文件视为空库（
 function storeWrite(data) {
   return storeQ = storeQ.then(() => new Promise(done => {
     storeRead(); // 先装载磁盘态（AIbot P2-1）：rev 只在 GET 路径懒装载——重启后首请求若是 POST 会从 0 重发号，旧窗口高 rev 镜像被静默压掉，违反「rev 服务端唯一发号」公理
-    const rev = storeRev + 1, out = JSON.stringify({ rev, data }), tmp = tmpOf(STORE_FILE);
+    const rev = storeRev + 1, out = JSON.stringify({ rev, data });
     fs.mkdir(DATA_DIR, { recursive: true }, e => {
       if (e) return done({ ok: false, error: '写入失败' });
-      fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
-        : renameRetry(tmp, STORE_FILE, e3 => {
-          if (e3) return done({ ok: false, error: '写入失败' });
-          storeRev = rev; storeCache = { rev, data };
-          done({ ok: true, rev });
-        }));
+      atomicWrite(STORE_FILE, out, e2 => {
+        if (e2) return done({ ok: false, error: '写入失败' }); // 失败路径：rev/缓存不动，tmp 已由 helper 回收
+        storeRev = rev; storeCache = { rev, data };
+        done({ ok: true, rev });
+      });
     });
   })).catch(() => ({ ok: false, error: '写入失败' }));
 }
@@ -235,15 +250,14 @@ function qReplace(clean) { // 覆盖写 data（去重日志保留：旧 op 重�
   return qQ = qQ.then(() => new Promise(done => {
     const st = JSON.parse(JSON.stringify(qRead()));
     st.data = clean;
-    const rev = st.rev + 1, out = JSON.stringify(st), tmp = tmpOf(QUALITY_FILE);
+    const rev = st.rev + 1, out = JSON.stringify(st);
     if (Buffer.byteLength(out) > Q_MAX) return done({ ok: false, error: 'quality sidecar 超过 2MB 硬上限' });
     fs.mkdir(DATA_DIR, { recursive: true }, e => {
       if (e) return done({ ok: false, error: '写入失败' });
-      fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
-        : renameRetry(tmp, QUALITY_FILE, e3 => {
-          if (e3) return done({ ok: false, error: '写入失败' });
-          qCache = st; qCache.rev = rev; done({ ok: true, rev });
-        }));
+      atomicWrite(QUALITY_FILE, out, e2 => {
+        if (e2) return done({ ok: false, error: '写入失败' }); // 失败路径：rev/缓存不动，tmp 已由 helper 回收
+        qCache = st; qCache.rev = rev; done({ ok: true, rev });
+      });
     });
   })).catch(() => ({ ok: false, error: '写入失败' }));
 }
@@ -272,15 +286,14 @@ function qCommit(ops, keep) { // 串行：克隆当前态 → 应用（qApplyOp�
     const rev = st.rev + 1;
     const serialize = () => JSON.stringify({ v: 1, rev, ops: st.ops, ats: st.ats, floorAt: st.floorAt, data: st.data }); // 水位线随盘持久
     qTrim(st.data, keep, () => Buffer.byteLength(serialize()), Q_MAX); // 2MB 逼近时按淘汰序裁（每 2 步复核防过冲）
-    const out = serialize(), tmp = tmpOf(QUALITY_FILE);
+    const out = serialize();
     if (Buffer.byteLength(out) > Q_MAX) return done({ ok: false, error: 'quality sidecar 超过 2MB 硬上限', code: 'too-large' }); // 无法合并（含 2MB 硬上限）→ 409（路由按 code 映射；写失败仍 200 ok:false——临时错误非协议拒）
     fs.mkdir(DATA_DIR, { recursive: true }, e => {
       if (e) return done({ ok: false, error: '写入失败' });
-      fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
-        : renameRetry(tmp, QUALITY_FILE, e3 => {
-          if (e3) return done({ ok: false, error: '写入失败' });
-          qCache = st; qCache.rev = rev; done({ ok: true, rev, applied, rejected });
-        }));
+      atomicWrite(QUALITY_FILE, out, e2 => {
+        if (e2) return done({ ok: false, error: '写入失败' }); // 失败路径：rev/缓存不动，tmp 已由 helper 回收
+        qCache = st; qCache.rev = rev; done({ ok: true, rev, applied, rejected });
+      });
     });
   })).catch(() => ({ ok: false, error: '写入失败' }));
 }
@@ -345,15 +358,14 @@ function lsCommit(ops) { // 串行：克隆当前态 → op.id 去重 + 日桶�
     const rev = st.rev + 1;
     lsTrimDays(st.days);
     const serialize = () => JSON.stringify({ v: 1, rev, ops: st.ops, days: st.days });
-    const out = serialize(), tmp = tmpOf(LS_FILE);
+    const out = serialize();
     if (Buffer.byteLength(out) > LS_MAX) return done({ ok: false, error: 'listen-stats sidecar 超过 2MB 硬上限' });
     fs.mkdir(DATA_DIR, { recursive: true }, e => {
       if (e) return done({ ok: false, error: '写入失败' });
-      fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
-        : renameRetry(tmp, LS_FILE, e3 => {
-          if (e3) return done({ ok: false, error: '写入失败' });
-          lsCache = st; lsCache.rev = rev; done({ ok: true, rev, applied });
-        }));
+      atomicWrite(LS_FILE, out, e2 => {
+        if (e2) return done({ ok: false, error: '写入失败' }); // 失败路径：rev/缓存不动，tmp 已由 helper 回收
+        lsCache = st; lsCache.rev = rev; done({ ok: true, rev, applied });
+      });
     });
   })).catch(() => ({ ok: false, error: '写入失败' }));
 }
@@ -390,15 +402,14 @@ function lsReplace(clean) { // 覆盖写 days（op 去重日志保留：旧 op �
   return lsQ = lsQ.then(() => new Promise(done => {
     const st = JSON.parse(JSON.stringify(lsRead()));
     st.days = clean;
-    const rev = st.rev + 1, out = JSON.stringify(st), tmp = tmpOf(LS_FILE);
+    const rev = st.rev + 1, out = JSON.stringify(st);
     if (Buffer.byteLength(out) > LS_MAX) return done({ ok: false, error: 'listen-stats sidecar 超过 2MB 硬上限' });
     fs.mkdir(DATA_DIR, { recursive: true }, e => {
       if (e) return done({ ok: false, error: '写入失败' });
-      fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
-        : renameRetry(tmp, LS_FILE, e3 => {
-          if (e3) return done({ ok: false, error: '写入失败' });
-          lsCache = st; lsCache.rev = rev; done({ ok: true, rev });
-        }));
+      atomicWrite(LS_FILE, out, e2 => {
+        if (e2) return done({ ok: false, error: '写入失败' }); // 失败路径：rev/缓存不动，tmp 已由 helper 回收
+        lsCache = st; lsCache.rev = rev; done({ ok: true, rev });
+      });
     });
   })).catch(() => ({ ok: false, error: '写入失败' }));
 }

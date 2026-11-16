@@ -84,7 +84,9 @@ const pickPort = () => new Promise((resolve, reject) => { // 82xx 段随机起�
   const shot = async name => { await page.mouse.move(2, 2); await page.screenshot({ path: path.join(output, name) }); report.screenshots.push(name); };
   const clr = () => page.evaluate(async () => { // 清本地镜像 + 服务端 store（remember 经 300ms debounce 落 /api/store；首轮 boot 的 GET 与清空有竞态——清两次压掉回灌）
     try { localStorage.clear(); } catch (_) {}
-    try { await fetch('/api/store', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: {} }) }); } catch (_) {}
+    // 全空快照 POST 已被服务端空覆盖防呆拒（issue #42：rev>0 拒 409）——全量覆盖语义下单键空值即清库，
+    // 且这正是「合法删除靠值表达」的口径（favs '[]'）
+    try { await fetch('/api/store', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: { 'radio.favs': '[]' } }) }); } catch (_) {}
   });
   const waitBoot = () => page.waitForFunction(() => typeof App !== 'undefined' && App.state.stations.length > 50, null, { timeout: 20000 });
   const boot = async () => { // 清态进入（两轮）：竞态防御见 clr；等装配完成（全库 1600+ 或快照兜底）

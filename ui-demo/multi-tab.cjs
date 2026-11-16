@@ -5,7 +5,8 @@
    · context1 双 page（pa/pb）= 真·同浏览器双标签——共享 localStorage 镜像 + BroadcastChannel 跨页可达，
      承载活广播收敛 / 共享镜像对抗写 / 断网 dirty 重推；
    · context2 单 page（pc）= 真·第二浏览器（独立存储分区）——BroadcastChannel 不跨 context（实测 pulls=0），
-     承载对账收敛（页内 Store.pull()，与 boot apply 同链）/ 分区镜像真·last-write-wins / 最终一致舞步。
+     承载空库开局页 unload 防清库（issue #42 回归门，reload 直接触发 beforeunload 链）/ 对账收敛（boot apply
+     同链）/ 分区镜像真·last-write-wins / 最终一致舞步。
    实测语义基线（写入断言口径，脚本 note 同步留痕）：
    · 同浏览器他页写 → 本页镜像立即收敛（共享存储）+ 广播 pull 后 Store.rev 收敛；App 内存态**不**随广播重载
      ——store.js apply() 以「镜像 ≠ 后端」为重载门槛，共享镜像下两者恒等（memFav=false 实测）——内存收敛走
@@ -193,13 +194,19 @@ const BLOCKED_REQUIREMENTS = [ // 阻塞中的验收要求：修复落地前，�
     check('SC3 镜像互见（A 见 B 的 showdead、B 见 A 的 view）', ca.dead === '1' && cb.view === 'list');
     note('共享镜像下两页 flush 载荷恒相同（后推者胜体现为 rev 单调推进而非数据分叉）；分叉镜像的真·LWW 在 [SD] 跨浏览器档');
 
-    // —— [SD] 跨浏览器真·last-write-wins（分区镜像）+ 双方最终一致 ——
-    // pc 对账用页内 Store.pull()（与 boot apply 同一条「GET→键级比对→applyServerStore」链）而非 reload：
-    // pc 分区镜像在开局空库态只含 boot 自写键，reload 的 beforeunload flush 会以该最小快照清库（真实第二浏览器
-    // 「空库态开页 → 他页写入 → 本页关闭/刷新」数据丢失面，探针实测——记入报告发现项，不在本批修生产代码）。
-    console.log('[SD] 跨浏览器 last-write-wins');
-    await pc.evaluate(() => Store.pull());
+    // —— [SD] 空库开局页 unload 防清库（issue #42 回归门）+ 跨浏览器真·last-write-wins + 双方最终一致 ——
+    // pc 是 [S] 段空库态开局的第二浏览器（独立分区镜像零写、boot 时空库未 apply 过非空数据）：reload 触发的
+    // beforeunload flush 正是 issue #42 场景——修复前以全空快照整库清掉 SA/SB/SC 写入（探针实测发现项）；
+    // 修复后客户端空覆盖门拦下（store.js：不发推改走对账）+ 服务端 rev>0 拒全空快照（server.js 409）双保险，
+    // reload 恢复安全；reload 后 boot 即「pull 后收敛」同链（GET→键级比对→applyServerStore），无需显式 pull。
+    console.log('[SD] 空库开局页 unload 防清库 + 跨浏览器 last-write-wins');
+    const sdBefore = await srvState();
+    await pc.reload(); await waitBoot(pc); // 空库开局页 unload flush(true) 过门——SD0 全景验收
     await pc.waitForFunction(({ k1, k2 }) => App.favKeys().has(k1) && App.favKeys().has(k2), { k1: st1.k, k2: st2.k }, { timeout: 8000 });
+    const sdAfter = await srvState();
+    check('SD0 空库开局页 unload 不清库（issue #42）：他页写入（favs 两台/主题/视图/无效源开关）全数仍在（空覆盖门 + 服务端双保险）',
+      sdAfter['radio.favs'] === sdBefore['radio.favs'] && sdAfter['radio.theme'] === sdBefore['radio.theme']
+      && sdAfter['radio.view'] === sdBefore['radio.view'] && sdAfter['radio.showdead'] === sdBefore['radio.showdead']);
     const rc0 = await pc.evaluate(() => ({ theme: App.state.theme, rev: Store.rev }));
     check('SD1 第二浏览器对账收敛（两收藏/主题随主源，内存经 apply diff 重载）', rc0.theme === 'dark' && rc0.rev === (await getJson(base + 'api/store')).rev);
     await new Promise(r => setTimeout(r, 1200)); // quiesce：pc 对账 applyServerStore→rebind 回写链的 debounce flush 落地（其快照缺 vol，先落地再写 vol 防互踩）
@@ -213,9 +220,10 @@ const BLOCKED_REQUIREMENTS = [ // 阻塞中的验收要求：修复落地前，�
     check('SD4 A 本地镜像不丢（失败不丢镜像保证的常态面）', (await counts(pa)).vol === '0.8');
     await pc.evaluate(() => Store.set('radio.showdead', '1')); await pc.evaluate(() => Store.flush());
     await new Promise(r => setTimeout(r, 1200)); // quiesce：pc flush/回写链全落地
-    // 收敛舞步（实测语义：跨浏览器 reload 的 beforeunload flush 会以本页陈旧快照清掉他页写入——LWW 自带
-    // 「最后同步者胜」，收敛必须走「落后页 pull 对手态（apply 键级比对：新值覆盖、后端缺键保本地）→ 推全量」链，
-    // 不能用 reload（见报告发现项）。pa pull 后其镜像 = 并集 {vol 本地保留, grid/showdead 自 pc}：
+    // 收敛舞步（实测语义：跨浏览器 reload 的 beforeunload flush 会以本页**非空陈旧**快照清掉他页写入——
+    // 这是 LWW 自带「最后同步者胜」的既有语义（issue #42 明确不批增量对账/lastSeenRev 改造），与空库开局页
+    // 的全空 wipe（SD0 门管）不同面；收敛必须走「落后页 pull 对手态（apply 键级比对：新值覆盖、后端缺键保
+    // 本地）→ 推全量」链，不能用 reload。pa pull 后其镜像 = 并集 {vol 本地保留, grid/showdead 自 pc}：
     await pa.evaluate(() => Store.pull());
     await pa.waitForFunction(() => Store.get('radio.view') === 'grid', null, { timeout: 8000 }); // apply 完成信号（pc 的 grid 到达）
     const paMid = await counts(pa);

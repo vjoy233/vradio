@@ -19,6 +19,8 @@
 //   [11] apply 键级合并：缺键保留绝不 removeItem / 覆盖 / 仅 baselineProg 变化不触发（AIbot P3-3）
 //   [12] 服务端 rev 只存不比（客户端不做 rev 仲裁）
 //   [13] 首次迁移：后端空 + 本地有镜像 → boot 静默 flush 推上去（老用户无感）
+//   [14] 空覆盖门（issue #42）：空库开局页 unload 不以全空快照清库（拦下发 pull 对账）；三个放行面
+//        （本页有写/sawData 见过非空/合法删除空值表达）+ 门后自愈
 //   [15] flush 单飞串行 + 尾随重推：在飞不并发/补发读最新内存/旧快照终态不清新 dirty/keepalive 旁路
 //        （review#37 P1-4 生产修复面；defer 后端手动 release 模拟乱序）
 // 未覆盖项与原因：
@@ -345,8 +347,9 @@ const bodyData = p => JSON.parse(p.body).data;
     assert.ok(posts[0].keepalive, 'unload flush 必须 keepalive=true（可穿 unload）');
     assert.strictEqual(bodyData(posts[0])['radio.vol'], '88', '窗口内改动必须进 body（防关页丢写）');
   });
-  await ok('visibilitychange：hidden=true flush；hidden=false 不 flush', async () => {
+  await ok('visibilitychange：hidden=true flush（有写面）；hidden=false 不 flush', async () => {
     const t = await mkTab({});
+    t.Store.set('radio.vol', '9'); // 有写面：快照非空，断言 flush 机制本身（空快照面归 [14] 门管）
     t.sb.document.hidden = true;
     t.sb.document.dispatch('visibilitychange');
     await drain();
@@ -501,6 +504,62 @@ const bodyData = p => JSON.parse(p.body).data;
     const t = await mkTab({});
     assert.strictEqual(t.Store.mode, 'server', '仍进 server 模式');
     assert.strictEqual(t.be.posts().length, 0, '无镜像不得发迁移 POST');
+  });
+
+  console.log('[14] 空覆盖门（issue #42）：空库开局页不得以全空快照整库覆盖他端写入');
+  await ok('核心面：空库开局页在他页写入后 unload flush → 零 POST + 改走 pull 对账（他端数据拉回镜像）', async () => {
+    const be = mkBackend(); // 空库开局（本页 boot 见空 data）
+    const t = await mkTab({ be });
+    assert.strictEqual(t.Store.sawData, false, '空库开局 sawData 应为 false');
+    be.data = { 'radio.favs': '["他页"]', 'radio.theme': 'dark' }; be.rev = 5; // 此后他页写入后端（本页无 BC 通道/未感知）
+    t.sb._winEv.beforeunload.forEach(fn => fn()); // unload 触发 flush(true)（debounce 规则③）
+    await drain();
+    assert.strictEqual(t.be.posts().length, 0, '全空快照 + 未见过非空数据：必须拦下不发 POST（wipe 面，issue #42 核心）');
+    assert.strictEqual(be.data['radio.favs'], '["他页"]', '后端数据原样（未被空快照覆盖）');
+    const gets = t.be.calls.filter(c => c.m === 'GET');
+    assert.ok(gets.length >= 1, '拦下后必须改走 pull 对账先行（issue #42 A：不发推、先对账）');
+    assert.strictEqual(t.sb.localStorage.getItem('radio.favs'), '["他页"]', '对账把他页数据拉回本页镜像（收敛）');
+    assert.strictEqual(t.Store.sawData, true, 'pull apply 非空数据后 sawData 置位（此后本页恢复正常推送资格）');
+  });
+  await ok('放行面①：空库开局页自己写过键 → 快照非空 → flush 照常 POST（正常 LWW 不受门影响）', async () => {
+    const be = mkBackend();
+    const t = await mkTab({ be });
+    t.Store.set('radio.vol', '55'); // 本页写（快照不再全空）
+    t.sb._winEv.beforeunload.forEach(fn => fn());
+    await drain();
+    assert.strictEqual(t.be.posts().length, 1, '非空快照必须照常推送');
+    assert.strictEqual(be.data['radio.vol'], '55', '本页写入落库');
+  });
+  await ok('放行面②：本页 apply 过非空服务端数据（sawData）→ 即使镜像被清空也不拦（防「合法清空态」误伤）', async () => {
+    const be = mkBackend(); be.data = { 'radio.favs': '["sv"]' }; be.rev = 3; // 开局后端已非空（第二实例晚开 = 常态）
+    const t = await mkTab({ be });
+    assert.strictEqual(t.Store.sawData, true, 'boot 见非空数据即置 sawData');
+    t.Store.KEYS.forEach(k => t.sb.localStorage.removeItem(k)); // 模拟极端清空（业务无删键路径，防未来误拦）
+    await t.Store.flush(); await drain();
+    assert.strictEqual(t.be.posts().length, 1, 'sawData 页的全空快照不拦（该页见过数据，全空是其自身明确状态）');
+    assert.deepStrictEqual(be.data, {}, 'POST 照常全量覆盖（LWW 语义保持）');
+  });
+  await ok('放行面③：合法删除零回归——收藏清空（空数组值）快照照常 POST，键在值空不是全空', async () => {
+    const be = mkBackend(); be.data = { 'radio.favs': '["a"]', 'radio.vol': '30' }; be.rev = 2;
+    const t = await mkTab({ be });
+    t.Store.set('radio.favs', '[]'); // 业务唯一删除语义：值表达（非删键）
+    t.sb._winEv.beforeunload.forEach(fn => fn());
+    await drain();
+    assert.strictEqual(t.be.posts().length, 1, '空数组值快照必须照常推送（门只看键全缺，不看值空）');
+    assert.strictEqual(be.data['radio.favs'], '[]', '收藏清空落库（合法删除）');
+    assert.strictEqual(be.data['radio.vol'], '30', '同快照其余键随行');
+  });
+  await ok('门后自愈：被拦页对账拉回数据后再写 → flush 恢复正常推送（无死锁/无卡态）', async () => {
+    const be = mkBackend();
+    const t = await mkTab({ be });
+    be.data = { 'radio.favs': '["x"]' }; be.rev = 1;
+    t.sb._winEv.beforeunload.forEach(fn => fn()); // 拦 + pull 对账
+    await drain();
+    t.Store.set('radio.theme', 'light'); // 本页此后正常写
+    await t.Store.flush(); await drain();
+    assert.strictEqual(t.be.posts().length, 1, '对账后（sawData=true、快照非空）推送恢复正常');
+    assert.strictEqual(be.data['radio.theme'], 'light', '写入落库');
+    assert.strictEqual(be.data['radio.favs'], '["x"]', '拉回的他页数据随本页快照汇合（缺键保留语义）');
   });
 
   console.log('[15] flush 单飞串行 + 尾随重推（review#37 P1-4：乱序响应不得清掉新改动的 dirty 资格）');

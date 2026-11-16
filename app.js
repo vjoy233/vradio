@@ -754,6 +754,10 @@ const App = {
 
   /* ---------- 收藏/最近的 URL 回绑与存取（债务 1） ---------- */
   rebind() {
+    // 回绑前内存态快照：回绑产生实际变化才落盘（audit B1「白做一遍 3 次落盘」的根治）。空库开局页不得
+    // 被无条件写入的空结构值（favs '[]'/health '{}'）污染镜像——那会让快照非空，绕过 Store 空覆盖门
+    // （issue #42：跨实例空页 unload 以「空结构快照」整库覆盖他端数据）
+    const jf0 = JSON.stringify(this.favs), jr0 = JSON.stringify(this.recents), jh0 = JSON.stringify(this.healthMarks);
     const find = e => this.state.stations.find(s => keyOf(s) === e.k)
       || (e.u.length && this.state.stations.find(s => s.u.some(u => e.u.includes(u))));
     const nf = [];
@@ -780,8 +784,10 @@ const App = {
       if (st) { st.health = 'dead'; st.perm = e.perm; hm[keyOf(st)] = { ...e, u: st.u.slice(0, 6) }; }
       else if (Date.now() - e.t0 < 90 * DAY) hm[k] = e;
     }
-    this.healthMarks = hm; this.saveHealth();
-    this.saveFavs(); this.saveRecents();
+    this.healthMarks = hm;
+    if (JSON.stringify(this.favs) !== jf0) this.saveFavs(); // 实际变化才落盘（无变化 = 无信息量，等价零写）
+    if (JSON.stringify(this.recents) !== jr0) this.saveRecents();
+    if (JSON.stringify(this.healthMarks) !== jh0) this.saveHealth();
     this.qualityKeep(); // B2：收藏/最近回绑后刷新 trim 保护集
   },
   favKeys() { return new Set(this.favs.map(f => f.k)); },

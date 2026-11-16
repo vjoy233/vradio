@@ -718,6 +718,10 @@ http.createServer((req, res) => {
           if (typeof v !== 'string' || v.length > max) return json(413, { ok: false, error: `数据键 ${k} 超限（>${Math.round(max / 1024)}KB），写入被拒绝` }); // AIbot P2-3：白名单键超限显式拒绝——客户端收非 ok 置 dirty 保镜像；静默丢键会让对账把镜像一起抹掉
           clean[k] = v;
         }
+        // 空覆盖防呆（issue #42 B）：全空快照 + 非空库（rev>0）= 跨实例空页 unload 的 wipe 面，显式拒绝。
+        // 合法删除语义靠值表达（favs '[]' / cfg '{}'），键全缺不承载任何合法状态；rev=0 空库不拦
+        // （新页无数据可丢，拦了反而让「空+空」死锁）。与客户端空覆盖门（store.js flush）互为双保险
+        if (!Object.keys(clean).length && storeRead().rev > 0) return json(409, { ok: false, code: 'empty-overwrite', error: '拒绝以全空快照覆盖非空存储（合法删除请以空值表达：favs "[]"/cfg "{}"）' });
         storeWrite(clean).then(r => json(200, r)); // rev 在写成功后发（响应携带新号）
       });
       return;

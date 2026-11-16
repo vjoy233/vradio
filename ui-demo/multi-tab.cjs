@@ -54,7 +54,7 @@ const KNOWN_FAILURES = [
     actual: 'PR #40 原基线：内存不随广播重载（apply 旧门槛「镜像 ≠ 后端」，共享镜像下恒等）只能 reload 兜底；rebase 后已修——71fbdf9 review#37 P1-2 改比对「本页内存基线」而非共享镜像，广播 pull 即收敛（[KF] 段 KF1 探针实证）',
     tracking: '链内 71fbdf9 review#37 P1-2 已修（原挂 issue #42 关联面）；回归守卫 = expectFixed KF1' },
   { id: 'KF2', status: 'open', scenario: 'SD 段（跨浏览器第二浏览器）', expected: '他端写入后本端自动收敛；陈旧 unload 不覆盖他端写入',
-    actual: '跨浏览器无 BC 通道：reload/关闭的 beforeunload flush 以本页陈旧快照覆盖他端写入（空覆盖门只在服务端拦全空快照，非空陈旧快照仍 LWW 覆盖）；收敛须手动 Store.pull()+flush 舞步（SD5/SD5a/SD6 按显式 pull 断言）。⚠ 探针误报面：probe 靠 kf 键入取 sticky activation，缺激活则 beforeunload 不派发、陈旧 flush 没发，服务端 vol 停 0.66 被误读「意外转绿」（61d1fc4 首轮误报同根因已留痕；reviewer 独立复跑再现同型）——wt40-r2 复跑 3/3 豁免成立（50 断言全过），单次转绿先核 beforeunload 是否派发再判豁免腐化',
+    actual: '跨浏览器无 BC 通道：reload/关闭的 beforeunload flush 以本页陈旧快照覆盖他端写入（空覆盖门只在服务端拦全空快照，非空陈旧快照仍 LWW 覆盖）；收敛须手动 Store.pull()+flush 舞步（SD5/SD5a/SD6 按显式 pull 断言）。⚠ 探针 flaky 面已实证：Chromium unload 期 keepalive fetch 偶发不派发 → 陈旧 flush 没发 → 服务端 vol 停 0.66 被误读「意外转绿」（reviewer 单次转绿 / wt40-r2 复跑 3/3 成立 / 链尾复验单次转绿，三方不一致=概率性）——probe 已加固：服务端 rev 增量核验陈旧 flush 是否真的发出，未发重试一次，两次未发判探针失效记 note（本轮不判 KF2，豁免状态维持）',
     tracking: 'issue #42 + 生产修复批次（跨端收敛协议）' },
   { id: 'KF3', status: 'open', scenario: 'M6（维护冲突「重新加载最新值」）', expected: '重载后输入框显示后端权威值（B 名）',
     actual: '输入框回到上一投影名（round1 落库的 A 名）——远程 cfg.names 改名不经 applySources 不重投 uiStationProjection 的 s.n；草稿丢弃正确但显示陈旧',
@@ -369,11 +369,24 @@ const BLOCKED_REQUIREMENTS = [ // 阻塞中的验收要求：修复落地前，�
     await kd.evaluate(() => { Store.set('radio.vol', '0.66'); Store.flush(); });
     await new Promise(r => setTimeout(r, 600));
     check('KF2 前置：kd 写 vol=0.66 已落服务端', (await srvState())['radio.vol'] === '0.66');
-    await kf.keyboard.press('x'); // 无副作用键（未绑定）——仅取 sticky activation，保证 reload 派发 beforeunload
-    await kf.reload(); await waitBoot(kf);
-    await new Promise(r => setTimeout(r, 1200)); // beforeunload flush POST 落地
-    expectBuggy('KF2', (await srvState())['radio.vol'] === '0.9',
-      '陈旧 unload flush 未再覆盖他页写入（跨端收敛协议已修）——更新 SD 段断言并从 KNOWN_FAILURES 移除 KF2');
+    // ⚠ flaky 探针面加固（review#40-r2 实跑差异：reviewer 单次转绿 / wt40-r2 复跑 3/3 豁免成立 /
+    // 链尾复验单次转绿——三方不一致证明概率性）：Chromium unload 期 keepalive fetch 偶发不派发，
+    // 陈旧 flush 没发出 → 服务端 vol 停 0.66 被误读「协议已修」。以服务端 rev 增量核验「陈旧 flush
+    // 是否真的发出」：未发出重试一次（再键入再 reload），两次都未发出判探针失效（note 记录、本轮
+    // 不判 KF2，豁免状态维持——既不误报转绿也不误报腐化）
+    const kfAttempt = async () => {
+      const rev0 = (await getJson(base + 'api/store')).rev;
+      await kf.keyboard.press('x'); // 无副作用键（未绑定）——仅取 sticky activation，保证 reload 派发 beforeunload
+      await kf.reload(); await waitBoot(kf);
+      await new Promise(r => setTimeout(r, 1200)); // beforeunload flush POST 落地
+      return (await getJson(base + 'api/store')).rev > rev0; // rev 推进 = 陈旧 flush 确实发出
+    };
+    if (await kfAttempt() || await kfAttempt()) {
+      expectBuggy('KF2', (await srvState())['radio.vol'] === '0.9',
+        '陈旧 unload flush 未再覆盖他页写入（跨端收敛协议已修）——更新 SD 段断言并从 KNOWN_FAILURES 移除 KF2');
+    } else {
+      note('KF2 探针失效：两次 reload 的 beforeunload keepalive 均未派发（flaky 面）——本轮不判 KF2，豁免状态维持');
+    }
     await kd.close(); await ke.close(); await kf.close();
 
     check('Z1 全程零 pageerror / 非资源 console error（三页）', report.errors.length === 0);

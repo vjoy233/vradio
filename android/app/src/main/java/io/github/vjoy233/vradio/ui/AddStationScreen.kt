@@ -54,7 +54,7 @@ fun AddStationScreen(vm: AppVm) {
       .verticalScroll(rememberScrollState()),
   ) {
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-      TextButton(onClick = { vm.nav.value = Nav.LIST }) { Text("← 返回") }
+      TextButton(onClick = { vm.closeSecondary() }) { Text("← 返回") }
       Text("添加电台", fontWeight = FontWeight.Bold, fontSize = 17.sp)
     }
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
@@ -87,7 +87,7 @@ fun AddStationScreen(vm: AppVm) {
         onClick = {
           vm.addStation(name, selCat, custom, url) {
             name = ""; url = ""; custom = ""
-            vm.nav.value = Nav.LIST
+            vm.closeSecondary()
           }
         },
         enabled = !addBusy && name.isNotBlank() && url.isNotBlank(),

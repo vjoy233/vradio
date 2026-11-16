@@ -92,7 +92,15 @@ import java.util.concurrent.atomic.AtomicInteger
    纪律：全部主线程交互，网络/体检在 viewModelScope + Dispatchers.IO；
    toast = 后台任务反馈、status = 用户主动操作反馈（sync.js/App.toast 分工，两通道不双写）。 */
 
-enum class Nav { LIST, SETTINGS, ADD }   // 手写导航态（无导航库，契约）
+/** 各目的地页内 UI 瞬态（P0，方案 §6.1）：搜索词/分类/网格视图/滚动位——纯进程内保留（destinationUi map），
+    不落 radio.*（零新持久键），进程被杀恢复默认 */
+data class DestinationUiState(
+  val query: String = "",
+  val category: String = "全部",
+  val grid: Boolean = false,
+  val firstVisibleItem: Int = 0,
+  val firstVisibleOffset: Int = 0,
+)
 
 class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
@@ -117,12 +125,39 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   val showDead = MutableStateFlow(false)
   val theme = MutableStateFlow("auto")
   private val stamp = MutableStateFlow(0)                    // 渲染哨兵（app.js state.stamp）
-  val nav = MutableStateFlow(Nav.LIST)
+
+  /* ---------- 根导航态（P0，方案 §6.1；契约在 ui/Navigation.kt）：目的地/次级页/全屏播放器/搜索展开
+     + 各目的地页内 UI 瞬态 map——全部纯 UI 瞬态不持久化（零新 radio.* 键），进程死恢复默认 ---------- */
+  val destination = MutableStateFlow(Destination.LIBRARY)
+  val secondary = MutableStateFlow<SecondaryRoute?>(null)
+  val secondaryFrom = MutableStateFlow(Destination.LIBRARY)  // 次级页来源目的地（返回回到来源页口径，Q11/Q15）
+  val playerExpanded = MutableStateFlow(false)
+  val searchExpanded = MutableStateFlow(false)
+  val destinationUi = MutableStateFlow<Map<Destination, DestinationUiState>>(emptyMap())
+
   val showSrc = MutableStateFlow(false)
   val srcKey = MutableStateFlow<String?>(null)                // 选源浮层打开时的台 key（换台即收起，srcPopK 同款）
   val showSongs = MutableStateFlow(false)
   val locate = MutableStateFlow<String?>(null)               // 回到正在播（web locatePlaying）
   val status = MutableStateFlow("")                          // 用户主动操作反馈（#status 同款）
+
+  /* ---------- 根导航动作（P0，方案 §6.1）：守卫/返回裁决走 ui/Navigation.kt 契约纯函数 ---------- */
+
+  /** 顶层目的地切换：发现关闭时去发现 = 回退电台（navigateGuard 契约同款） */
+  fun navigate(to: Destination) { destination.value = navigateGuard(to) }
+
+  /** 次级页开合：先记来源目的地再设 secondary（返回时回跳来源页，Q11/Q15） */
+  fun openSettings() { secondaryFrom.value = destination.value; secondary.value = SecondaryRoute.SETTINGS }
+  fun openAddStation() { secondaryFrom.value = destination.value; secondary.value = SecondaryRoute.ADD_STATION }
+  fun closeSecondary() { secondary.value = null }
+
+  /** 各目的地页内 UI 瞬态快照（toMutableMap 拷贝替换触发流更新）：离开页面前/进次级页前调一次，不在滚动帧回调里写 */
+  fun saveDestinationUi(d: Destination, ui: DestinationUiState) {
+    destinationUi.value = destinationUi.value.toMutableMap().apply { put(d, ui) }
+  }
+
+  fun openPlayer() { playerExpanded.value = true }
+  fun closePlayer() { playerExpanded.value = false }
 
   /* ---------- 进行态/结果文案 ---------- */
   val healthBusy = MutableStateFlow(false); val healthProg = MutableStateFlow(""); val healthResult = MutableStateFlow("")
@@ -257,6 +292,23 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     .distinctUntilChanged()
     .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
 
+  /* 收藏页投影（P0 最小版，方案 §5.5 子集；P1 升级 FavoriteListUi 全量）：按收藏写入序遍历 lib.favs——
+     键优先 URL 兜底解析（Library.resolveEntry 同款），休眠孤儿/手动隐藏跳过、按键去重（回绑可归并同台）；
+     顺序语义 = 既有实现遍历序（Web scopeFavRecent/logosEnsure 同款，「最新收藏置顶」留 P1 全量版裁决）；
+     combine(stamp) 与 listUi 同款哨兵驱动，收藏/装配/维护配置变更自动重算，composable 不直读 lib */
+  val favorites: StateFlow<List<Station>> = combine(stamp) {
+    runCatching {
+      val seen = HashSet<String>(); val out = ArrayList<Station>()
+      for (f in lib.favs) {
+        val s = runCatching { lib.resolve(f.k) }.getOrNull() ?: (
+          if (f.u.isEmpty()) null else runCatching { lib.stations.firstOrNull { st -> st.u.any { it in f.u } } }.getOrNull())
+        if (s == null || s.hidden || !seen.add(s.key)) continue
+        out.add(s)
+      }
+      out
+    }.getOrDefault(emptyList())
+  }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
   /* 添加电台页的分类候选（审计 P3：catOptions() 直读无订阅，boot 未完成进页则 chips 永远空——从 listUi 派生响应式） */
   val addCats: StateFlow<List<String>> = listUi
     .map { lu -> lu.chips.drop(3).map { c -> c.first } }                 // 掐头去「全部/★收藏/最近」
@@ -372,7 +424,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       val u = i.data?.toString()?.trim().orEmpty()
       if (u.startsWith("http://", ignoreCase = true) || u.startsWith("https://", ignoreCase = true)) {   // AIbot P3：浏览器转发可能保留大写 scheme
         addPreset.value = u
-        if (booted) { nav.value = Nav.ADD; toast("已填入流地址，探活通过后点「添加」") }
+        if (booted) { openAddStation(); toast("已填入流地址，探活通过后点「添加」") }
       }
     }
   }
@@ -387,7 +439,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         if (s != null) startPlay(s)
         else { resumeLastIfWanted(); status.value = "快捷方式指向的电台已不在列表中" }
       }
-      addPreset.value != null -> { nav.value = Nav.ADD; toast("已填入流地址，探活通过后点「添加」") }   // AIbot P3：冷启动接流与热路径反馈一致
+      addPreset.value != null -> { openAddStation(); toast("已填入流地址，探活通过后点「添加」") }   // AIbot P3：冷启动接流与热路径反馈一致
       else -> resumeLastIfWanted()
     }
   }
@@ -757,7 +809,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     val s = cur.station ?: return
     val invisible = runCatching { filteredList(showDead.value).none { it.key == s.key } }.getOrDefault(true)
     if (invisible) { cat.value = "全部"; keyword.value = "" }
-    nav.value = Nav.LIST
+    secondary.value = null; destination.value = Destination.LIBRARY   // 旧 nav=LIST 平移：回电台页（次级页开着也一并收回）
     locate.value = s.key
   }
 

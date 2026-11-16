@@ -90,7 +90,7 @@ fun SettingsScreen(vm: AppVm) {
 
   Column(Modifier.fillMaxSize().background(pal.bg).statusBarsPadding()) {
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-      TextButton(onClick = { vm.nav.value = Nav.LIST }) { Text("← 返回") }
+      TextButton(onClick = { vm.closeSecondary() }) { Text("← 返回") }
       Text("设置", fontWeight = FontWeight.Bold, fontSize = 17.sp)
     }
     LazyColumn(
@@ -178,7 +178,7 @@ fun SettingsScreen(vm: AppVm) {
             Text("添加自定义电台", fontSize = 15.sp, color = pal.tx)
             Info("先探活（拒绝假流/死链），通过后写入个人列表 my-radio.txt（同步不覆盖）")
           }
-          TextButton(onClick = { vm.nav.value = Nav.ADD }) { Text("添加") }
+          TextButton(onClick = { vm.openAddStation() }) { Text("添加") }
         }
       }
       item {

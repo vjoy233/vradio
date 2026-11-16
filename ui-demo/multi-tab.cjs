@@ -15,10 +15,10 @@
    播放样本：脚本自建本地静音 WAV 流（127.0.0.1 83xx 端口，真机 headless Chromium 实测可到 playing；
    真实公网流不可保证），点播 → playing → quality/listenstats 服务端样本全走真实客户端链。
    产物：docs/test-reports/multi-tab/validation.json（失败截图 docs/test-reports/multi-tab/）。
-   已知缺陷豁免（review#40 P2）：KNOWN_FAILURES/BLOCKED_REQUIREMENTS 结构化数组随报告输出——同页内存
-   reload 兜底（KF1）/跨浏览器陈旧 unload 覆盖（KF2）/M6 旧投影名（KF3）/生产修复挂账（KF4），
-   全 PASS 不代表活广播/App 收敛/真实 reload LWW 已验收；expectBuggy 运行期守卫：特征化场景意外转绿
-   即报错提示移除豁免。
+   已知缺陷豁免（review#40 P2）：KNOWN_FAILURES/BLOCKED_REQUIREMENTS 结构化数组随报告输出——跨浏览器
+   陈旧 unload 覆盖（KF2）/M6 旧投影名（KF3）/生产修复挂账（KF4）按现状特征化断言（全 PASS 不代表
+   跨端收敛/投影重投已验收）；同页内存不同步（KF1）已随链内 review#37 P1-2 修复转 expectFixed 回归守卫；
+   守卫口径：expectBuggy 特征化场景意外转绿 / expectFixed 已修场景回归，均整场报错提示处置。
    Playwright 为外部工具（VRADIO_PLAYWRIGHT 指向安装路径），非仓库依赖。
    跑法：VRADIO_PLAYWRIGHT=".../playwright" node ui-demo/multi-tab.cjs */
 const assert = require('assert');
@@ -43,25 +43,27 @@ function wavBuf() { const rate = 8000, secs = 240, pcm = Buffer.alloc(rate * 2 *
   h.write('RIFF', 0); h.writeUInt32LE(36 + pcm.length, 4); h.write('WAVE', 8); h.write('fmt ', 12); h.writeUInt32LE(16, 16);
   h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22); h.writeUInt32LE(rate, 24); h.writeUInt32LE(rate * 2, 28);
   h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34); h.write('data', 36); h.writeUInt32LE(pcm.length, 40); return Buffer.concat([h, pcm]); }
-// —— 已知缺陷结构化豁免（review#40 P2）：以下四项是既有生产缺陷的特征化测试，全部 PASS **不能**解读为
-//    「活广播收敛 / App 收敛 / 真实 reload LWW 已验收」。machine-readable，随 validation.json 输出；
-//    意外转绿守卫见 expectBuggy（运行期 probe，转绿即报错提示移除豁免，防豁免腐化）。 ——
+// —— 已知缺陷结构化豁免（review#40 P2）：特征化测试的状态台账，随 validation.json 输出。
+//    status: open = 缺陷仍在（特征化断言 + expectBuggy 守卫：意外转绿即报错提示移除豁免）；
+//    fixed = 已随链内修复转绿（expectFixed 回归守卫：再转红即报错提示恢复豁免）。
+//    ⚠ KF1 状态演进：PR #40 原基线实测「内存不随广播收敛」，rebase 后链内 71fbdf9（review#37 P1-2，
+//    apply 改比对本页内存基线）已修——豁免转为回归守卫，台账如实记录而非删除。 ——
 const KNOWN_FAILURES = [
-  { id: 'KF1', scenario: 'SA 段（同浏览器双标签）', expected: '他页写 → 广播到达 → 本页 App 内存态即时收敛（活广播重载内存）',
-    actual: 'App 内存态不随广播重载——store.js apply() 以「镜像 ≠ 后端」为重载门槛，共享镜像下两者恒等；内存收敛只能 reload 兜底（SA5/SA8/SB2 按 reload 断言）',
-    tracking: 'issue #42 + 生产修复批次（Store 广播内存收敛）' },
-  { id: 'KF2', scenario: 'SD 段（跨浏览器第二浏览器）', expected: '他端写入后本端自动收敛；陈旧 unload 不覆盖他端写入',
+  { id: 'KF1', status: 'fixed', scenario: 'SA 段（同浏览器双标签）', expected: '他页写 → 广播到达 → 本页 App 内存态即时收敛（活广播重载内存）',
+    actual: 'PR #40 原基线：内存不随广播重载（apply 旧门槛「镜像 ≠ 后端」，共享镜像下恒等）只能 reload 兜底；rebase 后已修——71fbdf9 review#37 P1-2 改比对「本页内存基线」而非共享镜像，广播 pull 即收敛（[KF] 段 KF1 探针实证）',
+    tracking: '链内 71fbdf9 review#37 P1-2 已修（原挂 issue #42 关联面）；回归守卫 = expectFixed KF1' },
+  { id: 'KF2', status: 'open', scenario: 'SD 段（跨浏览器第二浏览器）', expected: '他端写入后本端自动收敛；陈旧 unload 不覆盖他端写入',
     actual: '跨浏览器无 BC 通道：reload/关闭的 beforeunload flush 以本页陈旧快照覆盖他端写入（空覆盖门只在服务端拦全空快照，非空陈旧快照仍 LWW 覆盖）；收敛须手动 Store.pull()+flush 舞步（SD5/SD5a/SD6 按显式 pull 断言）',
     tracking: 'issue #42 + 生产修复批次（跨端收敛协议）' },
-  { id: 'KF3', scenario: 'M6（维护冲突「重新加载最新值」）', expected: '重载后输入框显示后端权威值（B 名）',
+  { id: 'KF3', status: 'open', scenario: 'M6（维护冲突「重新加载最新值」）', expected: '重载后输入框显示后端权威值（B 名）',
     actual: '输入框回到上一投影名（round1 落库的 A 名）——远程 cfg.names 改名不经 applySources 不重投 uiStationProjection 的 s.n；草稿丢弃正确但显示陈旧',
     tracking: 'issue #42 + UI 维护面板生产修复批次' },
-  { id: 'KF4', scenario: '生产修复挂账（本矩阵范围外）', expected: '活广播内存收敛 / 跨端自动收敛 / 投影重投随生产修复落地',
-    actual: '前三项均按现状特征化断言；对应场景全部 PASS 不代表修复完成', tracking: 'issue #42（空覆盖门已落）/ 后续生产修复批次' },
+  { id: 'KF4', status: 'open', scenario: '生产修复挂账（本矩阵范围外）', expected: '跨端自动收敛 / 投影重投随生产修复落地',
+    actual: 'KF2/KF3 按现状特征化断言，对应场景全部 PASS 不代表修复完成；KF1 已随链内修复转回归守卫（见其 status）', tracking: 'issue #42（空覆盖门已落）/ 后续生产修复批次' },
 ];
-const BLOCKED_REQUIREMENTS = [ // 阻塞中的验收要求：修复落地前，相关段不可解读为「已验收」
-  { req: '活广播 App 内存收敛（方案 §3 L3 数据状态节）', blockedBy: 'KF1/KF3 特征化现状（reload 兜底）', tracking: 'issue #42 + 生产修复批次' },
+const BLOCKED_REQUIREMENTS = [ // 阻塞中的验收要求：修复落地前，相关段不可解读为「已验收」（已修项移出）
   { req: '跨浏览器最终一致（陈旧 unload 不覆盖他端）', blockedBy: 'KF2 特征化现状（手动 pull/flush 收敛为临时口径）', tracking: 'issue #42 + 生产修复批次' },
+  { req: '维护冲突重载显示后端权威值（投影重投）', blockedBy: 'KF3 特征化现状（草稿丢弃正确但显示旧投影名）', tracking: 'issue #42 + UI 维护面板生产修复批次' },
 ];
 (async () => {
   let chromium = null; // Playwright 加载收口（同 pr-smoke）：缺工具也写 FAIL 报告 + 非零退出，不裸崩
@@ -84,6 +86,12 @@ const BLOCKED_REQUIREMENTS = [ // 阻塞中的验收要求：修复落地前，�
   const expectBuggy = (id, cond, hint) => {
     if (!cond) throw new Error(`KNOWN_FAILURE ${id} 意外转绿：${hint}`);
     report.assertions.push(`${id} 豁免成立`); console.log('  ✓', `${id} 豁免成立（特征化现状保留）`);
+  };
+  // 已修复缺陷回归守卫（KF1 同款）：cond=true = 链内修复仍生效（记断言）；cond=false = 回归 →
+  // 整场报错退出，提示恢复 KNOWN_FAILURES 豁免并核查对应修复
+  const expectFixed = (id, cond, hint) => {
+    if (!cond) throw new Error(`KNOWN_FAILURE ${id} 回归（原豁免已随链内修复移除）：${hint}`);
+    report.assertions.push(`${id} 修复回归守卫`); console.log('  ✓', `${id} 修复回归守卫（原缺陷已修，防回退）`);
   };
   const failShot = async name => { try { if (pages[0]) { await pages[0].screenshot({ path: path.join(output, name) }); note('失败现场截图: ' + name); } } catch (_) {} }; // 顶层定义（catch 域可见；pr-smoke 内联版有同位 ReferenceError 隐患，此处收口）
   try {
@@ -146,7 +154,7 @@ const BLOCKED_REQUIREMENTS = [ // 阻塞中的验收要求：修复落地前，�
     await pa.evaluate(() => Store.bc && Store.bc.postMessage('store'));
     await pb.waitForFunction(n => window.__pulls > n, pBBase, { timeout: 5000 });
     check('SA4 自发广播：pa 零回声（Store.pull 增量 0）、pb 跨页收到', (await pullsOf(pa)) === pABase);
-    note('内存态实测不随广播重载（apply() 以「镜像 ≠ 后端」为重载门槛；共享镜像下两者恒等，探针 memFavN 口径）——内存收敛走 reload 断言');
+    note('内存态语义（KF1 状态演进如实记录）：PR #40 原基线实测不随广播重载（apply 旧门槛「镜像 ≠ 后端」，共享镜像下恒等）；rebase 后链内 71fbdf9 review#37 P1-2 改比对内存基线，广播 pull 即收敛内存——[KF] 段 KF1 修复回归守卫实证；SA5/SB2 的 reload 保留为冗余收敛路径验证');
     await pb.reload(); await waitBoot(pb);
     check('SA5 B 页 reload 后 App 内存收敛（favKeys 命中）', await pb.evaluate(k => App.favKeys().has(k), st1.k));
     await pb.click('#cats .chip[data-c="★收藏"]');
@@ -343,14 +351,17 @@ const BLOCKED_REQUIREMENTS = [ // 阻塞中的验收要求：修复落地前，�
     await kd.evaluate(k => App.toggleFav(App.state.stations.find(x => keyOf(x) === k)), stk3.k);
     await ke.waitForFunction(k => (localStorage.getItem('radio.favs') || '').includes(k), stk3.k, { timeout: 5000 });
     await new Promise(r => setTimeout(r, 1200)); // quiesce：debounce flush + 广播 + 各页 pull 全落地
-    // KF1 probe：ke 镜像已收敛（上一 waitForFunction），但 App 内存必须仍未收敛——活广播内存收敛未修（SA 段注记的 memFav 探针口径）
-    expectBuggy('KF1', !(await ke.evaluate(k => App.favKeys().has(k), stk3.k)),
-      'ke App 内存已随广播收敛（活广播内存收敛已修）——更新 SA5/SA8/SB2 断言并从 KNOWN_FAILURES 移除 KF1');
+    // KF1 修复回归守卫（原已知缺陷，链内 71fbdf9 review#37 P1-2 已修）：ke App 内存必须随广播收敛
+    //（SA 段旧注记的 memFav 探针口径反转）；若回归（内存不收敛）报错提示恢复 KF1 豁免
+    expectFixed('KF1', await ke.evaluate(k => App.favKeys().has(k), stk3.k),
+      'ke App 内存未随广播收敛（review#37 P1-2 内存基线重载失效）——恢复 KF1 豁免并核查 store.js apply 重载判定');
     // KF2 probe：第二浏览器新页（快照 = 启动时全量、不含 kd 的新写）陈旧 reload 的 beforeunload flush
-    // （keepalive fetch，可穿 unload）以本页快照覆盖他页写入——跨端收敛协议未修（SD 段实测语义）
+    // （keepalive fetch，可穿 unload）以本页快照覆盖他页写入——跨端收敛协议未修（SD 段实测语义）。
+    // 注意 Chromium 无 sticky user activation 不派发 beforeunload——探针页须先有真实键入再 reload
     await kd.evaluate(() => { Store.set('radio.vol', '0.66'); Store.flush(); });
     await new Promise(r => setTimeout(r, 600));
     check('KF2 前置：kd 写 vol=0.66 已落服务端', (await srvState())['radio.vol'] === '0.66');
+    await kf.keyboard.press('x'); // 无副作用键（未绑定）——仅取 sticky activation，保证 reload 派发 beforeunload
     await kf.reload(); await waitBoot(kf);
     await new Promise(r => setTimeout(r, 1200)); // beforeunload flush POST 落地
     expectBuggy('KF2', (await srvState())['radio.vol'] === '0.9',

@@ -71,6 +71,7 @@ function proxy(target, req, res, depth = 0) {
     if (r.headers['content-range']) h['Content-Range'] = r.headers['content-range'];
     res.writeHead(r.statusCode, h);
     r.on('error', () => res.destroy()); // 上游中途断流：终止响应，error 不逃逸（Node ≥14 防御性守卫）
+    r.on('aborted', () => res.destroy()); // 上游提前终止：Node ≤14 走 aborted 非 error（AIbot 增量复审 #39 P1——B12 在 Node 14 Linux 挂死的根因），同口径终止响应
     res.on('close', () => r.destroy()); // 浏览器侧断开（换源/暂停/关页）：销毁上游，直播流不再泄漏连接（P2-2）
     r.pipe(res);
   });

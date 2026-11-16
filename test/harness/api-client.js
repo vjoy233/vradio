@@ -5,6 +5,8 @@
 //   ④data 目录整扫删 .tmp 会误删其他实例的临时文件。随机端口只是网络隔离，从来不是存储隔离。
 // 新语义：宿主用户数据（data/*.json、my-radio.txt）与生成资产零接触；close = 杀服 → 等待退出 → 删自有临时根。
 // boot({root}) 复用既有临时根重启服务（「操纵资产 → 重启」矩阵用，第二轮不重新复制）。
+// 隔离默认化（review#39-r2 P2-③）：boot() 未传 isolated 也未传 root 时默认 isolated（临时应用根）——未来新增
+// 写盘 API 测试漏传 opts 不再污染宿主工作树；显式 isolated:false 或 root:ROOT 才落宿主工作树（当前无调用方）。
 // P1 扩展：boot({env}) 注入 VR_TEST_* 测试缝环境变量（PORT/HOST 在 env 之后钉死——测试缝不得改端口/监听地址）。
 const http = require('http'), net = require('net'), fs = require('fs'), path = require('path'), os = require('os');
 const { spawn } = require('child_process');
@@ -114,7 +116,7 @@ async function boot(opts) {
   if (opts.assets) throw new Error('boot({assets}) 已废弃：isolated 服务写生成资产落在临时根内，宿主零接触，无需仓库根快照（直读直写 ROOT 的场景用 snapshotAssets/restoreAssets）');
   const port = await freePort();
   let root = opts.root || null, ownsRoot = false;
-  if (opts.isolated && !root) { root = makeRoot(); ownsRoot = true; }
+  if (!root && opts.isolated !== false) { root = makeRoot(); ownsRoot = true; } // 隔离默认化（review#39-r2 ③）：无显式 root 一律临时应用根；isolated:false 才显式落宿主根
   // env 注入在前、PORT/HOST 钉死在后：测试缝（VR_TEST_*）不得改端口/监听地址
   const srv = spawn(process.execPath, [path.join(root || ROOT, 'server.js')], { env: Object.assign({}, process.env, opts.env || {}, { PORT: String(port), HOST: '127.0.0.1' }), cwd: root || ROOT, stdio: 'ignore' });
   const req = reqFn(port);

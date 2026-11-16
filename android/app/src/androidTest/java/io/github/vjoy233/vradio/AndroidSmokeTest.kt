@@ -22,7 +22,8 @@ import java.net.URL
  * 已接入确定性断言：Activity 启动、共享资产生产解析器可解析（AIbot P2：首字节存在性
  * 不构成「可解析」，一个字节的坏文件同样通过）、radio-meta.json 契约形态。
  * 仍未实现（逐批接入，勿把当前绿灯当成更强保证）：装配就绪（AppVm.boot 业务就绪的有界等待）、
- * 共享 fixture 版本核对、音频焦点、进程回收、Widget、备份导入。
+ * 音频焦点、进程回收、Widget、备份导入。共享 fixture 版本核对已接入（review#40-r2 P2）：
+ * assumeFixtureReachable 解析 /__health 的 version 与 FIXTURE_VERSION 对账，漂移两模式都 fail。
  * 测试输入统一走本地 Node fixture，禁止依赖公网。
  * fixtureBaseUrl 注入协议（docs/testing-strategy-2026-11.md §3 L4）：宿主起
  * test/harness/android-fixture.js（监听 0.0.0.0 随机端口）→ workflow 把 127.0.0.1 换算 10.0.2.2 →
@@ -41,7 +42,8 @@ class AndroidSmokeTest {
   val guard = TestUtil.dataGuard() // review#40 P1：launchesMainActivity 会触发 AppVm boot 链（可能写用户数据），统一快照兜底
 
   companion object {
-    /** fixture 版本：与 test/harness/android-fixture.js 的 FIXTURE_VERSION 两处同步改（报告须记录在案） */
+    /** fixture 版本：与 test/harness/android-fixture.js 的 FIXTURE_VERSION 两处同步改（报告须记录在案；
+        设备端经 /__health 反查对账——assumeFixtureReachable，漂移即 fail） */
     const val FIXTURE_VERSION = "v1"
 
     /** 未传参约定缺省值：端口 0 不存在 → 播放类用例一律 skip */
@@ -68,21 +70,33 @@ class AndroidSmokeTest {
       return base!!
     }
 
-    /** fixture 可达性预检（review#40 P2-5）：GET /__health 5s 超时口径——CI required 模式端口不通立即
-        fail（比建流超时更早更明确的信号）；本地模式 Assume 跳过（不开 fixture 的手动 dispatch 保持绿） */
+    /** fixture 可达性 + 版本核对预检（review#40 P2-5 / r2 P2）：GET /__health 5s 超时，可达即解析 JSON
+        的 version 字段与 [FIXTURE_VERSION] 对账——fixture 与 APK 同仓两处同步改，读到≠期望 = 协议漂移，
+        两种模式都 fail（错版本 fixture 跑出的结果无意义，skip 只会掩盖漂移）；端口不通口径不变：
+        ciRequired fail（比建流超时更早更明确的信号），本地模式 Assume 跳过（不开 fixture 的手动 dispatch 保持绿） */
     fun assumeFixtureReachable(base: String) {
-      val ok = runCatching {
+      var served: String? = null // 非空 = /__health 有响应体（可达），值为设备侧读到的 version
+      var detail = ""
+      try {
         val c = URL(base + "/__health").openConnection() as HttpURLConnection
         c.connectTimeout = 5000; c.readTimeout = 5000
         val code = c.responseCode
+        val body = if (code in 200..299) c.inputStream.bufferedReader().use { it.readText() } else null
         c.disconnect()
-        code in 200..299
-      }.getOrDefault(false)
-      if (!ok) {
-        val msg = "fixture 不可达（$base/__health，5s 超时）——模拟器 10.0.2.2 映射/宿主 fixture 进程异常"
-        if (ciRequired()) throw AssertionError(msg)
-        Assume.assumeTrue(msg, false)
+        if (body != null) served = try { JSONObject(body).optString("version", "(缺 version 字段)") }
+          catch (t: Throwable) { "(JSON 不可解析:${t.message})" }
+        else detail = "HTTP $code"
+      } catch (t: Throwable) { detail = t.message ?: t.javaClass.simpleName }
+      if (served != null) {
+        if (served != FIXTURE_VERSION) throw AssertionError(
+          "fixture 协议漂移：/__health 实际 version=$served，APK 侧期望 $FIXTURE_VERSION" +
+          "（与 test/harness/android-fixture.js 的 FIXTURE_VERSION 两处同步改失配）——拒绝执行，先对齐两侧版本")
+        return
       }
+      val msg = "fixture 不可达（$base/__health，5s 超时${if (detail.isEmpty()) "" else "：$detail"}）" +
+        "——模拟器 10.0.2.2 映射/宿主 fixture 进程异常"
+      if (ciRequired()) throw AssertionError(msg)
+      Assume.assumeTrue(msg, false)
     }
 
     /** fixture 版本/URL + 设备 API + APK 版本进 instrumentation 日志（L4 报告要求逐项在案；tag VRadioSmoke） */

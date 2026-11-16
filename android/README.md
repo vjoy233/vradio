@@ -55,6 +55,8 @@
 
 版本基线（2026-10 锁定）：AGP 8.13.2 / Kotlin 2.2.21 / Gradle 8.14.6 / compose-bom 2026.06.01（09.00 的 material-ripple 要求 compileSdk 37 > AGP 8.13 上限 36，故钉 06.01）/ core-ktx 1.17.0（同理）/ Media3 1.11.1 / minSdk 26 / target & compileSdk 36。**依赖白名单封闭清单制**（plan §四）：新增运行时依赖一律先议事；okhttp 是 D6 拍板的唯一运行时破例（Icecast `ICY 200 OK` 非标状态行）。测试专用的 `androidx.test.ext:junit`、`androidx.test:runner`、`androidx.test:rules` 只挂在 `androidTestImplementation`，不扩大运行时依赖白名单；新增测试依赖必须在 PR 说明登记。
 
+**测试依赖登记（review#40-r2 P3，批准范围 = 测试配置、不入运行时白名单）**：纯 JVM 单测（`testImplementation`）= junit 4.13.2 / org.json 20250107 / kxml2 2.3.0（后两个是 android.jar 抛异常桩的真实现替身，设备运行时用平台内置、不进 APK）；instrumented smoke（`androidTestImplementation`）= androidx.test.ext:junit 1.2.1 / androidx.test:runner 1.6.2 / androidx.test:rules 1.6.1（无 espresso）。版本锁定随上表基线同制，新增测试依赖一律 PR 说明登记；离线构建 = `./gradlew --offline`（`test`/`compileDebugAndroidTestKotlin` 均可离线跑，gradle 依赖缓存须先热）。
+
 ## 模块结构（对应 Web 五文件精神的分层，语义契约见 ../CONTRACTS.md）
 
 ```

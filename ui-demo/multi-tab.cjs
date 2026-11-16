@@ -53,7 +53,7 @@ const KNOWN_FAILURES = [
     actual: 'PR #40 原基线：内存不随广播重载（apply 旧门槛「镜像 ≠ 后端」，共享镜像下恒等）只能 reload 兜底；rebase 后已修——71fbdf9 review#37 P1-2 改比对「本页内存基线」而非共享镜像，广播 pull 即收敛（[KF] 段 KF1 探针实证）',
     tracking: '链内 71fbdf9 review#37 P1-2 已修（原挂 issue #42 关联面）；回归守卫 = expectFixed KF1' },
   { id: 'KF2', status: 'open', scenario: 'SD 段（跨浏览器第二浏览器）', expected: '他端写入后本端自动收敛；陈旧 unload 不覆盖他端写入',
-    actual: '跨浏览器无 BC 通道：reload/关闭的 beforeunload flush 以本页陈旧快照覆盖他端写入（空覆盖门只在服务端拦全空快照，非空陈旧快照仍 LWW 覆盖）；收敛须手动 Store.pull()+flush 舞步（SD5/SD5a/SD6 按显式 pull 断言）',
+    actual: '跨浏览器无 BC 通道：reload/关闭的 beforeunload flush 以本页陈旧快照覆盖他端写入（空覆盖门只在服务端拦全空快照，非空陈旧快照仍 LWW 覆盖）；收敛须手动 Store.pull()+flush 舞步（SD5/SD5a/SD6 按显式 pull 断言）。⚠ 探针误报面：probe 靠 kf 键入取 sticky activation，缺激活则 beforeunload 不派发、陈旧 flush 没发，服务端 vol 停 0.66 被误读「意外转绿」（61d1fc4 首轮误报同根因已留痕；reviewer 独立复跑再现同型）——wt40-r2 复跑 3/3 豁免成立（50 断言全过），单次转绿先核 beforeunload 是否派发再判豁免腐化',
     tracking: 'issue #42 + 生产修复批次（跨端收敛协议）' },
   { id: 'KF3', status: 'open', scenario: 'M6（维护冲突「重新加载最新值」）', expected: '重载后输入框显示后端权威值（B 名）',
     actual: '输入框回到上一投影名（round1 落库的 A 名）——远程 cfg.names 改名不经 applySources 不重投 uiStationProjection 的 s.n；草稿丢弃正确但显示陈旧',

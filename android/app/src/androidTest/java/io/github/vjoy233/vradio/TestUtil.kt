@@ -22,7 +22,8 @@ import java.io.File
      从播放器内存清掉）；磁盘恢复有异常时再以 Store 内存快照兜底（空库不回写，避免无 store.json
      设备留下空文件）。
    快照/测试/恢复三类失败收集后统一抛出（JUnit4 MultipleFailureException，互不吞）——清理失败
-   记录在案，绝不静默吞。
+   记录在案，绝不静默吞；快照失败 = 隔离前提失效，直接报隔离失败、不跑本体也不做恢复（空快照
+   restore 会 clear+重放空 SharedPreferences，属破坏面扩大，review#40-r2 P2）。
    ⚠「主动断言失败/建流超时演练确认归位」= 模拟器接入批次的验收项（本机无模拟器，不跑
    connectedTest，本批只验编译）；挂账见 docs/testing-strategy-2026-11.md §10 附录。 */
 object TestUtil {
@@ -43,9 +44,13 @@ object TestUtil {
     override fun apply(base: Statement, description: Description): Statement = object : Statement() {
       override fun evaluate() {
         val errs = ArrayList<Throwable>()
-        try { snapshot() } catch (t: Throwable) { errs.add(t) }
-        try { base.evaluate() } catch (t: Throwable) { errs.add(t) }
-        try { restore() } catch (t: Throwable) { errs.add(t) }
+        var snapOk = false
+        try { snapshot(); snapOk = true } catch (t: Throwable) { errs.add(t) }
+        if (snapOk) { // 快照成功是本体 + 恢复的前提：快照失败 = 隔离前提失效（files/prefs 停留空 map，
+          // restore 的 clear+重放只会把用户 prefs 清光、扩大破坏）——跳过本体直接报隔离失败（AIbot review#40-r2 P2）
+          try { base.evaluate() } catch (t: Throwable) { errs.add(t) }
+          try { restore() } catch (t: Throwable) { errs.add(t) }
+        }
         MultipleFailureException.assertEmpty(errs) // 原测试失败与清理失败都上报，不互相掩盖
       }
     }

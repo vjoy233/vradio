@@ -1,6 +1,6 @@
 {
-  "capturedAt": "2026-11-16T16:15:53.203Z",
-  "url": "http://127.0.0.1:8237/",
+  "capturedAt": "2026-11-16T17:41:00.570Z",
+  "url": "http://127.0.0.1:8239/",
   "assertions": [
     "S1 pa 全库装配 >50 台",
     "S1 pb 全库装配 >50 台",
@@ -61,6 +61,8 @@
     "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
     "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
     "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
     "console:Failed to load resource: net::ERR_INTERNET_DISCONNECTED",
     "console:Failed to load resource: the server responded with a status of 404 (Not Found)"
   ],
@@ -68,7 +70,7 @@
     "内存态语义（KF1 状态演进如实记录）：PR #40 原基线实测不随广播重载（apply 旧门槛「镜像 ≠ 后端」，共享镜像下恒等）；rebase 后链内 71fbdf9 review#37 P1-2 改比对内存基线，广播 pull 即收敛内存——[KF] 段 KF1 修复回归守卫实证；SA5/SB2 的 reload 保留为冗余收敛路径验证",
     "共享镜像下两页 flush 载荷恒相同（后推者胜体现为 rev 单调推进而非数据分叉）；分叉镜像的真·LWW 在 [SD] 跨浏览器档",
     "播放样本经本地静音 WAV 流真实到 playing（headless 可复现）；quality rev=2 listenstats rev=2",
-    "资源加载噪音 8 条（自举实例合法 404 只记不判，同 pr-smoke 分流口径）",
+    "资源加载噪音 10 条（自举实例合法 404 只记不判，同 pr-smoke 分流口径）",
     "Z2 宿主 data/store.json + my-radio.txt 运行前后哈希不变",
     "Z3 清理失败门：browser/伪流服务/server/worktree 全回收（零泄漏成立）",
     "全部 PASS ≠「活广播内存收敛/跨端自动收敛/真实 reload LWW」已验收——KF1/KF2/KF3 按现状特征化断言（见 knownFailures 字段），KF4 = 生产修复挂账（issue #42）；意外转绿由 expectBuggy 现场报错"

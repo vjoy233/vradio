@@ -49,7 +49,7 @@ import io.github.vjoy233.vradio.ui.theme.LocalVrPalette
 import kotlinx.coroutines.delay
 
 /* 电台库页壳（P1，方案 §5.1）：TopAppBar（标题「电台」+ 搜索展开 + 更多菜单：设置/视图切换/
-   显示无效源/添加电台）+ 既有头部（范围/分类 chips、网格列表 SegBtn、✗ 无效源、✦ 发现）原样搬移；
+   显示无效源/添加电台）+ 既有头部（范围/分类 chips、网格列表 SegBtn、✗ 无效源）原样搬移；
    搜索 120ms 防抖随行迁移（§7 P1 硬点）；滚动位进程内保存/恢复（Q15/Q18 destinationUi 快照，
    不在滚动帧回调写 StateFlow）。旧「设置」TextButton/旧首行搜索框已删（入口进 TopAppBar/更多菜单）。
    列表主体 = StationContent 纯投影渲染（收藏页 §5.5 复用）。 */
@@ -147,12 +147,12 @@ fun StationScreen(vm: AppVm, pad: PaddingValues) {
         }
       }
     }
-    // 次行：双视图切换 + 无效源开关（出现过死台才亮，app.js deadBtn 同款）+ 发现入口（B3-C 开关）——原样搬移
+    // 次行：双视图切换 + 无效源开关（出现过死台才亮，app.js deadBtn 同款）——原样搬移
+    // （✦ 发现入口 P3 已删：发现升格正式目的地 DiscoveryScreen，走底栏/rail 导航，不留旧浮层混合态）
     Row(Modifier.padding(horizontal = 12.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
       SegBtn("网格", view == "grid") { vm.setView("grid") }
       SegBtn("列表", view == "list") { vm.setView("list") }
       if (lu.hasDead) SegBtn("✗ 无效源", showDead) { vm.toggleDead() }
-      if (io.github.vjoy233.vradio.FeatureFlags.DISCOVERY) SegBtn("✦ 发现", false) { vm.showDiscovery.value = true }
     }
     // 分类条（数量角标与列表同口径刷新，P3-5；范围/分类 chip 口径保持 listUi 既有双轨）——原样搬移
     LazyRow(

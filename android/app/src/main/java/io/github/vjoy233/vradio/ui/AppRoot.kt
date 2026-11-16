@@ -4,7 +4,6 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -25,11 +24,12 @@ import io.github.vjoy233.vradio.ui.theme.VrTheme
 /* 根组件（P0 导航迁移，方案 §6.2/§6.4）：VrScaffold 承载三目的地（电台/发现/收藏）+ mini player 常驻
    bottomBar 顶部（手机追加底栏、平板挂 rail，断点在契约内）；设置/添加电台是次级页全屏覆盖层
    （secondary?.let 挂载在 VrScaffold 之后，自带不透明 bg 盖住目的地，不占顶层目的地）。
-   浮层（选源/歌曲/发现/源详情）仍由 root 统一挂载——切目的地/进出次级页不丢播放上下文；
+   浮层（选源/歌曲/源详情）仍由 root 统一挂载——切目的地/进出次级页不丢播放上下文；
    toast 走 SnackbarHost，与 status（用户主动操作，PlayerBar 内）分工不双写。
    返回键层级（Q21）：确认弹窗/浮层自收 → Full player（P2）→ 次级页（契约纯函数 backTarget）→ 系统默认；
-   发现关（FeatureFlags.DISCOVERY=false）时
-   navigateGuard 使发现目的地不可达。vm 经 ViewModelProvider 直取（不引 lifecycle-viewmodel-compose）。 */
+   发现自 P3 起为正式目的地（DiscoveryScreen，§5.4），旧浮层与「✦ 发现」入口已删——不允许
+   「新导航+旧浮层」混合态；flag 关（开发态改 false）时 navigateGuard 使发现目的地不可达。
+   vm 经 ViewModelProvider 直取（不引 lifecycle-viewmodel-compose）。 */
 @Composable
 fun AppRoot() {
   val owner = LocalContext.current as ViewModelStoreOwner
@@ -71,7 +71,7 @@ fun AppRoot() {
       when (destination) {
         Destination.LIBRARY -> Box(Modifier.fillMaxSize().background(pal.bg)) { StationScreen(vm, pad) }
         Destination.FAVORITES -> Box(Modifier.fillMaxSize().background(pal.bg)) { FavoritesScreen(vm, pad) }   // pad 收敛进屏内（与 LIBRARY 同构）：头部自理状态栏、StationContent/空态吃 bottomBar 让位
-        Destination.DISCOVER -> Box(Modifier.fillMaxSize().background(pal.bg).padding(pad)) { }   // P3 填 DiscoveryScreen（§7）；flag 关时 navigateGuard 使其不可达
+        Destination.DISCOVER -> DiscoveryScreen(vm, pad)   // P3 正式目的地（§5.4）：bg/pad/状态栏自理；flag 关时 navigateGuard 使其不可达
       }
     }
     // 次级页全屏覆盖层：SettingsScreen/AddStationScreen 自带不透明 bg + statusBarsPadding，直接盖在目的地之上
@@ -85,11 +85,6 @@ fun AppRoot() {
     if (showPlayer) PlayerSheet(vm, ui)
     if (showSrc) SrcSheet(vm, ui)
     if (showSongs) SongsSheet(vm, ui)
-    // B3-C 发现浮层：开关控制入口（StationScreen 的「✦ 发现」按钮）与浮层挂载
-    if (io.github.vjoy233.vradio.FeatureFlags.DISCOVERY) {
-      val showDisc by vm.showDiscovery.collectAsState()
-      if (showDisc) DiscoverySheet(vm)
-    }
     // B1 源详情浮层：台消失（同步/导入重建）即自动收起；fav/logo 经 vm 注入（浮层本身不持 vm）
     if (showDetail) {
       val ds = vm.detailStation()

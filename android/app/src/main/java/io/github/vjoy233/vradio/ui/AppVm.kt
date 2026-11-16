@@ -102,6 +102,44 @@ data class DestinationUiState(
   val firstVisibleOffset: Int = 0,
 )
 
+/* P1 §5.5 收藏页投影：收藏集合内独立搜索/分类；数据源仍 lib.favs 单一来源，不复制收藏状态 */
+data class FavoriteListUi(
+  val list: List<Station> = emptyList(),
+  val chips: List<Pair<String, Int>> = emptyList(),   // 首项「全部」+ 收藏内实际出现分类与数量（顺序沿用 lib.cats() 顺序过滤）
+  val empty: String? = null,
+  val ver: Int = 0,
+)
+
+/** 收藏页投影纯函数（§5.5，JVM 直测零 Android 依赖；AppVm.favoriteListUi 的 combine 调用）：
+ *  favs 按 favorites 投影序（收藏写入序旧→新）传入，输出 Q16「最新收藏置顶」（新→旧）；
+ *  query 多词空格 AND 大小写不敏感（filteredList keyword 同款）；category 仅在收藏内实际出现的分类生效
+ *  （哨兵/失效分类一律不过滤——收藏页独立状态不写 cat）；chips 计数口径 = 全量收藏集合（同 listUi chips
+ *  基于 vis 全量非过滤后列表），顺序按 cats（lib.cats()）过滤，cats 未覆盖的按收藏数据序兜底；
+ *  empty 两档：收藏全空给引导语、过滤后无命中给换词提示；ver 透传 stamp（哨兵进值域防 StateFlow 判等丢渲染，
+ *  同 ListUi.ver）。 */
+fun buildFavoriteListUi(favs: List<Station>, query: String, category: String, stamp: Int,
+                        cats: List<String> = emptyList()): FavoriteListUi {
+  val byCat = favs.groupingBy { it.c }.eachCount()
+  val ordered = LinkedHashSet<String>()
+  for (c in cats) if (byCat.containsKey(c)) ordered.add(c)              // lib.cats() 顺序优先（与 listUi chips 分类序同口径）
+  for (s in favs) ordered.add(s.c)                                     // cats 未覆盖兜底（无 cats 时 = 收藏数据序）
+  val chips = ArrayList<Pair<String, Int>>(ordered.size + 1)
+  chips.add("全部" to favs.size)
+  for (c in ordered) chips.add(c to (byCat[c] ?: 0))
+  var list = if (category == "全部" || !ordered.contains(category)) favs else favs.filter { it.c == category }
+  val kw = query.trim().lowercase()
+  if (kw.isNotEmpty()) {                                               // 多词空格 AND（audit-r2 口径，与 filteredList 同款）
+    val ws = kw.split(Regex("\\s+"))
+    list = list.filter { s -> val n = s.n.lowercase(); ws.all { n.contains(it) } }
+  }
+  val empty = when {
+    favs.isEmpty() -> "还没有收藏电台，去电台页长按或点星标收藏吧"
+    list.isEmpty() -> "收藏中没有匹配的电台"
+    else -> null
+  }
+  return FavoriteListUi(list.asReversed(), chips, empty, stamp)
+}
+
 class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   /* ---------- 依赖层装配（契约 API，收口后口径） ---------- */
@@ -311,9 +349,20 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   /* 添加电台页的分类候选（审计 P3：catOptions() 直读无订阅，boot 未完成进页则 chips 永远空——从 listUi 派生响应式） */
   val addCats: StateFlow<List<String>> = listUi
-    .map { lu -> lu.chips.drop(3).map { c -> c.first } }                 // 掐头去「全部/★收藏/最近」
+    .map { lu -> lu.chips.drop(2).map { c -> c.first } }                 // 掐头去「全部/最近」（§5.1 chips 已去收藏哨兵；addCats 语义 = 真实分类）
     .distinctUntilChanged()
     .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+  /* 收藏页全量投影（P1 §5.5）：收藏集合内独立搜索/分类——favoriteQuery/favoriteCategory 进程内瞬态，
+     不写电台页 cat/keyword（收藏顶层页是收藏集合唯一主入口，电台页范围 chip 只留 全部/最近）；
+     数据源 = favorites（lib.favs 单一来源投影）+ favKeys 触发；过滤/chips/empty 派生收口在
+     buildFavoriteListUi 纯函数（JVM 直测）；ver = stamp 哨兵进值域（同 ListUi.ver） */
+  val favoriteQuery = MutableStateFlow("")
+  val favoriteCategory = MutableStateFlow("全部")
+  val favoriteListUi: StateFlow<FavoriteListUi> =
+    combine(favorites, favKeys, favoriteQuery, favoriteCategory, stamp) { favs, _, q, c, st ->
+      buildFavoriteListUi(favs, q, c, st, runCatching { lib.cats() }.getOrDefault(emptyList()))
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, FavoriteListUi())
 
   init {
     wirePlayer()
@@ -732,8 +781,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     val byCat = vis.groupingBy { it.c }.eachCount()
     val chips = ArrayList<Pair<String, Int>>(10)
     chips.add("全部" to vis.size)
-    chips.add("★收藏" to vis.count { runCatching { lib.isFav(it) }.getOrDefault(false) })
-    chips.add("最近" to recentList(vis).size)
+    chips.add("最近" to recentList(vis).size)                // §5.1 范围 chip 只留 全部/最近——★收藏 收敛到收藏顶层页（§5.5 唯一主入口）
     val cats = runCatching { lib.cats() }.getOrDefault(emptyList())
     for (c in cats) chips.add(c to (byCat[c] ?: 0))
     if (cat.value != "全部" && cat.value != "★收藏" && cat.value != "最近" && chips.none { it.first == cat.value })
@@ -787,6 +835,37 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       stamp.value++
       updateShortcuts()                                                  // E3：快捷方式随收藏增减刷新
       if (fav && logoAllowed()) viewModelScope.launch(Dispatchers.IO) { runCatching { logos.prime(s, true) } }   // 新收藏优先补台标（B5 策略门）
+    }
+  }
+
+  /* 取消收藏撤销（P1 Q13/Q17）：收藏页专用入口——立即取消 + 发撤销请求（AppRoot collect 出 Snackbar，
+     约 8s 可撤销、离开收藏页作废由 UI 侧裁决）；撤销按 URL 身份恢复，不按台名回绑 */
+  val favUndoReq = MutableStateFlow<Station?>(null)                       // 待撤销载荷（台快照）；null = 无在飞请求（UI 消费后置回）
+
+  /** 收藏页取消收藏：toggle 即取消（守卫防误加——非收藏态不翻转）+ 发撤销请求 */
+  fun unfavWithUndo(s: Station) {
+    viewModelScope.launch {                                               // Library 变异归 Main（审计 P2，同 toggleFav）
+      if (!runCatching { lib.isFav(s) }.getOrDefault(false)) return@launch
+      runCatching { lib.toggleFav(s) }
+      quality.keepHint = runCatching { qualityKeepSnapshot() }.getOrDefault(quality.keepHint)   // B2：trim 保护集随收藏增减
+      stamp.value++
+      updateShortcuts()                                                  // E3：快捷方式随收藏增减刷新
+      favUndoReq.value = s
+    }
+  }
+
+  /** 撤销取消收藏：按 URL 身份找回库内同一台（reload/同步重建后显示键可能漂移，任一源 URL 命中即回绑；
+     失联时按原条目写回 = 休眠待回绑，带 URL 的条目永不回收），走 toggleFav 同一条写回路径 + 台标 prime */
+  fun undoUnfav(s: Station) {
+    viewModelScope.launch {
+      val cur = runCatching { lib.stations.firstOrNull { st -> st.u.any { u -> u in s.u } } }.getOrNull() ?: s
+      if (runCatching { lib.isFav(cur) }.getOrDefault(false)) return@launch   // 期间已手动加回 = 幂等不翻转
+      runCatching { lib.toggleFav(cur) }
+      quality.keepHint = runCatching { qualityKeepSnapshot() }.getOrDefault(quality.keepHint)
+      stamp.value++
+      updateShortcuts()
+      if (logoAllowed()) viewModelScope.launch(Dispatchers.IO) { runCatching { logos.prime(cur, true) } }   // 恢复收藏优先补台标（B5 策略门）
+      favUndoReq.value = null
     }
   }
 

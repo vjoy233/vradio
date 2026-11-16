@@ -245,22 +245,34 @@ const audio = {
 `/api/myradio` 的接手实现骨架：
 
 ```js
-// test/myradio.js（建议新增；临时根 + 真服务；以下为零依赖 ok() 风格骨架）
+// test/myradio-api.js（建议新增；临时根 + 真服务；以下为零依赖 ok() 风格骨架，非可执行合同——
+// 实际接口以下方 harness 接口表为准，首个实现批次落地后回写真实签名）
 const assert = require('assert');
-const { boot, req, isolateFiles } = require('./harness/api-client');
+const { boot } = require('./harness/api-client');
 
 (async () => {
-  const { srv, req, files, close } = await boot({ isolated: true });
+  const { srv, port, req, close, root } = await boot({ isolated: true });
   try {
-    // 1. POST 合法分类/电台行 → 200，tmp+rename 后文件可读；
+    // 1. POST 合法分类/电台行 → 200，tmp+rename 后 root/my-radio.txt 可读；
     // 2. 非法行、逗号/竖线、非 http(s)、空名 → 清洗或丢弃；
     // 3. >500 行或 >64KB → 413，旧文件字节保持不变；
-    // 4. 两个并发 POST → 队列串行，不互相覆盖；
+    // 4. 并发 POST → 写队列串行、最终态恰为**后入队者的完整列表**（/api/myradio 是全量替换，
+    //    「不互相覆盖」是 mystation 追加读改写的语义，此处应断言无混合/半写的合法串行终态）；
     // 5. 写入/rename 注入失败 → 返回 ok:false，旧文件保持可解析。
-    assert.ok(srv && files);
+    assert.ok(srv && port && root);
   } finally { await close(); }
 })().catch(e => { console.error(e); process.exitCode = 1; });
 ```
+
+#### 真服务 harness 接口表（api-client.js 唯一合同，实现批次以此为准）
+
+| 接口 | 签名 | 语义 |
+|---|---|---|
+| `boot` | `boot(opts) → Promise<{srv, port, req, close, root}>` | `opts.env` 注入 `VR_TEST_*` 测试缝（PORT/HOST 钉死在后）；`opts.isolated` = 每次调用复制仓库骨架到独立临时应用根再起服（**宿主用户数据/生成资产零接触**，随机端口不是存储隔离）；`opts.root` = 复用既有临时根重启服务（资产操纵→重启矩阵用） |
+| `req` | `req(method, path, headers?, body?) → Promise<{status, headers, body}>` | JSON/文本两用；有默认超时，超时/连接错误 reject（服务挂住 = 有报告的测试失败，不是 CI 全局超时） |
+| `close` | `close() → Promise` | 幂等：先杀服、**等待子进程退出**、再删本轮自有的临时根；异常不上抛但记录 |
+| `addCleanup` | `addCleanup(fn)` | SIGINT 兜底注册表（单监听器） |
+| 快照类 | `snapshotAssets/restoreAssets`（显式操作仓库根，isolated boot 不使用） | 仅仓库根资产直读直写的场景（如 assets.js 一致性校验）；isolated 场景一律走 `root`，不靠跨进程备份还原 |
 
 Store/播放器测试的最小断言模板：
 
@@ -368,6 +380,8 @@ VRADIO_PLAYWRIGHT="$PWD/node_modules/playwright" node ../../ui-demo/p6-verify.cj
 
 Playwright CI 缺包、浏览器下载失败或 runner 无法启动必须标记为环境失败并上传日志；不得静默跳过。
 
+**执行预算与硬门失败判定细则**（PR/夜间共享 runner 的波动隔离）：PR 浏览器门总预算 ≤10 分钟，单 step 显式 `timeout-minutes`（启动 3 / 矩阵 5 / 上传 1），超预算判环境失败而非代码回归；性能哨兵（render 中位 `<100ms`）先跑 1 轮 warm-up 丢弃、再采样 5 轮取中位，失败自动重跑 1 次，**两轮同向超线且样本间无 >3× 离散才判代码回归**，否则记「环境波动-需人工复核」并保留原始样本与 runner 信息；夜间矩阵超预算时按「PR 受影响扩展 → 视口全量 → Firefox/Edge」顺序缩减并显式记录缩减项，不默默删除门禁。
+
 真实公网电台播放不作为每次 PR 的硬门；PR 只使用本地流 fixture。真实源抽查单独列为夜间/发布前探测，并把漂移视为数据健康信号，不把网络偶发失败误判为代码回归。
 
 ### L4：Android JVM、instrumented 与发布层（Web 主回归的配套层）
@@ -376,7 +390,7 @@ Playwright CI 缺包、浏览器下载失败或 runner 无法启动必须标记�
 - Android 变更或契约/数据变更：`assembleDebug`、`assembleRelease`、APK 体积哨兵、资产 hash/版本检查。
 - Android test-only 依赖：`androidx.test.ext:junit`、`androidx.test:runner`、`androidx.test:rules` 仅进入 `androidTestImplementation`，不改变运行时依赖白名单；新增测试依赖必须在 Android README/PR 中登记并说明原因。
 - instrumented smoke 的最小关键路径：启动并装载共享资产、使用本地固定流完成播放/暂停/切台、音频焦点让位与恢复、后台/进程回收后恢复快照、Widget 播放/上一台/下一台、备份预览与确认导入。Compose 只验证关键语义和操作，不把像素级 UI 回归复制到 Android。
-- 本地固定流由 Node 内置 HTTP fixture 提供；Android 通过模拟器可达地址访问。fixture 至少提供直流、HLS、ICY 曲讯、延迟建流和断流场景，避免 Android Smoke 依赖公网。接入协议固定为：workflow 在宿主机启动 `test/harness/android-fixture.js`，监听 `0.0.0.0` 的随机端口；模拟器使用 `10.0.2.2:<port>` 访问；workflow 通过 `-e fixtureBaseUrl=http://10.0.2.2:<port>` 传给 instrumentation。真机执行时改用同一局域网地址，并在报告中记录 fixture URL 与版本。
+- 本地固定流由 Node 内置 HTTP fixture 提供；Android 通过模拟器可达地址访问。fixture 至少提供直流、HLS、ICY 曲讯、延迟建流和断流场景，避免 Android Smoke 依赖公网。接入协议固定为：workflow 在宿主机启动 `test/harness/android-fixture.js`，监听 `0.0.0.0` 的随机端口；模拟器使用 `10.0.2.2:<port>` 访问。参数传递按执行入口区分：`adb shell am instrument -e fixtureBaseUrl=http://10.0.2.2:<port> ...`（adb 直调口径）或 `gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.fixtureBaseUrl=http://10.0.2.2:<port>`（Gradle 口径，CI workflow 用这条）。真机执行时改用同一局域网地址，并在报告中记录 fixture URL 与版本（设备端反查 `/__health` 核对，不信客户端硬编码）。
 - 执行分层：稳定模拟器作为 PR/夜间候选；实体设备只做发布前验收。当前批次只提交 `androidTest` 测试骨架和可手动触发的 workflow 草案，模拟器 API/镜像稳定后再接入 PR 硬门。
 - Media3/真实网络/Widget/Android Auto 不塞进 JVM 单测；使用固定流 fixture、fake RawHttp、设备 smoke 和人工实机验收分层。
 - Web/Android 黄金 fixture 必须逐字段或逐组等价；差异报告点名字段路径和端，不接受“整体不相等”。
@@ -385,7 +399,7 @@ Playwright CI 缺包、浏览器下载失败或 runner 无法启动必须标记�
 
 | Smoke 组 | 关键断言 | 输入/隔离 | 当前门禁 |
 |---|---|---|---|
-| 启动与资产 | Activity 可启动；`radio.txt`/`logos.txt` 可解析；共享 fixture 版本可见 | 临时 app 数据；本地资产 | 下一批模拟器接入 |
+| 启动与资产 | Activity 可启动；`radio.txt`/`logos.txt` 可解析；共享 fixture 版本可见。**已实现**：启动不 finish、radio.txt 生产解析器（≥1 台/≥2 分类/URL 形态）、logos.txt 行形态、radio-meta.json 契约形态；**未实现**：AppVm.boot 装配就绪的有界等待、共享 fixture 版本核对 | 临时 app 数据；本地资产 | 下一批模拟器接入 |
 | 播放控制 | 固定流进入 playing；暂停/恢复/切台状态正确；不依赖公网 | Node fixture，模拟器可达地址 | 下一批模拟器接入 |
 | 音频焦点 | transient loss 暂停；gain 恢复；永久 loss 清理 | fake/系统 AudioManager 场景 | 发布前设备优先 |
 | 后台/进程恢复 | 回到前台状态不串台；进程回收后快照和最近台可恢复 | 系统后台、重启 Activity | 下一批模拟器接入 |
@@ -560,3 +574,16 @@ Node 14 政策：当前 `engines` 为 `>=14`，CI 必须保留 Node 14 leg。若
 3. 然后扩展真实浏览器、多标签、Android 设备和长时发布演练。
 
 在 P0/P1 完成前，项目仍可以继续开发，但涉及播放、持久化、同步和跨端契约的改动应视为高风险变更，必须附带定向测试和明确未覆盖项。
+
+## 10. 附录：落地进度与欠账（2026-11-15 基线之后的实施状态）
+
+> 状态表唯一入口：每批落地/修订后在**自己批次的行**追加一行记录（日期 + 已落地 + 仍欠项 + 验收命令），
+> 不改写 2026-11-15 的历史基线正文。接口/命令/覆盖事实变化必须同步回写，防止状态表长期停留在「尚未创建」。
+
+| 批次 | 状态记录 |
+|---|---|
+| P0a harness/player/store | （待批次落地后填写） |
+| P0b sync/logos/PR smoke | （待批次落地后填写） |
+| P1 API/CI | （待批次落地后填写） |
+| P2 浏览器/Android | （待批次落地后填写） |
+| P3 夜间/发布前 | （待批次落地后填写） |

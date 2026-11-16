@@ -376,9 +376,13 @@ const BLOCKED_REQUIREMENTS = [ // 阻塞中的验收要求：修复落地前，�
     // 不判 KF2，豁免状态维持——既不误报转绿也不误报腐化）
     const kfAttempt = async () => {
       const rev0 = (await getJson(base + 'api/store')).rev;
+      const trace = [];
+      const poll = setInterval(() => { getJson(base + 'api/store').then(x => trace.push(x.rev + ':' + x.data['radio.vol'])).catch(() => {}); }, 100);
       await kf.keyboard.press('x'); // 无副作用键（未绑定）——仅取 sticky activation，保证 reload 派发 beforeunload
       await kf.reload(); await waitBoot(kf);
       await new Promise(r => setTimeout(r, 1200)); // beforeunload flush POST 落地
+      clearInterval(poll);
+      const seen = new Set(); trace.forEach(x => { if (!seen.has(x)) { seen.add(x); console.log('[KF2 trace]', x); } });
       return (await getJson(base + 'api/store')).rev > rev0; // rev 推进 = 陈旧 flush 确实发出
     };
     const probeFull = await getJson(base + 'api/store');

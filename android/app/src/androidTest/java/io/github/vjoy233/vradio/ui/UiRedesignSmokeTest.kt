@@ -5,20 +5,15 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
-import androidx.compose.ui.test.hasRole
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
-import androidx.compose.ui.test.onAllNodes
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
-import androidx.compose.ui.test.onNode
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
-import androidx.compose.ui.test.fetchSemanticsNode
-import androidx.compose.ui.test.fetchSemanticsNodes
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -250,7 +245,12 @@ class UiRedesignSmokeTest {
 
   /** EditableText 专查（hasText 连 Text+EditableText 双查会撞列表行同名文本） */
   private fun hasEditableText(v: String) = SemanticsMatcher("editableText=\"$v\"") { node ->
-    node.config.getOrNull(SemanticsProperties.EditableText) == v
+    node.config.contains(SemanticsProperties.EditableText) && node.config[SemanticsProperties.EditableText] == v
+  }
+
+  /** Role 匹配（本 BOM ui-test 无顶层 hasRole——本地拼装，contains+[] 双保险防缺属性抛错） */
+  private fun hasRole(r: Role) = SemanticsMatcher("role=$r") { node ->
+    node.config.contains(SemanticsProperties.Role) && node.config[SemanticsProperties.Role] == r
   }
 
   /** 轮询播放状态到目标（PlayerHolder.ui StateFlow 跨线程读安全；100ms 步进，PlaybackSmokeTest 同款） */

@@ -18,7 +18,7 @@ on:
 jobs:
   drills-soak:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 40 # 预算绑定现有时长（#36 P2/r2 意见 5）：soak 30min + drills 约 2min + setup，超时即预算问题暴露
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -39,7 +39,7 @@ jobs:
           if-no-files-found: error
   real-sources:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10 # 真实源抽样约几分钟 + setup
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -60,7 +60,7 @@ jobs:
           if-no-files-found: error
   browser-nightly:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 15 # npm ci + playwright install + 两套件，预算从紧（#36 P2/r2 意见 5）
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

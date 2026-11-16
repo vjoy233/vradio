@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -13,8 +14,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStoreOwner
 import io.github.vjoy233.vradio.player.PlayerHolder
@@ -68,9 +71,15 @@ fun AppRoot() {
       }
     }
     VrScaffold(destination, vm::navigate, miniPlayer = { MiniPlayer(vm, ui) }, snackbarHost = { SnackbarHost(snack) }) { pad ->
+      // P4 §7「内容最大宽度」：EXPANDED（rail）档列表内容限宽 720dp 居中（阅读宽度上限，拍板值 owner 可调）；
+      // 发现页横滚卡片行保持全宽不设限；手机 COMPACT 无感（约束不生效）
       when (destination) {
-        Destination.LIBRARY -> Box(Modifier.fillMaxSize().background(pal.bg)) { StationScreen(vm, pad) }
-        Destination.FAVORITES -> Box(Modifier.fillMaxSize().background(pal.bg)) { FavoritesScreen(vm, pad) }   // pad 收敛进屏内（与 LIBRARY 同构）：头部自理状态栏、StationContent/空态吃 bottomBar 让位
+        Destination.LIBRARY -> Box(Modifier.fillMaxSize().background(pal.bg), contentAlignment = Alignment.TopCenter) {
+          Box(Modifier.widthIn(max = 720.dp).fillMaxSize()) { StationScreen(vm, pad) }
+        }
+        Destination.FAVORITES -> Box(Modifier.fillMaxSize().background(pal.bg), contentAlignment = Alignment.TopCenter) {   // pad 收敛进屏内（与 LIBRARY 同构）：头部自理状态栏、StationContent/空态吃 bottomBar 让位
+          Box(Modifier.widthIn(max = 720.dp).fillMaxSize()) { FavoritesScreen(vm, pad) }
+        }
         Destination.DISCOVER -> DiscoveryScreen(vm, pad)   // P3 正式目的地（§5.4）：bg/pad/状态栏自理；flag 关时 navigateGuard 使其不可达
       }
     }

@@ -10,8 +10,11 @@ import io.github.vjoy233.vradio.data.RadioTxt
 import org.json.JSONObject
 import org.junit.Assert.assertTrue
 import org.junit.Assume
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.net.HttpURLConnection
+import java.net.URL
 
 /**
  * Android 关键路径 Smoke 骨架（启动 + 共享资产 + 本地固定流 fixture 接入协议）。
@@ -25,11 +28,17 @@ import org.junit.runner.RunWith
  * test/harness/android-fixture.js（监听 0.0.0.0 随机端口）→ workflow 把 127.0.0.1 换算 10.0.2.2 →
  * gradle -Pandroid.testInstrumentationRunnerArguments.fixtureBaseUrl= 注入 instrumentation；
  * 未注入（或哨兵值）时播放类用例经 [assumeFixture] Assume 跳过——没接 fixture 的手动 dispatch 骨架仍绿。
- * 测试输入统一走本地 Node fixture，禁止依赖公网；音频焦点/进程回收/Widget 属发布前设备层，不在本批。
->>>>>>> 49f44ff (test(android): P2 instrumented smoke 扩展——fixtureBaseUrl 注入协议 + 播放/备份导入用例 + workflow 接 fixture（草案，不进 PR 硬门）)
+ * CI required 模式（review#40 P2-5）：workflow 同步注入 ciRequired=1——此时 fixture 未注入/端口不可达
+ * 直接 fail（workflow 的目的就是验证启动/端口传递协议，参数链退化必须红脸，不许「全 skip 的绿 job」）；
+ * 本地无该参数保持 Assume skip 不变。
+ * 测试输入统一走本地 Node fixture，禁止依赖公网；音频焦点/进程回收/Widget 属发布前设备层，不在本批
+ * （差异 diff 范围与挂账见 docs/testing-strategy-2026-11.md §10 附录）。
  */
 @RunWith(AndroidJUnit4::class)
 class AndroidSmokeTest {
+
+  @get:Rule
+  val guard = TestUtil.dataGuard() // review#40 P1：launchesMainActivity 会触发 AppVm boot 链（可能写用户数据），统一快照兜底
 
   companion object {
     /** fixture 版本：与 test/harness/android-fixture.js 的 FIXTURE_VERSION 两处同步改（报告须记录在案） */
@@ -42,11 +51,38 @@ class AndroidSmokeTest {
     fun fixtureBase(): String? = InstrumentationRegistry.getArguments().getString("fixtureBaseUrl")
       ?.trim()?.takeIf { it.isNotEmpty() && it != FIXTURE_BASE_NONE }
 
-    /** 播放类用例门槛：未接 fixture 即 Assume 跳过（AssumptionViolated = 跳过不算失败）；接了则返回非空 baseUrl */
+    /** CI required 模式开关（review#40 P2-5）：workflow 注入 ciRequired=1；缺省/其余值 = 本地手动档 */
+    fun ciRequired(): Boolean = InstrumentationRegistry.getArguments().getString("ciRequired")
+      ?.trim() == "1"
+
+    /** 播放类用例门槛：未接 fixture 时——CI required 模式直接 fail（skip = 启动/端口传递协议退化），
+        本地模式 Assume 跳过（AssumptionViolated = 跳过不算失败）；接了则返回非空 baseUrl */
     fun assumeFixture(): String {
       val base = fixtureBase()
-      Assume.assumeTrue("fixtureBaseUrl 未注入（缺省或哨兵 $FIXTURE_BASE_NONE），播放类 smoke 跳过", base != null)
+      if (base == null) {
+        if (ciRequired()) throw AssertionError(
+          "CI required 模式：fixtureBaseUrl 未注入——fixture 启动/10.0.2.2 端口传递协议退化" +
+          "（查 workflow 启动段是否 grep 到 FIXTURE_URL=），禁止以全 skip 假绿")
+        Assume.assumeTrue("fixtureBaseUrl 未注入（缺省或哨兵 $FIXTURE_BASE_NONE），播放类 smoke 跳过", false)
+      }
       return base!!
+    }
+
+    /** fixture 可达性预检（review#40 P2-5）：GET /__health 5s 超时口径——CI required 模式端口不通立即
+        fail（比建流超时更早更明确的信号）；本地模式 Assume 跳过（不开 fixture 的手动 dispatch 保持绿） */
+    fun assumeFixtureReachable(base: String) {
+      val ok = runCatching {
+        val c = URL(base + "/__health").openConnection() as HttpURLConnection
+        c.connectTimeout = 5000; c.readTimeout = 5000
+        val code = c.responseCode
+        c.disconnect()
+        code in 200..299
+      }.getOrDefault(false)
+      if (!ok) {
+        val msg = "fixture 不可达（$base/__health，5s 超时）——模拟器 10.0.2.2 映射/宿主 fixture 进程异常"
+        if (ciRequired()) throw AssertionError(msg)
+        Assume.assumeTrue(msg, false)
+      }
     }
 
     /** fixture 版本/URL + 设备 API + APK 版本进 instrumentation 日志（L4 报告要求逐项在案；tag VRadioSmoke） */
@@ -56,7 +92,7 @@ class AndroidSmokeTest {
         ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName
       }.getOrDefault("?")
       Log.i(tag, "fixtureVersion=$FIXTURE_VERSION fixtureUrl=${fixtureBase() ?: "(未注入)"} " +
-        "deviceApi=${Build.VERSION.SDK_INT} apkVersion=$apk")
+        "ciRequired=${if (ciRequired()) "1" else "0"} deviceApi=${Build.VERSION.SDK_INT} apkVersion=$apk")
     }
   }
 

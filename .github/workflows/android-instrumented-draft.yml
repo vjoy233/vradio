@@ -3,7 +3,10 @@
 #   不宣称播放 Smoke 已通过；矩阵各行的实质断言随 androidTest 批次逐项接入（docs/testing-strategy-2026-11.md §3 L4）。
 # 接入协议（P2 批）：宿主起 test/harness/android-fixture.js（0.0.0.0 随机端口，日志打印 FIXTURE_URL/版本）→
 # 127.0.0.1 换算 10.0.2.2（模拟器访问宿主回环的固定映射）→ gradle -Pandroid.testInstrumentationRunnerArguments.
-# fixtureBaseUrl= 注入（AGP 官方机制）；未注入时播放类用例 Assume 跳过（骨架仍绿）。失败必查 artifact：
+# fixtureBaseUrl= 注入（AGP 官方机制）；未注入时播放类用例 Assume 跳过（骨架仍绿）。
+# ciRequired=1（review#40 P2-5）：CI 档同步注入——fixture 未注入/端口不可达直接 fail。本 workflow 的目的
+# 就是验证启动/端口传递协议，参数链退化为「全 skip 绿 job」必须红脸；本地手动 dispatch 不传该参数保持 skip。
+# 失败必查 artifact：
 # instrumentation 报告 + logcat（tag VRadioSmoke 有 fixture 版本/设备 API/APK 版本）+ fixture 日志。
 name: android-instrumented-draft
 
@@ -51,7 +54,8 @@ jobs:
           script: |
             set +e
             android/gradlew --project-dir android connectedDebugAndroidTest --stacktrace \
-              -Pandroid.testInstrumentationRunnerArguments.fixtureBaseUrl=$FIXTURE_BASE
+              -Pandroid.testInstrumentationRunnerArguments.fixtureBaseUrl=$FIXTURE_BASE \
+              -Pandroid.testInstrumentationRunnerArguments.ciRequired=1
             CODE=$?
             adb logcat -d > "$GITHUB_WORKSPACE/instrumented-logcat.txt" || true   # 失败必查：VRadioSmoke tag 在案
             exit $CODE

@@ -27,6 +27,7 @@ jobs:
         run: |
           RID="$(git rev-parse --short HEAD)-$(date +%Y%m%d-%H%M%S)"
           rm -rf "docs/test-reports/nightly/$RID"
+          mkdir -p "docs/test-reports/nightly/$RID" # tee 在管道启动时即开日志文件，目录必须先建（首跑 run 43923463792 实测：缺目录 tee 即败，pipefail 连坐 step）
           echo "NIGHTLY_RUN_ID=$RID" >> "$GITHUB_ENV"
       - run: |
           set -o pipefail
@@ -48,6 +49,7 @@ jobs:
         run: |
           RID="$(git rev-parse --short HEAD)-$(date +%Y%m%d-%H%M%S)"
           rm -rf "docs/test-reports/nightly/$RID"
+          mkdir -p "docs/test-reports/nightly/$RID" # tee 在管道启动时即开日志文件，目录必须先建（首跑 run 43923463792 实测：缺目录 tee 即败，pipefail 连坐 step）
           echo "NIGHTLY_RUN_ID=$RID" >> "$GITHUB_ENV"
       - run: |
           set -o pipefail
@@ -71,6 +73,7 @@ jobs:
         run: |
           RID="$(git rev-parse --short HEAD)-$(date +%Y%m%d-%H%M%S)"
           rm -rf "docs/test-reports/nightly/$RID"
+          mkdir -p "docs/test-reports/nightly/$RID" # tee 在管道启动时即开日志文件，目录必须先建（首跑 run 43923463792 实测：缺目录 tee 即败，pipefail 连坐 step）
           echo "NIGHTLY_RUN_ID=$RID" >> "$GITHUB_ENV"
       - name: browser-matrix（十视口/缩放/forced-colors/键盘）
         run: |

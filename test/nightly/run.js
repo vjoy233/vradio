@@ -27,7 +27,7 @@ if (!quick) {
   jobs.push({ name: 'soak' });
 }
 
-const runId = runIdOf(), dir = prepareDir(runId, !process.env.NIGHTLY_RUN_ID, true); // 本地自算 run-id 先整目录清；env 注入（CI/workflow/复用）时只清固定名产物防旧证据混入（r2 意见 3，见 report-dir.js）
+const runId = runIdOf(), dir = prepareDir(runId, !process.env.NIGHTLY_RUN_ID, true); // 本地自算 run-id 先整目录清；env 注入（CI/workflow/复用）时清固定名 json 产物防旧证据混入（r2 意见 3；log-*.txt 由 tee 持句柄不能清，见 report-dir.js）
 const startedAt = new Date().toISOString();
 let fail = 0;
 const suites = [];

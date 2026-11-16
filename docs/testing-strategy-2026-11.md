@@ -397,6 +397,8 @@ Playwright CI 缺包、浏览器下载失败或 runner 无法启动必须标记�
 
 #### Android instrumented Smoke 矩阵
 
+**当前 Android PR 门 = compile-only**（`testDebugUnitTest` + `compileDebugAndroidTestKotlin` + `assemble`），设备 Smoke（`connectedDebugAndroidTest`）未接入——矩阵各行的「当前门禁」列以此为准，模拟器/实体设备 workflow 接入时逐项绑定 smoke case、失败证据与触发范围。
+
 | Smoke 组 | 关键断言 | 输入/隔离 | 当前门禁 |
 |---|---|---|---|
 | 启动与资产 | Activity 可启动；`radio.txt`/`logos.txt` 可解析；共享 fixture 版本可见。**已实现**：启动不 finish、radio.txt 生产解析器（≥1 台/≥2 分类/URL 形态）、logos.txt 行形态、radio-meta.json 契约形态；**未实现**：AppVm.boot 装配就绪的有界等待、共享 fixture 版本核对 | 临时 app 数据；本地资产 | 下一批模拟器接入 |
@@ -582,8 +584,8 @@ Node 14 政策：当前 `engines` 为 `>=14`，CI 必须保留 Node 14 leg。若
 
 | 批次 | 状态记录 |
 |---|---|
-| P0a harness/player/store | （待批次落地后填写） |
-| P0b sync/logos/PR smoke | （待批次落地后填写） |
+| P0a harness/player/store | **已落地 2026-11-16**（PR #37 test/p0a-harness-player-store，643a451→368ebaf）：test/harness/ 最小五件套——fake-clock（可推进时间+install/restore 显式 patch）/fake-browser（FakeLS/FakeBC hub/fakeAudio fire() 显式驱动/fakeDocument 确定性缓存/fakeNavigator+loadStore·loadPlayer vm 装载器）/http-fixture（本地可控上游路由表）/temp-root/api-client（真服务子进程引导+isolated 复制仓库骨架到独立临时应用根，宿主用户数据零接触）；test/player.js 播放状态机矩阵 62→64 断言 14 分节（决策链/世代令牌防串台+旧闭包·旧 HLS fatal 迟到 mutation 防线/级联自愈/看门狗/ended halt 守卫/srcmem2 FIFO/每台音量/多标签让位/睡眠渐弱）；test/store.js 存储状态机矩阵 32→41 断言（300ms 合批/dirty 对账/flush 三规则/多标签 LWW/file:// 降级四路/KEYS 与 contracts/radio-keys.json 逐键比对）；随行生产修复：player HLS fatal 实例句柄守卫、store apply 重载判定比对内存基线 mem+flush 单飞串行尾随重推、server.js 写盘 tmp 名唯一化（pid+序号）。仍欠项：P1 归拢 harness 公共接口、http-fixture 扩 ICY/HLS 场景。验收：`npm test`（vm 沙箱+FakeClock，零依赖零网络秒级） |
+| P0b sync/logos/PR smoke | **已落地 2026-11-16**（PR #38 test/p0b-web-batch，f9909b6→2dadbc3）：test/sync.js 四通道编排矩阵 45 断言组（runCheck 前 4 源封顶/ok·sus·perm 分档/网络失败不落标记/busy 互斥手动优先/bootQuiet 分发/首启基线确认门槛+中断续跑每 25 台落盘/强制两步协议 token 单次消费/ETA 整 10 刷新/toast·status 分流）；test/logos.js 台标数据链矩阵 34 用例/131 断言 10 分节（三级来源零请求断言/负缓存 7 天边界/在飞去重/3 路并行峰值/蜻蜓+byurl 双路解析/save FIFO 600/跨实例缓存恢复）；.ci/browser/ Playwright 1.62.1 独立供给（package.json 钉版+lockfile，node_modules gitignored——根项目零 npm 依赖不破）+ ui-demo/pr-smoke.cjs 正式页 PR 门（自举隔离=worktree 临时检出+82xx 随机端口+宿主零接触/Z2 宿主哈希终检/Z3 清理门；review#38 修订后 32 断言 on/off 双态 PASS @ 9059150，公网阻断 38 条零外联，H1 render 中位 81.5ms）。仍欠项：完整 connecting→playing 音频链路挂账 L5/multi-tab、Firefox/Edge 参数化。验收：`npm test` + `node ui-demo/pr-smoke.cjs`（需 .ci/browser Playwright 供给+VRADIO_PLAYWRIGHT） |
 | P1 API/CI | （待批次落地后填写） |
 | P2 浏览器/Android | （待批次落地后填写） |
 | P3 夜间/发布前 | （待批次落地后填写） |

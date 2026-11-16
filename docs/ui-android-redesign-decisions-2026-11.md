@@ -60,3 +60,13 @@
 5. **设置页签名保持 `SettingsScreen(vm)`**：§6.2 的 SettingsScreen(vm, pad) 按旧草案；§10 已确认决策「设置是次级页面」= 覆盖层形态，不进 VrScaffold 内容区（无 Scaffold pad 可传），自理状态栏/导航栏 padding。
 6. **折叠状态** = rememberSaveable（stringSetSaver）进程内（Q18：旋转重建保留、进程死亡回默认）；新增 `defaultExpandedIds()` 纯函数供屏幕与测试共用默认展开口径。
 7. **P3 验证证据**：开启态/关闭态双构建 + SettingsSectionTest 5 用例 + NavigationStateTest 8 用例（2 skipped 属双态假设设计）全绿。
+
+## 4. P4 实施落账
+
+1. **内容最大宽度拍板值 = 720dp**（§7 P4「平板 rail 与内容最大宽度实测」）：EXPANDED 档 LIBRARY/FAVORITES 列表内容限宽居中；发现页横滚行保持全宽；COMPACT 无感。owner review 可调。
+2. **TalkBack 语义契约**（串与 §8.2.9 断言对齐）：播放钮按态「播放/暂停/连接中」、中列「正在播放：<台名>，点按展开播放器」、搜索/更多、收藏星「收藏/已收藏」、⏮⏭「上一/下一收藏台」、音量 stateDescription「音量 N%」、设置组头「设置分组：<title>」+「已展开/已折叠」、发现卡「<台名>，点按播放」。Navigation.kt 反编译核实 M3 NavigationBarItem 自带 selectable+Role.Tab 合并语义——图标不加双读。
+3. **合并语义实证**：foundation clickable/combinedClickable merge descendants=true、ContentDescription 追加策略——卡内 FavStar 被父节点吞并，其 cd 追加进卡片合并串（hasContentDescription any 匹配两树皆命中）。
+4. **androidTest 增量（§8.2）**：新 `UiRedesignSmokeTest.kt`（7 用例：设置往返保留/fixture 播放跨目的地不断流/full player 动作/双形态分档几何/收藏搜索与撤销/目的地状态保留/语义契约）+ 测试依赖登记（compose ui-test 两件套 + BOM 对齐，**零运行时依赖**）。**依赖链挂账**：引用测试链 #36/#40 的 TestUtil.dataGuard/assumeFixture 基建——本链分支不编译 androidTest 源集；**交叉编译验证已做**：「feat/android-ui-p4 × origin/test/p2-browser-android」临时合并 worktree 跑 `assembleDebugAndroidTest` BUILD SUCCESSFUL（期间修复 3 处：成员函数误 import、本地 hasRole 拼装、EditableText 是 AnnotatedString 取 .text——均为测试文件修复，主源集零改动）。临时合并仅本地验证、不推送不进链；build.gradle.kts 双链冲突已在验证树手工并案（两侧 androidTest 依赖共存），正式合入时按同款处理。
+5. **返回链（§7 P4）**：确认弹窗/各 ModalBottomSheet 窗口自收（P2 已接）→ Full player → 次级页（backTarget）→ 系统默认；未覆盖系统 predictive back 动画（未改 manifest BackHandler 配置）。
+6. **手测/设备项挂账**（无 adb/模拟器，owner 侧执行）：320×720/360×800/390×844/800×360 设备矩阵、dark/light/OLED、字体放大、TalkBack 真机、强制深色、离线、空态/错误态走查；`connectedDebugAndroidTest`（fixture 旋转/后台播放硬门）待 #36/#40 合并后跑（§8.2.5 无网络态需 NetGate 注入面，挂账 §10 附录口径）。
+7. **P4 验证证据**：`test assembleDebug` BUILD SUCCESSFUL（主源集全绿）；交叉编译 `assembleDebugAndroidTest` BUILD SUCCESSFUL。

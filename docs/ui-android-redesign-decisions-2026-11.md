@@ -39,3 +39,14 @@
 6. **MiniPlayer `navigationBarsPadding()` 仅 EXPANDED 档**：平板/横屏 mini player 即屏幕底缘，三键导航会遮播放钮；COMPACT 档下方 NavigationBar 自理 inset。
 7. **滚动恢复护栏**：恢复 key 用「列表非空」（boot 未就绪时 scrollToItem 会被 clamp 到 0）+ `restored` 一次性标志（防空→非空翻转拽回旧位）。
 8. **设备矩阵手测（320×720/360×800/390×844/800×360）**：本机无 adb/模拟器，留 owner 手测门（§7 P1 实测项），不作为合并阻塞（JVM 门全绿）。
+
+## 2. P2 实施落账
+
+1. **`playerVisual` 位置**：`PlayerSheet.kt` 顶层纯函数（同包 JVM 直测）；不扩展 PState（P1-1 修订硬门），MiniPlayer 行内映射暂不动（后续批次收敛到 playerVisual）。
+2. **「回到电台页」= `vm.locatePlaying()` + `vm.closePlayer()`**：sheet 全屏遮挡时不收起看不到定位高亮——保留浏览上下文语义，仅补收起。
+3. **PlayerBar.kt = 纯控制件复用层**：旧 bar 容器删除（MiniPlayer 已取代），导出 PlayPauseBtn/SleepControl/VolumeControl/ActText 供 PlayerSheet 引用（sleepMenu/dragVol 收编单份不再复制）；`vm.status` 反馈行补进 full player（stepFav 无收藏提示等反馈需显示位，6s 自清与 MiniPlayer 幂等双写，后续收敛）。
+4. **Full player 主按钮 72dp**、⏮⏭ 自绘 SkipIcon（Canvas，无图标库）；sheet 内容 Column 加 verticalScroll 保障 PartiallyExpanded 拖拽手感（Q10）。
+5. **BackHandler 层级（Q21）**：确认弹窗/ModalBottomSheet 自收（窗口自消费）→ root 先 Full player 后次级页；`backTarget` 纯函数语义不变。
+6. **SourceDetailSheet**：头部无 sticky（sheet 首屏自然可见，已注明）；主操作位=播放/重播，管理动作收「更多」DropdownMenu（`sourceRowActs` 纯函数与枚举零改动，JVM 测试不涉）；诊断中=spinner+不可点（无取消通道，§5.7 口径）。
+7. **SongsSheet**：补歌史时间列展示层格式化（当天 HH:mm/跨天 MM-dd HH:mm，Locale.US 同既有先例；SongRec.at 存储不动）。
+8. **P2 验证证据**：`test assembleDebug` BUILD SUCCESSFUL；PlayerUiMappingTest 8 用例全绿（noSrc 优先/CONNECTING±status/PLAYING/PAUSED/IDLE±status 三元组断言）。

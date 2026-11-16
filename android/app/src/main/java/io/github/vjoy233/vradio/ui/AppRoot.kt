@@ -5,8 +5,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -45,10 +47,29 @@ fun AppRoot() {
     val ui by PlayerHolder.ui.collectAsState()
     val snack = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { vm.toasts.collect { snack.showSnackbar(it) } }
+    // 撤销 Snackbar（Q17，§5.5）：favUndoReq 非空即弹「已取消收藏」+ 撤销动作；Long≈10s（Material3
+    // 无 8s 档，取 Long ≈「约 8 秒」口径）；点撤销走 undoUnfav（URL 身份回绑）；结束清载荷
+    // （守卫：期间又发了新星标请求则不清——请求被更新值覆盖，旧 effect 不得误清）
+    val favUndoReq by vm.favUndoReq.collectAsState()
+    LaunchedEffect(favUndoReq) {
+      val st = favUndoReq ?: return@LaunchedEffect
+      val r = snack.showSnackbar("已取消收藏：${displayParts(st.n).first}", actionLabel = "撤销", duration = SnackbarDuration.Long)
+      if (r == SnackbarResult.ActionPerformed) vm.undoUnfav(st)
+      if (vm.favUndoReq.value == st) vm.favUndoReq.value = null
+    }
+    // Q15 切目的地收起搜索（搜索词保留、展开态收起，回台页有词自动再展开是 StationScreen 既有逻辑）；
+    // 离开收藏页撤销作废（§5.5）：dismiss 在飞 Snackbar + 清载荷——到站即失效，不留「幽灵撤销」
+    LaunchedEffect(destination) {
+      vm.searchExpanded.value = false
+      if (destination != Destination.FAVORITES) {
+        snack.currentSnackbarData?.dismiss()
+        vm.favUndoReq.value = null
+      }
+    }
     VrScaffold(destination, vm::navigate, miniPlayer = { MiniPlayer(vm, ui) }, snackbarHost = { SnackbarHost(snack) }) { pad ->
       when (destination) {
         Destination.LIBRARY -> Box(Modifier.fillMaxSize().background(pal.bg)) { StationScreen(vm, pad) }
-        Destination.FAVORITES -> Box(Modifier.fillMaxSize().background(pal.bg).padding(pad)) { FavoritesScreen(vm) }
+        Destination.FAVORITES -> Box(Modifier.fillMaxSize().background(pal.bg)) { FavoritesScreen(vm, pad) }   // pad 收敛进屏内（与 LIBRARY 同构）：头部自理状态栏、StationContent/空态吃 bottomBar 让位
         Destination.DISCOVER -> Box(Modifier.fillMaxSize().background(pal.bg).padding(pad)) { }   // P3 填 DiscoveryScreen（§7）；flag 关时 navigateGuard 使其不可达
       }
     }
@@ -61,7 +82,7 @@ fun AppRoot() {
     }
     if (showSrc) SrcSheet(vm, ui)
     if (showSongs) SongsSheet(vm, ui)
-    // B3-C 发现浮层：开关控制入口（StationList 的「✦ 发现」按钮）与浮层挂载
+    // B3-C 发现浮层：开关控制入口（StationScreen 的「✦ 发现」按钮）与浮层挂载
     if (io.github.vjoy233.vradio.FeatureFlags.DISCOVERY) {
       val showDisc by vm.showDiscovery.collectAsState()
       if (showDisc) DiscoverySheet(vm)

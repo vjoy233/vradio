@@ -1,6 +1,7 @@
 // test/nightly/drills.js —— 夜间故障演练层（P3，docs/testing-strategy-2026-11.md §3 L5 + §7 P3；全离线约 1-2 分钟）。
 // 退出码语义（方案 §5 失败分类）：代码回归（确定性断言破）= 非零退出；环境失败（端口/权限）= 报告标「环境未执行」非零退出。
-// 报告：docs/test-reports/nightly/drills.json（逐断言入列 + 分类）。跑法：node test/nightly/drills.js（编排见 run.js）。
+// 报告：docs/test-reports/nightly/<run-id>/drills.json（每轮独立目录，逐断言入列 + 分类，review#41 任务 2/6）。
+// 跑法：node test/nightly/drills.js（编排见 run.js）。
 // 覆盖矩阵：
 //   [1] /proxy 上游故障注入（VR_TEST_GUARD=1 + 回环 fixture，学 test/np-proxy.js 口径）：上游 404 状态/类型透传 /
 //       HTML 页透传 / 假流 336B 透传 / 畸形 Location 403（audit-r2 P2-1 回归）——服务不崩、语义正确
@@ -30,9 +31,10 @@ const assert = require('assert'), fs = require('fs'), path = require('path');
 const { boot, freePort, snapshotAssets, restoreAssets, addCleanup, ROOT } = require('../harness/api-client');
 const { fixture } = require('../harness/http-fixture');
 const { publishSync, readManifestOf, manifestCheckDir, assetsComplete } = require('../../update-sources');
+const { openRun } = require('./report-dir');
 
 let pass = 0, fail = 0;
-const REPORTS = path.join(ROOT, 'docs', 'test-reports', 'nightly');
+const ctx = openRun(); // 每轮独立报告目录（env NIGHTLY_RUN_ID = 编排方已建目录；本地自算先清）
 const asserts = [];
 const ok = (name, fn) => Promise.resolve().then(fn).then(
   () => { pass++; console.log('  ✓', name); asserts.push({ name, pass: true, category: 'code-regression' }); },
@@ -154,8 +156,10 @@ const enumCodes = JSON.parse(fs.readFileSync(path.join(ROOT, 'contracts', 'sourc
     await s.close(); s = null;
 
     console.log('[3] 写盘故障注入（quality+store 双通道：data/*.json 换同名目录）');
-    const QF = path.join(ROOT, 'data', 'quality.json'), SF = path.join(ROOT, 'data', 'store.json');
     s = await boot({ isolated: true }); // 无缝 boot：写盘面不涉网络护栏
+    // isolated 语义（review#41 复核补修）：server.js ROOT=__dirname——写盘落在 boot 临时应用根，注入必须瞄准 s.root，
+    // 打仓库根 data/ 既打不到服务（服务读不到）又在无 data/ 的 checkout 上 ENOENT 崩套件
+    const QF = path.join(s.root, 'data', 'quality.json'), SF = path.join(s.root, 'data', 'store.json');
     const U1 = FIX + '/wf1.mp3', U2 = FIX + '/wf2.mp3', U3 = FIX + '/wf3.mp3';
     await ok('quality 基线：合法 op → 200 {ok:true, rev:1}', async () => {
       const r = await postJson(s.req, '/api/quality', { ops: [opOf('wf-1', U1)] });
@@ -321,20 +325,20 @@ const enumCodes = JSON.parse(fs.readFileSync(path.join(ROOT, 'contracts', 'sourc
     try { await fx.close(); } catch (_) {}
   }
 
-  // 报告落盘（目录不存在则建；exit 语义：代码回归 = 非零）
-  const report = { script: 'drills', generatedAt: new Date().toISOString(), durationMs: Date.now() - t0,
+  // 报告落盘（每轮独立目录已建；exit 语义：代码回归 = 非零）
+  const report = { script: 'drills', runId: ctx.runId, headSha: ctx.headSha, startedAt: ctx.startedAt,
+    generatedAt: new Date().toISOString(), durationMs: Date.now() - t0,
     executed: true, category: fail ? 'code-regression' : 'pass', pass, fail, assertions: asserts };
-  fs.mkdirSync(REPORTS, { recursive: true });
-  fs.writeFileSync(path.join(REPORTS, 'drills.json'), JSON.stringify(report, null, 2));
-  console.log(`\n${pass} 通过，${fail} 失败（报告 docs/test-reports/nightly/drills.json）`);
+  fs.writeFileSync(ctx.file('drills'), JSON.stringify(report, null, 2));
+  console.log(`\n${pass} 通过，${fail} 失败（报告 docs/test-reports/nightly/${ctx.runId}/drills.json）`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { // 套件级异常 = 未执行：环境类（端口/权限/起服失败）标「环境未执行」，其余按代码回归处置
   const env = /EADDRINUSE|EACCES|EPERM|未就绪|启动即退出|listen /.test(String(e && e.message || e));
   console.error('drills 未执行（' + (env ? '环境失败' : '套件异常') + '）：', e && e.message || e);
   try {
-    fs.mkdirSync(REPORTS, { recursive: true });
-    fs.writeFileSync(path.join(REPORTS, 'drills.json'), JSON.stringify({ script: 'drills', generatedAt: new Date().toISOString(),
-      executed: false, category: env ? 'environment' : 'code-regression', reason: String(e && e.message || e).slice(0, 300), pass, fail, assertions: asserts }, null, 2));
+    fs.writeFileSync(ctx.file('drills'), JSON.stringify({ script: 'drills', runId: ctx.runId, headSha: ctx.headSha, startedAt: ctx.startedAt,
+      generatedAt: new Date().toISOString(), executed: false, category: env ? 'environment' : 'code-regression',
+      reason: String(e && e.message || e).slice(0, 300), pass, fail, assertions: asserts }, null, 2));
   } catch (_) {}
   process.exit(1);
 });

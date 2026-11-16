@@ -1,8 +1,16 @@
 // test/nightly/real-sources.js —— 真实源抽样（P3，docs/testing-strategy-2026-11.md §3 L5；需要公网）。
-// 跑法：node test/nightly/real-sources.js（编排入口 run.js --real）。报告：docs/test-reports/nightly/real-sources.json。
+// 跑法：node test/nightly/real-sources.js（CI 由 workflow 直调本文件，不组合编排 flag——review#41 任务 2）。
+// 报告：docs/test-reports/nightly/<run-id>/real-sources.json（每轮独立目录）。
 // 退出码语义（方案 §5 失败分类）：数据健康类（真实源探测失败）只进报告不阻塞 = exit 0；
 // 环境失败（本机不通公网）= 报告标「环境未执行」exit 1——用「先探稳定公网端点（baidu generate_204 /
 // registry.npmjs.org 双探）判连通性」区分网络环境 vs 源漂移。
+// 探测异常三分类（review#41 任务 4，防「程序异常伪装成 NETWORK 数据漂移」）：
+//   ① checkDetail 结构化返回（NETWORK/HTTP/SHORT_BODY 等契约枚举——网络失败本就被 checkDetail 内部结构化）
+//      → 数据健康记账，exit 0；
+//   ② checkDetail 意外 throw 但 errno 家族（e.code = ECONNREFUSED/ENOTFOUND/ETIMEDOUT 等网络层拒绝逃逸）
+//      → 仍按 NETWORK 记数据健康，但单列计数 summary.netRejects；
+//   ③ 未预期异常（TypeError/ReferenceError 等程序错误）→ 保留 stack、分类 code-regression、非零退出；
+//      逐样本捕获（先收集完一轮再统一判定），已完成样本照常入报告。
 // 抽样面（方案 §3 L5 固定代表样本）：**从仓库 radio.txt 实时抽取**（按分类名 + 序号固定，不硬编码 URL——
 // URL 会漂移）：国内 m3u8 央广系 ×2（cnr.cn 域 m3u8）+ 蜻蜓 mp3 ×2（qingting.fm 64k.mp3 直流）+
 // 欧美 m3u8 ×2（欧美音乐节）+ 国际新闻·谈话 ×1 + 已知漂移台（喜马拉雅 xmcdn 形态）×1 = 8 样本。
@@ -13,26 +21,32 @@
 //   [2] 结构化结果契约：逐样本字段齐全、code ⊆ contracts/source-diagnostic.json 枚举、code ⇔ ok 一致
 //   [3] 数据健康记账：code 分布入报告 summary（OK/漂移码各有其位），探测失败不阻塞退出码
 //   [4] 连通性预探：双公网端点皆黑 → 环境失败（executed:false + reason）exit 1
+//   [5] 探测器零未预期异常：程序错误不入数据健康账（②网络层拒绝单列不算此类）
 // 未覆盖项：
 //   - 样本代表性回归测试（样本 URL 的历史可用率趋势——属数据看板，非测试职责）
 //   - 探测并发（串行更温和且报告稳定；夜间层不追求秒级）
-//   - 播放级验证（解码/持续无卡顿）——本脚本只到 checkDetail 字节验收层
+//   - 播放级验证（解码/持续无卡顿）——本脚本只到 checkDetail 字节验收层（ICY/代理实际播放链路挂账，
+//     见 docs/testing-strategy-2026-11.md §10 附录）
 const assert = require('assert'), fs = require('fs'), https = require('https'), path = require('path');
 const { checkDetail, splitSections } = require('../../update-sources');
+const { openRun } = require('./report-dir');
 
 const ROOT = path.join(__dirname, '..', '..');
-const REPORTS = path.join(ROOT, 'docs', 'test-reports', 'nightly');
 const enumCodes = JSON.parse(fs.readFileSync(path.join(ROOT, 'contracts', 'source-diagnostic.json'), 'utf8')).codes;
 const probe = u => new Promise(res => { // 连通性预探：任何响应（含 204/403）都算「有公网」
   const rq = https.get(u, { timeout: 6000 }, r => { r.resume(); res(true); });
   rq.on('timeout', () => { rq.destroy(); res(false); });
   rq.on('error', () => res(false));
 });
+// 网络层拒绝判定：errno 家族（ECONNREFUSED/ENOTFOUND/ETIMEDOUT/EAI_AGAIN…）——checkDetail 已内部结构化网络失败，
+// 这里只接「逃逸成 throw 的系统错误」；TypeError 等程序错误无 errno code，绝不落入此列（review#41 任务 4 ②/③分界）
+const isNetReject = e => !!(e && typeof e.code === 'string' && /^E[A-Z0-9]{3,}$/.test(e.code));
 // 抽样器：行 → {name, url}（名字逗号在同步期已被替换，首个逗号即分隔符；URL 漂移由实时读取吸收）
 const splitLine = l => { const i = l.indexOf(','); return i < 0 ? null : { name: l.slice(0, i).trim(), url: l.slice(i + 1).trim() }; };
 
 (async () => {
   const t0 = Date.now();
+  const ctx = openRun();
   const samples = [];
   const txt = fs.readFileSync(path.join(ROOT, 'radio.txt'), 'utf8');
   const secs = splitSections(txt);
@@ -60,20 +74,31 @@ const splitLine = l => { const i = l.indexOf(','); return i < 0 ? null : { name:
   const online = await probe('https://www.baidu.com/generate_204') || await probe('https://registry.npmjs.org/');
   if (!online) { // 环境失败：明确标「环境未执行」非零退出（不伪报通过、不冒充数据健康）
     console.error('real-sources 未执行（环境失败）：公网不可达（baidu generate_204 + registry.npmjs.org 双探皆失败）');
-    fs.mkdirSync(REPORTS, { recursive: true });
-    fs.writeFileSync(path.join(REPORTS, 'real-sources.json'), JSON.stringify({ script: 'real-sources',
-      generatedAt: new Date().toISOString(), executed: false, category: 'environment',
+    fs.writeFileSync(ctx.file('real-sources'), JSON.stringify({ script: 'real-sources', runId: ctx.runId, headSha: ctx.headSha,
+      startedAt: ctx.startedAt, generatedAt: new Date().toISOString(), executed: false, category: 'environment',
       reason: '公网不可达（连通性双探皆失败）', durationMs: Date.now() - t0, pass, fail, assertions: asserts }, null, 2));
     process.exit(1);
   }
   console.log('连通性预探通过（公网可达），开始 8 样本结构化探测（12s 窗口/样本，串行）\n');
 
-  const results = [];
+  // 逐样本捕获先收集完一轮再统一判定（review#41 任务 4）：structured = 结构化/网络拒绝结果；progErrors = 程序错误（保 stack）
+  const results = [], progErrors = [], netRejectTags = [];
   for (const s of samples) {
     process.stdout.write('  · [' + s.tag + '] ' + s.name + ' … ');
-    let d;
+    let d = null, threw = null;
     try { d = await checkDetail(s.url, 0, { timeout: 12000 }); } // 真实网络：不带 testHook，生产口径
-    catch (e) { d = { url: s.url, ok: false, code: 'NETWORK', hls: /\.m3u8/i.test(s.url), mode: /\.m3u8/i.test(s.url) ? 'hls' : 'direct', httpStatus: 0, contentType: '', bytes: 0, latencyMs: 0, why: String(e && e.message || e).slice(0, 60), checkedAt: Date.now() }; }
+    catch (e) { threw = e; }
+    if (threw && !isNetReject(threw)) { // ③ 未预期异常：程序错误，保留 stack，收尾统一判 code-regression
+      console.log('PROGRAM-ERROR（' + String(threw && threw.message || threw).split('\n')[0].slice(0, 60) + '）');
+      progErrors.push({ tag: s.tag, name: s.name, category: s.category, url: s.url,
+        error: String(threw && threw.message || threw).slice(0, 200), stack: String(threw && threw.stack || threw).slice(0, 800) });
+      continue;
+    }
+    if (threw) { // ② errno 家族网络拒绝逃逸 checkDetail：按 NETWORK 记数据健康，单列计数
+      netRejectTags.push(s.tag);
+      d = { url: s.url, ok: false, code: 'NETWORK', hls: /\.m3u8/i.test(s.url), mode: /\.m3u8/i.test(s.url) ? 'hls' : 'direct',
+        httpStatus: 0, contentType: '', bytes: 0, latencyMs: 0, why: ('网络层拒绝 ' + threw.code + ' ' + String(threw.message || threw)).slice(0, 60), checkedAt: Date.now() };
+    }
     process.stdout.write(d.code + '（' + d.bytes + 'B / ' + d.latencyMs + 'ms）\n');
     results.push(Object.assign({ tag: s.tag, name: s.name, category: s.category },
       { url: d.url, ok: d.ok, code: d.code, httpStatus: d.httpStatus, contentType: d.contentType, bytes: d.bytes, latencyMs: d.latencyMs, why: d.why, checkedAt: d.checkedAt }));
@@ -81,29 +106,33 @@ const splitLine = l => { const i = l.indexOf(','); return i < 0 ? null : { name:
 
   const codes = {};
   for (const r of results) codes[r.code] = (codes[r.code] || 0) + 1;
-  await ok('结构化结果契约：逐样本字段齐全、code ⊆ 契约枚举、code ⇔ ok 一致', () => {
+  await ok('结构化结果契约：逐样本字段齐全、code ⊆ 契约枚举、code ⇔ ok 一致（程序错误样本除外——另行判回归）', () => {
     for (const r of results) {
       for (const k of ['url', 'ok', 'code', 'httpStatus', 'contentType', 'bytes', 'latencyMs']) assert.ok(k in r && r[k] !== undefined, r.tag + ' 缺 ' + k);
       assert.ok(enumCodes.includes(r.code), r.tag + ' 枚举外 code ' + r.code);
       assert.strictEqual(r.ok, r.code === 'OK', r.tag + ' code ⇔ ok 不一致');
     }
   });
+  await ok('探测器零未预期异常（TypeError/ReferenceError 等程序错误不入数据健康账；网络层拒绝单列 ' + netRejectTags.length + ' 个）', () => {
+    assert.strictEqual(progErrors.length, 0, progErrors.map(p => p.tag + ': ' + p.error).join('；') + '（stack 见报告）');
+  });
 
-  const report = { script: 'real-sources', generatedAt: new Date().toISOString(), durationMs: Date.now() - t0,
-    executed: true, category: 'data-health', network: 'online', pass, fail,
-    summary: { total: results.length, okCount: codes.OK || 0, codes }, // 数据健康记账：探测失败只进报告不阻塞
-    samples: results, assertions: asserts };
-  fs.mkdirSync(REPORTS, { recursive: true });
-  fs.writeFileSync(path.join(REPORTS, 'real-sources.json'), JSON.stringify(report, null, 2));
+  const report = { script: 'real-sources', runId: ctx.runId, headSha: ctx.headSha, startedAt: ctx.startedAt,
+    generatedAt: new Date().toISOString(), durationMs: Date.now() - t0,
+    executed: true, category: progErrors.length ? 'code-regression' : 'data-health', network: 'online', pass, fail,
+    summary: { total: samples.length, okCount: codes.OK || 0, codes,
+      netRejects: netRejectTags.length, netRejectTags, programErrors: progErrors.length }, // 数据健康记账 + 网络拒绝单列
+    samples: results.concat(progErrors), assertions: asserts };
+  fs.writeFileSync(ctx.file('real-sources'), JSON.stringify(report, null, 2));
   console.log(`\n${pass} 通过，${fail} 失败；code 分布：` + Object.entries(codes).map(([k, v]) => k + '=' + v).join(' / ')
-    + '（数据健康类——失败只进报告，exit 0）');
-  process.exit(fail ? 1 : 0); // 仅契约形态断言（代码回归）驱动退出码
+    + '；网络拒绝单列 ' + netRejectTags.length + '、程序错误 ' + progErrors.length
+    + '（数据健康类失败只进报告；程序错误判代码回归非零退出）');
+  process.exit(fail ? 1 : 0); // 契约形态/未预期异常断言（代码回归）驱动退出码
 })().catch(e => {
   console.error('real-sources 未执行（套件异常）：', e && e.message || e);
   try {
-    fs.mkdirSync(REPORTS, { recursive: true });
-    fs.writeFileSync(path.join(REPORTS, 'real-sources.json'), JSON.stringify({ script: 'real-sources',
-      generatedAt: new Date().toISOString(), executed: false, category: 'code-regression',
+    fs.writeFileSync(ctx.file('real-sources'), JSON.stringify({ script: 'real-sources', runId: ctx.runId, headSha: ctx.headSha,
+      startedAt: ctx.startedAt, generatedAt: new Date().toISOString(), executed: false, category: 'code-regression',
       reason: String(e && e.message || e).slice(0, 300), pass: 0, fail: 1, assertions: [] }, null, 2));
   } catch (_) {}
   process.exit(1);

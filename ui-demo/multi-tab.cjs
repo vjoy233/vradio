@@ -381,7 +381,11 @@ const BLOCKED_REQUIREMENTS = [ // 阻塞中的验收要求：修复落地前，�
       await new Promise(r => setTimeout(r, 1200)); // beforeunload flush POST 落地
       return (await getJson(base + 'api/store')).rev > rev0; // rev 推进 = 陈旧 flush 确实发出
     };
+    const probeFull = await getJson(base + 'api/store');
+    console.log('[KF2 调试] 服务端 rev=' + probeFull.rev + ' data=' + JSON.stringify(probeFull.data));
     if (await kfAttempt() || await kfAttempt()) {
+      const full = await getJson(base + 'api/store');
+      console.log('[KF2 调试] 陈旧 flush 后 rev=' + full.rev + ' data=' + JSON.stringify(full.data));
       expectBuggy('KF2', (await srvState())['radio.vol'] === '0.9',
         '陈旧 unload flush 未再覆盖他页写入（跨端收敛协议已修）——更新 SD 段断言并从 KNOWN_FAILURES 移除 KF2');
     } else {

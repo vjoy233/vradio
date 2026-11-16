@@ -45,9 +45,9 @@ fun AppRoot() {
     val ui by PlayerHolder.ui.collectAsState()
     val snack = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { vm.toasts.collect { snack.showSnackbar(it) } }
-    VrScaffold(destination, vm::navigate, miniPlayer = { PlayerBar(vm, ui) }, snackbarHost = { SnackbarHost(snack) }) { pad ->
+    VrScaffold(destination, vm::navigate, miniPlayer = { MiniPlayer(vm, ui) }, snackbarHost = { SnackbarHost(snack) }) { pad ->
       when (destination) {
-        Destination.LIBRARY -> Box(Modifier.fillMaxSize().background(pal.bg).padding(pad)) { StationList(vm) }
+        Destination.LIBRARY -> Box(Modifier.fillMaxSize().background(pal.bg)) { StationScreen(vm, pad) }
         Destination.FAVORITES -> Box(Modifier.fillMaxSize().background(pal.bg).padding(pad)) { FavoritesScreen(vm) }
         Destination.DISCOVER -> Box(Modifier.fillMaxSize().background(pal.bg).padding(pad)) { }   // P3 填 DiscoveryScreen（§7）；flag 关时 navigateGuard 使其不可达
       }

@@ -5,35 +5,29 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,89 +47,52 @@ import io.github.vjoy233.vradio.player.PlayerHolder
 import io.github.vjoy233.vradio.ui.theme.LocalVrPalette
 import kotlinx.coroutines.delay
 
-/* 电台列表（app.js render 面）：搜索（120ms 防抖）/分类条 chip+数量角标/网格+列表双视图/
-   行内 ☆ 收藏/死台删除线+分档徽标/正在播高亮/连接中指示；LazyColumn/LazyVerticalGrid + key。 */
+/* 列表主体纯投影（P1，方案 §5.1/§5.5）：只按入参渲染，不读页面级筛选态（收藏页复用——传另一个
+   list/inCat 即可）。空态沿用旧文案；LazyVerticalGrid(GridCells.Adaptive(160.dp))/LazyColumn 双主体
+   + 稳定 key；StationCard/StationRow/FavStar/metaBadges 私有件自旧 StationList 原样搬移；
+   locate 滚动定位 + 高亮一闪也在此（G P3：(locate, list) 联合触发）。
+   pad = 根导航 bottomBar 实高（VrScaffold contentWindowInsets 0 口径）——根部吃掉，最后一行不被遮。 */
 @Composable
-fun StationList(vm: AppVm) {
+fun StationContent(
+  vm: AppVm, pad: PaddingValues, list: List<Station>, empty: String?, hasDead: Boolean,   // hasDead 投影位（收藏页复用；空态暂只沿用旧文案）
+  grid: Boolean, gridState: LazyGridState, listState: LazyListState, locate: String?,
+  inCat: Boolean = false, modifier: Modifier = Modifier,
+) {
   val pal = LocalVrPalette.current
-  val lu by vm.listUi.collectAsState()
-  val ui by PlayerHolder.ui.collectAsState()
-  val cat by vm.cat.collectAsState()
-  val view by vm.view.collectAsState()
-  val showDead by vm.showDead.collectAsState()
+  val ui by PlayerHolder.ui.collectAsState()   // 全局播放态（与 PlayerBar 同源，PlayerHolder.ui）
   val favKeys by vm.favKeys.collectAsState()   // 行级收藏星状态源（在 items 外层捕获，改收藏才能逐行重渲）
-  val locate by vm.locate.collectAsState()
   var flash by remember { mutableStateOf<String?>(null) }
 
-  // 搜索：120ms 防抖（1600+ 台整表过滤不逐键跑）；外部清空（回到正在播）同步回输入框
-  var q by rememberSaveable { mutableStateOf(vm.keyword.value) }
-  LaunchedEffect(Unit) { vm.keyword.collect { k -> if (k != q.trim()) q = k } }
-  LaunchedEffect(q) { delay(120); val t = q.trim(); if (t != vm.keyword.value) vm.keyword.value = t }
-
   // 回到正在播（N5）：滚动定位 + 高亮一闪（1s 后消退）
-  val gridState = rememberLazyGridState()
-  val listState = rememberLazyListState()
-  // G P3：(locate, list) 联合触发——locatePlaying 同刻设 cat/keyword，listUi 传播异步，单看 locate 可能
+  // G P3：(locate, list) 联合触发——locatePlaying 同刻设 cat/keyword，list 传播异步，单看 locate 可能
   // 读到旧过滤结果 i=-1 静默跳过；列表更新会重试，目标不在列表则保留 locate 待后续（无循环无副作用）
-  LaunchedEffect(locate, lu.list) {
+  LaunchedEffect(locate, list) {
     val k = locate ?: return@LaunchedEffect
-    val i = lu.list.indexOfFirst { it.key == k }
+    val i = list.indexOfFirst { it.key == k }
     if (i < 0) return@LaunchedEffect
     vm.locate.value = null
-    if (view == "grid") gridState.animateScrollToItem(i) else listState.animateScrollToItem(i)
+    if (grid) gridState.animateScrollToItem(i) else listState.animateScrollToItem(i)
     flash = k
   }
   LaunchedEffect(flash) { if (flash != null) { delay(1000); flash = null } }
 
-  Column(Modifier.fillMaxSize().background(pal.bg).statusBarsPadding()) {
-    // 头部：标题 + 搜索 + 设置入口
-    Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-      Text("VRadio", color = pal.acc, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-      OutlinedTextField(
-        value = q, onValueChange = { q = it },
-        modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
-        singleLine = true,
-        placeholder = { Text("搜索电台名", fontSize = 13.sp) },
-      )
-      TextButton(onClick = { vm.openSettings() }) { Text("设置") }
-    }
-    // 次行：双视图切换 + 无效源开关（出现过死台才亮，app.js deadBtn 同款）+ 发现入口（B3-C 开关）
-    Row(Modifier.padding(horizontal = 12.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-      SegBtn("网格", view == "grid") { vm.setView("grid") }
-      SegBtn("列表", view == "list") { vm.setView("list") }
-      if (lu.hasDead) SegBtn("✗ 无效源", showDead) { vm.toggleDead() }
-      if (io.github.vjoy233.vradio.FeatureFlags.DISCOVERY) SegBtn("✦ 发现", false) { vm.showDiscovery.value = true }
-    }
-    // 分类条（数量角标与列表同口径刷新，P3-5）
-    LazyRow(
-      Modifier.fillMaxWidth().padding(vertical = 4.dp),
-      contentPadding = PaddingValues(horizontal = 12.dp),
-      horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-      items(lu.chips, key = { it.first }) { (c, n) ->
-        FilterChip(
-          selected = c == cat, onClick = { vm.setCat(c) },
-          label = { Row(verticalAlignment = Alignment.CenterVertically) { Text(c); Text(" $n", fontSize = 10.sp, color = pal.dim) } },
-        )
+  Box(modifier.fillMaxSize().padding(pad)) {
+    if (list.isEmpty()) {
+      Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text(empty ?: "该分类暂无电台", color = pal.dim, modifier = Modifier.padding(24.dp))
       }
-    }
-    // 列表主体
-    if (lu.list.isEmpty()) {
-      Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-        Text(lu.empty ?: "该分类暂无电台", color = pal.dim, modifier = Modifier.padding(24.dp))
-      }
-    } else if (view == "grid") {
+    } else if (grid) {
       LazyVerticalGrid(
         columns = GridCells.Adaptive(160.dp), state = gridState,
-        modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
         contentPadding = PaddingValues(bottom = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp),
-      ) { gridItems(lu.list, key = { it.key }) { s -> StationCard(vm, s, ui, flash, favKeys.contains(s.key), inCat(cat)) } }
+      ) { gridItems(list, key = { it.key }) { s -> StationCard(vm, s, ui, flash, favKeys.contains(s.key), inCat) } }
     } else {
       LazyColumn(
-        state = listState, modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp),
+        state = listState, modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
         contentPadding = PaddingValues(bottom = 12.dp),
-      ) { items(lu.list, key = { it.key }) { s -> StationRow(vm, s, ui, flash, favKeys.contains(s.key), inCat(cat)) } }
+      ) { items(list, key = { it.key }) { s -> StationRow(vm, s, ui, flash, favKeys.contains(s.key), inCat) } }
     }
   }
 }
@@ -159,9 +116,6 @@ private fun FavStar(on: Boolean, onToggle: () -> Unit) {
     )
   }
 }
-
-@Composable
-private fun inCat(cat: String) = cat != "全部" && cat != "★收藏" && cat != "最近" // 分类视图（徽标里分类名 100% 冗余不显）
 
 @Composable
 private fun metaBadges(vm: AppVm, s: Station, inCat: Boolean) {

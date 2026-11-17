@@ -101,3 +101,13 @@ connectedDebugAndroidTest、320/390/800dp 真机矩阵、200% 字体、TalkBack 
 ### 基础设施
 - #49 CI 失败 = **Aliyun maven 镜像 502（瞬态）**，rerun 通过；非代码问题。
 - 修复波全程沿链 merge forward（p0→p1→p2→p3→p4），冲突按修正终态裁决（PlayerBar 取 P2 重构版、StationContent 取注入版、AppRoot 取并集）；androidTest 交叉编译二次验证 BUILD SUCCESSFUL。
+
+## 6. AIbot review 二轮响应落账（增量复核保留项）
+
+1. **#45-P2 secondaryFrom 死状态**：取「删除+文档统一」——次级页期间目的地不可变（navigate 自动收口），返回=当前未改变的目的地；AppVm 字段/写入删除，Navigation.kt/AppRoot KDoc 口径统一（grep 归零）。
+2. **#46-P2 favUndoReq 单槽覆盖**：取「事件队列」——`FavUndoEvent(id, station)` Channel 逐操作入队，AppRoot 顺序消费（一条 Snackbar 关闭再出下一条，互不覆盖），`clearFavUndo()`=排空在飞队列（Q17 离开收藏页作废）；撤销按 URL 身份不变。新增 instrumented `快速连续取消收藏逐条可撤销`（两次连续取消→两条 Snackbar 顺序出现→各自撤销恢复）。
+3. **#47-P2 子 sheet 返回链 instrumented 覆盖**：UiRedesignSmokeTest 新增 `子sheet返回链`（Full Player→选源→返回→歌史→返回→返回关层，裁决=ModalBottomSheet 独立窗口自消费返回先序于 root BackHandler）+ `旋转后播放不断流且返回关层`（scenario.recreate：ViewModel 存活/播放不断流 Q20/sheet 态一次打开生命周期）；fixture Assume 门控（未接 fixture 自动 skip，ciRequired=1 fail）。**执行仍需设备/模拟器（本机无 emulator）——#40 已合并，#49 合并后 connectedDebugAndroidTest 即可在设备上跑**。
+4. **#49-P2 dual-state 脚本护栏**：脏工作树拒绝执行 + trap 兜底还原 + 收尾**整树**核验（不只单文件）；本轮新鲜证据：关闭态/开启态两态 BUILD SUCCESSFUL + 整树无残留。
+5. **#48 二轮说明**（信息性）：部分修复来自沿链阶梯提交、不在原 PR 差集——成立；#48 合并时因 p2⊇p3 阶梯事故携带了 P0–P3 全树进 main（已在 #49 链态评论披露），后续批次差集以 #49 为准。
+6. **设备侧硬门挂账不变**：connected smoke、320/390/800×360、200% 字体、TalkBack 真机、离线/错误态——本机无 emulator（platform-tools 有 adb、无设备/镜像），owner 侧执行；交叉编译验证改为直接 × 已合并测试链的 main（assembleDebugAndroidTest + test BUILD SUCCESSFUL），不再需要临时跨链合并。
+7. **testTag 化**（#49 二轮重申）：继续挂账——真实设备跑通首轮后按误命中情况逐步替换可见文本定位。

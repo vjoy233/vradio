@@ -20,7 +20,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -35,14 +34,13 @@ import io.github.vjoy233.vradio.model.PlayerUiState
 import io.github.vjoy233.vradio.player.PlayerHolder
 import io.github.vjoy233.vradio.ui.theme.LocalVrDimens
 import io.github.vjoy233.vradio.ui.theme.LocalVrPalette
-import kotlinx.coroutines.delay
 
 /* Mini player 常驻槽（P1，方案 §5.2）：PlayerBar「所有动作平铺」收敛为「一个主动作 + 两个上下文动作」——
    左台标 40dp / 中列台名+曲讯副行（单击展开 full player（P2 接 PlayerSheet，先开 playerExpanded flow 位）/
    长按源详情入口保留）/ 右播放暂停 48dp（连接中 spinner；空台 ▶ = 续播上次收听）。
    睡眠/选源/刷新/分享/收藏切台全部上收 full player 动作区（P2 落），本条只留主动作（§5.2 Q9）。
    状态映射与 PlayerBar 同源（PlayerHolder.ui），P2 抽公共 playerVisual 映射；
-   vm.status 6s 自清逻辑随行迁入（PlayerBar 内另有同款双写，写空字符串幂等无碍）。
+   status 只读（review#46/#47 P1：6s TTL 单一所有者在 AppVm.setStatus，UI 层自清协程已删）。
    COMPACT 档 mini player 上叠在底栏之上、下方 NavigationBar 自理导航条 inset；EXPANDED 档
    mini player 即屏幕底缘，补 navigationBarsPadding（三键导航不遮播放钮）。 */
 @OptIn(ExperimentalFoundationApi::class)
@@ -50,9 +48,7 @@ import kotlinx.coroutines.delay
 fun MiniPlayer(vm: AppVm, ui: PlayerUiState) {
   val pal = LocalVrPalette.current
   val dim = LocalVrDimens.current
-  val vstatus by vm.status.collectAsState()
-  // AIbot P2-2：用户操作反馈（「已静音」等）6s 自清——否则永久压住引擎的「直播中/连接中…」文案
-  LaunchedEffect(vstatus) { if (vstatus.isNotEmpty()) { delay(6000); vm.status.value = "" } }
+  val vstatus by vm.status.collectAsState()   // 只读兜底链展示（TTL 自清在 AppVm.setStatus，UI 不写）
   val window = rememberVrWindow()
   Column(
     Modifier.fillMaxWidth().background(pal.panel)

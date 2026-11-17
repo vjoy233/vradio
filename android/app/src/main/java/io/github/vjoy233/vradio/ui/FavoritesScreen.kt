@@ -38,7 +38,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import io.github.vjoy233.vradio.model.Station
 import io.github.vjoy233.vradio.ui.theme.LocalVrDimens
 import io.github.vjoy233.vradio.ui.theme.LocalVrPalette
 import kotlinx.coroutines.delay
@@ -48,11 +47,10 @@ import kotlinx.coroutines.delay
    列表主体复用 StationContent 纯投影（视图跟全局 radio.view 走；绝不写电台页 cat/keyword——
    收藏页是收藏集合唯一主入口，§5.5 硬点）。空态两档：收藏全空 = 自绘引导块 +「去电台库」按钮
    （StationContent 空态是纯文案位放不了按钮，故收藏全空时自绘）；有收藏但过滤无命中 = empty 文案位。
-   取消收藏撤销（Q13/Q17）：StationContent 行内星标/长按硬编码 vm.toggleFav（复用件无注入点，
-   本文件不动 StationContent）——收藏页在台时监听收藏投影集合做桥接：丢台且台仍在库、且单台丢失
-   （= 星标/长按/详情浮层取消；批量丢台 = 导入/同步数据级变更不误导撤销）即补发撤销载荷
-   vm.favUndoReq = s（unfavWithUndo 的 UI 侧等价物：toggleFav 已完成取消动作与全部随行副作用，
-   此处只补发请求；AppRoot collect 弹 Snackbar，点撤销走 undoUnfav 按 URL 身份回绑）。
+   取消收藏撤销（Q13/Q17，review#46 P1）：行内星标/长按经 onFavToggle 注入直调 vm.unfavWithUndo
+   （守卫非收藏态不翻转 + toggle 取消 + favUndoReq=s 单一产生点在 AppVm；AppRoot collect 弹 Snackbar，
+   点撤销走 undoUnfav 按 URL 身份回绑）——旧「监听收藏投影差分补发 favUndoReq」桥接已删：
+   维护隐藏/同步重建/回绑先后都会被差分误判成用户取消收藏（误报路径），事件不得由 UI 差分合成。
    滚动/筛选快照同 StationScreen 模式（destinationUi[FAVORITES]：离页 DisposableEffect 快照 +
    恢复护栏 list.isNotEmpty() + 一次性 restored 标志；恢复回写 vm.favoriteQuery/favoriteCategory）。 */
 @Composable
@@ -68,20 +66,6 @@ fun FavoritesScreen(vm: AppVm, pad: PaddingValues) {
   var q by rememberSaveable { mutableStateOf(vm.favoriteQuery.value) }
   LaunchedEffect(Unit) { vm.favoriteQuery.collect { k -> if (k != q.trim()) q = k } }
   LaunchedEffect(q) { delay(120); val t = q.trim(); if (t != vm.favoriteQuery.value) vm.favoriteQuery.value = t }
-
-  // 撤销桥接（Q13，见头部注释）：首帧建基线不比对（boot 装载/进页初始化防误报）
-  var prevFavs by remember { mutableStateOf<List<Station>?>(null) }
-  LaunchedEffect(favsAll) {
-    val prev = prevFavs
-    prevFavs = favsAll
-    if (prev == null) return@LaunchedEffect
-    val gone = prev.filter { p -> favsAll.none { it.key == p.key } }
-    if (gone.size == 1) {
-      val s = gone[0]
-      // 仍在库判别（一次性事件检查，非渲染路径；runCatching 同 AppVm 纪律）：同步重建删台不误导撤销
-      if (runCatching { vm.lib.stations.any { it.key == s.key } }.getOrDefault(false)) vm.favUndoReq.value = s
-    }
-  }
 
   // 滚动保存/恢复（Q15/Q18 同 StationScreen 模式）：恢复一次且等列表非空（boot 未就绪先挂起，
   // effect 重跑再对齐，restored 防搜索结果翻转时重复回拉）；筛选态恢复 = 回写 vm 独立收藏态
@@ -152,9 +136,11 @@ fun FavoritesScreen(vm: AppVm, pad: PaddingValues) {
         }
       }
       // 列表主体：纯投影复用（locate=null 收藏页无「回到正在播」；hasDead=false 死台分档是电台页口径）
+      // onFavToggle 注入（review#46 P1）：收藏页星标/长按 = unfavWithUndo（撤销事件由 AppVm 单一产生）
       StationContent(
         vm, pad, flui.list, flui.empty, false, view == "grid", gridState, listState, null,
         inCat = cat != "全部",
+        onFavToggle = { vm.unfavWithUndo(it) },
         modifier = Modifier.weight(1f),
       )
     } else {

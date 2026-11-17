@@ -53,7 +53,9 @@
    export ANDROID_HOME="D:/Dev/android-sdk"
    ```
 
-版本基线（2026-10 锁定）：AGP 8.13.2 / Kotlin 2.2.21 / Gradle 8.14.6 / compose-bom 2026.06.01（09.00 的 material-ripple 要求 compileSdk 37 > AGP 8.13 上限 36，故钉 06.01）/ core-ktx 1.17.0（同理）/ Media3 1.11.1 / minSdk 26 / target & compileSdk 36。**依赖白名单封闭清单制**（plan §四）：新增依赖一律先议事；okhttp 是 D6 拍板的唯一破例（Icecast `ICY 200 OK` 非标状态行）。
+版本基线（2026-10 锁定）：AGP 8.13.2 / Kotlin 2.2.21 / Gradle 8.14.6 / compose-bom 2026.06.01（09.00 的 material-ripple 要求 compileSdk 37 > AGP 8.13 上限 36，故钉 06.01）/ core-ktx 1.17.0（同理）/ Media3 1.11.1 / minSdk 26 / target & compileSdk 36。**依赖白名单封闭清单制**（plan §四）：新增运行时依赖一律先议事；okhttp 是 D6 拍板的唯一运行时破例（Icecast `ICY 200 OK` 非标状态行）。测试专用的 `androidx.test.ext:junit`、`androidx.test:runner`、`androidx.test:rules` 只挂在 `androidTestImplementation`，不扩大运行时依赖白名单；新增测试依赖必须在 PR 说明登记。
+
+**测试依赖登记（review#40-r2 P3，批准范围 = 测试配置、不入运行时白名单）**：纯 JVM 单测（`testImplementation`）= junit 4.13.2 / org.json 20250107 / kxml2 2.3.0（后两个是 android.jar 抛异常桩的真实现替身，设备运行时用平台内置、不进 APK）；instrumented smoke（`androidTestImplementation`）= androidx.test.ext:junit 1.2.1 / androidx.test:runner 1.6.2 / androidx.test:rules 1.6.1（无 espresso）。版本锁定随上表基线同制，新增测试依赖一律 PR 说明登记；离线构建 = `./gradlew --offline`（`test`/`compileDebugAndroidTestKotlin` 均可离线跑，gradle 依赖缓存须先热）。
 
 ## 模块结构（对应 Web 五文件精神的分层，语义契约见 ../CONTRACTS.md）
 
@@ -83,6 +85,27 @@ app/src/main/java/io/github/vjoy233/vradio/
   全量体检/主库同步在移动数据下默认「每次确认」（可改允许/禁止）；台标补全 Wi-Fi 优先（可关）。
   会话级流量估算按已知码率（无 ICY 码率时按 128kbps 并标注「估算」）30 秒采样累计，非精确计费。
   策略设置存私有键 `net.*`（同样不进契约/备份）。
+
+## instrumented smoke 与本地 fixture 协议（P2，docs/testing-strategy-2026-11.md §3 L4）
+
+instrumented smoke（`app/src/androidTest/`：启动/资产 + 播放控制 + 备份导入）走「本地固定流 fixture」协议，禁止依赖公网：
+
+- **fixture**：仓库根 `node test/harness/android-fixture.js`（零依赖 Node 内置 http，监听 0.0.0.0 随机端口）。
+  启动即打印 `FIXTURE_URL=http://127.0.0.1:<port>` 与 `FIXTURE_VERSION`；`--list` 打印路由清单（与测试断言对账）；
+  测试编排可 `require()` 其 `start()`。场景：直流 MP3×2（点播/切台）、ICY（icy-metaint=32 + icy-br + StreamTitle 换歌两帧）、
+  HLS master→variant→相对分片（真帧可解）、延迟建流 1.5s、断流 destroy、336B 假流、HTML 错误页、`__health` 自检。
+- **fixtureBaseUrl 注入**：模拟器访问宿主回环的固定映射是 `10.0.2.2`——workflow/本机把 127.0.0.1 换算后
+  `./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.fixtureBaseUrl=http://10.0.2.2:<port>`
+  （AGP 官方 instrumentation 参数机制）；真机在同一局域网时直接填宿主机地址，并在报告记录实际 URL。
+- **缺省 skip 语义**：测试读 `InstrumentationRegistry.getArguments().getString("fixtureBaseUrl")`；
+  未传参或等于哨兵值 `http://10.0.2.2:0`（端口 0 不存在）时，播放类用例经 JUnit4 `Assume` 跳过——
+  没接 fixture 的手动 dispatch 上骨架仍绿（启动/资产/备份导入离线用例照跑）。
+- **版本记录要求**：fixture 版本常量与 androidTest `AndroidSmokeTest.FIXTURE_VERSION` 两处同步改；
+  每个测试类 `@Before` 把 fixture 版本/URL、设备 API、APK 版本写进 instrumentation 日志（logcat tag `VRadioSmoke`）；
+  失败报告按 L4 要求逐项在案（报告 + logcat + fixture 日志，见 workflow artifact）。
+- **执行分层**：稳定模拟器（GitHub Actions `android-instrumented-draft.yml`，当前 workflow_dispatch/夜间草案，
+  首次 dispatch 只验镜像/协议可用性）为 PR/夜间候选；实体设备只做发布前验收——音频焦点让位/恢复、
+  Widget 播放/⏮⏭、后台/进程回收恢复快照属发布前设备层用例，不进模拟器门。
 
 ## 发布（M5）
 

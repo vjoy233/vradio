@@ -1,0 +1,82 @@
+# Android instrumented Smoke 草案（grilling 共识，当前手动/夜间运行；下一批稳定后再纳入 PR）
+# ⚠ 首次 dispatch 是「镜像/协议可用性验证」：只证明模拟器 + 本地 fixture + instrumentation 参数注入链路能跑通，
+#   不宣称播放 Smoke 已通过；矩阵各行的实质断言随 androidTest 批次逐项接入（docs/testing-strategy-2026-11.md §3 L4）。
+# 接入协议（P2 批）：宿主起 test/harness/android-fixture.js（0.0.0.0 随机端口，日志打印 FIXTURE_URL/版本）→
+# 127.0.0.1 换算 10.0.2.2（模拟器访问宿主回环的固定映射）→ gradle -Pandroid.testInstrumentationRunnerArguments.
+# fixtureBaseUrl= 注入（AGP 官方机制）；未注入时播放类用例 Assume 跳过（骨架仍绿）。
+# ciRequired=1（review#40 P2-5）：CI 档同步注入——fixture 未注入/端口不可达直接 fail。本 workflow 的目的
+# 就是验证启动/端口传递协议，参数链退化为「全 skip 绿 job」必须红脸；本地手动 dispatch 不传该参数保持 skip。
+# 失败必查 artifact：
+# instrumentation 报告 + logcat（tag VRadioSmoke 有 fixture 版本/设备 API/APK 版本）+ fixture 日志。
+name: android-instrumented-draft
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 18 * * *'
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: 启动本地固定流 fixture（宿主 0.0.0.0 随机端口，模拟器经 10.0.2.2 访问）
+        run: |
+          node test/harness/android-fixture.js --list          # 路由清单进日志（与测试断言对账）
+          node test/harness/android-fixture.js > /tmp/fixture.log 2>&1 &
+          echo $! > /tmp/fixture.pid                           # 记录 PID，测试结束 kill 防泄漏
+          for i in $(seq 1 30); do
+            grep -q 'FIXTURE_URL=' /tmp/fixture.log && break
+            sleep 0.5
+          done
+          grep -q 'FIXTURE_URL=' /tmp/fixture.log || { cat /tmp/fixture.log; exit 1; }
+          cat /tmp/fixture.log                                 # 含 FIXTURE_VERSION（报告要求在案）
+          PORT=$(grep -o 'FIXTURE_URL=http://127.0.0.1:[0-9]*' /tmp/fixture.log | cut -d: -f3)
+          echo "FIXTURE_BASE=http://10.0.2.2:$PORT" >> "$GITHUB_ENV"
+          curl -fsS "http://127.0.0.1:$PORT/__health"          # fixture 自检（版本 + 路由清单）
+      - name: Android instrumented Smoke（API 35 草案，fixtureBaseUrl 注入）
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          script: |
+            set +e
+            android/gradlew --project-dir android connectedDebugAndroidTest --stacktrace \
+              -Pandroid.testInstrumentationRunnerArguments.fixtureBaseUrl=$FIXTURE_BASE \
+              -Pandroid.testInstrumentationRunnerArguments.ciRequired=1
+            CODE=$?
+            adb logcat -d > "$GITHUB_WORKSPACE/instrumented-logcat.txt" || true   # 失败必查：VRadioSmoke tag 在案
+            exit $CODE
+      - name: 收尾 fixture 进程
+        if: always()
+        run: |
+          if [ -f /tmp/fixture.pid ]; then kill "$(cat /tmp/fixture.pid)" || true; fi
+      - name: 上传 instrumentation 报告 + logcat + fixture 日志（失败必须可查）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-instrumented-report
+          path: |
+            android/app/build/outputs/androidTest-results/**
+            android/app/build/reports/androidTests/**
+            instrumented-logcat.txt
+          if-no-files-found: ignore
+      - name: 附 fixture 日志（版本/URL/逐请求记录）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-fixture-log
+          path: /tmp/fixture.log
+          if-no-files-found: ignore

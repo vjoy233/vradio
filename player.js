@@ -232,7 +232,7 @@ const Player = {
     if (viaProxy) { try { proxyBase = new URL(raw).href; } catch (_) { return onFail(); } }
     audio.onerror = onFail;
     if (isHls && window.Hls && Hls.isSupported()) {
-      this.hls = new Hls({
+      const h = new Hls({
         enableWorker: false,
         manifestLoadingMaxRetry: 1, levelLoadingMaxRetry: 1, fragLoadingMaxRetry: 2, // 快速失败以便切换备选源
         xhrSetup: (xhr, url) => {
@@ -242,9 +242,13 @@ const Player = {
           xhr.open('GET', '/proxy?url=' + encodeURIComponent(abs));
         }
       });
-      this.hls.on(Hls.Events.ERROR, (_, d) => { if (d.fatal) { this.stopHls(); onFail(); } });
-      this.hls.loadSource(viaProxy ? raw : u);
-      this.hls.attachMedia(audio);
+      this.hls = h;
+      // fatal 处理器是随实例的闭包：onFail 有世代令牌兜底，但 stopHls 无——旧实例的迟到 fatal 若无
+      // 句柄核对会销毁「当前台的新实例」（review#37 P1-3 防串台不变量收口；真实 hls.js destroy 后
+      // 不再发事件，此处是防御纵深，令测试可确定性验证旧实例回调无副作用）
+      h.on(Hls.Events.ERROR, (_, d) => { if (d.fatal) { if (this.hls === h) this.stopHls(); onFail(); } });
+      h.loadSource(viaProxy ? raw : u);
+      h.attachMedia(audio);
       audio.play().catch(() => {});
     } else {
       audio.src = u; audio.play().catch(() => {});

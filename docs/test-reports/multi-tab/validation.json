@@ -1,0 +1,128 @@
+{
+  "capturedAt": "2026-11-16T18:25:46.200Z",
+  "url": "http://127.0.0.1:8251/",
+  "assertions": [
+    "S1 pa 全库装配 >50 台",
+    "S1 pb 全库装配 >50 台",
+    "S1 pc 全库装配 >50 台",
+    "S2 后端 /api/store 可达（rev/data 形态）",
+    "S3 三页零 pageerror（启动段）",
+    "SA1 B 页镜像即时收敛（radio.favs 含 500首华语经典——同浏览器同源共享存储区，写者 setItem 对他页同步可见）",
+    "SA2 B 页广播重拉后 Store.rev 收敛到后端",
+    "SA3 后端已落 A 的收藏（Node 直读 /api/store）",
+    "SA4 自发广播：pa 零回声（Store.pull 增量 0）、pb 跨页收到",
+    "SA5 B 页 reload 后 App 内存收敛（favKeys 命中）",
+    "SA6 B 页 UI 收敛（★收藏范围恰 1 台）",
+    "SA7 A 主题写落后端（light）",
+    "SA8 B 页主题随 A 收敛（data-theme=light + 内存）",
+    "SB1 后端收敛到 B 的写入（favs 含新台 + theme dark）",
+    "SB2 A 页 reload 后收藏收敛（含 CRI Hit FM FM88.7，共 2 台）",
+    "SB3 A 页主题随 B 收敛（data-theme=dark）",
+    "SC1 后端两键均落库（全量快照携对方写入，零丢失）",
+    "SC2 双方 rev 收敛一致（= 后端 rev，后推者发号为准）",
+    "SC3 镜像互见（A 见 B 的 showdead、B 见 A 的 view）",
+    "SD0 空库开局页 unload 不清库（issue #42）：他页写入（favs 两台/主题/视图/无效源开关）全数仍在（空覆盖门 + 服务端双保险）",
+    "SD1 第二浏览器对账收敛（两收藏/主题随主源，内存经 apply diff 重载）",
+    "SD2 A 写 vol 落后端",
+    "SD3 后推者 pc 全量快照胜：view 翻转落库 + A 的 vol 被覆盖出局 + rev 前进（显式 LWW，无按键合并）",
+    "SD4 A 本地镜像不丢（失败不丢镜像保证的常态面）",
+    "SD5a pa pull 对账成并集（view grid/showdead 1 自 pc，vol 本地保留——后端缺键不抹本地）",
+    "SD5 收敛舞步后后端全量齐备（vol/view/showdead 三键共存）",
+    "SD6 双方最终一致：pc 镜像+内存与后端/A 镜像三方齐",
+    "Q0 两台身份不同（合流前提）",
+    "Q1 A 点播后质量样本落服务端（ok 样本 ≥1，identity=https://lhttp.qingting.fm/live/50220…）",
+    "Q2 A 点播后收听统计落服务端（当日台桶 ms≥1 + session ≥1）",
+    "Q3 B 点播另一台后质量 sidecar 两台并存（合流不互踩）",
+    "Q4 统计 sidecar 两台并存且会话累计 ≥2",
+    "M1 维护面板三分区 + dialog 语义",
+    "M2 对象编辑器出现（编辑器输入态可定位）",
+    "M3 B 直写后 A 内存 cfg 收敛（externalChanged 冲突态已挂）",
+    "M4 冲突三选 UI（重新加载最新值/明确覆盖此对象/继续编辑）",
+    "M5 明确覆盖后 A 页版本落库（后端 names= A 名）",
+    "M6 重新加载后草稿丢弃（输入回上一投影名，A 草稿 ·验A2 消失）",
+    "M7 放弃后冲突态清除 + 后端仍为 B 版本",
+    "KF3 豁免成立",
+    "M8 继续编辑回草稿态（输入保留 A 草稿 + 冲突横幅仍在）",
+    "M9 继续编辑未写库（后端仍为 B 版本）",
+    "M10 面板收场（维护面板关闭）",
+    "X1 断网写后 dirty 置位（radio.storeDirty=1 持久标记）",
+    "X2 后端未被断网写污染（vol 仍为 SD 档的 0.8，改动只在镜像）",
+    "X3 恢复网络 reload：boot dirty→flush 先重推，后端收到断网写（vol=0.9）",
+    "X4 重推后 dirty 复位 + 镜像保序",
+    "KF1 修复回归守卫",
+    "KF2 前置：kd 写 vol=0.66 已落服务端",
+    "KF2 豁免成立",
+    "Z1 全程零 pageerror / 非资源 console error（三页）"
+  ],
+  "errors": [],
+  "resourceErrors": [
+    "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "console:Failed to load resource: net::ERR_INTERNET_DISCONNECTED",
+    "console:Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "notes": [
+    "内存态语义（KF1 状态演进如实记录）：PR #40 原基线实测不随广播重载（apply 旧门槛「镜像 ≠ 后端」，共享镜像下恒等）；rebase 后链内 71fbdf9 review#37 P1-2 改比对内存基线，广播 pull 即收敛内存——[KF] 段 KF1 修复回归守卫实证；SA5/SB2 的 reload 保留为冗余收敛路径验证",
+    "共享镜像下两页 flush 载荷恒相同（后推者胜体现为 rev 单调推进而非数据分叉）；分叉镜像的真·LWW 在 [SD] 跨浏览器档",
+    "播放样本经本地静音 WAV 流真实到 playing（headless 可复现）；quality rev=2 listenstats rev=2",
+    "资源加载噪音 12 条（自举实例合法 404 只记不判，同 pr-smoke 分流口径）",
+    "Z2 宿主 data/store.json + my-radio.txt 运行前后哈希不变",
+    "Z3 清理失败门：browser/伪流服务/server/worktree 全回收（零泄漏成立）",
+    "全部 PASS ≠「活广播内存收敛/跨端自动收敛/真实 reload LWW」已验收——KF1/KF2/KF3 按现状特征化断言（见 knownFailures 字段），KF4 = 生产修复挂账（issue #42）；意外转绿由 expectBuggy 现场报错"
+  ],
+  "result": "PASS",
+  "knownFailures": [
+    {
+      "id": "KF1",
+      "status": "fixed",
+      "scenario": "SA 段（同浏览器双标签）",
+      "expected": "他页写 → 广播到达 → 本页 App 内存态即时收敛（活广播重载内存）",
+      "actual": "PR #40 原基线：内存不随广播重载（apply 旧门槛「镜像 ≠ 后端」，共享镜像下恒等）只能 reload 兜底；rebase 后已修——71fbdf9 review#37 P1-2 改比对「本页内存基线」而非共享镜像，广播 pull 即收敛（[KF] 段 KF1 探针实证）",
+      "tracking": "链内 71fbdf9 review#37 P1-2 已修（原挂 issue #42 关联面）；回归守卫 = expectFixed KF1"
+    },
+    {
+      "id": "KF2",
+      "status": "open",
+      "scenario": "SD 段（跨浏览器第二浏览器）",
+      "expected": "他端写入后本端自动收敛；陈旧 unload 不覆盖他端写入",
+      "actual": "跨浏览器无 BC 通道：reload/关闭的 beforeunload flush 以本页陈旧快照覆盖他端写入（空覆盖门只在服务端拦全空快照，非空陈旧快照仍 LWW 覆盖）；收敛须手动 Store.pull()+flush 舞步（SD5/SD5a/SD6 按显式 pull 断言）。⚠ 探针两面已实证并定版加固：①Chromium unload 期 keepalive fetch 偶发不派发（陈旧 flush 没发，误读「转绿」）——rev 增量核验 + 未发重试一次、两次未发判探针失效记 note；②「陈旧覆盖发生」但被后续他页 0.66 对账写回覆盖（终态判定与写竞争天然 flaky，rev 采样实证 45→54 九连写）——判定锚点改事件级：服务端任意时点出现 vol=0.9 即覆盖发生（豁免成立），终态不再参与判定",
+      "tracking": "issue #42 + 生产修复批次（跨端收敛协议）"
+    },
+    {
+      "id": "KF3",
+      "status": "open",
+      "scenario": "M6（维护冲突「重新加载最新值」）",
+      "expected": "重载后输入框显示后端权威值（B 名）",
+      "actual": "输入框回到上一投影名（round1 落库的 A 名）——远程 cfg.names 改名不经 applySources 不重投 uiStationProjection 的 s.n；草稿丢弃正确但显示陈旧",
+      "tracking": "issue #42 + UI 维护面板生产修复批次"
+    },
+    {
+      "id": "KF4",
+      "status": "open",
+      "scenario": "生产修复挂账（本矩阵范围外）",
+      "expected": "跨端自动收敛 / 投影重投随生产修复落地",
+      "actual": "KF2/KF3 按现状特征化断言，对应场景全部 PASS 不代表修复完成；KF1 已随链内修复转回归守卫（见其 status）",
+      "tracking": "issue #42（空覆盖门已落）/ 后续生产修复批次"
+    }
+  ],
+  "blockedRequirements": [
+    {
+      "req": "跨浏览器最终一致（陈旧 unload 不覆盖他端）",
+      "blockedBy": "KF2 特征化现状（手动 pull/flush 收敛为临时口径）",
+      "tracking": "issue #42 + 生产修复批次"
+    },
+    {
+      "req": "维护冲突重载显示后端权威值（投影重投）",
+      "blockedBy": "KF3 特征化现状（草稿丢弃正确但显示旧投影名）",
+      "tracking": "issue #42 + UI 维护面板生产修复批次"
+    }
+  ]
+}

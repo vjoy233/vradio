@@ -311,6 +311,35 @@ ok('commitImport file:// 收听统计：走本地快照通道（get/post/refresh
   assert.deepStrictEqual(seq, ['gls', 'pls:1', 'rls']); // LS 双形态：file:// 经 localStorage 注入（生产 io）
 });
 
+// —— 空 data 备份 × 空覆盖门兼容（review#43 P1-2）：commitImport 全量 storeApply(info.data)（缺键删），
+//    data={} 是合法备份形态（全删后导出的极端备份）。服务端 /api/store 对「非空库上的空快照」回 409
+//    empty-overwrite → storeFlush false → 必须走四件回滚（rollback 恢复旧快照非空，二次 flush 不会
+//    再撞 409——自愈闭环）；data 空库则放行成功。产品语义：空备份恢复到非空库 = 被拒并如实回滚提示，
+//    不会永久 dirty 卡死。
+ok('commitImport 空 data 备份：storeFlush true（服务端 data 空放行/幂等空写）→ 成功路径', async () => {
+  const applied = [];
+  const info = Object.assign(impInfo(), { data: {} });
+  const r = await B.commitImport(info, true, ioFake({
+    storeApply: d => applied.push(Object.keys(d).length),
+    storeFlush: async () => true,
+  }));
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(applied, [0], 'storeApply({}) = 全键删除应用（合法空备份）');
+  assert.ok(r.msg.includes('已恢复完整备份'));
+});
+ok('commitImport 空 data 备份恢复到非空库：flush 409 false → 回滚 + 文案如实（rollback 恢复非空快照不再撞 409）', async () => {
+  const applied = [];
+  const info = Object.assign(impInfo(), { data: {} });
+  const r = await B.commitImport(info, true, ioFake({
+    storeApply: d => applied.push(Object.keys(d).length),
+    storeSnap: () => ({ 'radio.vol': '90', 'radio.favs': '["x"]' }), // 导入前库非空
+    storeFlush: async () => false, // 服务端 409 empty-overwrite（非空库拒空快照）
+  }));
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.msg.includes('已回滚到导入前状态'), '空备份×非空库必须被拒且如实回滚（不伪装成功）');
+  assert.deepStrictEqual(applied, [0, 2], '失败后 storeApply(snap) 恢复非空快照（二次 flush 不会 409，自愈闭环）');
+});
+
 Promise.all(pend).then(() => {
   console.log(`\n${pass} 通过，${fail} 失败`);
   process.exit(fail ? 1 : 0);

@@ -1,0 +1,31 @@
+{
+  "script": "soak",
+  "generatedAt": "2026-11-15T19:24:51.948Z",
+  "soakSeconds": 20,
+  "durationMs": 60632,
+  "executed": true,
+  "category": "pass",
+  "pass": 10,
+  "fail": 0,
+  "counters": {
+    "nowplaying": 7,
+    "nowplayingTitle": 6,
+    "nowplayingBad": 0,
+    "quality": 4,
+    "qualityFail": 0,
+    "store": 2,
+    "storeFail": 0,
+    "check": 1,
+    "checkBad": 0,
+    "fiveXX": 0,
+    "connErr": 0
+  },
+  "recycle": {
+    "directOpenAtPlus10s": 0,
+    "icyOpenFinal": 0
+  },
+  "rss": {
+    "skipped": true,
+    "note": "平台无 /proc（Windows），RSS 判据在 Linux CI 生效"
+  }
+}

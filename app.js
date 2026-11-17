@@ -23,6 +23,10 @@ const STARTER = [
 const $ = id => document.getElementById(id);
 const keyOf = s => s.c + '|' + s.n;
 const DAY = 86400000; // 死台分档各时间阈值共用（TTL/升级跨度/复测间隔/孤儿清理）
+function stableStr(v) { // 键序无关的稳定序列化（rebind 前后快照比较专用，review#43 P3）：对象键按名排序后
+  return JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x)) ? // 输出——语义相同仅键序不同 = 等价，不触发落盘
+    Object.keys(x).sort().reduce((o, key) => { o[key] = x[key]; return o; }, {}) : x);
+}
 const SRC_CAP = 6; // 每台最终源集合统一封顶（plan §5.4「每台最多 6 条」，review P1：装配 applyCfg 收口、
                    // 详情/批量诊断同口径；Android 侧 C.SRC_TOTAL_CAP 镜像，双端不漂移）
 
@@ -754,6 +758,13 @@ const App = {
 
   /* ---------- 收藏/最近的 URL 回绑与存取（债务 1） ---------- */
   rebind() {
+    // 回绑前内存态快照：回绑产生实际变化才落盘（audit B1「白做一遍 3 次落盘」的根治）。空库开局页不得
+    // 被无条件写入的空结构值（favs '[]'/health '{}'）污染镜像——那会让快照非空，绕过 Store 空覆盖门
+    // （issue #42：跨实例空页 unload 以「空结构快照」整库覆盖他端数据）。
+    // 快照比较用稳定键序序列化（stableStr）：对象键插入序不影响等价判定——语义相同仅键序不同的
+    // 回绑结果不触发落盘（review#43 P3：JSON.stringify 对键序敏感，未来改动插入序会凭空扩大写放大
+    // 并改变空门状态）
+    const jf0 = stableStr(this.favs), jr0 = stableStr(this.recents), jh0 = stableStr(this.healthMarks);
     const find = e => this.state.stations.find(s => keyOf(s) === e.k)
       || (e.u.length && this.state.stations.find(s => s.u.some(u => e.u.includes(u))));
     const nf = [];
@@ -780,8 +791,10 @@ const App = {
       if (st) { st.health = 'dead'; st.perm = e.perm; hm[keyOf(st)] = { ...e, u: st.u.slice(0, 6) }; }
       else if (Date.now() - e.t0 < 90 * DAY) hm[k] = e;
     }
-    this.healthMarks = hm; this.saveHealth();
-    this.saveFavs(); this.saveRecents();
+    this.healthMarks = hm;
+    if (stableStr(this.favs) !== jf0) this.saveFavs(); // 实际变化才落盘（无变化 = 无信息量，等价零写）
+    if (stableStr(this.recents) !== jr0) this.saveRecents();
+    if (stableStr(this.healthMarks) !== jh0) this.saveHealth();
     this.qualityKeep(); // B2：收藏/最近回绑后刷新 trim 保护集
   },
   favKeys() { return new Set(this.favs.map(f => f.k)); },

@@ -24,3 +24,7 @@ docs/ui-audit-assets/
 
 # ZCode 会话产物（handoff/review 草稿）
 .zcode/
+
+# 夜间层运行产物（review#41：每轮 <run-id>/ 子目录不入 git，防历史报告冒充本轮证据；历史人工样例在 samples/ 保留）
+/docs/test-reports/nightly/*
+!/docs/test-reports/nightly/samples/

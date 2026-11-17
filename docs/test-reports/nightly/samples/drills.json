@@ -1,0 +1,156 @@
+{
+  "script": "drills",
+  "generatedAt": "2026-11-15T19:23:45.370Z",
+  "durationMs": 14057,
+  "executed": true,
+  "category": "pass",
+  "pass": 29,
+  "fail": 0,
+  "assertions": [
+    {
+      "name": "上游 404 → 状态码与 Content-Type 原样透传（服务不崩不 502 化）",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "上游 HTML 错误页 → 200 text/html 载荷原样透传（代理不嗅探内容）",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "上游假流 336B → 200 audio/mpeg 336B（代理不验字节——验收在探活层）",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "畸形 Location（http://[）→ 403（tryUrl 归 null 按拒绝处理，audit-r2 P2-1 回归）",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "故障面打完服务仍存活：GET / → 200（无未捕获异常崩溃）",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "真流 fixture → code=OK（ok:true、mode direct、bytes≥8000）",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "假流 336B → SHORT_BODY；HTML 大页 → HTML；CT 撒谎 octet-stream 仍 HTML（内容嗅探）",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "断流源（死端口）→ NETWORK 且 httpStatus=0（未建连）",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "HLS 清单 404 → code=HTTP（mode=hls，直流不看状态码而 HLS 清单看——双口径）",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "契约形态：逐结果字段齐全、code ⊆ 枚举、响应不含上游响应体（顶层 ok = 任一源活）",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "quality 基线：合法 op → 200 {ok:true, rev:1}",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "store 基线：全量写 → 200 {ok:true, rev:1}",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "quality 写盘故障：POST 新批 → 200 {ok:false, error:「写入失败」}（临时错误通道非 5xx、不崩）",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "quality 内存态不推进：GET → rev 仍 1、故障批台目未入 data（写失败不留半应用状态）",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "quality 恢复后可写：POST → {ok:true, rev:2}（失败不发号不跳号，rev 连续）",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "store 写盘故障：POST 全量 → 200 {ok:false,「写入失败」}（storeQ 串行队列不被毒化）",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "store 内存态不推进：GET → rev 仍 1、数据仍是基线批",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "store 恢复后可写：POST → {ok:true, rev:2}",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "三连发后 root manifest = C2 且四资产逐文件可校验",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "两代回滚副本逐代可校验：sync-prev = B2、sync-prev-old = A2（代际轮换：任何时刻至少一代完整上一批）",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "kill#1（STALL 窗内 800ms，确定性零写盘）→ 重启 /api/boot：ok:true + 四资产完整 + manifest 可校验",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "kill#2（STALL 窗后 3400ms，算力/发布段随机落点）→ 重启同款不变量（旧批完整或新批完整，绝不混态）",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "quality rev 互不重号（串行队列唯一发号；成功批 8 个，写失败 0 批不发号不计入）",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "quality 终态聚合一致：128 ops 全部入账（写失败批重放收敛，实得 okCount 见报告）+ latN=128 + modes 含 direct",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "quality 幂等回放：16 个已见 id 再 POST → {ok:true, applied:0} 且 rev 不动（回放前当前号）",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "store LWW rev 单调：成功批 rev 互不重号，GET rev = max，data 与 max-rev 批载荷一致（显式 last-write-wins）",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "detail 探活 3 轮 × 8 源：code 全部命中预期（4×OK + SHORT_BODY/HTML/HTTP/NETWORK）且 code ⇔ ok 一致",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "压力段全程无 5xx、无连接级失败（18 个响应，含收敛重放；写失败走 200 ok:false 临时通道）",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "压力后服务存活：GET / → 200",
+      "pass": true,
+      "category": "code-regression"
+    }
+  ]
+}

@@ -16,6 +16,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -34,8 +36,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.Saver
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -76,12 +77,9 @@ fun defaultExpandedIds(): Set<String> = settingsGroups.filter { it.defaultExpand
 /* 纯函数：有则去无则加（天然幂等），折叠态记账只认 id */
 fun toggleExpanded(cur: Set<String>, id: String): Set<String> = if (id in cur) cur - id else cur + id
 
-/* Set<String> 经 List 过 Bundle（List<String> 是 autoSaver 可存形态）；
-   只保旋转重建，进程被杀回默认（Q18 口径）——不写 AppVm/Store */
-private val stringSetSaver = Saver<Set<String>, List<String>>(save = { it.toList() }, restore = { it.toSet() })
-
+@OptIn(ExperimentalLayoutApi::class)   // FlowRow（review#48：chips 行换行防 320dp/字体放大溢出）
 @Composable
-fun SettingsScreen(vm: AppVm) {
+fun SettingsScreen(vm: AppVm, pad: PaddingValues) {
   val pal = LocalVrPalette.current
   val theme by vm.theme.collectAsState()
   val view by vm.view.collectAsState()
@@ -106,8 +104,9 @@ fun SettingsScreen(vm: AppVm) {
   val traffic by vm.trafficTxt.collectAsState()
   val gate by vm.netGate.collectAsState()
   val timeshiftOn by vm.timeshiftOn.collectAsState()   // B7 Spike 时移回听（本地 pref，默认关）
-  // 折叠态（Q26/Q18）：rememberSaveable 只保旋转重建，进程被杀回默认；纯 UI 态，不写 AppVm/Store
-  var openIds by rememberSaveable(stateSaver = stringSetSaver) { mutableStateOf(defaultExpandedIds()) }
+  // 折叠态（Q26/Q18，review#48）：plain remember——进程死亡回默认（Q18 严格口径，不进 SavedStateRegistry）；
+  // 旋转重建同样回默认，丢折叠态是拍板取舍（折叠只是纯 UI 展示态，不写 AppVm/Store）
+  var openIds by remember { mutableStateOf(defaultExpandedIds()) }
 
   // SAF 导出（CreateDocument 预填文件名）与导入（OpenDocument 放宽到 */*——SAF 的 mime 上报不稳定）
   val expBackup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { u -> if (u != null) vm.exportTo(u, AppVm.Exp.BACKUP) }
@@ -141,7 +140,8 @@ fun SettingsScreen(vm: AppVm) {
     }
     LazyColumn(
       Modifier.fillMaxSize().padding(horizontal = 16.dp),
-      contentPadding = PaddingValues(bottom = 32.dp),
+      // review#49-2：消费 VrScaffold pad（次级页在 content 槽内——pad 含 mini player/底栏实高），32dp 是页脚呼吸位
+      contentPadding = PaddingValues(bottom = 32.dp + pad.calculateBottomPadding()),
     ) {
       settingsGroups.forEach { g ->
         item(key = "grp." + g.id) {
@@ -159,13 +159,13 @@ fun SettingsScreen(vm: AppVm) {
                 TimeshiftSettingRow(timeshiftOn) { vm.setTimeshift(it) }   // B7 Spike：时移回听实验开关
               }
               "appearance" -> {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {   // review#48：FlowRow 换行，320dp/字体放大不溢出
                   listOf("auto" to "跟随系统", "light" to "浅色", "dark" to "深色", "oled" to "纯黑 OLED").forEach { (v, label) ->
                     FilterChip(selected = theme == v, onClick = { vm.setTheme(v) }, label = { Text(label) })
                   }
                 }
                 SettingsRow("默认视图", "网格 / 列表双视图的默认形态") {   // P3 新接入（§5.6：外观 = 主题 + 默认视图）
-                  Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                  FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {   // review#48：FlowRow 换行
                     listOf("grid" to "网格", "list" to "列表").forEach { (v, label) ->
                       FilterChip(selected = view == v, onClick = { vm.setView(v) }, label = { Text(label) })
                     }
@@ -199,13 +199,13 @@ fun SettingsScreen(vm: AppVm) {
               }
               "network" -> {   // B5（plan-expansion-r4 §9.2）：播放永不阻断；仅约束大流量后台操作（原样归位）
                 ItemTitle("移动数据 · 全量体检", "逐台探测全部电台，移动数据下流量较大")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {   // review#48：FlowRow 换行
                   listOf("allow" to "允许", "confirm" to "每次确认", "deny" to "禁止").forEach { (v, label) ->
                     FilterChip(selected = netFull == v, onClick = { vm.setNetFullCheck(v) }, label = { Text(label) })
                   }
                 }
                 ItemTitle("移动数据 · 主库同步", "欧美台逐个实测重建，约 1 分钟")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {   // review#48：FlowRow 换行
                   listOf("allow" to "允许", "confirm" to "每次确认", "deny" to "禁止").forEach { (v, label) ->
                     FilterChip(selected = netSync == v, onClick = { vm.setNetSync(v) }, label = { Text(label) })
                   }

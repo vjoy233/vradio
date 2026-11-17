@@ -25,8 +25,9 @@ import io.github.vjoy233.vradio.ui.theme.LocalVrPalette
 import io.github.vjoy233.vradio.ui.theme.VrTheme
 
 /* 根组件（P0 导航迁移，方案 §6.2/§6.4）：VrScaffold 承载三目的地（电台/发现/收藏）+ mini player 常驻
-   bottomBar 顶部（手机追加底栏、平板挂 rail，断点在契约内）；设置/添加电台是次级页全屏覆盖层
-   （secondary?.let 挂载在 VrScaffold 之后，自带不透明 bg 盖住目的地，不占顶层目的地）。
+   bottomBar 顶部（手机追加底栏、平板挂 rail，断点在契约内）；设置/添加电台是次级页，进同一 Scaffold
+   content 槽渲染（review#45-1/#49-2 修订：不再全屏覆盖层——mini player/底栏/rail 全局常驻 §3.2/Q20，
+   页面消费 pad 防遮挡；期间显式切目的地经 vm.navigate 自动收次级页）。
    浮层（选源/歌曲/源详情）仍由 root 统一挂载——切目的地/进出次级页不丢播放上下文；
    toast 走 SnackbarHost，与 status（用户主动操作，PlayerBar 内）分工不双写。
    返回键层级（Q21）：确认弹窗/浮层自收 → Full player（P2）→ 次级页（契约纯函数 backTarget）→ 系统默认；
@@ -59,7 +60,7 @@ fun AppRoot() {
       val st = favUndoReq ?: return@LaunchedEffect
       val r = snack.showSnackbar("已取消收藏：${displayParts(st.n).first}", actionLabel = "撤销", duration = SnackbarDuration.Long)
       if (r == SnackbarResult.ActionPerformed) vm.undoUnfav(st)
-      if (vm.favUndoReq.value == st) vm.favUndoReq.value = null
+      if (vm.favUndoReq.value == st) vm.clearFavUndo()
     }
     // Q15 切目的地收起搜索（搜索词保留、展开态收起，回台页有词自动再展开是 StationScreen 既有逻辑）；
     // 离开收藏页撤销作废（§5.5）：dismiss 在飞 Snackbar + 清载荷——到站即失效，不留「幽灵撤销」
@@ -67,13 +68,20 @@ fun AppRoot() {
       vm.searchExpanded.value = false
       if (destination != Destination.FAVORITES) {
         snack.currentSnackbarData?.dismiss()
-        vm.favUndoReq.value = null
+        vm.clearFavUndo()
       }
     }
     VrScaffold(destination, vm::navigate, miniPlayer = { MiniPlayer(vm, ui) }, snackbarHost = { SnackbarHost(snack) }) { pad ->
-      // P4 §7「内容最大宽度」：EXPANDED（rail）档列表内容限宽 720dp 居中（阅读宽度上限，拍板值 owner 可调）；
-      // 发现页横滚卡片行保持全宽不设限；手机 COMPACT 无感（约束不生效）
-      when (destination) {
+      val sec = secondary
+      if (sec != null) {
+        // 次级页进 content 槽（review#45-1/#49-2）：自带不透明 bg + statusBarsPadding，消费 pad 防底栏遮挡
+        when (sec) {
+          SecondaryRoute.SETTINGS -> Box(Modifier.fillMaxSize().background(pal.bg)) { SettingsScreen(vm, pad) }
+          SecondaryRoute.ADD_STATION -> Box(Modifier.fillMaxSize().background(pal.bg)) { AddStationScreen(vm, pad) }
+        }
+      } else when (destination) {
+        // P4 §7「内容最大宽度」：EXPANDED（rail）档列表内容限宽 720dp 居中（阅读宽度上限，拍板值 owner 可调）；
+        // 发现页横滚卡片行保持全宽不设限；手机 COMPACT 无感（约束不生效）
         Destination.LIBRARY -> Box(Modifier.fillMaxSize().background(pal.bg), contentAlignment = Alignment.TopCenter) {
           Box(Modifier.widthIn(max = 720.dp).fillMaxSize()) { StationScreen(vm, pad) }
         }
@@ -81,13 +89,6 @@ fun AppRoot() {
           Box(Modifier.widthIn(max = 720.dp).fillMaxSize()) { FavoritesScreen(vm, pad) }
         }
         Destination.DISCOVER -> DiscoveryScreen(vm, pad)   // P3 正式目的地（§5.4）：bg/pad/状态栏自理；flag 关时 navigateGuard 使其不可达
-      }
-    }
-    // 次级页全屏覆盖层：SettingsScreen/AddStationScreen 自带不透明 bg + statusBarsPadding，直接盖在目的地之上
-    secondary?.let { r ->
-      when (r) {
-        SecondaryRoute.SETTINGS -> SettingsScreen(vm)
-        SecondaryRoute.ADD_STATION -> AddStationScreen(vm)
       }
     }
     // Full player（P2 §5.3）：先于选源/歌史 sheet 挂载——从 full player 开选源时后组合者浮在上层

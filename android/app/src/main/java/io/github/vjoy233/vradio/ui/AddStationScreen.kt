@@ -36,7 +36,7 @@ import io.github.vjoy233.vradio.ui.theme.LocalVrPalette
 /* 添加自定义电台（A-2 平移）：台名/分类（下拉选既有 + 自填优先）/流 URL 三件，
    探活先行（12s 窗）通过才写 my-radio，失败明示原因不静默。 */
 @Composable
-fun AddStationScreen(vm: AppVm) {
+fun AddStationScreen(vm: AppVm, pad: PaddingValues) {
   val pal = LocalVrPalette.current
   var name by rememberSaveable { mutableStateOf("") }
   var url by rememberSaveable { mutableStateOf("") }
@@ -51,6 +51,7 @@ fun AddStationScreen(vm: AppVm) {
 
   Column(
     Modifier.fillMaxSize().background(pal.bg).statusBarsPadding().imePadding()
+      .padding(bottom = pad.calculateBottomPadding())   // review#49-2：消费 VrScaffold pad 防底栏遮挡提交按钮
       .verticalScroll(rememberScrollState()),
   ) {
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {

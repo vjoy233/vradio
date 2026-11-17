@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -42,6 +43,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.vjoy233.vradio.model.PState
@@ -55,16 +57,20 @@ import kotlinx.coroutines.delay
    list/inCat 即可）。空态沿用旧文案；LazyVerticalGrid(GridCells.Adaptive(160.dp))/LazyColumn 双主体
    + 稳定 key；StationCard/StationRow/FavStar/metaBadges 私有件自旧 StationList 原样搬移；
    locate 滚动定位 + 高亮一闪也在此（G P3：(locate, list) 联合触发）。
+   onFavToggle 注入（review#46 P1）：收藏动作分派——收藏页传 vm.unfavWithUndo（取消收藏+撤销载荷
+   由 AppVm 单一产生），默认 null = 电台页原 vm.toggleFav 语义；星标 onClick 与行/卡长按统一走此分派。
+   详情入口（§5.1「详情图标」，review#46 P2）：卡/行各挂 48dp 命中区「ⓘ」钮 = vm.openDetailOf(key)。
    pad = 根导航 bottomBar 实高（VrScaffold contentWindowInsets 0 口径）——根部吃掉，最后一行不被遮。 */
 @Composable
 fun StationContent(
   vm: AppVm, pad: PaddingValues, list: List<Station>, empty: String?, hasDead: Boolean,   // hasDead 投影位（收藏页复用；空态暂只沿用旧文案）
   grid: Boolean, gridState: LazyGridState, listState: LazyListState, locate: String?,
-  inCat: Boolean = false, modifier: Modifier = Modifier,
+  inCat: Boolean = false, onFavToggle: ((Station) -> Unit)? = null, modifier: Modifier = Modifier,
 ) {
   val pal = LocalVrPalette.current
   val ui by PlayerHolder.ui.collectAsState()   // 全局播放态（与 PlayerBar 同源，PlayerHolder.ui）
   val favKeys by vm.favKeys.collectAsState()   // 行级收藏星状态源（在 items 外层捕获，改收藏才能逐行重渲）
+  val favToggle: (Station) -> Unit = onFavToggle ?: { vm.toggleFav(it) }   // 收藏动作分派（review#46 P1）：注入优先，默认原 toggleFav
   var flash by remember { mutableStateOf<String?>(null) }
 
   // 回到正在播（N5）：滚动定位 + 高亮一闪（1s 后消退）
@@ -91,12 +97,12 @@ fun StationContent(
         modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
         contentPadding = PaddingValues(bottom = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp),
-      ) { gridItems(list, key = { it.key }) { s -> StationCard(vm, s, ui, flash, favKeys.contains(s.key), inCat) } }
+      ) { gridItems(list, key = { it.key }) { s -> StationCard(vm, s, ui, flash, favKeys.contains(s.key), inCat, favToggle) } }
     } else {
       LazyColumn(
         state = listState, modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
         contentPadding = PaddingValues(bottom = 12.dp),
-      ) { items(list, key = { it.key }) { s -> StationRow(vm, s, ui, flash, favKeys.contains(s.key), inCat) } }
+      ) { items(list, key = { it.key }) { s -> StationRow(vm, s, ui, flash, favKeys.contains(s.key), inCat, favToggle) } }
     }
   }
 }
@@ -116,8 +122,30 @@ private fun FavStar(on: Boolean, onToggle: () -> Unit) {
       modifier = Modifier.clip(RoundedCornerShape(8.dp)).combinedClickable(
         onClick = onToggle,
         onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onToggle() },
-      ).semantics {   // P4 a11y：收藏态切换语义（§8.2.9）；在卡片/行内会被合并进父语义（cd 追加进父 contentDescription 列表）
+      ).semantics {   // P4 a11y 契约串（review#49 P2：子件保 role Button，父卡/行不赋 role 防嵌套）
         role = Role.Button; contentDescription = if (on) "已收藏" else "收藏"
+      }.padding(6.dp),
+    )
+  }
+}
+
+/* 详情钮（§5.1「详情图标」，review#46 P2）：48dp 命中区「ⓘ」文字钮（照 FavStar 独立按钮样式），
+   onClick = vm.openDetailOf(key)。combinedClickable 自吞长按同 FavStar 机理（AIbot P2-6——纯
+   clickable 长按透传外层卡/行收藏长按），长按同开详情。role Button + cd「电台详情」。 */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun DetailBtn(vm: AppVm, k: String, glyph: TextUnit = 18.sp) {
+  val pal = LocalVrPalette.current
+  val haptic = LocalHapticFeedback.current
+  Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+    Text(
+      "ⓘ", fontSize = glyph,
+      color = pal.dim,
+      modifier = Modifier.clip(RoundedCornerShape(8.dp)).combinedClickable(
+        onClick = { vm.openDetailOf(k) },
+        onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); vm.openDetailOf(k) },
+      ).semantics {
+        role = Role.Button; contentDescription = "电台详情"
       }.padding(6.dp),
     )
   }
@@ -135,11 +163,15 @@ private fun metaBadges(vm: AppVm, s: Station, inCat: Boolean) {
   }
 }
 
-/* 网格卡片：精简两行（台名+星 / 徽标行），正在播边框高亮 + ▶ 前缀；fav 由外层响应式传入（勿在行内直读 lib）。
-   N7：长按整卡 = 收藏切换（震动反馈；时长取系统默认长按超时，Web 侧是 500ms 定时，手感近似） */
+/* 网格卡片：精简两行（台名+星 / 徽标行+详情钮），正在播边框高亮 + ▶ 前缀；fav 由外层响应式传入（勿在行内直读 lib）。
+   N7：长按整卡 = 收藏切换（震动反馈；时长取系统默认长按超时，Web 侧是 500ms 定时，手感近似）。
+   详情钮（review#46 P2）放徽标行行尾（星标正下方）：160dp 最小卡宽下行首放不下第二个 48dp 钮
+   （40 logo+8+48 星+48 钮 > 142 内容宽，台名会被挤没——§5.1「不挤压主信息」优先于「星标旁」）。
+   P4 a11y：父语义 cd「台名，分类，点按播放，长按收藏」（review#49 P2：父节点不赋 role Button——
+   combinedClickable 自身 clickable 语义即可，避免父 Button 套子 Button 嵌套）。 */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun StationCard(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?, fav: Boolean, inCat: Boolean) {
+private fun StationCard(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?, fav: Boolean, inCat: Boolean, onFavToggle: (Station) -> Unit) {
   val pal = LocalVrPalette.current
   val haptic = LocalHapticFeedback.current
   val k = s.key
@@ -154,9 +186,9 @@ private fun StationCard(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?
       .border(1.dp, when { flash == k || playing -> pal.acc; else -> pal.line }, shape)
       .combinedClickable(
         onClick = { vm.togglePlay(k) },
-        onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); vm.toggleFav(s) },
-      ).semantics {   // P4 a11y：合并语义「台名，分类，点按播放，长按收藏」+ role Button（§8.2.9；长按收藏走 onLongClick）
-        contentDescription = "$dn，${s.c}，点按播放，长按收藏"; role = Role.Button
+        onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onFavToggle(s) },
+      ).semantics {
+        contentDescription = "$dn，${s.c}，点按播放，长按收藏"
       }.padding(10.dp),
   ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -170,19 +202,23 @@ private fun StationCard(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?
         fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
       )
       if (dead) Text(" ✗", color = pal.warn, fontSize = 13.sp)
-      FavStar(fav) { vm.toggleFav(s) }
+      FavStar(fav) { onFavToggle(s) }
     }
     Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
       metaBadges(vm, s, inCat)
       if (connecting) { PulseDot(pal.acc); Text("连接中", fontSize = 11.sp, color = pal.dim) }
+      Spacer(Modifier.weight(1f))
+      DetailBtn(vm, k, 16.sp)
     }
   }
 }
 
-/* 列表行：两行详情（台名/徽标），正在播底色高亮；fav 由外层响应式传入；长按整行 = 收藏（N7，同卡片） */
+/* 列表行：两行详情（台名/徽标），正在播底色高亮；fav 由外层响应式传入；长按整行 = 收藏（N7，同卡片）。
+   详情钮（review#46 P2）紧贴星标行首（§5.1「星标旁」；整行宽度充裕不挤台名），徽标行缩进 30→78dp
+   随行首双钮（48+48）保持与台名首字的既有错位 26dp。父语义 cd 同 StationCard（无 role，防嵌套）。 */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun StationRow(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?, fav: Boolean, inCat: Boolean) {
+private fun StationRow(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?, fav: Boolean, inCat: Boolean, onFavToggle: (Station) -> Unit) {
   val pal = LocalVrPalette.current
   val haptic = LocalHapticFeedback.current
   val k = s.key
@@ -195,13 +231,14 @@ private fun StationRow(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?,
       .background(when { flash == k -> pal.acc.copy(alpha = .12f); playing -> pal.panel; else -> Color.Transparent })
       .combinedClickable(
         onClick = { vm.togglePlay(k) },
-        onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); vm.toggleFav(s) },
-      ).semantics {   // P4 a11y：合并语义同 StationCard（§8.2.9）
-        contentDescription = "$dn，${s.c}，点按播放，长按收藏"; role = Role.Button
+        onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onFavToggle(s) },
+      ).semantics {
+        contentDescription = "$dn，${s.c}，点按播放，长按收藏"
       }.padding(vertical = 2.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
-    FavStar(fav) { vm.toggleFav(s) }
+    DetailBtn(vm, k)
+    FavStar(fav) { onFavToggle(s) }
     Column(Modifier.weight(1f)) {
       Row(verticalAlignment = Alignment.CenterVertically) {
         StationLogo(vm.logoOf(s), s.n, s.key, 22.dp)
@@ -215,7 +252,7 @@ private fun StationRow(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?,
         )
         if (connecting) { PulseDot(pal.acc); Text(" 连接中", fontSize = 11.sp, color = pal.dim) }
       }
-      Row(Modifier.padding(start = 30.dp, top = 1.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+      Row(Modifier.padding(start = 78.dp, top = 1.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
         metaBadges(vm, s, inCat)
       }
     }

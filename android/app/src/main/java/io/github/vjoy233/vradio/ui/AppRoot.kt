@@ -26,7 +26,7 @@ import io.github.vjoy233.vradio.ui.theme.VrTheme
    页面消费 pad 防遮挡；期间显式切目的地经 vm.navigate 自动收次级页）。
    浮层（选源/歌曲/发现/源详情）仍由 root 统一挂载——切目的地/进出次级页不丢播放上下文；
    toast 走 SnackbarHost，与 status（用户主动操作，PlayerBar 内）分工不双写。
-   返回键走契约纯函数 backTarget：次级页开着才消费返回（收回次级页回来源目的地）；
+   返回键走契约纯函数 backTarget：次级页开着才消费返回（收回次级页——期间目的地不可变，= 回到打开时的页，Q11）；
    确认弹窗/浮层由各自窗口自收，先序于本 BackHandler。发现关（FeatureFlags.DISCOVERY=false）时
    navigateGuard 使发现目的地不可达。vm 经 ViewModelProvider 直取（不引 lifecycle-viewmodel-compose）。 */
 @Composable

@@ -26,6 +26,7 @@ import io.github.vjoy233.vradio.model.Station
 import io.github.vjoy233.vradio.player.PlayerHolder
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -258,6 +259,96 @@ class UiRedesignSmokeTest {
       assertTrue("内容描述「$cd」应存在（§8.2.9 语义契约）",
         composeRule.onAllNodesWithContentDescription(cd).fetchSemanticsNodes().isNotEmpty())
     }
+  }
+
+  /* ---------- §8.2.3 扩展（review#47 二轮 P2）：Full Player→选源/歌史→连续返回的子 sheet 返回链 ----------
+     层级裁决=ModalBottomSheet 独立窗口自消费返回（先序于 root BackHandler）：子 sheet 开着→返回收子 sheet；
+     子 sheet 关→返回收 Full Player。选源入口需多源台（u.size>1，构造双条目 fixture 台占位索引）。 */
+  @Test
+  fun `子sheet返回链`() {
+    AndroidSmokeTest.logFixtureEnv(TAG)
+    val base = AndroidSmokeTest.assumeFixture()
+    AndroidSmokeTest.assumeFixtureReachable(base)
+    assertTrue("boot 应就绪（列表装载）", awaitBoot())
+    val s = Station("smoke", "fixture 多源A", mutableListOf("$base/direct.mp3", "$base/direct.mp3"))
+    InstrumentationRegistry.getInstrumentation().runOnMainSync { PlayerHolder.play(s) }
+    assertTrue("12s 内未进入 PLAYING", awaitSt(PState.PLAYING, 12_000))
+    composeRule.waitForIdle()
+    // 展开 Full Player（mini 中列 cd；unmerged 树取中列自身节点）
+    composeRule.onNodeWithContentDescription("正在播放：fixture 多源A，点按展开播放器", useUnmergedTree = true).performClick()
+    composeRule.waitUntil(5_000) { vmRef!!.playerExpanded.value }
+    assertTrue("Full Player 应展开", vmRef!!.playerExpanded.value)
+    // 选源（子 sheet 1）→ 返回 → Full Player 仍在
+    composeRule.onNodeWithText("选源").performClick()
+    composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText("恢复默认源").fetchSemanticsNodes().isNotEmpty() }
+    scenario!!.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+    composeRule.waitForIdle()
+    assertTrue("返回后应回 Full Player（选源层收起）", vmRef!!.playerExpanded.value && !vmRef!!.showSrc.value)
+    composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText("正在播放").fetchSemanticsNodes().isNotEmpty() }
+    // 歌史（子 sheet 2）→ 返回 → 返回 → Full Player 关
+    composeRule.onNodeWithText("歌史").performClick()
+    composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText("歌曲历史").fetchSemanticsNodes().isNotEmpty() }
+    scenario!!.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+    composeRule.waitForIdle()
+    assertTrue("返回后应回 Full Player（歌史层收起）", vmRef!!.playerExpanded.value && !vmRef!!.showSongs.value)
+    scenario!!.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+    composeRule.waitUntil(5_000) { !vmRef!!.playerExpanded.value }
+    assertFalse("连续返回后 Full Player 应关闭", vmRef!!.playerExpanded.value)
+  }
+
+  /* ---------- §8.2.2 扩展（review#47/#49 二轮）：旋转重建——播放不断流（Q20）+ sheet 态归宿 + 返回关层 ---------- */
+  @Test
+  fun `旋转后播放不断流且返回关层`() {
+    AndroidSmokeTest.logFixtureEnv(TAG)
+    val base = AndroidSmokeTest.assumeFixture()
+    AndroidSmokeTest.assumeFixtureReachable(base)
+    val s = Station("smoke", "fixture 直流A", mutableListOf("$base/direct.mp3"))
+    InstrumentationRegistry.getInstrumentation().runOnMainSync { PlayerHolder.play(s) }
+    assertTrue("12s 内未进入 PLAYING", awaitSt(PState.PLAYING, 12_000))
+    composeRule.onNodeWithContentDescription("正在播放：fixture 直流A，点按展开播放器", useUnmergedTree = true).performClick()
+    composeRule.waitUntil(5_000) { vmRef!!.playerExpanded.value }
+    scenario!!.recreate()   // 旋转/配置重建口径：AppVm（ViewModel）与 PlayerHolder（单例）存活
+    composeRule.waitForIdle()
+    scenario!!.onActivity { a -> vmRef = ViewModelProvider(a)[AppVm::class.java] }   // 重建后换新 Activity 实例取同一 VM
+    assertTrue("旋转后 Full Player 态应保留（ViewModel 存活）", vmRef!!.playerExpanded.value)
+    assertTrue("旋转后播放应不断流（Q20）", PlayerHolder.ui.value.st == PState.PLAYING)
+    scenario!!.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+    composeRule.waitUntil(5_000) { !vmRef!!.playerExpanded.value }
+    assertFalse("旋转后返回应关 Full Player（sheet 态一次打开生命周期）", vmRef!!.playerExpanded.value)
+  }
+
+  /* ---------- review#46 二轮 P2：快速连续取消收藏——事件队列逐条消费互不覆盖 ----------
+     队列语义在 AppVm(unfavWithUndo 入队)/AppRoot(顺序消费) 集成面——经 vm 直驱两次快速取消，
+     断言两条 Snackbar 顺序出现且各自撤销恢复（星标 UI 点击已由 §8.2.6 覆盖）。 */
+  @Test
+  fun `快速连续取消收藏逐条可撤销`() {
+    assertTrue("boot 应就绪（列表装载）", awaitBoot())
+    val cand = vmRef!!.lib.stations.filter { !it.n.contains("[") && it.n.length >= 2 }.distinctBy { it.n }
+    val s1 = cand.getOrNull(0) ?: throw AssertionError("应有可用台 1")
+    val s2 = cand.getOrNull(1) ?: throw AssertionError("应有可用台 2")
+    val inst = InstrumentationRegistry.getInstrumentation()
+    inst.runOnMainSync { vmRef!!.toggleFav(s1); vmRef!!.toggleFav(s2) }
+    composeRule.waitUntil(10_000) {
+      vmRef!!.favorites.value.any { it.key == s1.key } && vmRef!!.favorites.value.any { it.key == s2.key }
+    }
+    tab("收藏").performClick()
+    composeRule.waitForIdle()
+    // 连续快速取消两台（第二条紧跟第一条，旧单槽实现会覆盖第一条载荷）
+    inst.runOnMainSync { vmRef!!.unfavWithUndo(s1) }
+    inst.runOnMainSync { vmRef!!.unfavWithUndo(s2) }
+    // 第一条（s1）→ 撤销 → s1 恢复
+    composeRule.waitUntil(10_000) {
+      composeRule.onAllNodes(hasText("已取消收藏：" + io.github.vjoy233.vradio.ui.displayParts(s1.n).first, substring = true)).fetchSemanticsNodes().isNotEmpty()
+    }
+    composeRule.onNodeWithText("撤销").performClick()
+    composeRule.waitUntil(10_000) { vmRef!!.favorites.value.any { it.key == s1.key } }
+    // 第二条（s2，队列顺序消费未被覆盖）→ 撤销 → s2 恢复
+    composeRule.waitUntil(15_000) {
+      composeRule.onAllNodes(hasText("已取消收藏：" + io.github.vjoy233.vradio.ui.displayParts(s2.n).first, substring = true)).fetchSemanticsNodes().isNotEmpty()
+    }
+    composeRule.onNodeWithText("撤销").performClick()
+    composeRule.waitUntil(10_000) { vmRef!!.favorites.value.any { it.key == s2.key } }
+    assertTrue("两次撤销均应恢复", vmRef!!.favorites.value.any { it.key == s1.key } && vmRef!!.favorites.value.any { it.key == s2.key })
   }
 
   /* ---------- helpers ---------- */

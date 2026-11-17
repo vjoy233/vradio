@@ -97,7 +97,7 @@ fun StationList(vm: AppVm) {
         singleLine = true,
         placeholder = { Text("搜索电台名", fontSize = 13.sp) },
       )
-      TextButton(onClick = { vm.nav.value = Nav.SETTINGS }) { Text("设置") }
+      TextButton(onClick = { vm.openSettings() }) { Text("设置") }
     }
     // 次行：双视图切换 + 无效源开关（出现过死台才亮，app.js deadBtn 同款）+ 发现入口（B3-C 开关）
     Row(Modifier.padding(horizontal = 12.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

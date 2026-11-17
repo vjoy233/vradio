@@ -38,7 +38,7 @@ import io.github.vjoy233.vradio.ui.theme.LocalVrPalette
 /* 设置页（契约 §Agent C SettingsScreen）：主题三态/无效源显示/手动体检（进度+分档统计完成态）/
    D7 数据更新/端内同步 M4/添加电台入口/导入导出五件套（SAF）/关于。 */
 @Composable
-fun SettingsScreen(vm: AppVm) {
+fun SettingsScreen(vm: AppVm, pad: PaddingValues) {
   val pal = LocalVrPalette.current
   val theme by vm.theme.collectAsState()
   val showDead by vm.showDead.collectAsState()
@@ -90,12 +90,13 @@ fun SettingsScreen(vm: AppVm) {
 
   Column(Modifier.fillMaxSize().background(pal.bg).statusBarsPadding()) {
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-      TextButton(onClick = { vm.nav.value = Nav.LIST }) { Text("← 返回") }
+      TextButton(onClick = { vm.closeSecondary() }) { Text("← 返回") }
       Text("设置", fontWeight = FontWeight.Bold, fontSize = 17.sp)
     }
     LazyColumn(
       Modifier.fillMaxSize().padding(horizontal = 16.dp),
-      contentPadding = PaddingValues(bottom = 32.dp),
+      // review#49-2：消费 VrScaffold pad（次级页在 content 槽内——pad 含 mini player/底栏实高），32dp 是页脚呼吸位
+      contentPadding = PaddingValues(bottom = 32.dp + pad.calculateBottomPadding()),
     ) {
       item {
         Section("外观")
@@ -178,7 +179,7 @@ fun SettingsScreen(vm: AppVm) {
             Text("添加自定义电台", fontSize = 15.sp, color = pal.tx)
             Info("先探活（拒绝假流/死链），通过后写入个人列表 my-radio.txt（同步不覆盖）")
           }
-          TextButton(onClick = { vm.nav.value = Nav.ADD }) { Text("添加") }
+          TextButton(onClick = { vm.openAddStation() }) { Text("添加") }
         }
       }
       item {

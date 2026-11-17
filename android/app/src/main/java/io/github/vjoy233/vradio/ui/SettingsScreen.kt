@@ -76,7 +76,7 @@ fun toggleExpanded(cur: Set<String>, id: String): Set<String> = if (id in cur) c
 private val stringSetSaver = Saver<Set<String>, List<String>>(save = { it.toList() }, restore = { it.toSet() })
 
 @Composable
-fun SettingsScreen(vm: AppVm) {
+fun SettingsScreen(vm: AppVm, pad: PaddingValues) {
   val pal = LocalVrPalette.current
   val theme by vm.theme.collectAsState()
   val view by vm.view.collectAsState()
@@ -136,7 +136,8 @@ fun SettingsScreen(vm: AppVm) {
     }
     LazyColumn(
       Modifier.fillMaxSize().padding(horizontal = 16.dp),
-      contentPadding = PaddingValues(bottom = 32.dp),
+      // review#49-2：消费 VrScaffold pad（次级页在 content 槽内——pad 含 mini player/底栏实高），32dp 是页脚呼吸位
+      contentPadding = PaddingValues(bottom = 32.dp + pad.calculateBottomPadding()),
     ) {
       settingsGroups.forEach { g ->
         item(key = "grp." + g.id) {

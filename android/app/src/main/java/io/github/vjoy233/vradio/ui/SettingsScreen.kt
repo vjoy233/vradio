@@ -38,7 +38,7 @@ import io.github.vjoy233.vradio.ui.theme.LocalVrPalette
 /* 设置页（契约 §Agent C SettingsScreen）：主题三态/无效源显示/手动体检（进度+分档统计完成态）/
    D7 数据更新/端内同步 M4/添加电台入口/导入导出五件套（SAF）/关于。 */
 @Composable
-fun SettingsScreen(vm: AppVm) {
+fun SettingsScreen(vm: AppVm, pad: PaddingValues) {
   val pal = LocalVrPalette.current
   val theme by vm.theme.collectAsState()
   val showDead by vm.showDead.collectAsState()
@@ -95,7 +95,8 @@ fun SettingsScreen(vm: AppVm) {
     }
     LazyColumn(
       Modifier.fillMaxSize().padding(horizontal = 16.dp),
-      contentPadding = PaddingValues(bottom = 32.dp),
+      // review#49-2：消费 VrScaffold pad（次级页在 content 槽内——pad 含 mini player/底栏实高），32dp 是页脚呼吸位
+      contentPadding = PaddingValues(bottom = 32.dp + pad.calculateBottomPadding()),
     ) {
       item {
         Section("外观")

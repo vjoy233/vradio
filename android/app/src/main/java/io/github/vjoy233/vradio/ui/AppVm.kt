@@ -66,6 +66,7 @@ import io.github.vjoy233.vradio.sync.SyncEngine
 import io.github.vjoy233.vradio.widget.WidgetCommands
 import io.github.vjoy233.vradio.widget.WidgetPush
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -181,13 +182,22 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   /* ---------- 根导航动作（P0，方案 §6.1）：守卫/返回裁决走 ui/Navigation.kt 契约纯函数 ---------- */
 
-  /** 顶层目的地切换：发现关闭时去发现 = 回退电台（navigateGuard 契约同款） */
-  fun navigate(to: Destination) { destination.value = navigateGuard(to) }
+  /** 顶层目的地切换：发现关闭时去发现 = 回退电台（navigateGuard 契约同款）；
+      次级页开着时显式切目的地 = 离开次级页（review#45：返回始终回当前目的地，Q11 来源契约在全路径成立） */
+  fun navigate(to: Destination) { destination.value = navigateGuard(to); secondary.value = null }
 
   /** 次级页开合：先记来源目的地再设 secondary（返回时回跳来源页，Q11/Q15） */
   fun openSettings() { secondaryFrom.value = destination.value; secondary.value = SecondaryRoute.SETTINGS }
   fun openAddStation() { secondaryFrom.value = destination.value; secondary.value = SecondaryRoute.ADD_STATION }
   fun closeSecondary() { secondary.value = null }
+
+  /** status 反馈单一所有者（review#46/#47 P1）：每次写入重启 6s TTL，UI 层不得再自建清理协程（旧三处竞态删除） */
+  private var statusJob: Job? = null
+  fun setStatus(s: String) {
+    status.value = s
+    statusJob?.cancel()
+    statusJob = viewModelScope.launch { delay(6000); status.value = "" }
+  }
 
   /** 各目的地页内 UI 瞬态快照（toMutableMap 拷贝替换触发流更新）：离开页面前/进次级页前调一次，不在滚动帧回调里写 */
   fun saveDestinationUi(d: Destination, ui: DestinationUiState) {
@@ -486,7 +496,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       sc != null -> {
         val s = runCatching { lib.stations.firstOrNull { it.key == sc } }.getOrNull()
         if (s != null) startPlay(s)
-        else { resumeLastIfWanted(); status.value = "快捷方式指向的电台已不在列表中" }
+        else { resumeLastIfWanted(); setStatus("快捷方式指向的电台已不在列表中") }
       }
       addPreset.value != null -> { openAddStation(); toast("已填入流地址，探活通过后点「添加」") }   // AIbot P3：冷启动接流与热路径反馈一致
       else -> resumeLastIfWanted()
@@ -871,7 +881,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   fun stepFav(d: Int) {                                                   // ←/→ 收藏间切台（A-5）
     val favsIn = filteredList(showDead.value).filter { runCatching { lib.isFav(it) }.getOrDefault(false) }
-    if (favsIn.isEmpty()) { status.value = "还没有收藏电台——点电台旁 ☆ 收藏后可用收藏间切换"; return }
+    if (favsIn.isEmpty()) { setStatus("还没有收藏电台——点电台旁 ☆ 收藏后可用收藏间切换"); return }
     val curIdx = cur.station?.let { c -> favsIn.indexOfFirst { it.key == c.key } } ?: -1
     val nx = if (curIdx < 0) (if (d > 0) 0 else favsIn.size - 1) else (curIdx + d + favsIn.size) % favsIn.size
     togglePlay(favsIn[nx].key)
@@ -880,7 +890,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   fun resumeLast() {                                                      // ▶ 空台 = 续播上次收听
     val r = lib.recents.firstOrNull()
     val s = r?.let { runCatching { lib.resolve(it.k) }.getOrNull() }
-    if (s == null) { status.value = if (r == null) "还没有播放记录" else "上次收听的电台已不在列表中，请直接点播"; return }
+    if (s == null) { setStatus(if (r == null) "还没有播放记录" else "上次收听的电台已不在列表中，请直接点播"); return }
     startPlay(s)
   }
 
@@ -903,7 +913,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     val s = cur.station ?: return
     val had = PlayerHolder.forgetSrc()
     startPlay(s)                                                          // 无 prefer 且记忆已清 → 纯启发式序
-    status.value = if (had) "已恢复默认源，从默认源重播" else "本无源记忆，按默认序重播"
+    setStatus(if (had) "已恢复默认源，从默认源重播" else "本无源记忆，按默认序重播")
   }
 
   /* ---------- B1 源详情（SourceDetailSheet 编排）：逐源诊断（禁用源不发请求）+ 源动作 ---------- */
@@ -957,11 +967,11 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       SourceAction.RestoreDefault -> {                          // 恢复默认播放源（清 srcmem2；正在听则按链重播）
         val had = PlayerHolder.forgetSrcOf(s)
         if (cur.station?.key == s.key) startPlay(s)
-        status.value = if (had) "已恢复默认播放源（人工顺序与禁用保留）" else "本无源记忆，按默认序处理"
+        setStatus(if (had) "已恢复默认播放源（人工顺序与禁用保留）" else "本无源记忆，按默认序处理")
       }
       SourceAction.ResetOrder -> {                              // 撤销人工源排序（恢复同步原始顺序；禁用/追加源保留）
         runCatching { lib.srcOrderReset(s) }
-        status.value = "已撤销人工源排序（禁用与追加源保留）"
+        setStatus("已撤销人工源排序（禁用与追加源保留）")
       }
     }
     stamp.value++
@@ -978,11 +988,11 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   fun setVol(pct: Int) { PlayerHolder.setVolPct(pct) }
 
   fun toggleMute() {
-    if (cur.volPct > 0) { PlayerHolder.setVolPct(0); status.value = "已静音" }
+    if (cur.volPct > 0) { PlayerHolder.setVolPct(0); setStatus("已静音") }
     else {
       // restoreVolPct = 当前台记忆 → 全局 → 默认（player.js restoreVol 同语义）；会话内近似值会把台记忆覆盖坏
       val rv = PlayerHolder.restoreVolPct()
-      PlayerHolder.setVolPct(rv); status.value = "音量 $rv%"
+      PlayerHolder.setVolPct(rv); setStatus("音量 $rv%")
     }
   }
 

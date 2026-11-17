@@ -577,13 +577,14 @@ Node 14 政策：当前 `engines` 为 `>=14`，CI 必须保留 Node 14 leg。若
 
 ## 10. 附录：落地进度与欠账（2026-11-15 基线之后的实施状态）
 
-> 状态表唯一入口：每批落地/修订后在**自己批次的行**追加一行记录（日期 + 已落地 + 仍欠项 + 验收命令），
-> 不改写 2026-11-15 的历史基线正文。接口/命令/覆盖事实变化必须同步回写，防止状态表长期停留在「尚未创建」。
+> 状态表唯一入口：每批落地/修订后在**自己批次的行**追加记录（已落地 + 仍欠项），不改写 2026-11-15 的
+> 历史基线正文。仍欠项必须写明接手批次/负责人视角与验收条件，不允许只写「待办」；本地无法完成的项
+> （运维/远端环境）如实标注。接口/命令/覆盖事实变化必须同步回写，防止状态表长期停留在「尚未创建」。
 
-| 批次 | 状态记录 |
-|---|---|
-| P0a harness/player/store | （待批次落地后填写） |
-| P0b sync/logos/PR smoke | （待批次落地后填写） |
-| P1 API/CI | （待批次落地后填写） |
-| P2 浏览器/Android | （待批次落地后填写） |
-| P3 夜间/发布前 | （待批次落地后填写） |
+| 批次 | 已落地 | 仍欠（验收条件） |
+|---|---|---|
+| P0a harness/player/store | （待批次落地后填写） | （待批次落地后填写） |
+| P0b sync/logos/PR smoke | （待批次落地后填写） | （待批次落地后填写） |
+| P1 统一 API 矩阵 + CI 门禁 | 真服务矩阵五件 + 资产校验全部落地：`station-api.js`（mystation/boot，isolated 临时应用根视角）、`np-proxy.js`、`sync-api.js`（token 单次消费/forced 真发布链/busy 409，宿主 last-sync-report 零接触有对照断言）、`myradio-api.js`（/api/myradio 高风险矩阵：全量替换语义/500 行与 64KB 封顶/replace 与 mystation 共用写队列并发/rename 失败保旧/空列表清空/备份恢复联动）、`assets.js`；listen-stats 拆层（纯状态机 `listen-stats.js` 进 unit、端点 `listen-stats-api.js` 进 api）；run.js 三个 profile 白名单同步；web.yml 结构修复（`if-no-files-found` 移入 upload-artifact 的 `with`）+ 证据面（Node 三版本日志/汇总 JSON `if: always()` 上传、浏览器轻量证据 always、截图仅失败上传，`set -o pipefail` 保留退出码）；本地全量与 unit/api profile 实跑 0 失败 | ① 分支保护 required checks 配置：把 web.yml 的 `node` / `browser` check 名登记为 PR 必过门——属仓库运维操作，本地无法完成，接手人在 GitHub 分支保护/规则集中配置后按一次真实 PR 验证缺失 check 会挡合并；② web.yml 远端首跑验证：workflow 结构本地仅做 YAML 解析与 with/step 层级自查，Linux runner + Node 14/18/20 矩阵 + Chromium 无法本地复现——push 后在远端 CI 实跑，确认全部矩阵 job 执行并产出结果与证据 artifact，方可认定「代码 job 可运行」，与 ① 的「合并必须通过这些 check」分别验收 |
+| P2 浏览器/Android | （待批次落地后填写） | （待批次落地后填写） |
+| P3 夜间/发布前 | （待批次落地后填写） | （待批次落地后填写） |

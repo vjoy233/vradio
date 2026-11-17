@@ -1,0 +1,177 @@
+{
+  "capturedAt": "2026-11-15T18:45:07.246Z",
+  "url": "http://127.0.0.1:8244/",
+  "assertions": [
+    "S1 全库装配 >50 台",
+    "S2 桌面壳生效（uiRefresh ≥1024 侧栏可见）",
+    "S3 启动零 pageerror",
+    "V320 无横向溢出（scrollWidth 320 ≤ 320）",
+    "V320 列表可见（范围内 1521 台 / 已渲染 1521 行）",
+    "V320 header 高度合理（102px，界 200）",
+    "V320 themeWrap 收进 lowfreq（≤640，p6 A8 口径）",
+    "V375 无横向溢出（scrollWidth 375 ≤ 375）",
+    "V375 列表可见（范围内 1521 台 / 已渲染 1521 行）",
+    "V375 header 高度合理（102px，界 200）",
+    "V375 themeWrap 收进 lowfreq（≤640，p6 A8 口径）",
+    "V390 无横向溢出（scrollWidth 390 ≤ 390）",
+    "V390 列表可见（范围内 1521 台 / 已渲染 1521 行）",
+    "V390 header 高度合理（102px，界 200）",
+    "V390 header 两行口径 ≤130px（p6 A6；实测 102px）",
+    "V390 themeWrap 收进 lowfreq（≤640，p6 A8 口径）",
+    "V414 无横向溢出（scrollWidth 414 ≤ 414）",
+    "V414 列表可见（范围内 1521 台 / 已渲染 1521 行）",
+    "V414 header 高度合理（102px，界 200）",
+    "V414 themeWrap 收进 lowfreq（≤640，p6 A8 口径）",
+    "V768 无横向溢出（scrollWidth 768 ≤ 768）",
+    "V768 列表可见（范围内 1521 台 / 已渲染 1521 行）",
+    "V768 header 高度合理（108px，界 160）",
+    "V768 themeWrap 不在 lowfreq（>640）",
+    "V1023 无横向溢出（scrollWidth 1023 ≤ 1023）",
+    "V1023 列表可见（范围内 1521 台 / 已渲染 1521 行）",
+    "V1023 header 高度合理（59px，界 160）",
+    "V1023 themeWrap 不在 lowfreq（>640）",
+    "V1023 紧凑布局（桌面壳侧栏隐藏）",
+    "V1024 无横向溢出（scrollWidth 1024 ≤ 1024）",
+    "V1024 列表可见（范围内 1521 台 / 已渲染 1521 行）",
+    "V1024 header 高度合理（59px，界 160）",
+    "V1024 桌面壳生效（侧栏可见——断点翻转）",
+    "V1280 无横向溢出（scrollWidth 1280 ≤ 1280）",
+    "V1280 列表可见（范围内 1521 台 / 已渲染 1521 行）",
+    "V1280 header 高度合理（59px，界 160）",
+    "V1440 无横向溢出（scrollWidth 1440 ≤ 1440）",
+    "V1440 列表可见（范围内 1521 台 / 已渲染 1521 行）",
+    "V1440 header 高度合理（59px，界 160）",
+    "V1920 无横向溢出（scrollWidth 1920 ≤ 1920）",
+    "V1920 列表可见（范围内 1521 台 / 已渲染 1521 行）",
+    "V1920 header 高度合理（59px，界 160）",
+    "Z1 dsf2@1280 无横向溢出（scrollWidth 1280 ≤ 1280，DPR 2）",
+    "Z2 200% 渲染下主题按钮可点（三选菜单弹出）",
+    "Z3 200% 渲染下视图切换可点（aria-pressed 翻转）",
+    "Z4 语义 200%（640 布局视口）无横向溢出（scrollWidth 640 ≤ 640）",
+    "Z5 语义 200% 搜索框可用 + header 合理（55px）",
+    "FC1 body 背景非透明（页面不白屏）",
+    "FC2 body 文字色非透明且与背景相异（文本可见）",
+    "FC3 主按钮文本色非透明（themeBtn 可读）",
+    "N1 300×700 无横向溢出",
+    "K1 / 聚焦搜索框",
+    "K2 输入即过滤（keyword='广播'，界面 964 = 含「广播」口径 964）",
+    "K3 Enter 不崩、筛选态不漂（pageerror 零 + keyword 保持）",
+    "K4 Esc 清空搜索",
+    "K5 ↓ 焦点进列表首行（role=listitem 行）",
+    "K6 行 Enter 点播（本地流真实到 playing）",
+    "K7 ? 出快捷键帮助浮层（role=dialog + aria-label）",
+    "K8 Esc 收浮层 + 焦点回归合理（activeElement=body 或可见元素，无焦点丢进隐藏元素——p6 G5 口径）",
+    "K7b → 在收藏间切台（当前台 = 刚收藏台，本地流真实到 playing）",
+    "A1 themeBtn aria-label=主题：跟随系统",
+    "A2 浅色档 aria-label + menu aria-pressed 同步",
+    "A3 菜单开 → themeBtn aria-expanded=true",
+    "A4 深色档 aria-label + 菜单收起 aria-expanded=false",
+    "A5 维护面板 dialog 语义（role=dialog + aria-modal=true + aria-label 存在）",
+    "A6 维护面板三分区可达",
+    "A7 维护面板关闭（页面回列表态）",
+    "Z1 全程零 pageerror / 非资源 console error（双 context 双页）"
+  ],
+  "screenshots": [
+    "320.png",
+    "768.png",
+    "1024.png"
+  ],
+  "errors": [],
+  "resourceErrors": [
+    "console:Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "console:Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "notes": [
+    "各档 header 实测高度：320:102 375:102 390:102 414:102 768:108 1023:59 1024:59 1280:59 1440:59 1920:59",
+    "forced-colors 实测：body bg=rgb(0, 0, 0) fg=rgb(255, 255, 255) themeBtn=rgb(255, 255, 255)",
+    "资源加载噪音 2 条（自举实例合法 404 只记不判，同 pr-smoke 分流口径）",
+    "未覆盖项（headless 不可靠替代，方案 §3 L3 明确保留人工）：Safari/macOS 实机、NVDA/VoiceOver 读屏语义、Firefox/Edge 夜间矩阵、真实音频输出（无头静音）；200% 缩放为 dsf2+语义双口径近似（真实 Ctrl+缩放含字体 hinting 差异）",
+    "Z2 宿主 data/store.json + my-radio.txt 运行前后哈希不变",
+    "Z3 清理失败门：browser/伪流服务/server/worktree 全回收（零泄漏成立）"
+  ],
+  "matrix": {
+    "viewports": {
+      "320": {
+        "sw": 320,
+        "hh": 102,
+        "visN": 1521,
+        "rows": 1521,
+        "low": true,
+        "side": false
+      },
+      "375": {
+        "sw": 375,
+        "hh": 102,
+        "visN": 1521,
+        "rows": 1521,
+        "low": true,
+        "side": false
+      },
+      "390": {
+        "sw": 390,
+        "hh": 102,
+        "visN": 1521,
+        "rows": 1521,
+        "low": true,
+        "side": false
+      },
+      "414": {
+        "sw": 414,
+        "hh": 102,
+        "visN": 1521,
+        "rows": 1521,
+        "low": true,
+        "side": false
+      },
+      "768": {
+        "sw": 768,
+        "hh": 108,
+        "visN": 1521,
+        "rows": 1521,
+        "low": false,
+        "side": false
+      },
+      "1023": {
+        "sw": 1023,
+        "hh": 59,
+        "visN": 1521,
+        "rows": 1521,
+        "low": false,
+        "side": false
+      },
+      "1024": {
+        "sw": 1024,
+        "hh": 59,
+        "visN": 1521,
+        "rows": 1521,
+        "low": false,
+        "side": true
+      },
+      "1280": {
+        "sw": 1280,
+        "hh": 59,
+        "visN": 1521,
+        "rows": 1521,
+        "low": false,
+        "side": true
+      },
+      "1440": {
+        "sw": 1440,
+        "hh": 59,
+        "visN": 1521,
+        "rows": 1521,
+        "low": false,
+        "side": true
+      },
+      "1920": {
+        "sw": 1920,
+        "hh": 59,
+        "visN": 1521,
+        "rows": 1521,
+        "low": false,
+        "side": true
+      }
+    }
+  },
+  "result": "PASS"
+}

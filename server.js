@@ -31,6 +31,41 @@ const { qApplyOp, qTrim } = require('./quality-store'); // B2：质量聚合应�
 const { lsDayKeyOk, lsApplyOp } = require('./listen-stats'); // B3：收听统计 op 应用/日期键历法校验（与客户端同语义）
 const ROOT = __dirname, PORT = process.env.PORT || 8137, HOST = process.env.HOST || '127.0.0.1';
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.txt': 'text/plain; charset=utf-8' };
+// 写盘 tmp 名唯一化（pid+单调序号）：同目录双实例共用固定 `文件.tmp` 会互踩——A 实例 write 未 rename 时
+// B 实例 write 同名 tmp 覆盖内容，rename 后落盘的是对方的数据（test/quality.js「多标签合流/512 淘汰」
+// 用例随机假红的根因）。串行队列只护本进程，跨进程必须靠 tmp 名本身唯一。
+// ⚠ 边界（review#37 P1-1 澄清）：tmp 唯一只消解「临时文件互踩」，**不构成同数据根双进程安全部署**——
+// rev 发号/quality/listen-stats 内存缓存是进程私有的，双进程写同根仍会互相盲写；测试一律用独立
+// 数据根（test/harness/api-client.js 临时应用根），单写进程是支持形态。
+let tmpSeq = 0;
+const tmpOf = f => f + '.' + process.pid + '-' + (++tmpSeq) + '.tmp';
+// rename 短重试（Windows 环境性瞬时锁：杀毒/索引器摸目标文件 → EPERM/EACCES，实测并发写 1/30 命中）——
+// 3 次 × 50ms 内自愈，避免把瞬态锁当真写失败（200 ok:false → 客户端置 dirty 重推，数据不丢但白折腾）；
+// 其余错误码照旧直通。
+const renameRetry = (from, to, cb, n = 3) => fs.rename(from, to, e => {
+  if (e && (e.code === 'EPERM' || e.code === 'EACCES') && n > 0) return setTimeout(() => renameRetry(from, to, cb, n - 1), 50);
+  cb(e);
+});
+// 统一原子写 helper（review#40 / #37 review P2-2 转交）：tmp+rename+短重试+失败回收一条龙，七条写路径
+// （my-radio 追加/整替、store、quality 合并/覆盖、listen-stats 合并/覆盖）全走这里——
+// · writeFile 或 rename 最终失败：unlink 本次自己拥有的 tmp（tmpOf 名含 pid+序号，只清自己的、不碰
+//   其他实例/其他进程的 tmp），data/ 不再留含个人数据的 tmp 孤儿（旧版每次 rename 最终失败遗留一个，
+//   恢复后也不回收）；unlink ENOENT（rename 恰好成功后走不到/竞态）无害；
+// · renameRetry（EPERM/EACCES 3×50ms）语义原样保留在链内；重试期间 tmp 已写出完整内容——
+//   中途进程被杀仍退化为「旧文件完好 + tmp 孤儿」，与原行为一致（tmp 由下次启动清理不在本 helper 职责）；
+// · 状态推进（rev/缓存/响应）只在各路径成功分支做——失败路径原文件字节与内存 rev 一律不动（原纪律），
+//   回调/响应语义不变（ok:false 恰一次、串行队列照常推进）。
+function atomicWrite(target, content, cb) {
+  const tmp = tmpOf(target);
+  const drop = () => fs.unlink(tmp, () => {}); // 失败回收：仅本次拥有的 tmp
+  fs.writeFile(tmp, content, e => {
+    if (e) { drop(); return cb(e); }
+    renameRetry(tmp, target, e2 => {
+      if (e2) { drop(); return cb(e2); } // rename 成功后 tmp 已不存在，不走此分支
+      cb(null);
+    });
+  });
+}
 // Host 头白名单（audit A3，防 DNS rebinding）：回环监听（默认）下只认本机名——rebinding 攻击里页面
 // Origin==Host==攻击者域名，所有 Origin 比对失效，从握手层直接拒绝；HOST=0.0.0.0 显式局域网档自担
 // 风险不校验；HOST 指定具体地址时该地址随行放行（127.0.0.2 等其它环回变形会被拒，属可接受收紧）
@@ -50,12 +85,12 @@ function proxy(target, req, res, depth = 0) {
   if (depth > 5) return res.writeHead(508).end('too many redirects');
   const mod = target.startsWith('https') ? https : http;
   const creq = mod.get(target, {
-    timeout: 30000, lookup: guardLookup, // 超时（P2-3）+ 连接级 IP 校验：校验的就是本次连接实际使用的解析结果
+    timeout: 30000, lookup: TEST_HOOK ? TEST_HOOK.lookup : guardLookup, // 超时（P2-3）+ 连接级 IP 校验：校验的就是本次连接实际使用的解析结果
     headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Accept': '*/*' }
   }, r => {
     if ([301, 302, 303, 307].includes(r.statusCode) && r.headers.location) {
       r.resume();
-      const next = safeTarget(tryUrl(r.headers.location, target)); // 重定向逐跳复查（P2-6）；畸形头经 tryUrl 归 null 按拒绝处理（audit-r2 P2-1：裸 new URL 抛 TypeError 即崩进程）
+      const next = (TEST_HOOK ? TEST_HOOK.safe : safeTarget)(tryUrl(r.headers.location, target)); // 重定向逐跳复查（P2-6）；畸形头经 tryUrl 归 null 按拒绝处理（audit-r2 P2-1：裸 new URL 抛 TypeError 即崩进程）
       if (!next) return res.writeHead(403).end('403 redirect target rejected');
       return proxy(next, req, res, depth + 1);
     }
@@ -63,6 +98,7 @@ function proxy(target, req, res, depth = 0) {
     if (r.headers['content-range']) h['Content-Range'] = r.headers['content-range'];
     res.writeHead(r.statusCode, h);
     r.on('error', () => res.destroy()); // 上游中途断流：终止响应，error 不逃逸（Node ≥14 防御性守卫）
+    r.on('aborted', () => res.destroy()); // 上游提前终止：Node ≤14 走 aborted 非 error（AIbot 增量复审 #39 P1——B12 在 Node 14 Linux 挂死的根因），同口径终止响应
     res.on('close', () => r.destroy()); // 浏览器侧断开（换源/暂停/关页）：销毁上游，直播流不再泄漏连接（P2-2）
     r.pipe(res);
   });
@@ -86,9 +122,7 @@ function myStationWrite(n, u, c) {
     if (at >= 0) lines.splice(at + 1, 0, `${n},${u}`); // 已有该分类节：节内插入
     else lines.push('', head, `${n},${u}`); // 新分类：尾部开节
     const out = lines.join('\r\n').replace(/^\r\n/, '') + '\r\n';
-    const tmp = MY_FILE + '.tmp';
-    fs.writeFile(tmp, out, e => e ? done({ ok: false, error: '写入失败' })
-      : fs.rename(tmp, MY_FILE, e2 => done(e2 ? { ok: false, error: '写入失败' } : { ok: true })));
+    atomicWrite(MY_FILE, out, e => done(e ? { ok: false, error: '写入失败' } : { ok: true }));
   })).catch(() => ({ ok: false, error: '写入失败' }));
 }
 
@@ -97,9 +131,7 @@ function myStationWrite(n, u, c) {
 function myRadioReplace(lines) {
   return myQ = myQ.then(() => new Promise(done => {
     const out = lines.length ? lines.join('\r\n') + '\r\n' : '';
-    const tmp = MY_FILE + '.tmp';
-    fs.writeFile(tmp, out, e => e ? done({ ok: false, error: '写入失败' })
-      : fs.rename(tmp, MY_FILE, e2 => done(e2 ? { ok: false, error: '写入失败' } : { ok: true })));
+    atomicWrite(MY_FILE, out, e => done(e ? { ok: false, error: '写入失败' } : { ok: true }));
   })).catch(() => ({ ok: false, error: '写入失败' }));
 }
 
@@ -123,15 +155,14 @@ function storeRead() { // 懒加载：首访问读盘；坏文件视为空库（
 function storeWrite(data) {
   return storeQ = storeQ.then(() => new Promise(done => {
     storeRead(); // 先装载磁盘态（AIbot P2-1）：rev 只在 GET 路径懒装载——重启后首请求若是 POST 会从 0 重发号，旧窗口高 rev 镜像被静默压掉，违反「rev 服务端唯一发号」公理
-    const rev = storeRev + 1, out = JSON.stringify({ rev, data }), tmp = STORE_FILE + '.tmp';
+    const rev = storeRev + 1, out = JSON.stringify({ rev, data });
     fs.mkdir(DATA_DIR, { recursive: true }, e => {
       if (e) return done({ ok: false, error: '写入失败' });
-      fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
-        : fs.rename(tmp, STORE_FILE, e3 => {
-          if (e3) return done({ ok: false, error: '写入失败' });
-          storeRev = rev; storeCache = { rev, data };
-          done({ ok: true, rev });
-        }));
+      atomicWrite(STORE_FILE, out, e2 => {
+        if (e2) return done({ ok: false, error: '写入失败' }); // 失败路径：rev/缓存不动，tmp 已由 helper 回收
+        storeRev = rev; storeCache = { rev, data };
+        done({ ok: true, rev });
+      });
     });
   })).catch(() => ({ ok: false, error: '写入失败' }));
 }
@@ -151,6 +182,15 @@ function storeWrite(data) {
 // trim 时保留——B2 临场设计（契约 trimOrder 的保护集服务端落地）。trim 下钻序见 quality-store.js。 ----------
 const QUALITY_FILE = path.join(DATA_DIR, 'quality.json');
 const Q_MAX = +(process.env.VR_TEST_Q_MAX || 0) || 2 * 1024 * 1024, Q_OPS_MAX = 32, Q_BODY_MAX = 256 * 1024, Q_OPLOG = 512; // VR_TEST_Q_MAX 仅测试注入缝（真实 HTTP 链压 2MB 拒绝路径用，生产不设）
+// 测试注入缝（同 VR_TEST_Q_MAX 先例：env 显式设置才生效，生产路径绝不自启）——
+//   VR_TEST_GUARD=1：proxy/check/mystation/nowplaying 四面顶替 safeTarget/guardLookup 判定放行回环 fixture
+//     （update-sources request/checkStream/checkDetail 的 opt.testHook 同款契约；http(s) 形态校验保留，
+//     lookup 固定回 127.0.0.1——fixture 流地址自带端口直达，双护栏语义由 test/smoke.js+diagnostic.js 离线钉死）；
+//   VR_TEST_SYNC_STASH=<json 文件>：预置同步 stash（{report,reportHash,inputs,tokens}）——强制两步协议
+//     离线实测（token 换发 → 带 token 强制发布复用原料不重拉上游，publishResult 照常走真发布链）；
+//   VR_TEST_SYNC_STALL=<ms>：/api/sync 处理起始延迟（busy 409 竞态确定性）。
+const TEST_HOOK = process.env.VR_TEST_GUARD === '1'
+  ? { safe: u => (/^https?:\/\//.test(u || '') ? u : null), lookup: (h, o, cb) => cb(null, '127.0.0.1', 4) } : null;
 const Q_KINDS = new Set(['diagnostic', 'playback']), Q_TRIGGERS = new Set(['manual', 'boot', 'sync', 'play', 'watchdog', 'switch', 'error']), Q_MODES = new Set(['direct', 'hls', 'proxy']);
 let qCache = null, qQ = Promise.resolve();
 function qRead() { // 懒加载 + 坏文件按空库恢复（只清自身，绝不碰 radio.health / store.json）
@@ -210,15 +250,14 @@ function qReplace(clean) { // 覆盖写 data（去重日志保留：旧 op 重�
   return qQ = qQ.then(() => new Promise(done => {
     const st = JSON.parse(JSON.stringify(qRead()));
     st.data = clean;
-    const rev = st.rev + 1, out = JSON.stringify(st), tmp = QUALITY_FILE + '.tmp';
+    const rev = st.rev + 1, out = JSON.stringify(st);
     if (Buffer.byteLength(out) > Q_MAX) return done({ ok: false, error: 'quality sidecar 超过 2MB 硬上限' });
     fs.mkdir(DATA_DIR, { recursive: true }, e => {
       if (e) return done({ ok: false, error: '写入失败' });
-      fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
-        : fs.rename(tmp, QUALITY_FILE, e3 => {
-          if (e3) return done({ ok: false, error: '写入失败' });
-          qCache = st; qCache.rev = rev; done({ ok: true, rev });
-        }));
+      atomicWrite(QUALITY_FILE, out, e2 => {
+        if (e2) return done({ ok: false, error: '写入失败' }); // 失败路径：rev/缓存不动，tmp 已由 helper 回收
+        qCache = st; qCache.rev = rev; done({ ok: true, rev });
+      });
     });
   })).catch(() => ({ ok: false, error: '写入失败' }));
 }
@@ -247,15 +286,14 @@ function qCommit(ops, keep) { // 串行：克隆当前态 → 应用（qApplyOp�
     const rev = st.rev + 1;
     const serialize = () => JSON.stringify({ v: 1, rev, ops: st.ops, ats: st.ats, floorAt: st.floorAt, data: st.data }); // 水位线随盘持久
     qTrim(st.data, keep, () => Buffer.byteLength(serialize()), Q_MAX); // 2MB 逼近时按淘汰序裁（每 2 步复核防过冲）
-    const out = serialize(), tmp = QUALITY_FILE + '.tmp';
+    const out = serialize();
     if (Buffer.byteLength(out) > Q_MAX) return done({ ok: false, error: 'quality sidecar 超过 2MB 硬上限', code: 'too-large' }); // 无法合并（含 2MB 硬上限）→ 409（路由按 code 映射；写失败仍 200 ok:false——临时错误非协议拒）
     fs.mkdir(DATA_DIR, { recursive: true }, e => {
       if (e) return done({ ok: false, error: '写入失败' });
-      fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
-        : fs.rename(tmp, QUALITY_FILE, e3 => {
-          if (e3) return done({ ok: false, error: '写入失败' });
-          qCache = st; qCache.rev = rev; done({ ok: true, rev, applied, rejected });
-        }));
+      atomicWrite(QUALITY_FILE, out, e2 => {
+        if (e2) return done({ ok: false, error: '写入失败' }); // 失败路径：rev/缓存不动，tmp 已由 helper 回收
+        qCache = st; qCache.rev = rev; done({ ok: true, rev, applied, rejected });
+      });
     });
   })).catch(() => ({ ok: false, error: '写入失败' }));
 }
@@ -320,15 +358,14 @@ function lsCommit(ops) { // 串行：克隆当前态 → op.id 去重 + 日桶�
     const rev = st.rev + 1;
     lsTrimDays(st.days);
     const serialize = () => JSON.stringify({ v: 1, rev, ops: st.ops, days: st.days });
-    const out = serialize(), tmp = LS_FILE + '.tmp';
+    const out = serialize();
     if (Buffer.byteLength(out) > LS_MAX) return done({ ok: false, error: 'listen-stats sidecar 超过 2MB 硬上限' });
     fs.mkdir(DATA_DIR, { recursive: true }, e => {
       if (e) return done({ ok: false, error: '写入失败' });
-      fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
-        : fs.rename(tmp, LS_FILE, e3 => {
-          if (e3) return done({ ok: false, error: '写入失败' });
-          lsCache = st; lsCache.rev = rev; done({ ok: true, rev, applied });
-        }));
+      atomicWrite(LS_FILE, out, e2 => {
+        if (e2) return done({ ok: false, error: '写入失败' }); // 失败路径：rev/缓存不动，tmp 已由 helper 回收
+        lsCache = st; lsCache.rev = rev; done({ ok: true, rev, applied });
+      });
     });
   })).catch(() => ({ ok: false, error: '写入失败' }));
 }
@@ -365,15 +402,14 @@ function lsReplace(clean) { // 覆盖写 days（op 去重日志保留：旧 op �
   return lsQ = lsQ.then(() => new Promise(done => {
     const st = JSON.parse(JSON.stringify(lsRead()));
     st.days = clean;
-    const rev = st.rev + 1, out = JSON.stringify(st), tmp = LS_FILE + '.tmp';
+    const rev = st.rev + 1, out = JSON.stringify(st);
     if (Buffer.byteLength(out) > LS_MAX) return done({ ok: false, error: 'listen-stats sidecar 超过 2MB 硬上限' });
     fs.mkdir(DATA_DIR, { recursive: true }, e => {
       if (e) return done({ ok: false, error: '写入失败' });
-      fs.writeFile(tmp, out, e2 => e2 ? done({ ok: false, error: '写入失败' })
-        : fs.rename(tmp, LS_FILE, e3 => {
-          if (e3) return done({ ok: false, error: '写入失败' });
-          lsCache = st; lsCache.rev = rev; done({ ok: true, rev });
-        }));
+      atomicWrite(LS_FILE, out, e2 => {
+        if (e2) return done({ ok: false, error: '写入失败' }); // 失败路径：rev/缓存不动，tmp 已由 helper 回收
+        lsCache = st; lsCache.rev = rev; done({ ok: true, rev });
+      });
     });
   })).catch(() => ({ ok: false, error: '写入失败' }));
 }
@@ -398,10 +434,10 @@ function npStart(url) { // 建会话（或复用已有）；并发封顶时 LRU 
   npSess.set(url, s);
   const go = (t, depth) => { // 重定向逐跳复查（旁路连接同样过 SSRF 护栏，不豁免）
     if (depth > 3) { s.deadAt = Date.now(); return; }
-    const creq = (t.startsWith('https') ? https : http).get(t, { timeout: 15000, lookup: guardLookup, headers: { 'User-Agent': NP_UA, Accept: '*/*', 'Icy-MetaData': '1' } }, r => {
+    const creq = (t.startsWith('https') ? https : http).get(t, { timeout: 15000, lookup: TEST_HOOK ? TEST_HOOK.lookup : guardLookup, headers: { 'User-Agent': NP_UA, Accept: '*/*', 'Icy-MetaData': '1' } }, r => {
       if ([301, 302, 303, 307].includes(r.statusCode) && r.headers.location) {
         r.resume();
-        const nx = safeTarget(tryUrl(r.headers.location, t)); // 畸形头经 tryUrl 归 null（audit-r2 P2-1）
+        const nx = (TEST_HOOK ? TEST_HOOK.safe : safeTarget)(tryUrl(r.headers.location, t)); // 畸形头经 tryUrl 归 null（audit-r2 P2-1）
         if (nx) go(nx, depth + 1); else s.deadAt = Date.now();
         return;
       }
@@ -458,6 +494,8 @@ const bootState = bootManifest(ROOT, m => console.log('[sync]', m));
    绑定报告指纹）；POST /api/sync {forceToken} 消费 token → 复用 stash 原料重跑强制发布（不重拉上游）。
    普通 /api/sync 不收 force 字段（400）；force 只绕数量/分类类决策门，安全护栏/格式过滤/生成失败照拦。 */
 let syncStash = null; // {report, reportHash, inputs:{cn,eu}, tokens:{token:{expiresAt,reportHash}}}
+if (process.env.VR_TEST_SYNC_STASH) { try { syncStash = JSON.parse(fs.readFileSync(process.env.VR_TEST_SYNC_STASH, 'utf8')); } catch (_) {} } // 注入缝：强制两步协议离线实测
+const SYNC_STALL = +(process.env.VR_TEST_SYNC_STALL || 0); // 注入缝：/api/sync 起始延迟（busy 409 竞态确定性）
 const randHex = () => crypto.randomBytes(32).toString('hex');
 http.createServer((req, res) => {
   if (HOST_OK && !HOST_OK.has(hostName(req.headers.host || '') || '')) return res.writeHead(403).end('403 unexpected Host'); // rebinding 面（audit A3）：Host 不在白名单一律拒
@@ -490,6 +528,7 @@ http.createServer((req, res) => {
       if ('force' in j) return json(400, { error: '不接受 force 字段——强制同步走 /api/sync/force-token 两步协议' });
       const forceToken = typeof j.forceToken === 'string' ? j.forceToken : '';
       const run = (async () => {
+        if (SYNC_STALL) await new Promise(r => setTimeout(r, SYNC_STALL)); // 注入缝：busy 409 竞态窗口
         if (forceToken) { // 两步协议第二步：消费 token（单次、绑定指纹复查）→ 复用 stash 原料强制发布
           const c = forceTokenConsume(syncStash, forceToken, Date.now());
           if (c.status !== 200) return { __http: c.status, __err: c.error };
@@ -524,12 +563,13 @@ http.createServer((req, res) => {
     try { sp = new URL(req.url, `http://${req.headers.host || 'localhost'}`); urls = [...sp.searchParams.getAll('url')]; }
     catch (_) { return json(400, { ok: false, detail: 'bad request' }); }
     if (urls.length > 4) return json(400, { ok: false, detail: '最多 4 个源' }); // 放大面封顶（P2-9）
-    const targets = [...new Set(urls.map(safeTarget).filter(Boolean))];
+    const targets = [...new Set(urls.map(TEST_HOOK ? TEST_HOOK.safe : safeTarget).filter(Boolean))];
     if (!targets.length) return json(400, { ok: false, detail: '仅允许公网 http(s) 地址' });
     // 探活窗口可调（AIbot P1-1）：批量体检不传 → checkStream 默认 4.5s（ETA 按最坏校准，不能放慢）；
     // 追加备选源传 t=12000 —— 蜻蜓系救援源建流 5-10s 属正常，与 /api/mystation 同口径。钳到 [1s, 30s] 防滥用
     const tms = Math.min(Math.max(parseInt(sp.searchParams.get('t'), 10) || 0, 0), 30000);
     const opt = tms >= 1000 ? { timeout: tms } : {};
+    if (TEST_HOOK) opt.testHook = TEST_HOOK; // 注入缝：四面统一过 TEST_HOOK（见顶部注释）
     (async () => {
       if (sp.searchParams.get('detail') === '1') { // 结构化详情（B1，契约 contracts/source-diagnostic.json）：逐源完整结果、
         // 绝不返回响应体；安全边界与旧口径一致（≤4 URL/双护栏/逐跳复查/跨源拒/时间窗口不放宽——单 URL 窗口同 t 钳制）
@@ -553,9 +593,10 @@ http.createServer((req, res) => {
       const c = String(j.c || '').replace(/[,\r\n|#]/g, ' ').trim().slice(0, 24);
       const u0 = String(j.u || '').trim().slice(0, 512);
       if (!n || !c) return json(400, { error: '电台名/分类不能为空' });
-      const target = safeTarget(u0);
+      const target = (TEST_HOOK ? TEST_HOOK.safe : safeTarget)(u0);
       if (!target) return json(403, { error: '流地址不合法（仅公网 http(s)）' });
-      checkStream(target, 0, { timeout: 12000 }).then(async r => { // 探活先行：假流（xmcdn 336B 类）与死链一律拒绝入库；窗口放宽到 12s——蜻蜓系建流 5-10s 属正常（AIbot P1-2），单 URL 手动添加不涉 /api/check 的放大面
+      const probe = { timeout: 12000 }; if (TEST_HOOK) probe.testHook = TEST_HOOK;
+      checkStream(target, 0, probe).then(async r => { // 探活先行：假流（xmcdn 336B 类）与死链一律拒绝入库；窗口放宽到 12s——蜻蜓系建流 5-10s 属正常（AIbot P1-2），单 URL 手动添加不涉 /api/check 的放大面
         if (!r.ok) return json(200, { ok: false, detail: '探活失败：' + r.detail });
         json(200, await myStationWrite(n, target, c));
       }).catch(e => json(500, { error: String(e && e.message || e) }));
@@ -677,6 +718,13 @@ http.createServer((req, res) => {
           if (typeof v !== 'string' || v.length > max) return json(413, { ok: false, error: `数据键 ${k} 超限（>${Math.round(max / 1024)}KB），写入被拒绝` }); // AIbot P2-3：白名单键超限显式拒绝——客户端收非 ok 置 dirty 保镜像；静默丢键会让对账把镜像一起抹掉
           clean[k] = v;
         }
+        // 空覆盖防呆（issue #42 B）：全空快照 + **当前库实际非空** = 跨实例空页 unload 的 wipe 面，显式拒绝。
+        // 合法删除语义靠值表达（favs '[]' / cfg '{}'），键全缺不承载任何合法状态。
+        // 判据用 storeRead().data 实际键数而非 rev>0（review#43 P1：rev 是版本号——rev=0 初始空库的一次
+        // 合法空写/白名单滤后空快照也会把 rev 推到 >0，此后「空库+空快照」永久 409，客户端持续 dirty 重试死锁；
+        // data 非空才是「有数据可丢」的本义）。空库（data 空）上空快照放行 = 幂等空写，不产生 wipe 面。
+        // 与客户端空覆盖门（store.js flush）互为双保险
+        if (!Object.keys(clean).length && Object.keys(storeRead().data).length) return json(409, { ok: false, code: 'empty-overwrite', error: '拒绝以全空快照覆盖非空存储（合法删除请以空值表达：favs "[]"/cfg "{}"）' });
         storeWrite(clean).then(r => json(200, r)); // rev 在写成功后发（响应携带新号）
       });
       return;
@@ -690,7 +738,7 @@ http.createServer((req, res) => {
     let u;
     try { u = [...new URL(req.url, `http://${req.headers.host || 'localhost'}`).searchParams.getAll('url')][0]; }
     catch (_) { return json(400, { title: '' }); }
-    const target = u && safeTarget(u);
+    const target = u && (TEST_HOOK ? TEST_HOOK.safe : safeTarget)(u);
     if (!target) return json(400, { title: '' }); // 仅公网 http(s)
     if (/\.m3u8(\?|$)/i.test(target)) return json(200, { title: '' }); // HLS 结构性无 ICY，不建旁路不耗探活（i：.M3U8 变形同判）
     const old = npSess.get(target);
@@ -705,7 +753,7 @@ http.createServer((req, res) => {
     // 的跨站 <audio> 不带 SFS/Origin，此校验对最弱浏览器不闭环（Referer 校验可被 referrerpolicy=no-referrer
     // 绕过、且空 Referer 与地址栏直开不可区分，不采纳）；localhost 威胁模型下残余危害 = 带宽中继
     let target;
-    try { target = safeTarget(decodeURIComponent(req.url.slice('/proxy?url='.length))); }
+    try { target = (TEST_HOOK ? TEST_HOOK.safe : safeTarget)(decodeURIComponent(req.url.slice('/proxy?url='.length))); }
     catch (_) { return res.writeHead(400).end('400 bad url'); }
     if (!target) return res.writeHead(403).end('403 公网 http(s) only');
     return proxy(target, req, res);

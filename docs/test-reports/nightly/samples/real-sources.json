@@ -1,0 +1,144 @@
+{
+  "script": "real-sources",
+  "generatedAt": "2026-11-15T19:23:51.235Z",
+  "durationMs": 5773,
+  "executed": true,
+  "category": "data-health",
+  "network": "online",
+  "pass": 2,
+  "fail": 0,
+  "summary": {
+    "total": 8,
+    "okCount": 5,
+    "codes": {
+      "HTTP": 3,
+      "OK": 5
+    }
+  },
+  "samples": [
+    {
+      "tag": "cn-m3u8-cnr#0",
+      "name": "CNR 音乐之声",
+      "category": "华语音乐",
+      "url": "http://ngcdn003.cnr.cn/live/yyzs/index.m3u8",
+      "ok": false,
+      "code": "HTTP",
+      "httpStatus": 403,
+      "contentType": "text/html",
+      "bytes": 2010,
+      "latencyMs": 14,
+      "why": "清单 HTTP 403",
+      "checkedAt": 1794770625607
+    },
+    {
+      "tag": "cn-m3u8-cnr#1",
+      "name": "CNR 经典音乐广播 101.8",
+      "category": "华语音乐",
+      "url": "http://ngcdn004.cnr.cn/live/dszs/index.m3u8",
+      "ok": false,
+      "code": "HTTP",
+      "httpStatus": 403,
+      "contentType": "text/html",
+      "bytes": 2008,
+      "latencyMs": 12,
+      "why": "清单 HTTP 403",
+      "checkedAt": 1794770625621
+    },
+    {
+      "tag": "cn-qt-mp3#0",
+      "name": "CRI 怀旧金曲频道",
+      "category": "华语音乐",
+      "url": "https://lhttp.qingting.fm/live/5022038/64k.mp3",
+      "ok": true,
+      "code": "OK",
+      "httpStatus": 200,
+      "contentType": "audio/mpeg",
+      "bytes": 24143,
+      "latencyMs": 287,
+      "why": "audio/mpeg 24143B",
+      "checkedAt": 1794770625920
+    },
+    {
+      "tag": "cn-qt-mp3#1",
+      "name": "Asia FM",
+      "category": "华语音乐",
+      "url": "https://lhttp.qingting.fm/live/5022405/64k.mp3",
+      "ok": true,
+      "code": "OK",
+      "httpStatus": 200,
+      "contentType": "audio/mpeg",
+      "bytes": 36184,
+      "latencyMs": 175,
+      "why": "audio/mpeg 36184B",
+      "checkedAt": 1794770626414
+    },
+    {
+      "tag": "eu-m3u8#0",
+      "name": "Radio Italia Solo Musica Italiana [意大利]",
+      "category": "欧美音乐",
+      "url": "https://radioitaliasmi.akamaized.net/hls/live/2093120/RISMI/stream01/streamPlaylist.m3u8",
+      "ok": true,
+      "code": "OK",
+      "httpStatus": 200,
+      "contentType": "video/MP2T",
+      "bytes": 17682,
+      "latencyMs": 338,
+      "why": "hls分片 17682B",
+      "checkedAt": 1794770628052
+    },
+    {
+      "tag": "eu-m3u8#1",
+      "name": "BBC Radio 1",
+      "category": "欧美音乐",
+      "url": "http://as-hls-ww-live.akamaized.net/pool_904/live/ww/bbc_radio_one/bbc_radio_one.isml/bbc_radio_one-audio=320000.m3u8",
+      "ok": false,
+      "code": "HTTP",
+      "httpStatus": 410,
+      "contentType": "text/html",
+      "bytes": 4,
+      "latencyMs": 965,
+      "why": "清单 HTTP 410",
+      "checkedAt": 1794770629018
+    },
+    {
+      "tag": "intl-talk#0",
+      "name": "BFM radio [法国]",
+      "category": "国际新闻·谈话",
+      "url": "https://audio.bfmtv.com/bfmradio_128.mp3",
+      "ok": true,
+      "code": "OK",
+      "httpStatus": 200,
+      "contentType": "audio/mpeg",
+      "bytes": 36370,
+      "latencyMs": 1495,
+      "why": "audio/mpeg 36370B",
+      "checkedAt": 1794770631078
+    },
+    {
+      "tag": "drift-xmcdn#0",
+      "name": "Love Radio FM103.7",
+      "category": "华语音乐",
+      "url": "http://live.xmcdn.com/live/55/64.m3u8",
+      "ok": true,
+      "code": "OK",
+      "httpStatus": 200,
+      "contentType": "audio/x-aac",
+      "bytes": 17041,
+      "latencyMs": 34,
+      "why": "hls分片 17041B",
+      "checkedAt": 1794770631235
+    }
+  ],
+  "assertions": [
+    {
+      "name": "抽样装配：8 样本齐（分类缺节/不足 2 条 = radio.txt 形态回归）",
+      "pass": true,
+      "category": "code-regression"
+    },
+    {
+      "name": "结构化结果契约：逐样本字段齐全、code ⊆ 契约枚举、code ⇔ ok 一致",
+      "pass": true,
+      "category": "code-regression"
+    }
+  ]
+}

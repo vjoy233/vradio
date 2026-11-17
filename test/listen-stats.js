@@ -1,19 +1,14 @@
-// 本地收听统计测试（B3-B，plan-expansion-r4 §7.2）：① 纯状态机（lsCreate + fake clock + mock save）——
-// 播放/暂停/连接中/失败/切源/跨午夜/时钟回拨/90 天裁剪/体积裁剪/重复 flush 幂等/写盘失败不影响（保增量重试）；
-// ② 日期键历法校验（AIbot P1-1：坏日期 fixture 双端同一样本——与 Android ListenStatsTest.坏日期键历法校验
-// 逐键等价）；③ 多标签 ops 合并（AIbot P1-3：同 base 两实例各自增量，最终都在——服务端 op.id 幂等合流）；
+// 本地收听统计测试（B3-B，plan-expansion-r4 §7.2）——L1 纯状态机（unit profile；AIbot review#39 第 4 条：
+// 旧文件 L1/L2 混装整文件只落 api profile，test:unit 漏掉核心单元行为——真服务端到端拆至 test/listen-stats-api.js）：
+// ① 纯状态机（lsCreate + fake clock + mock save）——播放/暂停/连接中/失败/切源/跨午夜/时钟回拨/90 天裁剪/
+//   体积裁剪/重复 flush 幂等/写盘失败不影响（保增量重试）；② 日期键历法校验（AIbot P1-1：坏日期 fixture
+//   双端同一样本——与 Android ListenStatsTest.坏日期键历法校验逐键等价）；③ 多标签 ops 合并（AIbot P1-3：
+//   同 base 两实例各自增量，最终都在——服务端 op.id 幂等合流，迷你服务端 mock 与服务端 lsCommit 同语义）；
 // ③b flush 409 分类（AIbot 复核 P1：schema 丢批留痕/batch-limit 收窄批宽重试/无 code 保留 pending）+
-// pull 条件获取（AIbot 复核 P2：带 baseRev、notModified 跳过全量替换）；④ /api/listenstats 端点（真服务）——
-// GET 全量 / GET ?rev= 条件获取（同 rev notModified、rev 推进回全量）/ POST {baseRev,ops} 增量合并 /
-// op.id 幂等（重放不双计）/ 双标签并发（两 POST 同 baseRev 不同增量最终都在）/ 405/403/409（schema 含坏日期键，
-// 409 响应带机器可读 code）/ 损坏文件按空库恢复。
-// 用户数据保护（同 quality 口径）：data/listen-stats.json 先备份 .smokebak，跑完还原现场。
-const assert = require('assert'), http = require('http'), net = require('net'), fs = require('fs'), path = require('path');
-const { spawn } = require('child_process');
-const { lsCreate, lsDayKey, lsDayKeyOk, lsMerge, lsTrim, lsOpsToDays, LSCAPS } = require(path.join(__dirname, '..', 'listen-stats.js'));
-
-const UP = path.join(__dirname, '..');
-const LSF = path.join(UP, 'data', 'listen-stats.json'), LSFBAK = LSF + '.smokebak';
+//   pull 条件获取（AIbot 复核 P2：带 baseRev、notModified 跳过全量替换）。
+// 本文件不起服务、不碰盘——/api/listenstats 端点矩阵见 test/listen-stats-api.js（api profile）。
+const assert = require('assert'), path = require('path');
+const { lsCreate, lsDayKey, lsDayKeyOk, lsMerge, lsTrim } = require(path.join(__dirname, '..', 'listen-stats.js'));
 
 let pass = 0, fail = 0;
 const ok = (name, fn) => Promise.resolve().then(fn).then(
@@ -144,7 +139,7 @@ await ok('pull 装载过滤坏键（load 返回脏数据也不污染 base）', a
   assert.strictEqual(ls.baseRev, 3);
 });
 
-/* ---------- ③ 多标签 ops 合并（AIbot P1-3；真实端到端见下 ④） ---------- */
+/* ---------- ③ 多标签 ops 合并（AIbot P1-3；真实端到端见 listen-stats-api.js） ---------- */
 const mkServer = () => { // 迷你服务端（与服务端 lsCommit 同语义：op.id 去重 + 日桶累加 + rev 发号）
   let rev = 0; const seen = new Set(), days = {};
   return {
@@ -198,14 +193,14 @@ await ok('响应丢失重试不双计：同 op.id 重放 applied=0、日桶不�
 });
 await ok('写失败保 pending 重试：失败后增量不丢、下次 flush 同 id 补投', async () => {
   const c = mkClock(), posted = [];
-  let fail = true;
-  const ls = lsCreate({ clock: c, save: async (batch) => { if (fail) throw new Error('disk down'); posted.push(batch.slice()); return { ok: true, rev: 1, applied: batch.length }; } });
+  let failSave = true;
+  const ls = lsCreate({ clock: c, save: async (batch) => { if (failSave) throw new Error('disk down'); posted.push(batch.slice()); return { ok: true, rev: 1, applied: batch.length }; } });
   ls.enabled = true;
   ls.enterPlaying(st('https://a/live')); ls.onState('PLAYING'); c.adv(10000);
   await ls.flush();                                     // 失败：pending 保留
   assert.strictEqual(posted.length, 0); assert.strictEqual(ls.pend.length, 2, 'session op + 10s 增量 op 均未确认'); assert.ok(ls.dirty);
   c.adv(5000); ls.tick();
-  fail = false;
+  failSave = false;
   await ls.flush();                                     // 重试：同 op.id 补投 + 新增量随行
   assert.ok(posted.flat().some(o => o.ms === 10000), '失败期增量 10s 在');
   assert.strictEqual(ls.view()[lsDayKey(base)].ms, 15000);
@@ -230,7 +225,7 @@ await ok('summary：近 N 日合计 + 今日口径', () => {
   assert.strictEqual(s.ms, 120000); assert.strictEqual(s.sessions, 1); assert.strictEqual(s.todayMs, 120000);
 });
 
-/* ---------- ③b flush 409 分类 + pull 条件获取（AIbot 复核 P1/P2；服务端 code 映射见 ④） ---------- */
+/* ---------- ③b flush 409 分类 + pull 条件获取（AIbot 复核 P1/P2；服务端 code 映射见 listen-stats-api.js） ---------- */
 const warnSpy = () => { const orig = console.warn, calls = []; console.warn = (...a) => calls.push(a.join(' ')); return { calls, done: () => { console.warn = orig; } }; };
 await ok('409 分类·schema：丢批留痕（不可恢复），不再无限重试', async () => {
   const c = mkClock(), sp = warnSpy();
@@ -295,165 +290,6 @@ await ok('pull 条件获取：带 baseRev、notModified 跳过全量替换（BC 
   assert.strictEqual(ls.baseRev, 6);
 });
 
-/* ---------- ④ /api/listenstats 端点（真服务端到端） ---------- */
-const freePort = () => new Promise((resolve, reject) => {
-  const s = net.createServer();
-  s.on('error', reject); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); });
-});
-let PORT = 0;
-const req = (m, p, headers = {}, body = null) => new Promise((resolve, reject) => {
-  if (body != null && !headers['Content-Length']) headers['Content-Length'] = Buffer.byteLength(body);
-  const r = http.request({ host: '127.0.0.1', port: PORT, method: m, path: p, headers }, res => {
-    let b = ''; res.on('data', c => b += c); res.on('end', () => resolve({ status: res.statusCode, body: b }));
-  });
-  r.on('error', reject); r.end(body);
-});
-const boot = () => new Promise(async (resolve, reject) => {
-  const srv = spawn(process.execPath, [path.join(UP, 'server.js')], { env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1' }, stdio: 'ignore' });
-  for (let i = 0; i < 60; i++) {
-    await new Promise(r => setTimeout(r, 100));
-    try { const r = await req('GET', '/'); if (r.status === 200) return resolve(srv); } catch (_) {}
-    if (srv.exitCode !== null) return reject(new Error('server 启动即退出'));
-  }
-  srv.kill(); reject(new Error('server 6s 未就绪'));
-});
-const DAY = lsDayKey(base);
-const op = (id, ms, extra = {}) => Object.assign({ id, day: DAY, u0: 'https://main.example/live', cat: '华语音乐', ms, sess: 0 }, extra);
-
-const hadLS = fs.existsSync(LSF);
-if (hadLS) { fs.copyFileSync(LSF, LSFBAK); fs.unlinkSync(LSF); }
-let srv = null;
-try {
-  PORT = await freePort();
-  srv = await boot();
-
-  await ok('方法校验：DELETE /api/listenstats → 405', async () =>
-    assert.strictEqual((await req('DELETE', '/api/listenstats')).status, 405));
-  await ok('跨源拒绝：POST（Origin: evil）→ 403', async () =>
-    assert.strictEqual((await req('POST', '/api/listenstats', { Origin: 'http://evil.com' }, '{}')).status, 403));
-  await ok('GET 空库 → {v:1, rev:0, days:{}}', async () => {
-    const j = JSON.parse((await req('GET', '/api/listenstats')).body);
-    assert.strictEqual(j.v, 1); assert.strictEqual(j.rev, 0); assert.deepStrictEqual(j.days, {});
-  });
-  await ok('POST 单批 ops → rev=1 applied=2，GET 读回日桶', async () => {
-    const r = await req('POST', '/api/listenstats', { 'Content-Type': 'application/json' },
-      JSON.stringify({ baseRev: 0, ops: [op('t1', 1200000, { sess: 1 }), op('t2', 620000)] }));
-    const j = JSON.parse(r.body);
-    assert.strictEqual(r.status, 200); assert.strictEqual(j.ok, true); assert.strictEqual(j.rev, 1); assert.strictEqual(j.applied, 2);
-    const g = JSON.parse((await req('GET', '/api/listenstats')).body);
-    assert.strictEqual(g.rev, 1); assert.strictEqual(g.days[DAY].ms, 1820000);
-    assert.strictEqual(g.days[DAY].stations['https://main.example/live'], 1820000);
-    assert.strictEqual(g.days[DAY].categories['华语音乐'], 1820000);
-    assert.strictEqual(g.days[DAY].sessions, 1);
-  });
-  await ok('op.id 幂等：重放同批 applied=0、日桶不变、rev 不跳', async () => {
-    const r = await req('POST', '/api/listenstats', { 'Content-Type': 'application/json' },
-      JSON.stringify({ baseRev: 1, ops: [op('t1', 1200000, { sess: 1 }), op('t2', 620000)] }));
-    const j = JSON.parse(r.body);
-    assert.strictEqual(j.applied, 0); assert.strictEqual(j.rev, 1);
-    const g = JSON.parse((await req('GET', '/api/listenstats')).body);
-    assert.strictEqual(g.days[DAY].ms, 1820000); assert.strictEqual(g.rev, 1);
-  });
-  await ok('双标签并发：两页同 baseRev 各自 POST 不同增量，最终两条都在', async () => {
-    const rA = await req('POST', '/api/listenstats', { 'Content-Type': 'application/json' },
-      JSON.stringify({ baseRev: 1, ops: [op('wA1', 10000)] }));
-    const rB = await req('POST', '/api/listenstats', { 'Content-Type': 'application/json' },
-      JSON.stringify({ baseRev: 1, ops: [op('wB1', 20000, { u0: 'https://b/live', cat: '欧美音乐' })] })); // B 页仍基于 rev=1 的 base
-    assert.strictEqual(JSON.parse(rA.body).applied, 1);
-    assert.strictEqual(JSON.parse(rB.body).applied, 1);   // 增量合流：不因 baseRev 落后拒批
-    const g = JSON.parse((await req('GET', '/api/listenstats')).body);
-    assert.strictEqual(g.days[DAY].ms, 1820000 + 30000);
-    assert.strictEqual(g.days[DAY].stations['https://main.example/live'], 1820000 + 10000, 'A 页在');
-    assert.strictEqual(g.days[DAY].stations['https://b/live'], 20000, 'B 页在（后写者不覆盖先写者）');
-  });
-  await ok('GET ?rev= 条件获取：同 rev → notModified（不传 days）、rev 推进 → 全量', async () => {
-    const rev0 = JSON.parse((await req('GET', '/api/listenstats')).body).rev;
-    const nm = JSON.parse((await req('GET', '/api/listenstats?rev=' + rev0)).body);
-    assert.strictEqual(nm.rev, rev0); assert.strictEqual(nm.notModified, true);
-    assert.ok(!nm.days, '命中当前版本不重复传输全量');
-    const pr = await req('POST', '/api/listenstats', { 'Content-Type': 'application/json' },
-      JSON.stringify({ baseRev: rev0, ops: [op('rv1', 5000)] }));
-    const rev1 = JSON.parse(pr.body).rev;
-    const full = JSON.parse((await req('GET', '/api/listenstats?rev=' + rev0)).body);
-    assert.ok(!full.notModified && full.days, 'rev 变化返回全量 days');
-    assert.strictEqual(full.rev, rev1);
-    const nm2 = JSON.parse((await req('GET', '/api/listenstats?rev=' + rev1)).body);
-    assert.strictEqual(nm2.notModified, true, '追平新 rev 再命中');
-  });
-  await ok('schema 违规 → 409 + code:schema / 超单批 → 409 + code:batch-limit（机器可读分类，AIbot 复核 P1）', async () => {
-    for (const bad of [
-      { baseRev: 0, ops: [{ id: 'x1', day: '2026-02-31', u0: 'https://a/live', ms: 1 }] },   // 02-31 历法不存在
-      { baseRev: 0, ops: [{ id: 'x2', day: '2026-13-01', u0: 'https://a/live', ms: 1 }] },   // 13 月
-      { baseRev: 0, ops: [{ id: 'x3', day: DAY, u0: 'ftp://x', ms: 1 }] },                   // 非 http(s) 台键
-      { baseRev: 0, ops: [{ id: 'x4', day: DAY, u0: 'https://a/live', ms: -1 }] },           // 负增量
-      { baseRev: 0, ops: [{ day: DAY, ms: 1 }] },                                            // 缺 id
-      { baseRev: 0, ops: [] },                                                               // 空批
-      { v: 1, days: { [DAY]: { ms: 1, stations: {}, categories: {}, sessions: 1 } } },       // 旧全量快照形态（无 ops）
-    ]) {
-      const r = await req('POST', '/api/listenstats', { 'Content-Type': 'application/json' }, JSON.stringify(bad));
-      assert.strictEqual(r.status, 409, JSON.stringify(bad));
-      assert.strictEqual(JSON.parse(r.body).code, 'schema', 'schema 来源带 code');
-    }
-    assert.strictEqual((await req('POST', '/api/listenstats', { 'Content-Type': 'application/json' }, 'not json')).status, 400);
-    const many = []; for (let i = 0; i <= LSCAPS.opsMax; i++) many.push(op('sp' + i, 1));
-    const r2 = await req('POST', '/api/listenstats', { 'Content-Type': 'application/json' },
-      JSON.stringify({ baseRev: 0, ops: many }));
-    assert.strictEqual(r2.status, 409, '超单批上限 64');
-    assert.strictEqual(JSON.parse(r2.body).code, 'batch-limit', '批量超限来源带 code');
-  });
-
-  // —— B4 v3 备份 sidecar 覆盖导入：POST {replace:true,days}（lsTrimImport 白名单 + 超限整体拒绝）——
-  await ok('replace 覆盖导入：days 全量替换 + rev 推进 + 坏字段静默裁剪（白名单纪律）', async () => {
-    const before = JSON.parse((await req('GET', '/api/listenstats')).body);
-    const r = await req('POST', '/api/listenstats', { 'Content-Type': 'application/json' }, JSON.stringify({ replace: true,
-      days: {
-        '2026-11-14': { ms: '1800000', sessions: 2.9, stations: { 'ftp://x': 5, 'https://new.example/live': '7000.9' }, categories: { ['长'.repeat(25)]: 1, '华语音乐': 3 } },
-        '2026-02-30': { ms: 999 },                                     // 非历法日：丢弃
-      } }));
-    assert.strictEqual(r.status, 200);
-    const g = JSON.parse((await req('GET', '/api/listenstats')).body);
-    assert.strictEqual(g.rev, before.rev + 1, 'replace 也走 rev 唯一发号');
-    assert.deepStrictEqual(g.days, { '2026-11-14': { ms: 1800000, sessions: 2, stations: { 'https://new.example/live': 7000 }, categories: { '华语音乐': 3 } } });
-  });
-  await ok('replace 后旧 op 重放不复活旧数据（op 去重日志跨 replace 保留）', async () => {
-    const pr = await req('POST', '/api/listenstats', { 'Content-Type': 'application/json' },
-      JSON.stringify({ baseRev: 0, ops: [op('pre-replace-1', 1000)] }));
-    const before = JSON.parse((await req('GET', '/api/listenstats')).body);
-    assert.strictEqual((await req('POST', '/api/listenstats', { 'Content-Type': 'application/json' },
-      JSON.stringify({ replace: true, days: {} }))).status, 200);   // 清空
-    const rp = await req('POST', '/api/listenstats', { 'Content-Type': 'application/json' },
-      JSON.stringify({ baseRev: 0, ops: [op('pre-replace-1', 1000)] })); // 重放 replace 前已入账的 op
-    assert.strictEqual(JSON.parse(rp.body).applied, 0, '去重日志保留：重放 applied=0');
-    const g = JSON.parse((await req('GET', '/api/listenstats')).body);
-    assert.deepStrictEqual(g.days, {}, 'replace 后旧增量不得复活');
-    assert.strictEqual(g.rev, before.rev + 1, '重放 applied=0 不发新号');
-  });
-  await ok('replace 超限/形态违规 → 409 整体拒绝（>90 日、非对象 days）', async () => {
-    const many = {}; for (let i = 0; i < 91; i++) many[lsDayKey(base + i * 86400000)] = { ms: 1, sessions: 1 }; // 历法合法的 91 个连续日
-    const r = await req('POST', '/api/listenstats', { 'Content-Type': 'application/json' }, JSON.stringify({ replace: true, days: many }));
-    assert.strictEqual(r.status, 409, '91 个合法日 > sidecar 保留期 90');
-    assert.ok(JSON.parse(r.body).error.includes('不合法或超限'));
-    for (const bad of [null, 'x', [1]]) {                              // 非对象 days 一律整体拒绝
-      const rb = await req('POST', '/api/listenstats', { 'Content-Type': 'application/json' }, JSON.stringify({ replace: true, days: bad }));
-      assert.strictEqual(rb.status, 409, 'days=' + JSON.stringify(bad));
-    }
-  });
-
-  // 损坏恢复：写坏 listen-stats.json 后重启服务——按空库恢复且不碰磁盘外数据
-  srv.kill(); srv = null;
-  fs.mkdirSync(path.dirname(LSF), { recursive: true });
-  fs.writeFileSync(LSF, '{broken json');
-  PORT = await freePort();
-  srv = await boot();
-  await ok('损坏 listen-stats.json → 按空库恢复（rev 归零）', async () => {
-    const j = JSON.parse((await req('GET', '/api/listenstats')).body);
-    assert.strictEqual(j.v, 1); assert.strictEqual(j.rev, 0); assert.deepStrictEqual(j.days, {});
-  });
-} finally {
-  if (srv) srv.kill();
-  try { fs.unlinkSync(LSF); fs.unlinkSync(LSF + '.tmp'); } catch (_) {}
-  if (hadLS) { try { fs.copyFileSync(LSFBAK, LSF); fs.unlinkSync(LSFBAK); } catch (_) {} }
-}
 console.log(`\n${pass} 通过，${fail} 失败`);
 process.exit(fail ? 1 : 0);
 }).catch(e => { console.error('listen-stats 测试异常：', e); process.exit(1); });

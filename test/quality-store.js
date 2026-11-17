@@ -219,7 +219,8 @@ const newStations = () => ({});
         trigger: e.trigger, ok: e.ok, latencyMs: e.latencyMs, bytes: e.bytes, mode: e.mode, at: e.at });
     const qa = qSummary(stations, fx.identityUrl, null, fx.expected.lastObservedAt);
     assert.notStrictEqual(qa, null);
-    assert.deepStrictEqual(qa, fx.expected);
+    const diff = require('./harness/deep-diff').deepDiff(fx.expected, qa); // 逐字段差异点名（方案 §3 L4：不接受整体不相等）
+    assert.strictEqual(diff.length, 0, diff.length ? '黄金样本逐字段差异：\n     ' + diff.join('\n     ') : '');
   });
 
   console.log('[8] flush 409/失败分类处置（AIbot PR#26 复核 P2：schema 丢批留痕、batch-limit 减半分批、容量/网络保留 pending）');

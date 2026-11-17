@@ -20,6 +20,7 @@ android {
     targetSdk = 36
     versionCode = 1
     versionName = "0.1.0"
+    testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
   // 签名：keystore.properties 存在则用正式密钥（gitignored，见 README 发布节），否则 release 退回 debug 签名保 CI 可出包
@@ -82,6 +83,10 @@ dependencies {
   // 同理（B4）：android.jar 的 org.xmlpull.v1.XmlPullParserFactory 也是抛异常桩——data/PlaylistParser.kt 的
   // XML 解析在单测环境须挂真实现（kxml2 = Android 平台内置的同一解析器，设备运行时用平台实现不进 APK）
   testImplementation("net.sf.kxml:kxml2:2.3.0")
+  // instrumented smoke（当前仅手动/夜间草案，不进入普通 PR 硬门）
+  androidTestImplementation("androidx.test.ext:junit:1.2.1")
+  androidTestImplementation("androidx.test:runner:1.6.2")
+  androidTestImplementation("androidx.test:rules:1.6.1")
 }
 
 // —— 数据文件打包：仓库根 radio.txt/logos.txt（update-sources.js 产出的单一数据源）→ assets，随行写 data-stamp.txt
@@ -120,6 +125,24 @@ val copyRadioData by tasks.registering {
 
 android { sourceSets.getByName("main").assets.srcDir(genAssetsDir) }
 tasks.named("preBuild") { dependsOn(copyRadioData) }
+
+// —— contracts 黄金样本 → androidTest assets（review#40 P2-5）：备份导入设备 smoke（BackupRestoreSmokeTest）
+//    构建期消费仓库 contracts/fixtures 原件，不再逐字内联——契约文件改动随构建自动跟上，内联拷贝漂移被根治。
+//    JVM 侧 ContractTest/BackupV3Test 仍走上方 test resources 接线，两侧消费同一份仓库原件 ——
+val genContractsDir = layout.buildDirectory.dir("generated/contractsAssets")
+val copyContractsFixtures by tasks.registering {
+  outputs.upToDateWhen { false } // 样本小（KB 级），每次构建重拷，免 up-to-date 判定复杂度
+  doLast {
+    val out = File(genContractsDir.get().asFile, "contracts").apply { mkdirs() }
+    listOf("backup-v2.json", "backup-v3.json").forEach { f ->
+      val src = File(repoRoot, "contracts/fixtures/$f")
+      if (!src.exists()) throw GradleException("缺少契约黄金样本 contracts/fixtures/$f——仓库根 contracts/ 目录缺件")
+      src.copyTo(File(out, f), overwrite = true)
+    }
+  }
+}
+android { sourceSets.getByName("androidTest").assets.srcDir(genContractsDir) }
+tasks.named("preBuild") { dependsOn(copyContractsFixtures) }
 
 // —— 契约资源接线（B0，plan-expansion-r4 §4.2）：仓库根 contracts/（radio-keys.json + fixtures/）挂进 test
 //    resources，JVM 单测经 classLoader 读取——Web/Android 双端消费同一份契约文件（漏改任一侧被 ContractTest 拦截）——

@@ -28,8 +28,8 @@ import io.github.vjoy233.vradio.ui.theme.VrTheme
    页面消费 pad 防遮挡；期间显式切目的地经 vm.navigate 自动收次级页）。
    浮层（选源/歌曲/发现/源详情）仍由 root 统一挂载——切目的地/进出次级页不丢播放上下文；
    toast 走 SnackbarHost，与 status（用户主动操作，PlayerBar 内）分工不双写。
-   返回键走契约纯函数 backTarget：次级页开着才消费返回（收回次级页——期间目的地不可变，= 回到打开时的页，Q11）；
-   确认弹窗/浮层由各自窗口自收，先序于本 BackHandler。发现关（FeatureFlags.DISCOVERY=false）时
+   返回键层级（Q21）：确认弹窗/浮层自收 → Full player（P2）→ 次级页（契约纯函数 backTarget）→ 系统默认；
+   次级页开着才消费返回（收回次级页——期间目的地不可变，= 回到打开时的页，Q11）。发现关（FeatureFlags.DISCOVERY=false）时
    navigateGuard 使发现目的地不可达。vm 经 ViewModelProvider 直取（不引 lifecycle-viewmodel-compose）。 */
 @Composable
 fun AppRoot() {
@@ -40,6 +40,7 @@ fun AppRoot() {
     val pal = LocalVrPalette.current
     val destination by vm.destination.collectAsState()
     val secondary by vm.secondary.collectAsState()
+    val showPlayer by vm.playerExpanded.collectAsState()
     val showSrc by vm.showSrc.collectAsState()
     val showSongs by vm.showSongs.collectAsState()
     val showDetail by vm.showDetail.collectAsState()
@@ -80,6 +81,8 @@ fun AppRoot() {
         Destination.DISCOVER -> Box(Modifier.fillMaxSize().background(pal.bg).padding(pad)) { }   // P3 填 DiscoveryScreen（§7）；flag 关时 navigateGuard 使其不可达
       }
     }
+    // Full player（P2 §5.3）：先于选源/歌史 sheet 挂载——从 full player 开选源时后组合者浮在上层
+    if (showPlayer) PlayerSheet(vm, ui)
     if (showSrc) SrcSheet(vm, ui)
     if (showSongs) SongsSheet(vm, ui)
     // B3-C 发现浮层：开关控制入口（StationScreen 的「✦ 发现」按钮）与浮层挂载
@@ -104,8 +107,10 @@ fun AppRoot() {
         onDismiss = { vm.closeDetail() },
       )
     }
-    // 返回裁决（契约纯函数 §6.4）：次级页开着才消费返回——收回次级页；无次级页不消费（系统默认行为）
+    // 返回层级（Q21：确认弹窗→Full Player/详情 sheet→设置/添加页→原顶层页）：确认弹窗与各 ModalBottomSheet
+    // 自收（scrim/对话框窗口自消费返回，先序于此）；这里按「Full player → 次级页」顺序消费
+    BackHandler(enabled = showPlayer) { vm.closePlayer() }
     val back = backTarget(secondary, destination)
-    BackHandler(enabled = back != null) { vm.closeSecondary() }
+    BackHandler(enabled = !showPlayer && back != null) { vm.closeSecondary() }
   }
 }

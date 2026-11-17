@@ -42,6 +42,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -49,7 +54,7 @@ import io.github.vjoy233.vradio.ui.theme.LocalVrPalette
 import kotlinx.coroutines.delay
 
 /* 电台库页壳（P1，方案 §5.1）：TopAppBar（标题「电台」+ 搜索展开 + 更多菜单：设置/视图切换/
-   显示无效源/添加电台）+ 既有头部（范围/分类 chips、网格列表 SegBtn、✗ 无效源、✦ 发现）原样搬移；
+   显示无效源/添加电台）+ 既有头部（范围/分类 chips、网格列表 SegBtn、✗ 无效源）原样搬移；
    搜索 120ms 防抖随行迁移（§7 P1 硬点）；滚动位进程内保存/恢复（Q15/Q18 destinationUi 快照，
    不在滚动帧回调写 StateFlow）。旧「设置」TextButton/旧首行搜索框已删（入口进 TopAppBar/更多菜单）。
    列表主体 = StationContent 纯投影渲染（收藏页 §5.5 复用）。 */
@@ -109,18 +114,28 @@ fun StationScreen(vm: AppVm, pad: PaddingValues) {
       title = { Text("电台", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
       colors = TopAppBarDefaults.topAppBarColors(containerColor = pal.bg),
       actions = {
-        Box(Modifier.size(48.dp).clickable { vm.searchExpanded.value = !vm.searchExpanded.value }, contentAlignment = Alignment.Center) {
+        // P4 a11y：自绘 Canvas 图标必须补 contentDescription + role（§8.2.9）
+        Box(
+          Modifier.size(48.dp).clickable { vm.searchExpanded.value = !vm.searchExpanded.value }
+            .semantics { role = Role.Button; contentDescription = "搜索" },
+          contentAlignment = Alignment.Center,
+        ) {
           SearchIcon(if (searchOpen) pal.acc else pal.dim)
         }
         Box(contentAlignment = Alignment.Center) {
-          Box(Modifier.size(48.dp).clickable { menuOpen = true }, contentAlignment = Alignment.Center) { MoreIcon(pal.dim) }
+          Box(
+            Modifier.size(48.dp).clickable { menuOpen = true }
+              .semantics { role = Role.Button; contentDescription = "更多" },
+            contentAlignment = Alignment.Center,
+          ) { MoreIcon(pal.dim) }
           DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
             DropdownMenuItem(text = { Text("设置") }, onClick = { menuOpen = false; vm.openSettings() })
             DropdownMenuItem(text = { Text(if (view == "grid") "切换为列表视图" else "切换为网格视图") },
               onClick = { menuOpen = false; vm.setView(if (view == "grid") "list" else "grid") })
-            DropdownMenuItem(   // 开关不收菜单：勾选态翻面可见
+            DropdownMenuItem(   // 开关不收菜单：勾选态翻面可见；P4 a11y：显示态走 stateDescription（§8.2.9）
               text = { Text("显示无效源") },
               trailingIcon = { Text(if (showDead) "✓" else "", color = pal.acc, fontSize = 14.sp) },
+              modifier = Modifier.semantics { stateDescription = if (showDead) "已显示" else "已隐藏" },
               onClick = { vm.toggleDead() },
             )
             DropdownMenuItem(text = { Text("添加电台") }, onClick = { menuOpen = false; vm.openAddStation() })
@@ -147,12 +162,12 @@ fun StationScreen(vm: AppVm, pad: PaddingValues) {
         }
       }
     }
-    // 次行：双视图切换 + 无效源开关（出现过死台才亮，app.js deadBtn 同款）+ 发现入口（B3-C 开关）——原样搬移
+    // 次行：双视图切换 + 无效源开关（出现过死台才亮，app.js deadBtn 同款）——原样搬移
+    // （✦ 发现入口 P3 已删：发现升格正式目的地 DiscoveryScreen，走底栏/rail 导航，不留旧浮层混合态）
     Row(Modifier.padding(horizontal = 12.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
       SegBtn("网格", view == "grid") { vm.setView("grid") }
       SegBtn("列表", view == "list") { vm.setView("list") }
       if (lu.hasDead) SegBtn("✗ 无效源", showDead) { vm.toggleDead() }
-      if (io.github.vjoy233.vradio.FeatureFlags.DISCOVERY) SegBtn("✦ 发现", false) { vm.showDiscovery.value = true }
     }
     // 分类条（数量角标与列表同口径刷新，P3-5；范围/分类 chip 口径保持 listUi 既有双轨）——原样搬移
     LazyRow(

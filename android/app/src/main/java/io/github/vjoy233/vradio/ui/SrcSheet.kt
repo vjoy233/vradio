@@ -38,6 +38,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -310,6 +314,7 @@ private fun SourceMoreMenu(acts: List<SourceRowAct>, u: String, i: Int, onEdit: 
   Box {
     Row(
       Modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(6.dp)).clickable { open = true }
+        .semantics { role = Role.Button; contentDescription = "源管理动作：更多" }   // P4 a11y（§8.2.9）
         .padding(horizontal = 10.dp),
       verticalAlignment = Alignment.CenterVertically,
     ) { Text("更多 ▾", fontSize = 12.sp, color = pal.acc) }

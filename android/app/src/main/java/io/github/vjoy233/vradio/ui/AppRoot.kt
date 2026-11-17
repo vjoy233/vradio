@@ -4,7 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -14,8 +14,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStoreOwner
 import io.github.vjoy233.vradio.player.PlayerHolder
@@ -26,11 +28,13 @@ import io.github.vjoy233.vradio.ui.theme.VrTheme
    bottomBar 顶部（手机追加底栏、平板挂 rail，断点在契约内）；设置/添加电台是次级页，进同一 Scaffold
    content 槽渲染（review#45-1/#49-2 修订：不再全屏覆盖层——mini player/底栏/rail 全局常驻 §3.2/Q20，
    页面消费 pad 防遮挡；期间显式切目的地经 vm.navigate 自动收次级页）。
-   浮层（选源/歌曲/发现/源详情）仍由 root 统一挂载——切目的地/进出次级页不丢播放上下文；
+   浮层（选源/歌曲/源详情）仍由 root 统一挂载——切目的地/进出次级页不丢播放上下文；
    toast 走 SnackbarHost，与 status（用户主动操作，PlayerBar 内）分工不双写。
    返回键层级（Q21）：确认弹窗/浮层自收 → Full player（P2）→ 次级页（契约纯函数 backTarget）→ 系统默认；
-   次级页开着才消费返回（收回次级页——期间目的地不可变，= 回到打开时的页，Q11）。发现关（FeatureFlags.DISCOVERY=false）时
-   navigateGuard 使发现目的地不可达。vm 经 ViewModelProvider 直取（不引 lifecycle-viewmodel-compose）。 */
+   次级页开着才消费返回（收回次级页——期间目的地不可变，= 回到打开时的页，Q11）。
+   发现自 P3 起为正式目的地（DiscoveryScreen，§5.4），旧浮层与「✦ 发现」入口已删——不允许
+   「新导航+旧浮层」混合态；flag 关（开发态改 false）时 navigateGuard 使发现目的地不可达。
+   vm 经 ViewModelProvider 直取（不引 lifecycle-viewmodel-compose）。 */
 @Composable
 fun AppRoot() {
   val owner = LocalContext.current as ViewModelStoreOwner
@@ -76,20 +80,21 @@ fun AppRoot() {
           SecondaryRoute.ADD_STATION -> Box(Modifier.fillMaxSize().background(pal.bg)) { AddStationScreen(vm, pad) }
         }
       } else when (destination) {
-        Destination.LIBRARY -> Box(Modifier.fillMaxSize().background(pal.bg)) { StationScreen(vm, pad) }
-        Destination.FAVORITES -> Box(Modifier.fillMaxSize().background(pal.bg)) { FavoritesScreen(vm, pad) }   // pad 收敛进屏内（与 LIBRARY 同构）：头部自理状态栏、StationContent/空态吃 bottomBar 让位
-        Destination.DISCOVER -> Box(Modifier.fillMaxSize().background(pal.bg).padding(pad)) { }   // P3 填 DiscoveryScreen（§7）；flag 关时 navigateGuard 使其不可达
+        // P4 §7「内容最大宽度」：EXPANDED（rail）档列表内容限宽 720dp 居中（阅读宽度上限，拍板值 owner 可调）；
+        // 发现页横滚卡片行保持全宽不设限；手机 COMPACT 无感（约束不生效）
+        Destination.LIBRARY -> Box(Modifier.fillMaxSize().background(pal.bg), contentAlignment = Alignment.TopCenter) {
+          Box(Modifier.widthIn(max = 720.dp).fillMaxSize()) { StationScreen(vm, pad) }
+        }
+        Destination.FAVORITES -> Box(Modifier.fillMaxSize().background(pal.bg), contentAlignment = Alignment.TopCenter) {   // pad 收敛进屏内（与 LIBRARY 同构）：头部自理状态栏、StationContent/空态吃 bottomBar 让位
+          Box(Modifier.widthIn(max = 720.dp).fillMaxSize()) { FavoritesScreen(vm, pad) }
+        }
+        Destination.DISCOVER -> DiscoveryScreen(vm, pad)   // P3 正式目的地（§5.4）：bg/pad/状态栏自理；flag 关时 navigateGuard 使其不可达
       }
     }
     // Full player（P2 §5.3）：先于选源/歌史 sheet 挂载——从 full player 开选源时后组合者浮在上层
     if (showPlayer) PlayerSheet(vm, ui)
     if (showSrc) SrcSheet(vm, ui)
     if (showSongs) SongsSheet(vm, ui)
-    // B3-C 发现浮层：开关控制入口（StationScreen 的「✦ 发现」按钮）与浮层挂载
-    if (io.github.vjoy233.vradio.FeatureFlags.DISCOVERY) {
-      val showDisc by vm.showDiscovery.collectAsState()
-      if (showDisc) DiscoverySheet(vm)
-    }
     // B1 源详情浮层：台消失（同步/导入重建）即自动收起；fav/logo 经 vm 注入（浮层本身不持 vm）
     if (showDetail) {
       val ds = vm.detailStation()

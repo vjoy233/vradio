@@ -32,6 +32,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -46,7 +51,11 @@ import io.github.vjoy233.vradio.ui.theme.LocalVrPalette
 fun PlayPauseBtn(ui: PlayerUiState, size: Dp = 52.dp, onClick: () -> Unit) {
   val pal = LocalVrPalette.current
   Box(
-    Modifier.size(size).clip(CircleShape).background(pal.bg).clickable(onClick = onClick),
+    Modifier.size(size).clip(CircleShape).background(pal.bg).clickable(onClick = onClick)
+      .semantics {   // P4 a11y：主钮按 playerVisual.action 同口径读「播放/暂停」（CONNECTING/PLAYING→暂停，PAUSED/IDLE→播放，§8.2.9）
+        role = Role.Button
+        contentDescription = if (ui.st == PState.PLAYING || ui.st == PState.CONNECTING) "暂停" else "播放"
+      },
     contentAlignment = Alignment.Center,
   ) {
     when (ui.st) {
@@ -64,7 +73,10 @@ fun SleepControl(ui: PlayerUiState) {
   val pal = LocalVrPalette.current
   var menu by remember { mutableStateOf(false) }
   Box {
-    TextButton(onClick = { if (ui.sleepLeftMs > 0) PlayerHolder.cancelSleep() else menu = !menu }) {
+    TextButton(
+      onClick = { if (ui.sleepLeftMs > 0) PlayerHolder.cancelSleep() else menu = !menu },
+      modifier = Modifier.semantics { contentDescription = "睡眠定时" },   // P4 a11y（§8.2.9；剩余时长仍以可见文本为准）
+    ) {
       Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(if (ui.sleepLeftMs > 0) fmtLeft(ui.sleepLeftMs) else "定时", fontSize = 13.sp)
         if (ui.sleepLeftMs > 0) Text("点击取消", fontSize = 9.sp, color = pal.dim)
@@ -94,7 +106,8 @@ fun VolumeControl(vm: AppVm, ui: PlayerUiState) {
       onValueChange = { dragVol = it; vm.setVol(it.toInt()) },
       onValueChangeFinished = { dragVol = null },
       valueRange = 0f..100f,
-      modifier = Modifier.weight(1f).padding(start = 6.dp, end = 6.dp).height(30.dp),
+      modifier = Modifier.weight(1f).padding(start = 6.dp, end = 6.dp).height(30.dp)
+        .semantics { stateDescription = "音量 ${ui.volPct}%" },   // P4 a11y：音量百分比 state（§8.2.9）
     )
     Text("${ui.volPct}%", fontSize = 12.sp, color = pal.dim, modifier = Modifier.width(36.dp))
   }

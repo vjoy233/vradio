@@ -12,6 +12,8 @@ object FeatureFlags {
   /** B3-B 收听统计：true = 消费播放状态事件 + listen-stats.json sidecar flush；false = 不消费不 flush（数据保留）。 */
   const val LISTEN_STATS = false
 
-  /** B3-C 本地发现页：true = 列表页「发现」入口 + 派生计算可见；false = 入口隐藏不派生。 */
-  const val DISCOVERY = false
+  /** B3-C 本地发现页：P3 起翻 true——发现已是正式目的地 DiscoveryScreen（方案 §5.4/§7 P3 发布
+     决策门：Screen/导航项/测试矩阵/旧浮层迁移同批完成后翻转，Web 侧早已 true 对齐，不留
+     「新导航+旧浮层」混合态）；false 仅存于开发自测态（NavigationStateTest 双态 assume 覆盖）。 */
+  const val DISCOVERY = true
 }

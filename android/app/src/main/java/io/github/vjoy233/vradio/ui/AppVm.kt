@@ -320,7 +320,6 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     archive = { u0, t -> viewModelScope.launch(Dispatchers.IO) { runCatching { lib.pushSong(u0, t) }; stamp.value++ } })
   private val listenSidecar = ListenSidecar(ctx.filesDir)
   private var listenTracker: ListenTracker? = null
-  val showDiscovery = MutableStateFlow(false)
   private val recovered = LinkedHashMap<String, Long>()   // 台 key → 复活时刻（Prefs 缓存 7 天过期）
   /** radio-meta 与当前 radio 资产同批绑定（AIbot P1-4 + 三轮 P1）：false/混态时发现页「最近新增」置空（不猜）。
    *  判据见 RadioMeta.bound（filesDir/assets 来源配对 + stamp.meta 见证 + radio/meta 内容哈希核对）。 */

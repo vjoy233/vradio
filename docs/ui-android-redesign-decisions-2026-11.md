@@ -50,3 +50,13 @@
 6. **SourceDetailSheet**：头部无 sticky（sheet 首屏自然可见，已注明）；主操作位=播放/重播，管理动作收「更多」DropdownMenu（`sourceRowActs` 纯函数与枚举零改动，JVM 测试不涉）；诊断中=spinner+不可点（无取消通道，§5.7 口径）。
 7. **SongsSheet**：补歌史时间列展示层格式化（当天 HH:mm/跨天 MM-dd HH:mm，Locale.US 同既有先例；SongRec.at 存储不动）。
 8. **P2 验证证据**：`test assembleDebug` BUILD SUCCESSFUL；PlayerUiMappingTest 8 用例全绿（noSrc 优先/CONNECTING±status/PLAYING/PAUSED/IDLE±status 三元组断言）。
+
+## 3. P3 实施落账
+
+1. **发布决策门验收（编译期双构建证据）**：开启态（`DISCOVERY=true`，提交态）`test assembleDebug` BUILD SUCCESSFUL；关闭态（临时翻 false，**构建后即还原**，不入库）同样 BUILD SUCCESSFUL——`NavigationStateTest` 改 JUnit4 `Assume` 双态假设（开启态跑 A 块三目的地断言、关闭态跑 B 块两项断言、公共断言恒跑），两种编译态测试套件全绿。混合态（新导航+旧浮层）已消除：DiscoverySheet.kt 删除、showDiscovery 流删除、✦ 入口删除（grep 零代码级残余）。
+2. **「最近新增」未绑定说明**：Groups 无现成字段、旧 sheet 无对应文案——屏幕直接读 AppVm 既有只读 `metaBound`（纯展示消费，派生零改动）；metaBound 变更点随 stamp bump 触发 discovery 流重发，无陈旧窗口。
+3. **DiscoveryRow 不保留**：旧 Row 形态在新屏无引用，提取为顶层 `DiscoveryCard`（logo 由 vm.logoOf 注入，不持 vm）——不留死代码。
+4. **设置页「显示无效源」并入外观组**（plan 七组无此项，不丢设置）；「维护配置」解读为 radio.cfg 导入/导出两行（从导入导出组移入电台组）；「导出收藏 m3u」保留在备份与导入组（plan 字面只列歌单导入，不丢设置）。
+5. **设置页签名保持 `SettingsScreen(vm)`**：§6.2 的 SettingsScreen(vm, pad) 按旧草案；§10 已确认决策「设置是次级页面」= 覆盖层形态，不进 VrScaffold 内容区（无 Scaffold pad 可传），自理状态栏/导航栏 padding。
+6. **折叠状态** = rememberSaveable（stringSetSaver）进程内（Q18：旋转重建保留、进程死亡回默认）；新增 `defaultExpandedIds()` 纯函数供屏幕与测试共用默认展开口径。
+7. **P3 验证证据**：开启态/关闭态双构建 + SettingsSectionTest 5 用例 + NavigationStateTest 8 用例（2 skipped 属双态假设设计）全绿。

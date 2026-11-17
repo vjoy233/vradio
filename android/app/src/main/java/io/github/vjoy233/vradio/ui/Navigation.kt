@@ -32,7 +32,7 @@ enum class Destination(val title: String) {
   LIBRARY("电台"), DISCOVER("发现"), FAVORITES("收藏"),
 }
 
-/** 次级页路由：从更多菜单进入，返回回到来源目的地（secondaryFrom 由 AppVm 记录，Q11/Q15） */
+/** 次级页路由：从更多菜单进入；期间显式切目的地经 navigate() 自动收次级页——返回=当前未改变的目的地（Q11/Q15，review#45 二轮：secondaryFrom 已删） */
 enum class SecondaryRoute { SETTINGS, ADD_STATION }
 
 /** 窗口档位：600dp 断点（Q7），手写双形态不引 adaptive 依赖 */

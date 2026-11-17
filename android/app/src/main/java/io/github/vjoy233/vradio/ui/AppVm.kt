@@ -169,7 +169,6 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
      + 各目的地页内 UI 瞬态 map——全部纯 UI 瞬态不持久化（零新 radio.* 键），进程死恢复默认 ---------- */
   val destination = MutableStateFlow(Destination.LIBRARY)
   val secondary = MutableStateFlow<SecondaryRoute?>(null)
-  val secondaryFrom = MutableStateFlow(Destination.LIBRARY)  // 次级页来源目的地（返回回到来源页口径，Q11/Q15）
   val playerExpanded = MutableStateFlow(false)
   val searchExpanded = MutableStateFlow(false)
   val destinationUi = MutableStateFlow<Map<Destination, DestinationUiState>>(emptyMap())
@@ -187,8 +186,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   fun navigate(to: Destination) { destination.value = navigateGuard(to); secondary.value = null }
 
   /** 次级页开合：先记来源目的地再设 secondary（返回时回跳来源页，Q11/Q15） */
-  fun openSettings() { secondaryFrom.value = destination.value; secondary.value = SecondaryRoute.SETTINGS }
-  fun openAddStation() { secondaryFrom.value = destination.value; secondary.value = SecondaryRoute.ADD_STATION }
+  fun openSettings() { secondary.value = SecondaryRoute.SETTINGS }
+  fun openAddStation() { secondary.value = SecondaryRoute.ADD_STATION }
   fun closeSecondary() { secondary.value = null }
 
   /** status 反馈单一所有者（review#46/#47 P1）：每次写入重启 6s TTL，UI 层不得再自建清理协程（旧三处竞态删除） */

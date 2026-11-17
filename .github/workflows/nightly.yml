@@ -1,0 +1,99 @@
+# 夜间层（P3，docs/testing-strategy-2026-11.md §3 L5 + §7 P3）：不阻塞普通 PR，可重复运行并产出报告。
+#   drills = 故障注入 + kill 中断发布恢复 + 资产两代轮换 + 并发压力（全离线）；
+#   soak = 长时播放/连接回收（workflow 30min；断言 = 零 5xx + 零写失败预算 + 曲讯不串台 + fixture 连接受回收 + Linux 侧 RSS 哨兵）；
+#   real-sources = 真实源抽样（数据健康类——漂移只进报告不判代码失败，先探公网连通性区分网络环境 vs 源漂移；
+#                  直调 real-sources.js，不做编排 flag 组合——review#41：--quick 曾吞掉 --real 致 job 空跑）；
+#   browser-nightly = Chromium 全矩阵（browser-matrix 十视口/缩放/forced-colors/键盘 + multi-tab 多标签对抗，后者
+#                  if:always 保证前者失败仍执行、退出状态分别保留）。
+# 产物隔离（review#41 任务 2）：每轮独立目录 docs/test-reports/nightly/<run-id>/（run-id = HEAD 短哈希 + 时间戳，
+# env NIGHTLY_RUN_ID 注入脚本与上传路径共用——上传只指本轮目录，不整目录上传历史；历史人工样例在 nightly/samples/）。
+# 各测试 step 输出 tee 进本轮目录随 artifact 上传（set -o pipefail 保退出码不被 tee 吞，review#41 任务 6）。
+# Firefox/Edge 夜间矩阵与 Safari 实机、NVDA/VoiceOver、实体 Android 属发布前层——脚本/环境就绪前不设 job
+# （方案纪律：不得静默跳过，也不把环境差异伪装成已通过；未覆盖项在 PR 说明与脚本文件头留档）。
+name: nightly
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 19 * * *'
+jobs:
+  drills-soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40 # 预算绑定现有时长（#36 P2/r2 意见 5）：soak 30min + drills 约 2min + setup，超时即预算问题暴露
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: 算本轮 run-id 并清空同名目录（防旧产物混入）
+        run: |
+          RID="$(git rev-parse --short HEAD)-$(date +%Y%m%d-%H%M%S)"
+          rm -rf "docs/test-reports/nightly/$RID"
+          mkdir -p "docs/test-reports/nightly/$RID" # tee 在管道启动时即开日志文件，目录必须先建（首跑 run 43923463792 实测：缺目录 tee 即败，pipefail 连坐 step）
+          echo "NIGHTLY_RUN_ID=$RID" >> "$GITHUB_ENV"
+      - run: |
+          set -o pipefail
+          npm run test:nightly -- --soak=1800 2>&1 | tee "docs/test-reports/nightly/$NIGHTLY_RUN_ID/log-drills-soak.txt"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-drills-soak
+          path: docs/test-reports/nightly/${{ env.NIGHTLY_RUN_ID }}/
+          if-no-files-found: error
+  real-sources:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10 # 真实源抽样约几分钟 + setup
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: 算本轮 run-id 并清空同名目录（防旧产物混入）
+        run: |
+          RID="$(git rev-parse --short HEAD)-$(date +%Y%m%d-%H%M%S)"
+          rm -rf "docs/test-reports/nightly/$RID"
+          mkdir -p "docs/test-reports/nightly/$RID" # tee 在管道启动时即开日志文件，目录必须先建（首跑 run 43923463792 实测：缺目录 tee 即败，pipefail 连坐 step）
+          echo "NIGHTLY_RUN_ID=$RID" >> "$GITHUB_ENV"
+      - run: |
+          set -o pipefail
+          node test/nightly/real-sources.js 2>&1 | tee "docs/test-reports/nightly/$NIGHTLY_RUN_ID/log-real-sources.txt"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-real-sources
+          path: docs/test-reports/nightly/${{ env.NIGHTLY_RUN_ID }}/
+          if-no-files-found: error
+  browser-nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15 # npm ci + playwright install + 两套件，预算从紧（#36 P2/r2 意见 5）
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci --prefix .ci/browser
+      - run: npx --prefix .ci/browser playwright install --with-deps chromium
+      - name: 算本轮 run-id 并清空同名目录（防旧产物混入）
+        run: |
+          RID="$(git rev-parse --short HEAD)-$(date +%Y%m%d-%H%M%S)"
+          rm -rf "docs/test-reports/nightly/$RID"
+          mkdir -p "docs/test-reports/nightly/$RID" # tee 在管道启动时即开日志文件，目录必须先建（首跑 run 43923463792 实测：缺目录 tee 即败，pipefail 连坐 step）
+          echo "NIGHTLY_RUN_ID=$RID" >> "$GITHUB_ENV"
+      - name: browser-matrix（十视口/缩放/forced-colors/键盘）
+        run: |
+          set -o pipefail
+          rm -rf docs/test-reports/browser-matrix
+          node ui-demo/browser-matrix.cjs 2>&1 | tee "docs/test-reports/nightly/$NIGHTLY_RUN_ID/log-browser-matrix.txt"
+        env: { CI: '1', VRADIO_PLAYWRIGHT: '${{ github.workspace }}/.ci/browser/node_modules/playwright' }
+      - name: multi-tab（多标签对抗；browser-matrix 失败仍执行，退出状态分别保留）
+        if: always()
+        run: |
+          set -o pipefail
+          rm -rf docs/test-reports/multi-tab
+          node ui-demo/multi-tab.cjs 2>&1 | tee "docs/test-reports/nightly/$NIGHTLY_RUN_ID/log-multi-tab.txt"
+        env: { CI: '1', VRADIO_PLAYWRIGHT: '${{ github.workspace }}/.ci/browser/node_modules/playwright' }
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-browser
+          path: |
+            docs/test-reports/nightly/${{ env.NIGHTLY_RUN_ID }}/
+            docs/test-reports/browser-matrix
+            docs/test-reports/multi-tab
+          if-no-files-found: error

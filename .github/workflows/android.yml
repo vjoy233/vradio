@@ -5,9 +5,9 @@ name: android
 on:
   push:
     branches: [main]
-    paths: ['android/**', '.github/workflows/android.yml']
+    paths: ['android/**', 'contracts/**', 'radio.txt', 'logos.txt', 'radio-meta.json', '.github/workflows/android.yml', '.github/workflows/android-instrumented-draft.yml']
   pull_request:
-    paths: ['android/**', '.github/workflows/android.yml']
+    paths: ['android/**', 'contracts/**', 'radio.txt', 'logos.txt', 'radio-meta.json', '.github/workflows/android.yml', '.github/workflows/android-instrumented-draft.yml']
 
 jobs:
   build:
@@ -26,6 +26,10 @@ jobs:
       # 单测纯 JVM 秒级：debug 变体即覆盖全部用例（G P3：test 连跑 debug+release 两套时间翻倍）
       - name: 单元测试（parser/classifyCn 金样/store/cfg/backup/health/myradio）
         run: android/gradlew --project-dir android testDebugUnitTest
+      # 设备测试代码持续编译门（AIbot P2：testDebugUnitTest/assemble* 都不编 androidTest，
+      # 骨架编译回归此前只能等夜间草案才暴露）；无需模拟器，不改变「设备执行下一批接入」的决定
+      - name: 编译 androidTest（设备测试代码 + runner 接线持续门禁）
+        run: android/gradlew --project-dir android compileDebugAndroidTestKotlin
       - name: 构建 debug APK
         run: android/gradlew --project-dir android assembleDebug
       - name: debug APK 体积哨兵（事故哨兵而非功能预算）

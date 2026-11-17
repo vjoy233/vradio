@@ -6,7 +6,12 @@
   "scripts": {
     "start": "node server.js",
     "sync": "node update-sources.js",
-    "test": "node test/run.js"
+    "test": "node test/run.js",
+    "test:contract": "node test/run.js contract",
+    "test:unit": "node test/run.js unit",
+    "test:api": "node test/run.js api",
+    "test:browser": "node ui-demo/pr-smoke.cjs",
+    "test:nightly": "node test/nightly/run.js"
   },
   "keywords": [
     "radio",

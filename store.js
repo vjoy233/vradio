@@ -5,6 +5,9 @@
    时先重推镜像再对账；rev 由服务端唯一发号（POST 成功分配），客户端只存不比——仲裁实质是「后端为准 +
    dirty 重推」，并发退化为显式 last-write-wins（后同步者胜）。多标签经 BroadcastChannel 'store' 重拉
    （与播放互斥 'on' 同通道；debounce 三规则：flush 时读当前内存/收消息作废 pending/beforeunload+visibilitychange flush）。
+   review#37 双修：①apply 重载判定比对本页内存基线 mem（同源标签共享 localStorage，镜像一致 ≠ 内存一致，
+   否则他页改动永远不进本页 App）；②flush 单飞串行 + 尾随重推（乱序响应下「旧快照迟到成功」不得清掉
+   新改动的 dirty 资格；keepalive 卸载态例外直发）。
 
    ⚠ 白名单契约：新增任何 radio.* 持久键必须同步扩本文件 KEYS 与 server.js 的 STORE_KEYS——
    后端只收白名单键，漏扩的表现是换浏览器丢该键（localStorage 镜像仍在，本机无感）。
@@ -13,7 +16,11 @@
 const Store = {
   mode: 'local',  // 'local'（file:// 或后端失败降级，镜像即全部）| 'server'
   rev: 0,         // lastServerRev（服务端发号；调试/可观测用，不参与仲裁比较）
+  sawData: false, // 本页见过非空服务端数据（boot/apply 置位，内存标志跨会话不持久——reload 后重新对账重建）
   pend: 0, bc: null,
+  mem: null,      // 本页内存基线（KEYS → 本页 App 已见值）：同源多标签共享 localStorage，他页写镜像后本页
+                  // 镜像「看起来已一致」，但 App 内存还是旧态——apply 的重载判定必须比对实例基线而非共享镜像（review#37 P1-2）
+  inflight: false, trailing: false, // flush 单飞串行 + 尾随重推（review#37 P1-4，见 flush 注释）
   KEYS: ['radio.favs', 'radio.recents', 'radio.health', 'radio.cfg', 'radio.songs', 'radio.volperst', 'radio.srcmem2',
     'radio.vol', 'radio.view', 'radio.showdead', 'radio.theme', 'radio.baseline', 'radio.baselineProg'],
 
@@ -21,6 +28,7 @@ const Store = {
   set dirty(v) { try { v ? localStorage.setItem('radio.storeDirty', '1') : localStorage.removeItem('radio.storeDirty'); } catch (_) {} },
 
   init() { // App.boot 首行调用（Player.init 读记忆之前）
+    this.mem = this.snapshot(); // 内存基线 = 本页开局镜像（App 首屏即从镜像渲染）
     try {
       this.bc = new BroadcastChannel('vradio');
       this.bc.onmessage = e => { if (e.data === 'store') this.pull(); }; // 他页已推送：重拉后端（先作废本地 pending，规则②）
@@ -33,8 +41,8 @@ const Store = {
   },
 
   get(k) { return localStorage.getItem(k); },
-  set(k, v) { try { localStorage.setItem(k, v); } catch (_) {} this.schedule(); },
-  remove(k) { try { localStorage.removeItem(k); } catch (_) {} this.schedule(); },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (_) {} if (this.mem) this.mem[k] = v; this.schedule(); },
+  remove(k) { try { localStorage.removeItem(k); } catch (_) {} if (this.mem) delete this.mem[k]; this.schedule(); },
   schedule() { clearTimeout(this.pend); this.pend = setTimeout(() => this.flush(), 300); }, // 写放大护栏：音量条拖动等连续写攒批
 
   snapshot() { const o = {}; for (const k of this.KEYS) { const v = localStorage.getItem(k); if (v != null) o[k] = v; } return o; },
@@ -50,6 +58,7 @@ const Store = {
         if (Object.keys(this.snapshot()).length) await this.flush();
         return;
       }
+      this.sawData = true; // 本页已知服务端非空（issue #42 空覆盖门的放行证据，dirty 重推分支同样置位）
       if (this.dirty) return this.flush(); // 后端失败期镜像较新：重推 pending 而非回退（P1-2：dirty 持久化后跨会话可达）
       this.apply(data);
     } catch (_) {} // 后端不可用：留 local 模式，镜像即全部
@@ -60,27 +69,73 @@ const Store = {
      （各浏览器旧 localStorage 尚未汇合到主源）里全量覆盖会把后端没见过的键（收藏/配置）静默抹掉。
      删除语义靠值表达（收藏清空 = favs 空数组、重置 = cfg 空对象），键消失仅 baselineProg 一种且自愈
      （复活 → 续跑空表 → 再置 done）。
+     重载判定（review#37 P1-2）：比对「本页内存基线」而非共享镜像——同浏览器多标签共享 localStorage，
+     他页 set 即写共享镜像，本页镜像看起来已一致但 App 内存仍是旧态；只看镜像会跳过重载，他页改动
+     永远不进本页内存（直到手刷）。镜像写入与内存基线任一有差即视为该键 stale。
      进度类键（基线续跑进度）单独变化时只落盘不重载内存——否则基线期间他页每 ~25 台被广播触发一次
      整表重渲，打断滚动/阅读（AIbot P3-3）；其余键变化才走 App.applyServerStore 内存重载 */
   apply(data) {
+    if (!this.mem) this.mem = this.snapshot(); // init 未走的直调 apply：懒初始化（此时镜像即内存基线）
+    if (data && Object.keys(data).length) this.sawData = true; // 拉到非空数据即「见过」（pull 链同置，issue #42 门放行证据）
     let changed = false;
     const diff = [];
     for (const k of this.KEYS) {
       const v = data[k];
       if (v == null) continue; // 后端缺键 = 未见过的本地数据，保留待汇合（见上）
-      if (localStorage.getItem(k) !== v) { localStorage.setItem(k, v); changed = true; diff.push(k); }
+      const lsDiff = localStorage.getItem(k) !== v;
+      const memDiff = this.mem[k] !== v;
+      if (lsDiff) { localStorage.setItem(k, v); changed = true; }
+      if (memDiff) this.mem[k] = v;
+      if (lsDiff || memDiff) diff.push(k);
     }
-    if (changed && diff.some(k => k !== 'radio.baselineProg')) App.applyServerStore();
+    if (diff.some(k => k !== 'radio.baselineProg')) App.applyServerStore();
     return changed;
   },
 
   async flush(keepalive) { // 推镜像全量。序列化时点在 flush 执行时读当前内存（规则①：非 debounce 触发时的旧快照，
     clearTimeout(this.pend); // 他页重拉后本页 pending flush 的是新内存，不压他页改动）
     if (this.mode !== 'server') return;
+    // 空覆盖门（issue #42 A）：空库态开局的页（快照全空 + 从未见过非空服务端数据——跨实例无 BC 通道，
+    // unload/visibility 触发的 flush 是它唯一的推送点）以全空快照 POST 会整库覆盖他端写入。这不是
+    // last-write-wins（LWW 建立在双方都有数据上）而是 wipe；合法删除语义靠值表达（收藏清空 = favs
+    // '[]'、重置 = cfg '{}'），全空快照不承载任何合法状态（App 侧无任何「删 radio.* 键」路径）。
+    // 此态改走 pull 对账先行、不上推；dirty 态静默返回（pull 的 dirty 分支会回调 flush 成环，且该组合
+    // 业务不可达——置 dirty 的前提是有失败期写、有写快照即非全空）
+    const gate = this.snapshot();
+    if (!Object.keys(gate).length && !this.sawData) {
+      // 拦下后改走 pull 对账（他端数据拉回镜像、sawData 置位恢复正常推送资格）。⚠ 该 pull 是
+      // fire-and-forget：unload/切后台窗口内浏览器可能取消在途 fetch——「拉回他页数据」是 best-effort
+      // 而非可靠保证（review#43 P2）；防 wipe 是硬保证（POST 已拦下），对账兜底靠下次 boot 重拉收敛
+      if (!this.dirty) this.pull();
+      return;
+    }
+    // keepalive（unload/切后台）直发，不进单飞状态机：页将亡，排队等价确定丢写；并行旧 POST 至多造成
+    // 一次显式 last-write-wins 退化，优于静默丢改动。组合边界（review#37 增量/#43 P2）：旧普通 POST、
+    // keepalive 快照、尾随重推三者完成顺序不定 = 最后完成者胜——显式 LWW 退化，测试冻结见 [15] 乱序矩阵
+    if (keepalive) return this._postSnapshot(true);
+    // 单飞串行 + 尾随重推（review#37 P1-4）：flush 无并发护栏时，乱序响应会让「旧快照的迟到成功」清掉新
+    // 改动的 dirty 资格——flush A（旧快照）在飞 → 本地再改 → flush B 失败置 dirty → A 迟到成功把 dirty 清掉，
+    // 本地较新却失去重推资格，下次启动被后端旧值回滚。改为一飞一队：在飞期间新 flush 只挂尾随标记，
+    // 当前 POST 终态落定后自动补发（补发重读当前内存，规则①语义保持），乱序窗口结构性消除。
+    if (this.inflight) { this.trailing = true; return; }
+    this.inflight = true;
+    try {
+      await this._postSnapshot(false);
+    } finally {
+      this.inflight = false;
+      if (this.trailing) { this.trailing = false; this.flush(); }
+    }
+  },
+
+  async _postSnapshot(keepalive) { // 单次 POST（flush 的受护栏主体；快照在此刻现读——补发读最新内存）
     const body = JSON.stringify({ data: this.snapshot() });
     try {
       const r = await fetch('/api/store', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: !!keepalive }).then(x => x.json());
       if (r && r.ok) { this.dirty = false; this.rev = r.rev; if (this.bc) this.bc.postMessage('store'); }
+      else if (r && r.code === 'empty-overwrite') { // 服务端空覆盖防呆 409（issue #42 B）：服务端「当前库非空」
+        this.dirty = false; // = 本页快照陈旧/本页是该页不该推的状态——不是失败期写，不清 dirty 会陷入
+        this.pull();        // 「boot dirty→flush→409→dirty」永久重试死锁（review#37 增量 P2：race/旧客户端
+      }                     // 仍可能收到 409）；改走 pull 对账收敛（服务端为准），rev 由 GET 响应随行
       else this.dirty = true; // 写失败（含超限被拒）：置 dirty 保镜像，下次 boot/pull 先重推（AIbot P2-3：超限拒绝必须让客户端知道，静默丢键会把镜像也一起抹掉）
     } catch (_) { this.dirty = true; }
   },

@@ -21,8 +21,9 @@ import io.github.vjoy233.vradio.ui.theme.LocalVrPalette
 import io.github.vjoy233.vradio.ui.theme.VrTheme
 
 /* 根组件（P0 导航迁移，方案 §6.2/§6.4）：VrScaffold 承载三目的地（电台/发现/收藏）+ mini player 常驻
-   bottomBar 顶部（手机追加底栏、平板挂 rail，断点在契约内）；设置/添加电台是次级页全屏覆盖层
-   （secondary?.let 挂载在 VrScaffold 之后，自带不透明 bg 盖住目的地，不占顶层目的地）。
+   bottomBar 顶部（手机追加底栏、平板挂 rail，断点在契约内）；设置/添加电台是次级页，进同一 Scaffold
+   content 槽渲染（review#45-1/#49-2 修订：不再全屏覆盖层——mini player/底栏/rail 全局常驻 §3.2/Q20，
+   页面消费 pad 防遮挡；期间显式切目的地经 vm.navigate 自动收次级页）。
    浮层（选源/歌曲/发现/源详情）仍由 root 统一挂载——切目的地/进出次级页不丢播放上下文；
    toast 走 SnackbarHost，与 status（用户主动操作，PlayerBar 内）分工不双写。
    返回键走契约纯函数 backTarget：次级页开着才消费返回（收回次级页回来源目的地）；
@@ -46,17 +47,17 @@ fun AppRoot() {
     val snack = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { vm.toasts.collect { snack.showSnackbar(it) } }
     VrScaffold(destination, vm::navigate, miniPlayer = { PlayerBar(vm, ui) }, snackbarHost = { SnackbarHost(snack) }) { pad ->
-      when (destination) {
+      val sec = secondary
+      if (sec != null) {
+        // 次级页进 content 槽（review#45-1/#49-2）：自带不透明 bg + statusBarsPadding，消费 pad 防底栏遮挡
+        when (sec) {
+          SecondaryRoute.SETTINGS -> Box(Modifier.fillMaxSize().background(pal.bg)) { SettingsScreen(vm, pad) }
+          SecondaryRoute.ADD_STATION -> Box(Modifier.fillMaxSize().background(pal.bg)) { AddStationScreen(vm, pad) }
+        }
+      } else when (destination) {
         Destination.LIBRARY -> Box(Modifier.fillMaxSize().background(pal.bg).padding(pad)) { StationList(vm) }
         Destination.FAVORITES -> Box(Modifier.fillMaxSize().background(pal.bg).padding(pad)) { FavoritesScreen(vm) }
         Destination.DISCOVER -> Box(Modifier.fillMaxSize().background(pal.bg).padding(pad)) { }   // P3 填 DiscoveryScreen（§7）；flag 关时 navigateGuard 使其不可达
-      }
-    }
-    // 次级页全屏覆盖层：SettingsScreen/AddStationScreen 自带不透明 bg + statusBarsPadding，直接盖在目的地之上
-    secondary?.let { r ->
-      when (r) {
-        SecondaryRoute.SETTINGS -> SettingsScreen(vm)
-        SecondaryRoute.ADD_STATION -> AddStationScreen(vm)
       }
     }
     if (showSrc) SrcSheet(vm, ui)

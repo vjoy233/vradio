@@ -5,7 +5,8 @@
    · context1 双 page（pa/pb）= 真·同浏览器双标签——共享 localStorage 镜像 + BroadcastChannel 跨页可达，
      承载活广播收敛 / 共享镜像对抗写 / 断网 dirty 重推；
    · context2 单 page（pc）= 真·第二浏览器（独立存储分区）——BroadcastChannel 不跨 context（实测 pulls=0），
-     承载对账收敛（页内 Store.pull()，与 boot apply 同链）/ 分区镜像真·last-write-wins / 最终一致舞步。
+     承载空库开局页 unload 防清库（issue #42 回归门，reload 直接触发 beforeunload 链）/ 对账收敛（boot apply
+     同链）/ 分区镜像真·last-write-wins / 最终一致舞步。
    实测语义基线（写入断言口径，脚本 note 同步留痕）：
    · 同浏览器他页写 → 本页镜像立即收敛（共享存储）+ 广播 pull 后 Store.rev 收敛；App 内存态**不**随广播重载
      ——store.js apply() 以「镜像 ≠ 后端」为重载门槛，共享镜像下两者恒等（memFav=false 实测）——内存收敛走
@@ -53,7 +54,7 @@ const KNOWN_FAILURES = [
     actual: 'PR #40 原基线：内存不随广播重载（apply 旧门槛「镜像 ≠ 后端」，共享镜像下恒等）只能 reload 兜底；rebase 后已修——71fbdf9 review#37 P1-2 改比对「本页内存基线」而非共享镜像，广播 pull 即收敛（[KF] 段 KF1 探针实证）',
     tracking: '链内 71fbdf9 review#37 P1-2 已修（原挂 issue #42 关联面）；回归守卫 = expectFixed KF1' },
   { id: 'KF2', status: 'open', scenario: 'SD 段（跨浏览器第二浏览器）', expected: '他端写入后本端自动收敛；陈旧 unload 不覆盖他端写入',
-    actual: '跨浏览器无 BC 通道：reload/关闭的 beforeunload flush 以本页陈旧快照覆盖他端写入（空覆盖门只在服务端拦全空快照，非空陈旧快照仍 LWW 覆盖）；收敛须手动 Store.pull()+flush 舞步（SD5/SD5a/SD6 按显式 pull 断言）。⚠ 探针误报面：probe 靠 kf 键入取 sticky activation，缺激活则 beforeunload 不派发、陈旧 flush 没发，服务端 vol 停 0.66 被误读「意外转绿」（61d1fc4 首轮误报同根因已留痕；reviewer 独立复跑再现同型）——wt40-r2 复跑 3/3 豁免成立（50 断言全过），单次转绿先核 beforeunload 是否派发再判豁免腐化',
+    actual: '跨浏览器无 BC 通道：reload/关闭的 beforeunload flush 以本页陈旧快照覆盖他端写入（空覆盖门只在服务端拦全空快照，非空陈旧快照仍 LWW 覆盖）；收敛须手动 Store.pull()+flush 舞步（SD5/SD5a/SD6 按显式 pull 断言）。⚠ 探针两面已实证并定版加固：①Chromium unload 期 keepalive fetch 偶发不派发（陈旧 flush 没发，误读「转绿」）——rev 增量核验 + 未发重试一次、两次未发判探针失效记 note；②「陈旧覆盖发生」但被后续他页 0.66 对账写回覆盖（终态判定与写竞争天然 flaky，rev 采样实证 45→54 九连写）——判定锚点改事件级：服务端任意时点出现 vol=0.9 即覆盖发生（豁免成立），终态不再参与判定',
     tracking: 'issue #42 + 生产修复批次（跨端收敛协议）' },
   { id: 'KF3', status: 'open', scenario: 'M6（维护冲突「重新加载最新值」）', expected: '重载后输入框显示后端权威值（B 名）',
     actual: '输入框回到上一投影名（round1 落库的 A 名）——远程 cfg.names 改名不经 applySources 不重投 uiStationProjection 的 s.n；草稿丢弃正确但显示陈旧',
@@ -193,13 +194,19 @@ const BLOCKED_REQUIREMENTS = [ // 阻塞中的验收要求：修复落地前，�
     check('SC3 镜像互见（A 见 B 的 showdead、B 见 A 的 view）', ca.dead === '1' && cb.view === 'list');
     note('共享镜像下两页 flush 载荷恒相同（后推者胜体现为 rev 单调推进而非数据分叉）；分叉镜像的真·LWW 在 [SD] 跨浏览器档');
 
-    // —— [SD] 跨浏览器真·last-write-wins（分区镜像）+ 双方最终一致 ——
-    // pc 对账用页内 Store.pull()（与 boot apply 同一条「GET→键级比对→applyServerStore」链）而非 reload：
-    // pc 分区镜像在开局空库态只含 boot 自写键，reload 的 beforeunload flush 会以该最小快照清库（真实第二浏览器
-    // 「空库态开页 → 他页写入 → 本页关闭/刷新」数据丢失面，探针实测——记入报告发现项，不在本批修生产代码）。
-    console.log('[SD] 跨浏览器 last-write-wins');
-    await pc.evaluate(() => Store.pull());
+    // —— [SD] 空库开局页 unload 防清库（issue #42 回归门）+ 跨浏览器真·last-write-wins + 双方最终一致 ——
+    // pc 是 [S] 段空库态开局的第二浏览器（独立分区镜像零写、boot 时空库未 apply 过非空数据）：reload 触发的
+    // beforeunload flush 正是 issue #42 场景——修复前以全空快照整库清掉 SA/SB/SC 写入（探针实测发现项）；
+    // 修复后客户端空覆盖门拦下（store.js：不发推改走对账）+ 服务端 rev>0 拒全空快照（server.js 409）双保险，
+    // reload 恢复安全；reload 后 boot 即「pull 后收敛」同链（GET→键级比对→applyServerStore），无需显式 pull。
+    console.log('[SD] 空库开局页 unload 防清库 + 跨浏览器 last-write-wins');
+    const sdBefore = await srvState();
+    await pc.reload(); await waitBoot(pc); // 空库开局页 unload flush(true) 过门——SD0 全景验收
     await pc.waitForFunction(({ k1, k2 }) => App.favKeys().has(k1) && App.favKeys().has(k2), { k1: st1.k, k2: st2.k }, { timeout: 8000 });
+    const sdAfter = await srvState();
+    check('SD0 空库开局页 unload 不清库（issue #42）：他页写入（favs 两台/主题/视图/无效源开关）全数仍在（空覆盖门 + 服务端双保险）',
+      sdAfter['radio.favs'] === sdBefore['radio.favs'] && sdAfter['radio.theme'] === sdBefore['radio.theme']
+      && sdAfter['radio.view'] === sdBefore['radio.view'] && sdAfter['radio.showdead'] === sdBefore['radio.showdead']);
     const rc0 = await pc.evaluate(() => ({ theme: App.state.theme, rev: Store.rev }));
     check('SD1 第二浏览器对账收敛（两收藏/主题随主源，内存经 apply diff 重载）', rc0.theme === 'dark' && rc0.rev === (await getJson(base + 'api/store')).rev);
     await new Promise(r => setTimeout(r, 1200)); // quiesce：pc 对账 applyServerStore→rebind 回写链的 debounce flush 落地（其快照缺 vol，先落地再写 vol 防互踩）
@@ -213,9 +220,10 @@ const BLOCKED_REQUIREMENTS = [ // 阻塞中的验收要求：修复落地前，�
     check('SD4 A 本地镜像不丢（失败不丢镜像保证的常态面）', (await counts(pa)).vol === '0.8');
     await pc.evaluate(() => Store.set('radio.showdead', '1')); await pc.evaluate(() => Store.flush());
     await new Promise(r => setTimeout(r, 1200)); // quiesce：pc flush/回写链全落地
-    // 收敛舞步（实测语义：跨浏览器 reload 的 beforeunload flush 会以本页陈旧快照清掉他页写入——LWW 自带
-    // 「最后同步者胜」，收敛必须走「落后页 pull 对手态（apply 键级比对：新值覆盖、后端缺键保本地）→ 推全量」链，
-    // 不能用 reload（见报告发现项）。pa pull 后其镜像 = 并集 {vol 本地保留, grid/showdead 自 pc}：
+    // 收敛舞步（实测语义：跨浏览器 reload 的 beforeunload flush 会以本页**非空陈旧**快照清掉他页写入——
+    // 这是 LWW 自带「最后同步者胜」的既有语义（issue #42 明确不批增量对账/lastSeenRev 改造），与空库开局页
+    // 的全空 wipe（SD0 门管）不同面；收敛必须走「落后页 pull 对手态（apply 键级比对：新值覆盖、后端缺键保
+    // 本地）→ 推全量」链，不能用 reload。pa pull 后其镜像 = 并集 {vol 本地保留, grid/showdead 自 pc}：
     await pa.evaluate(() => Store.pull());
     await pa.waitForFunction(() => Store.get('radio.view') === 'grid', null, { timeout: 8000 }); // apply 完成信号（pc 的 grid 到达）
     const paMid = await counts(pa);
@@ -361,11 +369,34 @@ const BLOCKED_REQUIREMENTS = [ // 阻塞中的验收要求：修复落地前，�
     await kd.evaluate(() => { Store.set('radio.vol', '0.66'); Store.flush(); });
     await new Promise(r => setTimeout(r, 600));
     check('KF2 前置：kd 写 vol=0.66 已落服务端', (await srvState())['radio.vol'] === '0.66');
-    await kf.keyboard.press('x'); // 无副作用键（未绑定）——仅取 sticky activation，保证 reload 派发 beforeunload
-    await kf.reload(); await waitBoot(kf);
-    await new Promise(r => setTimeout(r, 1200)); // beforeunload flush POST 落地
-    expectBuggy('KF2', (await srvState())['radio.vol'] === '0.9',
-      '陈旧 unload flush 未再覆盖他页写入（跨端收敛协议已修）——更新 SD 段断言并从 KNOWN_FAILURES 移除 KF2');
+    // ⚠ flaky 探针面加固（review#40-r2 实跑差异：reviewer 单次转绿 / wt40-r2 复跑 3/3 豁免成立 /
+    // 链尾复验单次转绿——三方不一致证明概率性）：Chromium unload 期 keepalive fetch 偶发不派发，
+    // 陈旧 flush 没发出 → 服务端 vol 停 0.66 被误读「协议已修」。以服务端 rev 增量核验「陈旧 flush
+    // 是否真的发出」：未发出重试一次（再键入再 reload），两次都未发出判探针失效（note 记录、本轮
+    // 不判 KF2，豁免状态维持——既不误报转绿也不误报腐化）
+    // 判定锚点 = 事件级（review#43 复验定版）：「陈旧 unload 覆盖他页写入」缺陷的证据是**陈旧快照
+    // （vol=0.9）落库瞬间出现过**——KF2 前置后服务端/各页内存均为 0.66，唯一能写出 0.9 的就是 kf 的
+    // 陈旧 unload flush。后续他页 0.66 快照写回（ke/d reloadMems 对账写回的合法时序）不改变缺陷是否
+    // 发生——终态判定（final vol）与该写竞争天然 flaky（rev 采样实证 45→54 九连写；reviewer 单次
+    // 转绿/wt40-r2 3/3 成立/链尾两次分裂的三方不一致），事件级判定不受其影响。
+    // 另一面：Chromium unload 期 keepalive fetch 偶发不派发 → 陈旧 flush 没发（rev 不推进）——rev
+    // 增量核验 + 未发重试一次，两次未发判探针失效记 note（本轮不判 KF2，豁免状态维持）
+    let covered = false;
+    const kfAttempt = async () => {
+      const rev0 = (await getJson(base + 'api/store')).rev;
+      const poll = setInterval(() => { getJson(base + 'api/store').then(x => { if (x.data['radio.vol'] === '0.9') covered = true; }).catch(() => {}); }, 80);
+      await kf.keyboard.press('x'); // 无副作用键（未绑定）——仅取 sticky activation，保证 reload 派发 beforeunload
+      await kf.reload(); await waitBoot(kf);
+      await new Promise(r => setTimeout(r, 1200)); // beforeunload flush POST 落地
+      clearInterval(poll);
+      return (await getJson(base + 'api/store')).rev > rev0; // rev 推进 = 陈旧 flush 确实发出
+    };
+    if (await kfAttempt() || await kfAttempt()) {
+      expectBuggy('KF2', covered,
+        '陈旧 unload flush 发出后从未出现 vol=0.9 落库（跨端收敛协议已修）——更新 SD 段断言并从 KNOWN_FAILURES 移除 KF2');
+    } else {
+      note('KF2 探针失效：两次 reload 的 beforeunload keepalive 均未派发（flaky 面）——本轮不判 KF2，豁免状态维持');
+    }
     await kd.close(); await ke.close(); await kf.close();
 
     check('Z1 全程零 pageerror / 非资源 console error（三页）', report.errors.length === 0);

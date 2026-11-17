@@ -48,8 +48,8 @@ import kotlinx.coroutines.delay
    收藏页是收藏集合唯一主入口，§5.5 硬点）。空态两档：收藏全空 = 自绘引导块 +「去电台库」按钮
    （StationContent 空态是纯文案位放不了按钮，故收藏全空时自绘）；有收藏但过滤无命中 = empty 文案位。
    取消收藏撤销（Q13/Q17，review#46 P1）：行内星标/长按经 onFavToggle 注入直调 vm.unfavWithUndo
-   （守卫非收藏态不翻转 + toggle 取消 + favUndoReq=s 单一产生点在 AppVm；AppRoot collect 弹 Snackbar，
-   点撤销走 undoUnfav 按 URL 身份回绑）——旧「监听收藏投影差分补发 favUndoReq」桥接已删：
+   （守卫非收藏态不翻转 + toggle 取消 + 撤销事件入队——AppVm 单一产生点，operationId 逐操作不覆盖；
+   AppRoot 顺序消费弹 Snackbar，点撤销走 undoUnfav 按 URL 身份回绑）——旧「监听收藏投影差分补发撤销」桥接已删：
    维护隐藏/同步重建/回绑先后都会被差分误判成用户取消收藏（误报路径），事件不得由 UI 差分合成。
    滚动/筛选快照同 StationScreen 模式（destinationUi[FAVORITES]：离页 DisposableEffect 快照 +
    恢复护栏 list.isNotEmpty() + 一次性 restored 标志；恢复回写 vm.favoriteQuery/favoriteCategory）。 */

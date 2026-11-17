@@ -29,7 +29,7 @@ import io.github.vjoy233.vradio.ui.theme.VrTheme
    浮层（选源/歌曲/发现/源详情）仍由 root 统一挂载——切目的地/进出次级页不丢播放上下文；
    toast 走 SnackbarHost，与 status（用户主动操作，PlayerBar 内）分工不双写。
    返回键层级（Q21）：确认弹窗/浮层自收 → Full player（P2）→ 次级页（契约纯函数 backTarget）→ 系统默认；
-   发现关（FeatureFlags.DISCOVERY=false）时
+   次级页开着才消费返回（收回次级页——期间目的地不可变，= 回到打开时的页，Q11）。发现关（FeatureFlags.DISCOVERY=false）时
    navigateGuard 使发现目的地不可达。vm 经 ViewModelProvider 直取（不引 lifecycle-viewmodel-compose）。 */
 @Composable
 fun AppRoot() {
@@ -49,23 +49,22 @@ fun AppRoot() {
     val ui by PlayerHolder.ui.collectAsState()
     val snack = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { vm.toasts.collect { snack.showSnackbar(it) } }
-    // 撤销 Snackbar（Q17，§5.5）：favUndoReq 非空即弹「已取消收藏」+ 撤销动作；Long≈10s（Material3
-    // 无 8s 档，取 Long ≈「约 8 秒」口径）；点撤销走 undoUnfav（URL 身份回绑）；结束清载荷
-    // （守卫：期间又发了新星标请求则不清——请求被更新值覆盖，旧 effect 不得误清）
-    val favUndoReq by vm.favUndoReq.collectAsState()
-    LaunchedEffect(favUndoReq) {
-      val st = favUndoReq ?: return@LaunchedEffect
-      val r = snack.showSnackbar("已取消收藏：${displayParts(st.n).first}", actionLabel = "撤销", duration = SnackbarDuration.Long)
-      if (r == SnackbarResult.ActionPerformed) vm.undoUnfav(st)
-      if (vm.favUndoReq.value == st) vm.clearFavUndo()
+    // 撤销 Snackbar（Q17，§5.5）：撤销事件队列顺序消费——每条独立弹「已取消收藏」+ 撤销动作（review#46
+    // 二轮 P2：带 operationId 逐操作入队，快速连续取消不互相覆盖）；Long≈10s（Material3 无 8s 档，
+    // 取 Long ≈「约 8 秒」口径）；点撤销走 undoUnfav（URL 身份回绑）；消费完一条再收下一条
+    LaunchedEffect(Unit) {
+      vm.favUndoEvents.collect { ev ->
+        val r = snack.showSnackbar("已取消收藏：${displayParts(ev.station.n).first}", actionLabel = "撤销", duration = SnackbarDuration.Long)
+        if (r == SnackbarResult.ActionPerformed) vm.undoUnfav(ev.station)
+      }
     }
     // Q15 切目的地收起搜索（搜索词保留、展开态收起，回台页有词自动再展开是 StationScreen 既有逻辑）；
     // 离开收藏页撤销作废（§5.5）：dismiss 在飞 Snackbar + 清载荷——到站即失效，不留「幽灵撤销」
     LaunchedEffect(destination) {
       vm.searchExpanded.value = false
       if (destination != Destination.FAVORITES) {
-        snack.currentSnackbarData?.dismiss()
-        vm.clearFavUndo()
+        snack.currentSnackbarData?.dismiss()   // 在飞 Snackbar 作废
+        vm.clearFavUndo()                       // 未消费事件排空（Q17 离开收藏页失效）
       }
     }
     VrScaffold(destination, vm::navigate, miniPlayer = { MiniPlayer(vm, ui) }, snackbarHost = { SnackbarHost(snack) }) { pad ->

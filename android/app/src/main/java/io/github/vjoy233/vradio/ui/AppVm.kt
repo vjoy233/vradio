@@ -199,6 +199,9 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     statusJob = viewModelScope.launch { delay(6000); status.value = "" }
   }
 
+  /** 撤销载荷清理（review#46 P2：AppVm 单一消费，UI 不直写 MutableStateFlow） */
+  fun clearFavUndo() { favUndoReq.value = null }
+
   /** 各目的地页内 UI 瞬态快照（toMutableMap 拷贝替换触发流更新）：离开页面前/进次级页前调一次，不在滚动帧回调里写 */
   fun saveDestinationUi(d: Destination, ui: DestinationUiState) {
     destinationUi.value = destinationUi.value.toMutableMap().apply { put(d, ui) }

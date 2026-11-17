@@ -28,3 +28,14 @@
 3. **`VrScaffold` 无 `player` 参数**：mini player 以 slot 注入后状态源由 slot 自带（§6.2 骨架的 player 参数随之取消）。
 4. **DISCOVER 分支**：P0 为编译穷举空壳（`FeatureFlags.DISCOVERY=false` 关闭态 + `navigateGuard` 双保险不可达），P3 填 `DiscoveryScreen`。
 5. **P0 验证证据**：`./gradlew.bat test assembleDebug` BUILD SUCCESSFUL；新增 NavigationStateTest（13 断言）+ WindowClassTest（6 断言）全绿；旧 `Nav` 枚举零残留（grep 证）。
+
+## 1.y P1 实施落账
+
+1. **`buildFavoriteListUi` 增第 5 参 `cats`（默认空表）**：纯函数不能调 lib，chips 顺序需按 `lib.cats()` 过滤——combine 里传入；默认空时按收藏数据序兜底（4 参形式照常成立）。
+2. **Q16「最新收藏置顶」**在纯函数内 `asReversed()` 实现（入参=favorites 投影写入序）；数据层不动。
+3. **`StationContent` 复用签名增补 `inCat` 投影参数**：旧实现读电台页 `vm.cat` 判分类徽标冗余，收藏页不能读它——改投影参数。
+4. **撤销 Snackbar**：M3 无 8s 档，取 `SnackbarDuration.Long`（10s）≈「约 8 秒」口径；离开收藏页 dismiss + 清载荷（Q17）。
+5. **⚠ 技术债：星标撤销桥接**——StationContent 行内星标硬编码 `vm.toggleFav` 且本批冻结该文件，FavoritesScreen 以「单台丢失且仍在库」事件判别补发撤销请求（三重防误报：首帧建基线不比对/仅单台丢失/仍在库判别）。后续批次（P2/P4）机会式改为 StationContent 注入 `onFavToggle` 回调后删除桥接。
+6. **MiniPlayer `navigationBarsPadding()` 仅 EXPANDED 档**：平板/横屏 mini player 即屏幕底缘，三键导航会遮播放钮；COMPACT 档下方 NavigationBar 自理 inset。
+7. **滚动恢复护栏**：恢复 key 用「列表非空」（boot 未就绪时 scrollToItem 会被 clamp 到 0）+ `restored` 一次性标志（防空→非空翻转拽回旧位）。
+8. **设备矩阵手测（320×720/360×800/390×844/800×360）**：本机无 adb/模拟器，留 owner 手测门（§7 P1 实测项），不作为合并阻塞（JVM 门全绿）。

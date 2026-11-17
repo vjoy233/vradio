@@ -2,7 +2,8 @@ package io.github.vjoy233.vradio.ui
 
 /* Full player（P2，方案 §5.3）：ModalBottomSheet 半屏起步可拖全屏（Q10——展开层级交给 SheetState
    PartiallyExpanded/FullyExpanded 承载，不再造第三套布尔；P0 sheet 唯一所有者口径，容器层级归集成方
-   AppRoot 挂载）。内容顺序 §5.3 逐条：台标/台名/分类/收藏 → 状态行（组合映射 playerVisual，
+   AppRoot 挂载）。**sheet 状态一次打开生命周期内有效：关闭即移除、重开回半屏**（review#47 P2 两个
+   候选方案里取显式声明口径；BackHandler 关闭路径同样瞬时摘除，可接受）。内容顺序 §5.3 逐条：台标/台名/分类/收藏 → 状态行（组合映射 playerVisual，
    **不新增 PState.ERROR/NO_ENABLED_SOURCE——P1-1 修订硬门，映射是 PlayerUiState 字段组合**）→
    错误恢复动作行（Q22）→ 曲讯码率（HLS 结构性无 ICY 显示「暂无曲讯」不是异常，Web 同口径）→
    主控制（⏮ 收藏切台 / 主动作按 playerVisual.action 分派 / ⏭）→ 次操作行（选源/刷新/睡眠/分享/
@@ -34,9 +35,9 @@ import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberStandardBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,7 +58,7 @@ import io.github.vjoy233.vradio.player.PlayerHolder
 import io.github.vjoy233.vradio.timeshift.TimeshiftRewindButton
 import io.github.vjoy233.vradio.ui.theme.LocalVrDimens
 import io.github.vjoy233.vradio.ui.theme.LocalVrPalette
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /* ---------- 组合映射（方案 §5.3 原样落地；顶层纯函数，JVM 可直测 → PlayerUiMappingTest） ---------- */
 
@@ -94,14 +95,17 @@ fun PlayerSheet(vm: AppVm, ui: PlayerUiState) {
   val dim = LocalVrDimens.current
   val vstatus by vm.status.collectAsState()
   val favKeys by vm.favKeys.collectAsState()   // 收藏态源（StationContent 同款订阅——不行内直读）
-  // AIbot P2-2：用户操作反馈 6s 自清（与 MiniPlayer/旧 PlayerBar 同款幂等双写，后续批次收敛）
-  LaunchedEffect(vstatus) { if (vstatus.isNotEmpty()) { delay(6000); vm.status.value = "" } }
+  // review#47 P1：UI 层不再自清 status——AppVm.setStatus 是单一所有者（每次写入自带 6s TTL），本 sheet 只读
   val st = ui.station
   val visual = playerVisual(ui)
+  // sheet 状态一次打开生命周期内有效（文件头口径）：closePlayer 即移除 Composable，重开重新 remember
+  val sheetState = rememberStandardBottomSheetState(initialValue = SheetValue.PartiallyExpanded)  // Q10 半屏起步可拖全屏
+  val scope = rememberCoroutineScope()
 
   ModalBottomSheet(
-    onDismissRequest = { vm.closePlayer() },
-    sheetState = rememberStandardBottomSheetState(initialValue = SheetValue.PartiallyExpanded),  // Q10 半屏起步可拖全屏
+    // review#47 P1 收口：hide() 完成后再摘（滑下动画保留），避免 scrim/返回瞬时摘除 Composable
+    onDismissRequest = { scope.launch { sheetState.hide(); vm.closePlayer() } },
+    sheetState = sheetState,
   ) {
     Column(
       Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
@@ -139,14 +143,14 @@ fun PlayerSheet(vm: AppVm, ui: PlayerUiState) {
         VrBadge(actionHint(visual.action))
       }
 
-      // 错误恢复动作行（Q22）：WARN 态在状态行下给可执行动作——重试=refresh / 换源=openSrc /
-      // 详情=openDetailOf；noSrc（OPEN_DETAIL）只给详情。UI 不直接新建播放链（复用现有 API）。
+      // 错误恢复动作行（Q22）：WARN 态在状态行下给可执行动作——重试=refresh / 换源=openSrc（仅多源台，
+      // review#47 P2：单源台不开选源层）/ 详情=openDetailOf；noSrc（OPEN_DETAIL）只给详情。UI 不直接新建播放链（复用现有 API）。
       if (visual.tone == PlayerTone.WARN) {
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
           when (visual.action) {
             PlayerAction.RETRY -> {
               ActText("重试", color = pal.warn) { PlayerHolder.refresh() }
-              ActText("换源", color = pal.warn) { vm.openSrc() }
+              if (ui.station?.u?.let { it.size > 1 } == true) ActText("换源", color = pal.warn) { vm.openSrc() }
               ActText("打开详情", color = pal.warn) { vm.openDetailOf(ui.station?.key) }
             }
             PlayerAction.OPEN_DETAIL -> ActText("打开详情", color = pal.warn) { vm.openDetailOf(ui.station?.key) }

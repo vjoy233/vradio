@@ -45,6 +45,11 @@ import org.junit.runner.RunWith
    boot/播放/收藏注入都会写真实应用数据）。
    fixture 协议：播放类用例照 PlaybackSmokeTest 模式（AndroidSmokeTest.assumeFixture →
    assumeFixtureReachable → logFixtureEnv），未接 fixtureBaseUrl 时 Assume 跳过、CI required 模式 fail。
+   节点绑定口径：createEmptyComposeRule + ActivityScenario.launch(MainActivity)（singleTask 每用例重启拿干净
+   AppVm 态）；Compose 节点查询绑定该 Activity 的 Compose root（createAndroidComposeRule 等价但与本隔离口径冲突）。
+   星标类子件断言/点击一律 useUnmergedTree=true——父行 combinedClickable merge descendants 吞子件语义，
+   merged 树命中的是父行（点击=整行播放而非收藏切换，review#49 P2）。
+   可见文本定位（「★」「fixture 直流A」等）在真实数据/本地化/重复节点下可能误命中——testTag 化挂账（review#49 P3）。
    §8.2.9 语义契约串（搜索/更多/播放/暂停/已收藏/收藏）由并行 a11y 批次落地——本文件按钉死契约串断言，
    契约未落地前红脸是预期行为（防语义串漂移）。
    §8.2 逐项去向：
@@ -92,6 +97,11 @@ class UiRedesignSmokeTest {
     composeRule.onNode(hasText("搜索电台名")).performTextInput("爵士")
     // 打开设置：点「更多」→ 菜单项「设置」（次级页全屏覆盖，目的地不变）
     composeRule.onNodeWithContentDescription("更多").performClick()
+    // review#45-1：设置进 VrScaffold content 槽——mini player 全局常驻（§3.2/Q20），设置页期间播放钮仍在
+    composeRule.waitUntil(5_000) {
+      composeRule.onAllNodesWithContentDescription("播放", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+    }
+    assertTrue("设置页期间 mini player 应常驻", composeRule.onAllNodesWithContentDescription("播放", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty())
     composeRule.onNodeWithText("设置").performClick()
     composeRule.waitForIdle()
     // 返回（系统返回；AppRoot BackHandler 消费：次级页 → 来源目的地）
@@ -169,11 +179,23 @@ class UiRedesignSmokeTest {
     val cfg = InstrumentationRegistry.getInstrumentation().targetContext.resources.configuration
     val root: Rect = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
     val tab: Rect = tab("收藏").fetchSemanticsNode().boundsInRoot
+    // §3.3/review#49-1：mini player 几何——EXPANDED 档在内容列内（左缘不进 rail 区）；COMPACT 档在底栏导航之上
+    val playBtn: Rect = composeRule.onAllNodesWithContentDescription("播放", useUnmergedTree = true)
+      .fetchSemanticsNodes().first().boundsInRoot
+    val navTab: Rect = tab("电台").fetchSemanticsNode().boundsInRoot
     when (windowClassOf(cfg.screenWidthDp)) {
-      VrWindow.EXPANDED -> assertTrue(">=600dp 应为左缘 rail（tab centerX=${tab.center.x}，屏宽=${root.width}）",
-        tab.center.x.toDouble() < root.width / 4.0)
-      VrWindow.COMPACT -> assertTrue("<600dp 应为底栏（tab centerY=${tab.center.y}，屏高=${root.height}）",
-        tab.center.y.toDouble() > root.height * 0.7)
+      VrWindow.EXPANDED -> {
+        assertTrue(">=600dp 应为左缘 rail（tab centerX=${tab.center.x}，屏宽=${root.width}）",
+          tab.center.x.toDouble() < root.width / 4.0)
+        assertTrue(">=600dp mini player 应在内容列内不覆盖 rail（playBtn left=${playBtn.left}，rail right=${navTab.right}）",
+          playBtn.left >= navTab.right - 4f)
+      }
+      VrWindow.COMPACT -> {
+        assertTrue("<600dp 应为底栏（tab centerY=${tab.center.y}，屏高=${root.height}）",
+          tab.center.y.toDouble() > root.height * 0.7)
+        assertTrue("<600dp mini player 应在底栏导航之上（playBtn bottom=${playBtn.bottom}，nav top=${navTab.top}）",
+          playBtn.bottom <= navTab.top + 4f)
+      }
     }
   }
 
@@ -193,8 +215,9 @@ class UiRedesignSmokeTest {
     composeRule.onNodeWithText("搜索收藏").performTextInput(s.n)
     composeRule.waitForIdle()
     assertTrue("过滤后收藏行应在屏", composeRule.onAllNodesWithText(s.n).fetchSemanticsNodes().isNotEmpty())
-    // 行内星标取消收藏 → 收藏页桥接发撤销载荷 → Snackbar「已取消收藏：台名」
-    composeRule.onNodeWithText("★").performClick()
+    // 行内星标取消收藏 → unfavWithUndo 直发撤销载荷（review#46：差分桥已删）→ Snackbar「已取消收藏：台名」；
+    // unmerged 树定位星标自身节点——merged 树星标被父行吞并，performClick 会变成整行播放（review#49 P2）
+    composeRule.onNodeWithText("★", useUnmergedTree = true).performClick()
     composeRule.waitUntil(10_000) {
       composeRule.onAllNodes(hasText("已取消收藏", substring = true)).fetchSemanticsNodes().isNotEmpty()
     }

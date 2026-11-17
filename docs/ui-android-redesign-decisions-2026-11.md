@@ -70,3 +70,34 @@
 5. **返回链（§7 P4）**：确认弹窗/各 ModalBottomSheet 窗口自收（P2 已接）→ Full player → 次级页（backTarget）→ 系统默认；未覆盖系统 predictive back 动画（未改 manifest BackHandler 配置）。
 6. **手测/设备项挂账**（无 adb/模拟器，owner 侧执行）：320×720/360×800/390×844/800×360 设备矩阵、dark/light/OLED、字体放大、TalkBack 真机、强制深色、离线、空态/错误态走查；`connectedDebugAndroidTest`（fixture 旋转/后台播放硬门）待 #36/#40 合并后跑（§8.2.5 无网络态需 NetGate 注入面，挂账 §10 附录口径）。
 7. **P4 验证证据**：`test assembleDebug` BUILD SUCCESSFUL（主源集全绿）；交叉编译 `assembleDebugAndroidTest` BUILD SUCCESSFUL。
+
+## 5. AIbot review 响应落账（#44–#49 第一轮，全部沿链 merge forward）
+
+### 采纳并已修（按 PR）
+- **#45-P1 次级页覆盖 mini player**：Settings/AddStation 从全屏覆盖层改进 VrScaffold **同一 content 槽**（mini player/底栏/rail 全局常驻 §3.2/Q20）+ 两页消费 pad（#49-P1 同修）。§6.4 骨架的覆盖层伪代码按此修订。
+- **#45-P1 DISCOVERY 旧入口残留**：P3 已全删+grep 清零；门升级为可复现脚本（见下）。
+- **#45-P2 secondaryFrom 死状态**：取中间路径——次级页期间显式切目的地（vm.navigate）**自动收次级页**，返回始终回当前目的地，Q11 在全路径成立；secondaryFrom 保留为记录性字段。
+- **#45-P2 destinationUi 未接线**：P1 已接线（快照/恢复+护栏），无需新动作。
+- **#46-P1 收藏撤销差分桥误报**：**整段删除**；StationContent 增 `onFavToggle` 注入，收藏页传 `vm::unfavWithUndo`——撤销事件由 AppVm 单一产生（Q13/Q17 语义收紧）。
+- **#46-P2 Composable 直写 VM 流**：AppVm 增 `clearFavUndo()` 单一消费；UI 层 `favUndoReq.value=` 写归零（grep 证）。
+- **#46-P2 卡/行缺详情入口**：补 48dp「ⓘ」DetailBtn（§5.1），cd「电台详情」。
+- **#46/#47-P1 status 三处 6s 自清竞态**：收敛 AppVm `setStatus`（每次写入重启 TTL 单一所有者）；MiniPlayer/PlayerBar/PlayerSheet 自清全删，UI 只读。
+- **#47-P1 PlayerSheet 关闭无收口**：onDismissRequest 改 `hide()` 完成后再 closePlayer（滑下动画保留）；「sheet 状态一次打开生命周期内有效」显式声明（review 的第二候选口径）。
+- **#47-P2 单源台错误态显「换源」**：门控 `u.size > 1` 才渲染。
+- **#48-P2 折叠态 rememberSaveable 违反 Q18**：改 plain `remember`（进程死亡回默认；旋转丢折叠态为拍板取舍，注释注明）。
+- **#48-P2 chips 行 320dp/字体放大溢出**：4 处 FilterChip 容器改 **FlowRow** 换行。
+- **#48-P2 双态证据不可复现**：新增 `android/tools/dual-state-check.sh`（翻 false 构建→还原构建→残留核对）+ 本轮新鲜证据（两态 BUILD SUCCESSFUL）。
+- **#49-P1 mini player 横跨全宽覆盖 rail**：VrScaffold EXPANDED 档重构——mini player 移内容列底部（§3.3「播放条横跨内容区底部不覆盖 rail」，修订 §1.4 的骨架口径拍板）；UiRedesignSmokeTest 补几何断言（playBtn 左缘 ≥ rail 右缘 / COMPACT 在导航之上）。
+- **#49-P2 父卡/行 Role.Button 嵌套**：父节点去 role（保留 cd「点按播放，长按收藏」），FavStar 保持独立 Button；测试星标点击改 **useUnmergedTree=true**（merged 树点击会命中父行=播放）。
+- **#45-验收点**：设置页期间 mini player 常驻断言进 §8.2.1 用例。
+
+### 不采纳（理由）
+- **#46-P2 收藏页与电台页共享 view（网格互串）**：方案 §5.5 明文「列表/网格**复用 radio.view**」——共享即规格；不拆分页视图状态。
+- **#49-P1 改用 createAndroidComposeRule**：与「singleTask 每用例重启拿干净 AppVm 态」的隔离口径冲突；`createEmptyComposeRule + ActivityScenario.launch` 绑定同一 Activity Compose root，等价——绑定口径已写进测试类 KDoc。真跑 connected 的合并门不变（#36/#40 + 设备）。
+
+### 挂账不变（设备/链依赖）
+connectedDebugAndroidTest、320/390/800dp 真机矩阵、200% 字体、TalkBack 真机、离线态（NetGate 注入面）、testTag 化（#49-P3：真实数据下可见文本定位可能误命中，已 KDoc 注明风险）。
+
+### 基础设施
+- #49 CI 失败 = **Aliyun maven 镜像 502（瞬态）**，rerun 通过；非代码问题。
+- 修复波全程沿链 merge forward（p0→p1→p2→p3→p4），冲突按修正终态裁决（PlayerBar 取 P2 重构版、StationContent 取注入版、AppRoot 取并集）；androidTest 交叉编译二次验证 BUILD SUCCESSFUL。

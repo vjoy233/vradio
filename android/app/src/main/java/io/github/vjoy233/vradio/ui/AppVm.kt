@@ -169,7 +169,6 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
      + 各目的地页内 UI 瞬态 map——全部纯 UI 瞬态不持久化（零新 radio.* 键），进程死恢复默认 ---------- */
   val destination = MutableStateFlow(Destination.LIBRARY)
   val secondary = MutableStateFlow<SecondaryRoute?>(null)
-  val secondaryFrom = MutableStateFlow(Destination.LIBRARY)  // 次级页来源目的地（返回回到来源页口径，Q11/Q15）
   val playerExpanded = MutableStateFlow(false)
   val searchExpanded = MutableStateFlow(false)
   val destinationUi = MutableStateFlow<Map<Destination, DestinationUiState>>(emptyMap())
@@ -187,8 +186,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   fun navigate(to: Destination) { destination.value = navigateGuard(to); secondary.value = null }
 
   /** 次级页开合：先记来源目的地再设 secondary（返回时回跳来源页，Q11/Q15） */
-  fun openSettings() { secondaryFrom.value = destination.value; secondary.value = SecondaryRoute.SETTINGS }
-  fun openAddStation() { secondaryFrom.value = destination.value; secondary.value = SecondaryRoute.ADD_STATION }
+  fun openSettings() { secondary.value = SecondaryRoute.SETTINGS }
+  fun openAddStation() { secondary.value = SecondaryRoute.ADD_STATION }
   fun closeSecondary() { secondary.value = null }
 
   /** status 反馈单一所有者（review#46/#47 P1）：每次写入重启 6s TTL，UI 层不得再自建清理协程（旧三处竞态删除） */
@@ -199,8 +198,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     statusJob = viewModelScope.launch { delay(6000); status.value = "" }
   }
 
-  /** 撤销载荷清理（review#46 P2：AppVm 单一消费，UI 不直写 MutableStateFlow） */
-  fun clearFavUndo() { favUndoReq.value = null }
+  /** 撤销队列排空（review#46 二轮：离开收藏页作废——在飞 Snackbar 由 UI dismiss，未消费事件全部作废） */
+  fun clearFavUndo() { while (favUndoCh.tryReceive().isSuccess) { } }
 
   /** 各目的地页内 UI 瞬态快照（toMutableMap 拷贝替换触发流更新）：离开页面前/进次级页前调一次，不在滚动帧回调里写 */
   fun saveDestinationUi(d: Destination, ui: DestinationUiState) {
@@ -850,9 +849,14 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     }
   }
 
-  /* 取消收藏撤销（P1 Q13/Q17）：收藏页专用入口——立即取消 + 发撤销请求（AppRoot collect 出 Snackbar，
-     约 8s 可撤销、离开收藏页作废由 UI 侧裁决）；撤销按 URL 身份恢复，不按台名回绑 */
-  val favUndoReq = MutableStateFlow<Station?>(null)                       // 待撤销载荷（台快照）；null = 无在飞请求（UI 消费后置回）
+  /* 取消收藏撤销（P1 Q13/Q17）：收藏页专用入口——立即取消 + 入撤销队列（AppRoot 顺序 collect 出 Snackbar，
+     每条约 8s 可撤销、离开收藏页 clearFavUndo() 排空作废）；撤销按 URL 身份恢复，不按台名回绑。
+     review#46 二轮 P2：单槽 MutableStateFlow 会被快速连续取消覆盖（前一台撤销窗口丢失）——改带 operationId
+     的 Channel 事件队列，逐操作入队/逐条消费，Snackbar 按 id 归属、互不覆盖 */
+  data class FavUndoEvent(val id: Long, val station: Station)
+  private val favUndoCh = Channel<FavUndoEvent>(Channel.UNLIMITED)
+  val favUndoEvents: Flow<FavUndoEvent> = favUndoCh.receiveAsFlow()       // UI 顺序消费（一条 Snackbar 关闭再出下一条）
+  private var favUndoSeq = 0L
 
   /** 收藏页取消收藏：toggle 即取消（守卫防误加——非收藏态不翻转）+ 发撤销请求 */
   fun unfavWithUndo(s: Station) {
@@ -862,7 +866,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       quality.keepHint = runCatching { qualityKeepSnapshot() }.getOrDefault(quality.keepHint)   // B2：trim 保护集随收藏增减
       stamp.value++
       updateShortcuts()                                                  // E3：快捷方式随收藏增减刷新
-      favUndoReq.value = s
+      favUndoSeq += 1
+      favUndoCh.trySend(FavUndoEvent(favUndoSeq, s))
     }
   }
 
@@ -877,7 +882,6 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       stamp.value++
       updateShortcuts()
       if (logoAllowed()) viewModelScope.launch(Dispatchers.IO) { runCatching { logos.prime(cur, true) } }   // 恢复收藏优先补台标（B5 策略门）
-      favUndoReq.value = null
     }
   }
 

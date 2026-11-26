@@ -173,7 +173,7 @@ class LightUpdateTest {
     assertTrue(r.metaInvalid); assertFalse(r.metaChanged)
     assertEquals(LightUpdate.MetaStatus.INVALID, r.metaStatus)
     assertEquals(LightUpdate.CleanupStatus.DELETED, r.metaCleanup)
-    assertTrue(lightUpdateMessage(r).contains("元数据校验失败，旧文件已删除"))
+    assertTrue(lightUpdateMessage(r, false).contains("元数据校验失败，旧文件已删除"))
     assertNull(lu2.metaText())                              // 旧 meta 已删（混态拦截）
     assertEquals(radioV2, lu2.radioText())                  // 主库不受影响
     assertEquals(false, lu2.stampMetaOk())                  // 见证为 false：bound(files=true, files=true, false) = 不绑定
@@ -241,7 +241,7 @@ class LightUpdateTest {
     assertFalse(r.metaChanged); assertFalse(r.metaInvalid)
     assertEquals(LightUpdate.MetaStatus.WRITE_FAILED, r.metaStatus)
     assertEquals(LightUpdate.CleanupStatus.DELETED, r.metaCleanup)
-    assertTrue(lightUpdateMessage(r).contains("元数据写入失败，旧文件已删除"))
+    assertTrue(lightUpdateMessage(r, false).contains("元数据写入失败，旧文件已删除"))
     assertNull(lu2.metaText())                             // 旧 meta 已删（新 radio 不留旧 meta——宁缺勿混）
     assertEquals(false, lu2.stampMetaOk())                 // 见证失效：本批未落成 meta
     val h = lu2.stampHashOk()
@@ -294,7 +294,7 @@ class LightUpdateTest {
     val result = next.apply(radioV2)!!
     assertFalse(result.logosChanged)
     assertEquals(LightUpdate.LogosStatus.WRITE_FAILED, result.logosStatus)
-    assertTrue(lightUpdateMessage(result).contains("台标写入失败"))
+    assertTrue(lightUpdateMessage(result, false).contains("台标写入失败"))
     assertEquals(oldLogo, next.logosText())
     assertEquals(newRadio, next.radioText())
     assertEquals(true to true, next.stampHashOk())
@@ -311,12 +311,14 @@ class LightUpdateTest {
       radioAt = "2026-10-11T00:00:00Z", meta = metaV1)), 0), dir)
     val result = next.apply(radioV2)!!
     assertFalse(result.stampWritten)
-    assertTrue(lightUpdateMessage(result).contains("更新标记写入失败"))
+    assertTrue(lightUpdateMessage(result, false).contains("更新标记写入失败"))
     assertEquals(newRadio, next.radioText())
     assertEquals(oldStamp, next.stamp())
     val h = next.stampHashOk()
     assertEquals(false to true, h)
-    assertFalse(RadioMeta.bound(true, true, next.stampMetaOk(), h.first, h.second))
+    val bound = RadioMeta.bound(true, true, next.stampMetaOk(), h.first, h.second)
+    assertFalse(bound)
+    assertTrue(lightUpdateMessage(result, bound).contains("元数据未通过同批见证"))
     assertEquals("2026-10-11T00:00:00Z", next.check(next.stamp()!!))
   }
 
@@ -343,9 +345,45 @@ class LightUpdateTest {
     assertEquals(LightUpdate.MetaStatus.INVALID, r.metaStatus)
     assertEquals(LightUpdate.CleanupStatus.FAILED, r.metaCleanup)
     assertEquals(metaV1, next.metaText())
-    assertTrue(lightUpdateMessage(r).contains("旧文件删除失败"))
+    assertTrue(lightUpdateMessage(r, false).contains("旧文件删除失败"))
     val h = next.stampHashOk()
     assertFalse(RadioMeta.bound(true, true, next.stampMetaOk(), h.first, h.second))
+  }
+
+  @Test fun 同提交部分失败持久重试并恢复() = runBlocking {
+    for (failure in listOf("logos", "meta", "stamp")) {
+      val dir = tmp.newFolder()
+      val broken = fullMap(logos = if (failure == "logos") null else logosV2,
+        meta = if (failure == "meta") null else metaV1)
+      if (failure == "stamp") assertTrue(java.io.File(dir, "stamp.json.tmp").mkdir())
+      val first = LightUpdate(Gh(FakeHttp(broken), 0), dir)
+      val result = first.apply(radioV1)!!
+      assertTrue(result.retryPending)
+      assertEquals(radioV2, first.radioText())
+      if (failure == "stamp") assertTrue(java.io.File(dir, "stamp.json.tmp").delete())
+      val restarted = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
+      assertEquals("2026-10-10T00:00:00Z", restarted.check("2026-10-10T00:00:00Z"))
+      val recovered = restarted.apply(radioV2)!!
+      assertFalse(recovered.retryPending)
+      assertEquals(logosV2, restarted.logosText())
+      assertEquals(metaV1, restarted.metaText())
+      assertEquals(true to true, restarted.stampHashOk())
+      assertNull(restarted.check("2026-10-10T00:00:00Z"))
+    }
+  }
+
+  @Test fun 旧stamp恰好匹配时按见证而非写入结果显示绑定() = runBlocking {
+    val dir = tmp.newFolder()
+    val lu = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
+    lu.apply(radioV1)!!
+    assertTrue(java.io.File(dir, "stamp.json.tmp").mkdir())
+    val r = lu.apply(radioV2)!!
+    assertFalse(r.stampWritten)
+    val h = lu.stampHashOk()
+    val bound = RadioMeta.bound(true, true, lu.stampMetaOk(), h.first, h.second)
+    assertTrue(bound)
+    assertTrue(lightUpdateMessage(r, bound).contains("元数据同批见证通过"))
+    assertTrue(r.retryPending)
   }
 
 }

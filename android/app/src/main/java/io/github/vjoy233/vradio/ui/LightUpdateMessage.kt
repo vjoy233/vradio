@@ -3,7 +3,7 @@ package io.github.vjoy233.vradio.ui
 import io.github.vjoy233.vradio.sync.LightUpdate
 
 /** 主库已写入不代表其他资产提交成功；逐项报告，避免把部分成功描述成回滚。 */
-fun lightUpdateMessage(r: LightUpdate.Result): String {
+fun lightUpdateMessage(r: LightUpdate.Result, metaBound: Boolean): String {
   val logoState = when (r.logosFileState) {
     LightUpdate.FileState.UNCHANGED -> "旧文件保留"
     LightUpdate.FileState.ABSENT -> "本地无文件"
@@ -40,5 +40,7 @@ fun lightUpdateMessage(r: LightUpdate.Result): String {
     }
     "更新标记写入失败，$state，主库不会回滚"
   }
-  return "主库已写入（${r.commitIso.take(10)}）· 台数 +${r.added}/-${r.removed}；$logos；$meta；$stamp"
+  val binding = if (metaBound) "元数据同批见证通过" else "元数据未通过同批见证，最近新增不可用"
+  val retry = if (r.retryPending) "；下次检查将重试未完成的更新" else ""
+  return "主库已写入（${r.commitIso.take(10)}）· 台数 +${r.added}/-${r.removed}；$logos；$meta；$stamp；$binding$retry"
 }

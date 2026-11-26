@@ -1227,7 +1227,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         metaBound = RadioMeta.bound(true, nfMeta != null, light.stampMetaOk(), hW.first, hW.second)   // AIbot P1-4：更新后重算绑定（apply 已写 stamp 见证）
         lib.reload(); stamp.value++
         primeAll()
-        updateMsg.value = lightUpdateMessage(res)
+        updateMsg.value = lightUpdateMessage(res, metaBound)
         toast(updateMsg.value)
         pointGone(before)                                                 // 收藏台消失点名（removed ∩ 收藏）
         if (res.addedCheck.isNotEmpty()) { delay(800); incCheck(res.addedCheck.take(C.ADDED_CHECK_CAP)) }   // D4 增量体检（审计 P2）：D7 是主更新通道且安卓无首启基线——缺此调用 D7 新增国内台永远零体检（Web 唯一同步路径必跑 incHealth）

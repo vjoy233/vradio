@@ -26,7 +26,8 @@ class LightUpdate(private val gh: Gh, private val filesDir: File,
                     val added: Int, val removed: Int, val addedCheck: List<String>,
                     val metaChanged: Boolean = false, val metaInvalid: Boolean = false,
                     val logosStatus: LogosStatus, val logosFileState: FileState, val metaStatus: MetaStatus,
-                    val metaCleanup: CleanupStatus, val stampWritten: Boolean, val stampFileState: FileState)
+                    val metaCleanup: CleanupStatus, val stampWritten: Boolean, val stampFileState: FileState,
+                    val retryPending: Boolean)
 
   /** check/apply 的失败原因（""=无更新/成功）：契约返回 null 不抛，UI 据此区分「无更新」与「网络失败」。 */
   var lastFailWhy = ""
@@ -36,7 +37,7 @@ class LightUpdate(private val gh: Gh, private val filesDir: File,
   suspend fun check(localStampIso: String): String? {
     lastFailWhy = ""
     val latest = latestIso() ?: run { lastFailWhy = "GitHub 不可达（api.github.com，检查网络或稍后再试）"; return null }
-    return if (iso(latest) > iso(localStampIso)) latest else null
+    return if (File(filesDir, "light-update.pending").exists() || iso(latest) > iso(localStampIso)) latest else null
   }
 
   /** 下载两文件 → filesDir/radio.txt+logos.txt（tmp+rename）+ 落 stamp（批次提交标记，末位写：
@@ -72,6 +73,11 @@ class LightUpdate(private val gh: Gh, private val filesDir: File,
     // （radioHash/metaHash），boot 侧 stampHashOk 核对当前两文件内容与 stamp 记录一致才放行绑定——
     // 即便删件/stamp 写失败残留旧值，「新 radio + 旧 stamp」的内容哈希也对不上，RadioMeta.bound 仍判
     // 不绑定（发现页「最近新增」保守置空，不猜），且旧 stamp 使下次 check 重走 apply 自愈。
+    // 在任何资产变更前持久化重试意图；进程中断或末位 stamp 写失败也能在同一 commit 重试。
+    val pending = File(filesDir, "light-update.pending")
+    if (!pending.isFile && runCatching { writeTextAtomic(pending, "pending") }.isFailure) {
+      lastFailWhy = "更新重试标记写入失败，未开始写入资产"; return null
+    }
     if (runCatching { writeTextAtomic(File(filesDir, "radio.txt"), radio) }.isFailure) {
       lastFailWhy = "radio.txt 落盘失败（磁盘/权限）"; return null
     }
@@ -117,8 +123,11 @@ class LightUpdate(private val gh: Gh, private val filesDir: File,
       stampBefore.getOrNull() == stampAfter.getOrNull() -> FileState.UNCHANGED
       else -> FileState.CHANGED_OR_UNKNOWN
     }
+    // 仅所有资产和 stamp 成功后清标；删除失败保守继续重试。
+    if (logosStatus == LogosStatus.WRITTEN && metaChanged && stampWritten) runCatching { pending.delete() }
+    val retryPending = pending.exists()
     return Result(commitIso, radio != oldRadioText, logosStatus == LogosStatus.WRITTEN, addedKeys.size, removedKeys.size,
-      addedCheck, metaChanged, metaStatus == MetaStatus.INVALID, logosStatus, logosFileState, metaStatus, cleanup, stampWritten, stampState)
+      addedCheck, metaChanged, metaStatus == MetaStatus.INVALID, logosStatus, logosFileState, metaStatus, cleanup, stampWritten, stampState, retryPending)
   }
 
   /** filesDir 副本读取；null=从未更新（用 assets 打包件）。 */

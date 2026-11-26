@@ -1,6 +1,7 @@
 package io.github.vjoy233.vradio
 
 import io.github.vjoy233.vradio.sync.RadioMeta
+import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -17,6 +18,20 @@ class RadioMetaTest {
     assertEquals(456L, fresh.lastSeenAt)
     assertEquals(400L, fresh.lastVerifiedAt)
     assertEquals("sync", fresh.verification)
+  }
+
+  @Test fun 来源共享样本() {
+    val text = javaClass.classLoader!!.getResource("fixtures/source-meta.json")!!.readText()
+    val item = JSONObject(text).getJSONObject("source")
+    val actual = source(item.toString())
+    assertEquals(item.getString("url"), actual.url)
+    assertEquals(item.getString("upstream"), actual.upstream)
+    assertEquals(item.getString("upstreamId"), actual.upstreamId)
+    assertEquals(item.getString("kind"), actual.kind)
+    assertEquals(item.getLong("firstSeenAt"), actual.firstSeenAt)
+    assertEquals(item.getLong("lastSeenAt"), actual.lastSeenAt)
+    assertEquals(item.getLong("lastVerifiedAt"), actual.lastVerifiedAt)
+    assertEquals(item.getString("verification"), actual.verification)
   }
 
   @Test fun 缺失或未知字段不伪造验证() {

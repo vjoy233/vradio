@@ -108,6 +108,14 @@ ok('失败快照：错误、代理耗尽、不可变与跨台保留', () => {
   assert.strictEqual('code' in last, false); assert.strictEqual('httpStatus' in last, false);
   p.Player.play(st(['http://x/b.mp3'])); assert.strictEqual(p.Player.getFailureSnapshot(), last);
 });
+ok('失败快照：直播 ended 重连成功仍保留断流事实', () => {
+  const p = mkPage(), s = st(['http://x/a.mp3']);
+  p.Player.play(s); p.audio.fire('playing'); p.clock.tick(50); p.audio.fire('ended');
+  const f = p.Player.getFailureSnapshot();
+  assert.strictEqual(f.reason, 'watchdog'); assert.strictEqual(f.at, 1050);
+  assert.strictEqual(f.sourceUrl, s.u[0]); assert.strictEqual(f.attempts, 1);
+  p.audio.fire('playing'); assert.strictEqual(p.Player.getFailureSnapshot(), f);
+});
 ok('失败快照：看门狗、重连计数及旧世代不覆盖', () => {
   const p = mkPage(), s = st(['http://x/a.m3u8']);
   p.Player.play(s); const old = p.audio.onerror;

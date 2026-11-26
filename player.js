@@ -65,6 +65,7 @@ const Player = {
     el.addEventListener('ended', () => { // halt 守卫（三审 B3，audit-r2 P2-2 证实未落地）：暂停/让位页不得被 ended 自愈复活——retryOrNext 重连分支 audio.play() 会广播 'on' 反杀对方标签（AIbot P2-1 的 ping-pong）
       if (!this.station || this.connecting) return;
       if (this.halt) { this.heldNext = true; return; } // 暂停期上游断流：置搁浅标记，resume 走 retryOrNext 立即重连（review P3-1）——否则对已 ended 元素 play() 无效，最坏要等看门狗 12s
+      this.recordFailure('watchdog'); // 直播意外 ended 同样触发自愈，记录事实而非推测诊断
       this.qosDown('watchdog'); // B2：直播被服务端断连（不该 ended），先同源重连——断流样本（在播态才计）
       this.emitPhase('idle'); // 直播不该 ended：真实播放标记立即清（重连经 load 再发 connecting，切台清标记语义达成）
       this.retryOrNext();

@@ -26,6 +26,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import kotlinx.coroutines.launch
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedButton
@@ -38,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -110,9 +113,15 @@ fun SettingsScreen(vm: AppVm, pad: PaddingValues) {
   // 折叠态（Q26/Q18，review#48）：plain remember——进程死亡回默认（Q18 严格口径，不进 SavedStateRegistry）；
   // 旋转重建同样回默认，丢折叠态是拍板取舍（折叠只是纯 UI 展示态，不写 AppVm/Store）
   var openIds by remember { mutableStateOf(defaultExpandedIds()) }
+  val listState = rememberLazyListState()
+  val scope = rememberCoroutineScope()
   val focusNetwork by vm.focusNetworkSettings.collectAsState()
   LaunchedEffect(focusNetwork) {
-    if (focusNetwork) { openIds = openIds + "network"; vm.consumeNetworkSettingsFocus() }
+    if (focusNetwork) {
+      openIds = openIds + "network"
+      scope.launch { listState.animateScrollToItem(settingsGroups.indexOfFirst { it.id == "network" }) }
+      vm.consumeNetworkSettingsFocus()
+    }
   }
 
   // SAF 导出（CreateDocument 预填文件名）与导入（OpenDocument 放宽到 */*——SAF 的 mime 上报不稳定）
@@ -137,6 +146,7 @@ fun SettingsScreen(vm: AppVm, pad: PaddingValues) {
     }
     LazyColumn(
       Modifier.fillMaxSize().padding(horizontal = 16.dp),
+      state = listState,
       // review#49-2：消费 VrScaffold pad（次级页在 content 槽内——pad 含 mini player/底栏实高），32dp 是页脚呼吸位
       contentPadding = PaddingValues(bottom = 32.dp + pad.calculateBottomPadding()),
     ) {

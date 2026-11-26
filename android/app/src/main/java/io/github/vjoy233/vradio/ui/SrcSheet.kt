@@ -131,11 +131,11 @@ sealed class SourceAction {
 }
 
 /** 诊断 code 徽标文案（code 是程序分支唯一依据；文案仅展示） */
-private fun codeBadge(r: DiagnosticResult): Pair<String, Int> = when (r.code) {
-  "OK" -> "✓ 可用" to 1
+fun codeBadge(code: String, httpStatus: Int): Pair<String, Int> = when (code) {
+  "OK" -> if (httpStatus == 401 || httpStatus == 403) "字节检测通过" to 0 else "✓ 可用" to 1
   "NETWORK" -> "网络失败" to 2
   "HTML" -> "HTML 错误页" to 2
-  "HTTP" -> "HTTP ${r.httpStatus}" to 2
+  "HTTP" -> "HTTP $httpStatus" to 2
   "EMPTY_PLAYLIST" -> "清单无分片" to 2
   "NO_SEGMENT" -> "无可用分片" to 2
   "SHORT_BODY" -> "字节不足" to 2
@@ -156,6 +156,10 @@ fun qualityReasonText(reason: String): String = when (reason) {
   "insufficient_samples" -> "样本不足"
   else -> "质量未知"
 }
+
+fun diagnosticSuggestion(code: String, httpStatus: Int): String =
+  if (httpStatus == 401 || httpStatus == 403) "需要配置或服务拒绝，请检查服务权限"
+  else suggestionText(diagnosticAction(code, httpStatus))
 
 fun suggestionText(explanation: QualityExplanation): String = when (explanation.action) {
   "none" -> "无需操作"
@@ -269,7 +273,7 @@ fun SourceDetailSheet(
               fontSize = 12.sp, color = if (cur) pal.acc else pal.tx.copy(alpha = if (off) .4f else .85f))
             station.lbl[u]?.let { VrBadge(it) }
             if (cur) VrBadge("正在用", 1)
-            if (off) VrBadge("已禁用", 2) else if (diag != null) { val (t, k) = codeBadge(diag); VrBadge(t, k) }
+            if (off) VrBadge("已禁用", 2) else if (diag != null) { val (t, k) = codeBadge(diag.code, diag.httpStatus); VrBadge(t, k) }
           }
           // 结果行：why + 延迟/字节/模式（HLS 分片验收 or 直流字节验收）；禁用源 = 硬文案 + 取消禁用入口
           if (off) {
@@ -282,7 +286,7 @@ fun SourceDetailSheet(
               fontSize = 11.sp, color = pal.dim, maxLines = 2, overflow = TextOverflow.Ellipsis,
               modifier = Modifier.padding(start = 24.dp),
             )
-            Text("建议：${suggestionText(diagnosticAction(diag.code, diag.httpStatus))}",
+            Text("建议：${diagnosticSuggestion(diag.code, diag.httpStatus)}",
               fontSize = 11.sp, color = pal.dim, modifier = Modifier.padding(start = 24.dp))
           } else {
             Text("未诊断（点下方「诊断全部源」）", fontSize = 11.sp, color = pal.dim, modifier = Modifier.padding(start = 24.dp))

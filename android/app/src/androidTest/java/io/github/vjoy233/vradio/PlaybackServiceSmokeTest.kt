@@ -24,11 +24,15 @@ class PlaybackServiceSmokeTest {
     val token = SessionToken(ctx, android.content.ComponentName(ctx, PlaybackService::class.java))
     val future = MediaController.Builder(ctx, token).buildAsync()
     val controller = future.get(5, TimeUnit.SECONDS)
+    val instr = InstrumentationRegistry.getInstrumentation()
     try {
       assertNotNull("MediaSessionService 应返回共享 session", controller)
-      assertFalse("无用户播放意图时不应自动播放", PlayerHolder.ui.value.st == io.github.vjoy233.vradio.model.PState.PLAYING)
+      instr.runOnMainSync {
+        assertFalse("MediaController 应已连接", !controller.isConnected)
+        assertFalse("无用户播放意图时不应自动播放", PlayerHolder.ui.value.st == io.github.vjoy233.vradio.model.PState.PLAYING)
+      }
     } finally {
-      controller.release()
+      instr.runOnMainSync { controller.release() }
     }
   }
 }

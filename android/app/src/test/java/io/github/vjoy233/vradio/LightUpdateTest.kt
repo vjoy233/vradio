@@ -342,14 +342,20 @@ class LightUpdateTest {
   @Test fun rename失败保留旧文件并恢复() {
     val dir = tmp.newFolder(); val target = File(dir, "radio.txt")
     target.writeText("旧内容")
-    AtomicWriteTestHook.rename = { _, _ -> false } // tmp→target 拒绝覆盖：旧目标必须原样保留
+    var attemptedTemp: File? = null
+    AtomicWriteTestHook.rename = { from, to ->
+      assertEquals(target, to); attemptedTemp = from; false
+    } // tmp→target 拒绝覆盖：旧目标必须原样保留
     try {
       var failed = false
       try { writeTextAtomic(target, "新内容") } catch (_: java.io.IOException) { failed = true }
       assertTrue(failed)
       assertEquals("旧内容", target.readText())
       assertFalse(File(dir, "radio.txt.bak.atomic").exists())
-      assertFalse(File(dir, "radio.txt.tmp").exists())
+      val temp = attemptedTemp
+      assertNotNull(temp)
+      assertFalse(temp!!.exists())
+      assertEquals(listOf("radio.txt"), dir.listFiles()!!.map { it.name }.sorted())
     } finally { AtomicWriteTestHook.rename = null }
   }
 

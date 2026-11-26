@@ -2201,11 +2201,21 @@ const App = {
     host.querySelectorAll('[data-sidecar]').forEach(b => b.onclick = () => this.addDiscoveryStation(rows[+b.dataset.sidecar]));
   },
   async addDiscoveryStation(r) {
-    if (!r || !/^https?:\/\//.test(r.url) || !confirm(`将「${r.name}」加入个人电台并先探活？`)) return;
+    let u;
+    try { u = new URL(r && r.url); } catch (_) { return; }
+    // 仅作前端纵深校验；后端 safeTarget + guardLookup 仍是 SSRF/DNS rebinding 的安全边界。
+    if (!r || !/^https?:$/.test(u.protocol) || !u.hostname || /^(localhost|.*\.local)$/i.test(u.hostname) || /^(127\.|10\.|192\.168\.|169\.254\.)/.test(u.hostname) || !confirm(`将「${r.name}」加入个人电台并先探活？`)) return;
     if (!location.protocol.startsWith('http')) { $('status').textContent = 'file:// 无法写入个人电台，请使用 npm start'; return; }
-    const res = await fetch('/api/mystation', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({n:r.name,u:r.url,c:'精选'})}).then(x=>x.json()).catch(()=>null);
-    $('status').textContent = res && res.ok ? `已加入个人电台：${r.name}` : '加入失败：探活未通过或服务不可用';
-    if (res && res.ok) this.reloadMain();
+    try {
+      const q = await fetch('/api/mystation', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({n:r.name,u:r.url,c:'精选'})});
+      const ct = String(q.headers && q.headers.get ? q.headers.get('content-type') || '' : '').toLowerCase();
+      const len = Number(q.headers && q.headers.get ? q.headers.get('content-length') || 0 : 0);
+      if (len > 8192 || (ct && !ct.includes('application/json'))) throw Error('bad response');
+      const text = await q.text(); if (text.length > 8192) throw Error('large response');
+      const res = JSON.parse(text);
+      $('status').textContent = res && res.ok ? `已加入个人电台：${r.name}` : '加入失败：探活未通过或服务不可用';
+      if (res && res.ok) this.reloadMain();
+    } catch (_) { $('status').textContent = '加入失败：探活未通过或服务不可用'; }
   },
   renderDiscovery() {
     const d = buildDiscovery({

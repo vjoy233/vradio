@@ -20,13 +20,19 @@ class DiscoverySourceTest {
 
   @Test fun rejectsWrongCommitAndHttpStillAllowed() {
     assertNotNull(DiscoverySourceParser.parse(body))
-    assertNull(DiscoverySourceParser.parse(body.replace(commit, "f".repeat(40))))
+    assertNull(DiscoverySourceParser.parse(body.replace(commit, "f".repeat(40)).replace("0123456789abcdef0123456789abcdef01234567", commit)))
   }
 
   @Test fun rejectsOversizeAndTooManyItems() {
     assertNull(DiscoverySourceParser.parse(body, 8))
     val many = body.replace("\"items\":[{", "\"items\":[{" + ",{}".repeat(300))
     assertNull(DiscoverySourceParser.parse(many))
+  }
+
+  @Test fun rejectsMalformedUrls() {
+    assertNull(DiscoverySourceParser.parse(body.replace("http://example.com/a", "http://")))
+    assertNull(DiscoverySourceParser.parse(body.replace("http://example.com/a", "http://example.com/a\\nX")))
+    assertNull(DiscoverySourceParser.parse(body.replace("http://example.com/a", "file:///tmp/a")))
   }
 
   @Test fun manifestMismatchFailsClosed() {

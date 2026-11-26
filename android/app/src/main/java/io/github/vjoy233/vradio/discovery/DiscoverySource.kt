@@ -3,6 +3,7 @@ package io.github.vjoy233.vradio.discovery
 import org.json.JSONObject
 import java.security.MessageDigest
 import java.time.Instant
+import java.net.URI
 
 /** C3 预发布只读精选 sidecar 解析面；不联网、不写文件、不接主库/UI。 */
 data class DiscoveryItem(
@@ -31,6 +32,9 @@ object DiscoverySourceParser {
   private val SHA = Regex("[0-9a-f]{40}")
   private val HASH = Regex("[0-9a-f]{64}")
   private val HTTP = Regex("https?://[^\\s]+", RegexOption.IGNORE_CASE)
+  private val ISO = Regex("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z")
+
+  private fun urlOk(s: String): Boolean = runCatching { val u = URI(s); (u.scheme == "http" || u.scheme == "https") && !u.host.isNullOrBlank() && !s.any { it <= ' ' || it == '"' || it == '<' || it == '>' } }.getOrDefault(false)
 
   fun parse(text: String, maxBytes: Int = MAX_BYTES): DiscoverySource? {
     val bytes = text.toByteArray(Charsets.UTF_8)
@@ -53,7 +57,7 @@ object DiscoverySourceParser {
         val upstream = x.optString("upstream").trim()
         val ic = x.optString("commit")
         if (name.isEmpty() || name.length > 200 || genre.length > 120 ||
-          upstream != SOURCE || !HTTP.matches(url) || url.length > 2048 || ic != commit) return@runCatching null
+          upstream != SOURCE || !urlOk(url) || url.length > 2048 || ic != commit) return@runCatching null
         items += DiscoveryItem(name, url, genre, upstream, ic)
       }
       DiscoverySource(1, SOURCE, "CC0-1.0", commit, generated, items)

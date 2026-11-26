@@ -45,10 +45,9 @@ function copyTree(src, dst) { // Node 14 无 fs.cpSync——手写递归复制�
     }
   }
 }
-let rootSeq = 0;
 function makeRoot() {
-  const dir = path.join(os.tmpdir(), 'vradio-boot-' + process.pid + '-' + (++rootSeq) + '-' + Math.random().toString(36).slice(2, 8));
-  copyTree(ROOT, dir);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vradio-boot-' + process.pid + '-'));
+  try { copyTree(ROOT, dir); } catch (e) { rmRoot(dir); throw e; }
   return dir;
 }
 function rmRoot(dir) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) { console.error('临时根清理失败（记录不吞）:', dir, (e && e.code) || e); } }
@@ -127,10 +126,11 @@ async function boot(opts) {
     if (!closed) closed = (async () => {
       try { srv.kill(); } catch (_) {}
       const i = cleanups.indexOf(cleanup); if (i >= 0) cleanups.splice(i, 1);
-      await new Promise(ok => {
+      await new Promise((ok, reject) => {
         if (srv.exitCode !== null || srv.signalCode !== null) return ok();
         const hard = setTimeout(() => { try { srv.kill('SIGKILL'); } catch (_) {} }, 1500);
-        srv.once('exit', () => { clearTimeout(hard); ok(); });
+        const deadline = setTimeout(() => reject(new Error('server 未退出，保留临时根: ' + root)), 5000);
+        srv.once('exit', () => { clearTimeout(hard); clearTimeout(deadline); ok(); });
       });
       if (ownsRoot) rmRoot(root);
     })();

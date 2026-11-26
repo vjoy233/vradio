@@ -11,7 +11,7 @@
 //   [3] 写盘故障注入（quality+store 双通道，任务稿明示三选二）：data/*.json 换同名目录（Windows 无强制锁，
 //       openSync r+ 锁不住——rename 目标是目录必 EPERM/EISDIR 稳定复现，本机实测 EPERM）→ POST 200 {ok:false,
 //       error:'写入失败'} 不崩（临时错误通道非 5xx）+ 内存态不推进（rev/数据不回退不脏写）→ 恢复后服务可写且 rev 连续
-//   [4] kill 中断强制发布 + 重启恢复：VR_TEST_SYNC_STASH + STALL=3000，POST /api/sync 进行中 SIGKILL ×2
+//   [4] 同步请求期间 kill + 重启一致性（不证明发布中断）：VR_TEST_SYNC_STASH + STALL=3000，POST /api/sync 进行中 SIGKILL ×2
 //       （STALL 窗内 800ms = 确定性零写盘 / 窗后 3400ms = STALL 后随机落点（不保证命中发布））→ 重启 /api/boot
 //       断言不变量：ok:true + 四资产完整 + manifest 可校验 + 版本 ∈ {基线批, sync-*}（与 test/station-api.js
 //       [B] 区 boot 矩阵语义对齐；恢复路径本体由其确定性覆盖，此处验真实 kill 落点的状态一致性）
@@ -221,13 +221,16 @@ const enumCodes = JSON.parse(fs.readFileSync(path.join(ROOT, 'contracts', 'sourc
       assert.ok(mo && mo.version === 'A2' && manifestCheckDir(path.join(drillRoot, '.tmp', 'sync-prev-old'), mo), 'prev-old 实得 ' + (mo && mo.version));
     });
 
-    console.log('[4] kill 中断强制发布 + 重启恢复（STALL=3000，SIGKILL ×2）');
+    console.log('[4] 同步请求期间 kill + 重启一致性（不证明发布中断）（STALL=3000，SIGKILL ×2）');
     // stash 原料 = 临时根的全库文本（server 启动时读文件；publishSync 改掉的 radio.txt 不影响注入原料）
     fs.mkdirSync(path.join(drillRoot, 'data'), { recursive: true }); // stash 放在自有临时根
     fs.writeFileSync(stashF, JSON.stringify({ report: { reasons: [{ key: 'count-drop', msg: '测试门槛', bypassable: true }] },
       reportHash: 'a'.repeat(64), inputs: { cn: REAL_TXT + '华语音乐,#genre#\r\n注入测试台,http://s.example/inject.mp3\r\n注入测试台二,http://s.example/inject2.m3u8\r\n', eu: null }, tokens: {} }));
     const restartAssert = async (tag, killAt) => {
+      const before = ['radio.txt', 'radio-data.js', 'logos.txt', 'radio-meta.json', 'sync-manifest.json'].map(f => fs.readFileSync(path.join(drillRoot, f)));
+      safeToRemove = false;
       const srv = await boot({ root: drillRoot, env: { VR_TEST_SYNC_STASH: stashF, VR_TEST_SYNC_STALL: '3000' } });
+      safeToRemove = true;
       try {
         const t = await postJson(srv.req, '/api/sync/force-token', { reportHash: 'a'.repeat(64) });
         assert.strictEqual(t.status, 200, 'force-token ' + t.status);
@@ -241,8 +244,12 @@ const enumCodes = JSON.parse(fs.readFileSync(path.join(ROOT, 'contracts', 'sourc
         }
         assert.ok(busy, '强制同步未进入 busy 窗口');
         await sleep(killAt);
-      } finally { try { await hardKill(srv.srv); } catch (e) { safeToRemove = false; throw e; } await srv.close(); } // 杀服并等待退出（共享临时根留给重启校验）；断言破也不泄漏演练服务
+      } finally { try { await hardKill(srv.srv); } catch (e) { safeToRemove = false; throw e; } try { await srv.close(); } catch (e) { safeToRemove = false; throw e; } } // 杀服并等待退出（共享临时根留给重启校验）；断言破也不泄漏演练服务
+      if (tag === 'kill#1') ['radio.txt', 'radio-data.js', 'logos.txt', 'radio-meta.json', 'sync-manifest.json'].forEach((f, i) =>
+        assert.deepStrictEqual(fs.readFileSync(path.join(drillRoot, f)), before[i], tag + ' STALL 期间字节不变: ' + f));
+      safeToRemove = false;
       const b = await boot({ root: drillRoot });
+      safeToRemove = true;
       try {
         const j = (await getJson(b.req, '/api/boot')).j;
         assert.strictEqual(j.ok, true, tag + ' /api/boot ok（实得 ' + JSON.stringify(j) + '）');
@@ -256,7 +263,7 @@ const enumCodes = JSON.parse(fs.readFileSync(path.join(ROOT, 'contracts', 'sourc
         });
         assert.ok(validPrev,
           tag + ' 至少一代完整回滚副本仍在（重启恢复能力未损）');
-      } finally { await b.close(); }
+      } finally { try { await b.close(); } catch (e) { safeToRemove = false; throw e; } }
     };
     await ok('kill#1（STALL 窗内 800ms，确定性零写盘）→ 重启 /api/boot：ok:true + 四资产完整 + manifest 可校验', () => restartAssert('kill#1', 800));
     await ok('kill#2（STALL 窗后 3400ms，STALL 后随机落点，不保证发布中断）→ 重启同款不变量（旧批完整或新批完整，绝不混态）', () => restartAssert('kill#2', 3400));

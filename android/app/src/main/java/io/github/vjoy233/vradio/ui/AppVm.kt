@@ -61,6 +61,7 @@ import io.github.vjoy233.vradio.stats.ListenStatsCodec
 import io.github.vjoy233.vradio.stats.ListenTracker
 import io.github.vjoy233.vradio.sync.Gh
 import io.github.vjoy233.vradio.sync.LightUpdate
+import io.github.vjoy233.vradio.sync.Freshness
 import io.github.vjoy233.vradio.sync.RadioMeta
 import io.github.vjoy233.vradio.sync.SyncEngine
 import io.github.vjoy233.vradio.widget.WidgetCommands
@@ -213,6 +214,24 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   val healthBusy = MutableStateFlow(false); val healthProg = MutableStateFlow(""); val healthResult = MutableStateFlow("")
   val updateBusy = MutableStateFlow(false); val updateMsg = MutableStateFlow("")
   val syncBusy = MutableStateFlow(false); val syncMsg = MutableStateFlow("")
+  val freshnessPref = MutableStateFlow(Freshness.parse(Store.get(C.K_SYNC_FRESHNESS)))
+  val freshnessPrompt = MutableStateFlow(false)
+  val freshnessAge = MutableStateFlow("unknown")
+  private fun saveFreshness(p: Freshness.Pref) { freshnessPref.value = p; Store.set(C.K_SYNC_FRESHNESS, p.json()) }
+  fun setFreshnessDays(days: Int) { saveFreshness(freshnessPref.value.copy(reminderDays = if (days in listOf(7, 14, 30)) days else 14, disabled = false)) }
+  fun disableFreshness() { freshnessPrompt.value = false; saveFreshness(freshnessPref.value.copy(disabled = true)) }
+  fun dismissFreshness() { freshnessPrompt.value = false; saveFreshness(freshnessPref.value.copy(dismissedUntil = System.currentTimeMillis() + Freshness.DAY)) }
+  fun syncFromFreshness() { freshnessPrompt.value = false; fullSyncNow() }
+  private suspend fun checkFreshness() {
+    while (healthBusy.value || syncBusy.value || updateBusy.value || PlayerHolder.ui.value.st == PState.PLAYING || PlayerHolder.ui.value.st == PState.CONNECTING) delay(5000)
+    val p = Freshness.parse(Store.get(C.K_SYNC_FRESHNESS)); freshnessPref.value = p
+    val now = System.currentTimeMillis()
+    val fact = Freshness.fact(ctx.filesDir)
+    val state = Freshness.state(p, fact?.refreshedAt, fact?.provenance, now)
+    if (state.prompt) {
+      freshnessAge.value = state.age; saveFreshness(p.copy(lastPromptAt = now)); freshnessPrompt.value = true
+    }
+  }
   val addBusy = MutableStateFlow(false); val addMsg = MutableStateFlow("")
   val confirmReq = MutableStateFlow<String?>(null)           // 导入覆盖确认门槛
   val impHasQuality = MutableStateFlow(false)                // 待确认备份含质量 sidecar（确认框显隐复选，AIbot 三轮 P1-3）
@@ -460,6 +479,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       consumePending()   // batch1 启动末梢：E3 快捷方式点播 > E4 接流预填 > N4 自动续播（默认关）
       updateShortcuts()  // E3 动态快捷方式初装（收藏变更/导入时增量刷新）
     }
+    viewModelScope.launch { delay(5000); checkFreshness() }
     delay(4000)                                                          // 首屏后 4s 静默复查（B-10）
     if (unmetered()) silentCheck()                                       // 仅 WiFi（D10）；移动数据静默跳过
   }

@@ -116,6 +116,7 @@ function mkSync(over) {
       if (f.checkFail) return Promise.reject(new Error(f.checkFail));
       return Promise.resolve({ json: function () { return Promise.resolve(f.checkBody(url)); } });
     }
+    if (url === '/api/freshness') return Promise.resolve({ json: () => Promise.resolve({ fact: over.fact || null }) });
     if (url === '/api/sync') {
       if (over.holdSync && !opt.body) return new Promise(res => f.syncGates.push(function () { res({ json: function () { return Promise.resolve(f.syncBody(url, opt)); } }) }));
       if (f.syncFail) return Promise.reject(new Error(f.syncFail));
@@ -126,6 +127,7 @@ function mkSync(over) {
   };
   const sb = sandbox({ clock: clock, ls: ls, document: doc, fetch: fetch, location: over.location,
     globals: { $: function (id) { return doc.getElementById(id); }, App: app, Store: store, QualityStore: qs,
+      Freshness: require('../freshness'), Player: { connecting: false, audio: { paused: true } },
       keyOf: function (s) { return s.c + '|' + s.n; } } });
   vm.createContext(sb);
   vm.runInContext(SRC.slice(0, BOOT.index) + '\nthis.Sync = Sync;', sb, { filename: 'sync.js' });
@@ -135,6 +137,30 @@ function mkSync(over) {
 }
 
 (async () => {
+  await ok('新鲜度只提醒，点击才同步；稍后记录 24 小时且不伪造成功', async () => {
+    const t = mkSync(); t.el('toast').hidden = true;
+    await t.Sync.scheduleFreshness();
+    assert.strictEqual(t.calls.toast.length, 1);
+    assert.strictEqual(t.f.calls.filter(x => x.url === '/api/sync').length, 0);
+    t.calls.toast[0].opt.onDismiss();
+    const p = JSON.parse(t.store.get('radio.syncFreshness'));
+    assert.strictEqual(p.dismissedUntil, 1000 + 86400000);
+    assert.strictEqual(p.lastSuccessAt, undefined);
+    await t.Sync.scheduleFreshness(); assert.strictEqual(t.calls.toast.length, 1);
+  });
+  await ok('播放中延迟提醒，不触发同步', async () => {
+    const t = mkSync(); t.el('toast').hidden = true; t.sb.Player.audio.paused = false;
+    await t.Sync.scheduleFreshness();
+    assert.strictEqual(t.calls.toast.length, 0); assert.strictEqual(t.f.calls.length, 0);
+  });
+  await ok('新鲜度点击进入既有质量门，拦截不发布', async () => {
+    const t = mkSync({ syncBody: { gated: true, ok: false, report: { reasons: [], oldTotal: 10, newTotal: 1 } } });
+    t.el('toast').hidden = true; await t.Sync.scheduleFreshness();
+    await t.calls.toast[0].opt.action.fn();
+    assert.strictEqual(t.f.calls.filter(x => x.url === '/api/sync').length, 1);
+    assert.ok(t.el('status').textContent.includes('质量门'));
+    assert.strictEqual(JSON.parse(t.store.get('radio.syncFreshness')).lastSuccessAt, undefined);
+  });
   console.log('[1] runCheck 执行器：逐台探活/前 4 源/分档计数/网络失败不落标/禁用源/诊断/并发/中止');
   await ok('逐台 fetch /api/check?detail=1，6 源台只测前 4 源（不变量：探活批量封顶 4）', async () => {
     const s6 = st('新闻', '六源台', ['http://a/1', 'http://a/2', 'http://a/3', 'http://a/4', 'http://a/5', 'http://a/6']);

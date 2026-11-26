@@ -5,6 +5,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -51,6 +54,12 @@ fun AppRoot() {
     val detailDiag by vm.detailDiag.collectAsState()
     val detailBusy by vm.detailBusy.collectAsState()
     val ui by PlayerHolder.ui.collectAsState()
+    val freshPrompt by vm.freshnessPrompt.collectAsState()
+    val freshAge by vm.freshnessAge.collectAsState()
+    if (freshPrompt) AlertDialog(onDismissRequest = vm::dismissFreshness,
+      title = { Text(if (freshAge == "unknown") "电台数据更新时间未知" else "电台数据已有一段时间未同步") }, text = { Text("可手动同步检查最新数据。") },
+      confirmButton = { TextButton(onClick = vm::syncFromFreshness) { Text("立即同步") } },
+      dismissButton = { TextButton(onClick = vm::dismissFreshness) { Text("稍后") } })
     val snack = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { vm.toasts.collect { snack.showSnackbar(it) } }
     // 撤销 Snackbar（Q17，§5.5）：撤销事件队列顺序消费——每条独立弹「已取消收藏」+ 撤销动作（review#46

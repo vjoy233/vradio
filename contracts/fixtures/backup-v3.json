@@ -16,7 +16,8 @@
     "radio.showdead": "0",
     "radio.theme": "auto",
     "radio.baseline": "done",
-    "radio.baselineProg": "[]"
+    "radio.baselineProg": "[]",
+    "radio.syncFreshness": "{\"reminderDays\":14,\"disabled\":false,\"dismissedUntil\":0,\"lastPromptAt\":0}"
   },
   "myRadio": ["自建,#genre#", "我的电台,https://example.test/live"],
   "extensions": {

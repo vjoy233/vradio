@@ -92,6 +92,7 @@ fun SettingsScreen(vm: AppVm, pad: PaddingValues) {
   val updateMsg by vm.updateMsg.collectAsState()
   val syncBusy by vm.syncBusy.collectAsState()
   val syncMsg by vm.syncMsg.collectAsState()
+  val freshness by vm.freshnessPref.collectAsState()
   val confirm by vm.confirmReq.collectAsState()
   val impHasQ by vm.impHasQuality.collectAsState()     // 备份含质量 sidecar（确认框复选显隐，B4 三轮 P1-3）
   val impSc by vm.impSidecar.collectAsState()          // 用户勾选「恢复质量 sidecar」
@@ -191,6 +192,11 @@ fun SettingsScreen(vm: AppVm, pad: PaddingValues) {
                   Text(if (updateBusy) "检查中…" else "检查更新")
                 }
                 if (updateMsg.isNotEmpty()) Info(updateMsg)
+                ItemTitle("数据新鲜度提醒", "仅提醒，确认后才同步；时间未知时可手动检查")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                  listOf(7, 14, 30).forEach { days -> FilterChip(selected = !freshness.disabled && freshness.reminderDays == days, onClick = { vm.setFreshnessDays(days) }, label = { Text("${days}天") }) }
+                  FilterChip(selected = freshness.disabled, onClick = vm::disableFreshness, label = { Text("关闭") })
+                }
                 ItemTitle("同步最新源", "国内上游重分类 + 欧美台逐个实测重建，约 1 分钟")
                 Button(onClick = { vm.fullSyncNow() }, enabled = !syncBusy, modifier = Modifier.fillMaxWidth()) {
                   Text(if (syncBusy) "同步中…" else "立即同步")

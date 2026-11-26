@@ -34,6 +34,19 @@ class DiscoveryTest {
   private fun good(url: String, lastObs: Long, icy: Boolean = true, direct: Int = 1) =
     url to QInfo("good", direct, if (icy) "icy" else "none", lastObs)
 
+  @Test fun 验证边界及最近URL回绑() {
+    val a = st(name = "A", url = "http://a/1")
+    val b = st(name = "B", url = "http://b/1")
+    val c = st(name = "C", url = "http://c/1", hidden = true)
+    val now = 40L * 86400000L
+    val g = Discovery.build(DiscoveryInput(stations = listOf(a, b, c), now = now,
+      verifiedAt = mapOf(a.u0 to now - 1, b.u0 to now - 30L * 86400000L, c.u0 to now - 1),
+      attentionAt = mapOf(a.u0 to 10L, c.u0 to 20L), recentUrls = setOf(a.u0)))
+    assertEquals(listOf(a.u0), g.recentlyVerified.map { it.u0 })
+    assertEquals(listOf(a.u0), g.needsAttention.map { it.u0 })
+    assertEquals(listOf(b.u0), g.unlistened.map { it.u0 })
+  }
+
   @Test fun 六分组基本归组() {
     val a = st(name = "稳定台", url = "http://a/1")
     val b = st(name = "新增台", url = "http://b/1")

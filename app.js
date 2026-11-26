@@ -53,7 +53,8 @@ function buildDiscovery(input) {
   const heard = new Set();
   for (const r of input.recents || []) { if (r.k) heard.add(r.k); for (const u of r.u || []) heard.add(u); }
   const pk = input.playingKey || '', ck = input.connectingKey || '';
-  const g = { starter: [], stable: [], fresh: [], revived: [], icy: [], unheard: [] };
+  const g = { starter: [], stable: [], fresh: [], revived: [], icy: [], unheard: [], recentlyVerified: [], needsAttention: [] };
+  const now = input.now;
   let unknown = 0;
   for (const r of input.rows || []) {
     if (!r || !r.u0) continue;
@@ -61,7 +62,14 @@ function buildDiscovery(input) {
     if (r.dead && r.k !== pk && r.k !== ck) continue;         // ② dead 默认过滤（正在播/连接中例外口径沿用）
     const qa = q(r.u0, r.u);
     if (!qa) unknown++;                                       // ③ 无质量记录：不进质量分组、不误判
-    const row = { k: r.k, n: r.n, c: r.c, u0: r.u0, obs: qa ? (qa.lastObservedAt || 0) : 0 };
+    const m = metaSt && metaSt[r.u0];
+    const sources = m && Array.isArray(m.sources) ? m.sources.filter(x => x && (r.u || []).includes(x.url)) : [];
+    const origins = [...new Set((sources.length ? sources.map(x => ['gao', 'eu'].includes(x.upstream) ? x.upstream : 'unknown') : (r.origins && r.origins.length ? [] : ['unknown'])).concat(r.origins || []))].sort();
+    const explain = input.explain ? input.explain(qa, now) : { level: 'unknown', action: 'retest', reason: 'no_samples' };
+    const verified = sources.reduce((v, x) => x.verification === 'sync' && Number.isFinite(x.lastVerifiedAt) && x.lastVerifiedAt > 0 && x.lastVerifiedAt <= now && now - x.lastVerifiedAt < 30 * DAY ? Math.max(v, x.lastVerifiedAt) : v, 0);
+    const row = { k: r.k, n: r.n, c: r.c, u0: r.u0, obs: qa ? (qa.lastObservedAt || 0) : 0, origins, explain };
+    if (verified) g.recentlyVerified.push(Object.assign({ at: verified }, row));
+    if (qa && explain.level !== 'unknown' && explain.action === 'retest') g.needsAttention.push(row);
     if (r.om) g.starter.push(row);                            // ④ 精选 = originMask（同名但 URL 由主列表提供的精选台也命中）
     if (qa && qa.stability === 'good' && qa.directCount > 0) g.stable.push(row); // 稳定直连：good 且有直流源（B2 directCount 口径）
     const at = metaSt ? firstSeen(metaSt[r.u0]) : 0;
@@ -74,6 +82,8 @@ function buildDiscovery(input) {
   const byAt = (a, b) => ((b.at || 0) - (a.at || 0)) || (a.u0 < b.u0 ? -1 : a.u0 > b.u0 ? 1 : 0);
   for (const key of ['starter', 'stable', 'revived', 'icy', 'unheard']) g[key] = g[key].sort(byObs).slice(0, 20);
   g.fresh = g.fresh.sort(byAt).slice(0, 20);
+  g.recentlyVerified = g.recentlyVerified.sort(byAt).slice(0, 20);
+  g.needsAttention = g.needsAttention.sort(byObs).slice(0, 20);
   return { groups: g, unknown };
 }
 
@@ -676,14 +686,14 @@ const App = {
     const byKey = new Map(), byName = new Set();
     const starterNames = new Set(STARTER.map(x => x.n)), starterUrls = new Set(); // B3 originMask：精选身份 URL/精确名集合
     for (const st of STARTER) for (const u of st.u) starterUrls.add(u);
-    for (const s of mainList) { byKey.set(keyOf(s), s); byName.add(s.n); }
+    for (const s of mainList) { s.personalUrls = []; byKey.set(keyOf(s), s); byName.add(s.n); }
     for (const st of STARTER) if (!byName.has(st.n)) { // 决策 C：与主列表精确重名的精选台不再并入（http 模式下常听=纯重复）
       byKey.set(keyOf(st), { c: st.c, n: st.n, u: st.u.slice(), l: st.l }); byName.add(st.n);
     }
     for (const s of myList || []) {
       const cur = byKey.get(keyOf(s));
-      if (cur) s.u.forEach(u => !cur.u.includes(u) && cur.u.push(u));
-      else { byKey.set(keyOf(s), s); byName.add(s.n); }
+      if (cur) { cur.personalUrls = [...new Set((cur.personalUrls || []).concat(s.u))]; s.u.forEach(u => !cur.u.includes(u) && cur.u.push(u)); }
+      else { s.personalUrls = s.u.slice(); byKey.set(keyOf(s), s); byName.add(s.n); }
     }
     this.state.stations = [...byKey.values()];
     for (const s of this.state.stations) {
@@ -714,6 +724,7 @@ const App = {
       // 动了四处回绑全断）；先收集后 push，避免遍历中修改 s.u。variants()/srcmem 天然吃新序列，无需另行接线
       const add = [];
       for (const u of s.u) { const a = srcs[u]; if (a) for (const x of a) if (!s.u.includes(x) && !add.includes(x)) add.push(x); }
+      s.adjustedUrls = add.slice();
       if (add.length) s.u.push(...add);
       // 每台最多 6 条（plan §5.4，review P1）：对合并追加后的最终源集合统一封顶——保主源 s.u[0] 首位、
       // 只裁台尾（原生超编同理裁尾）；详情中心/批量诊断（diagIdx）同口径，双端与 Android SRC_TOTAL_CAP 不漂移
@@ -2190,8 +2201,9 @@ const App = {
   renderDiscovery() {
     const d = buildDiscovery({
       rows: this.state.stations.map(s => ({ k: keyOf(s), n: s.n, c: s.c, u0: s.u[0] || '', u: s.u,
-        hidden: !!(s.hidden || this.cfg.hideC[s.c]), dead: s.health === 'dead', om: s.om ? 1 : 0 })),
-      quality: (u0, u) => QualityStore.summary(u0, u),
+        hidden: !!(s.hidden || this.cfg.hideC[s.c]), dead: s.health === 'dead', om: s.om ? 1 : 0,
+        origins: [s.personalUrls && s.personalUrls.some(u => s.u.includes(u)) ? 'personal' : '', s.adjustedUrls && s.adjustedUrls.some(u => s.u.includes(u)) ? 'adjusted' : ''].filter(Boolean) })),
+      quality: (u0, u) => QualityStore.summary(u0, u), explain: qExplain, now: Date.now(),
       meta: this.metaCache, recents: this.recents, revives: this.revives,
       playingKey: Player.station && keyOf(Player.station), connectingKey: Player.connecting && keyOf(Player.connecting),
     });
@@ -2201,7 +2213,9 @@ const App = {
       ['fresh', '最近新增', '同步新进电台'],
       ['revived', '最近恢复', '从失效标记复活的电台'],
       ['icy', '有曲讯', '直流 ICY——播放时可显示歌名'],
-      ['unheard', '未听过', '还从未播放过'],
+      ['unheard', '未听过', '最近记录中未出现'],
+      ['recentlyVerified', '最近验证', '近期同步验证通过'],
+      ['needsAttention', '需要关注', '建议重测，不代表停运'],
     ];
     let html = '';
     for (const [id, t, desc] of GROUPS) {
@@ -2211,7 +2225,9 @@ const App = {
       if (!list.length) { html += `<div class="srcs" style="padding:2px 0 8px">暂无质量数据（播放与体检后自动累计）</div>`; continue; }
       html += list.map(r => `<button type="button" class="btn mbtn discrow" data-k="${this.esc(r.k)}" title="播放：${this.esc(r.n)}">
         <span class="dn">${this.esc(r.n)}</span><span class="badge">${this.esc(r.c)}</span>
-        ${id === 'fresh' ? `<span class="srcs">${this.fmtAgo(r.at)}</span>` : r.obs ? `<span class="srcs">${this.fmtAgo(r.obs)}</span>` : ''}
+        ${FEATURES.sourceExplain ? r.origins.map(o => `<span class="badge">${this.esc(({gao:'国内上游',eu:'欧美上游',unknown:'来源未知',personal:'个人来源',adjusted:'个人追加'})[o] || '来源未知')}</span>`).join('') : ''}
+        ${FEATURES.sourceExplain ? `<span class="srcs">${({good:'稳定',fair:'一般 · 建议重测',poor:'不稳定 · 建议重测',unknown:'暂无可信质量样本'})[r.explain.level] || '暂无可信质量样本'}</span>` : ''}
+        ${id === 'fresh' || id === 'recentlyVerified' ? `<span class="srcs">${this.fmtAgo(r.at)}</span>` : r.obs ? `<span class="srcs">${this.fmtAgo(r.obs)}</span>` : ''}
       </button>`).join('');
     }
     $('discBody').innerHTML = html || '<div class="empty">暂无推荐——收藏/播放/体检后这里会越来越准</div>';

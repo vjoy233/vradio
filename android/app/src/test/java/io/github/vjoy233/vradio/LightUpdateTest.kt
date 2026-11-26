@@ -355,7 +355,9 @@ class LightUpdateTest {
     AtomicWriteTestHook.tempWrite = { f, text -> f.writeText(text.take(1)); throw java.io.IOException("temp write injected") }
     try { writeTextAtomic(target, "new") ; throw AssertionError("expected failure") }
     catch (_: java.io.IOException) { assertEquals("old-bytes", target.readText()) }
-    assertFalse(actual?.exists() == true)
+    assertNotNull(actual)
+    assertFalse(actual!!.exists())
+    assertEquals(listOf("x.txt"), dir.listFiles()!!.map { it.name }.sorted())
   }
 
   @Test fun 旧stamp无哈希字段保守不绑定() {

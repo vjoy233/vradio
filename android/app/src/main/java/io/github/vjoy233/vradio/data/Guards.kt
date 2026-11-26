@@ -76,8 +76,8 @@ private fun rename(from: File, to: File): Boolean {
 }
 private val atomicLocks = java.util.concurrent.ConcurrentHashMap<String, Any>()
 
-/* 统一原子写：同目标进程内串行，独立临时文件，rename 成功才提交；失败直接抛错，旧目标不触碰。
-   生产使用 createTempFile；测试 hook 仅包装创建/写阶段，不改变临时文件策略。 */
+/* 统一原子写：同进程同目标串行，独立临时文件，ATOMIC_MOVE 成功才提交；失败直接抛错，旧目标不触碰。
+   这不提供跨进程/路径别名或硬件掉电保证；生产使用 createTempFile，测试 hook 仅注入创建/写失败。 */
 internal fun writeTextAtomic(f: File, text: String) {
   val lock = atomicLocks.computeIfAbsent(f.absolutePath) { Any() }
   synchronized(lock) {

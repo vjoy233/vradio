@@ -269,6 +269,27 @@ async function run(chromium) {
     await page.locator('#detailBody [data-act="dCopyDiagnostic"]').click();
     check('A4 点击复制诊断摘要产生脱敏内容', await page.evaluate(() => window.__copied.includes('诊断摘要') && !/https?:\/\/[^\s]*\?/.test(window.__copied)));
     await page.click('#dClose');
+    const multi = await page.evaluate(() => { const s = App.state.stations.find(x => !x.hidden && x.u.length > 1 && !(x.dis || []).includes(1)); return { key: s.c + '|' + s.n, name: s.n, identity: s.u[0], source: s.u[1] }; });
+    await page.fill('#q', multi.name);
+    await page.locator('[data-more]').filter({ has: page.locator('svg') }).first().waitFor();
+    const detailButton = page.locator('[data-more]').filter({ has: page.locator('svg') });
+    let match = null;
+    for (let i = 0; i < await detailButton.count(); i++) if (await detailButton.nth(i).getAttribute('data-more') === multi.key) { match = detailButton.nth(i); break; }
+    assert(match, '多源电台详情入口可见'); await match.click();
+    await page.waitForFunction(() => !App.detail.loading && App.detail.results.some(Boolean));
+    await page.evaluate(m => {
+      Player.srcMem[m.identity] = { i: 1, t: Date.now() }; Store.set('radio.srcmem2', JSON.stringify(Player.srcMem));
+      const s = App.detailStation(); QualityStore.stations[m.identity] = { sources: { [m.source]: { lastOkAt: Date.now() } } };
+      window.__playCalls = []; const orig = Player.play; Player.play = function (station, index) { window.__playCalls.push({ identity: station.u[0], index }); return orig.apply(this, arguments); };
+      App.renderDetail();
+    }, multi);
+    await page.locator('#detailBody [data-act="dPlay"][data-i="1"]').click();
+    check('A5 换源按钮调用真实播放链并指定第二源', await page.evaluate(m => window.__playCalls.some(x => x.identity === m.identity && x.index === 1) && Player.station.u[0] === m.identity && Player.curSi === 1, multi));
+    await page.locator('#detailBody [data-act="dResetMem"]').click();
+    check('A6 恢复默认清除源记忆并持久化', await page.evaluate(m => !Player.srcMem[m.identity] && !JSON.parse(Store.get('radio.srcmem2') || '{}')[m.identity], multi));
+    await page.locator('#detailBody [data-act="dSuccessful"]').click();
+    check('A7 播放有成功记录的源指定正确源', await page.evaluate(m => window.__playCalls.length >= 2 && window.__playCalls[window.__playCalls.length - 1].identity === m.identity && window.__playCalls[window.__playCalls.length - 1].index === 1 && Player.curSi === 1, multi));
+    await page.evaluate(() => Player.stop()); await page.click('#dClose'); await page.fill('#q', '');
 
     // —— [M] 维护离开三选（dirty → 保存/放弃/继续）——
     console.log('[M] 维护离开三选');

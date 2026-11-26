@@ -2211,7 +2211,10 @@ const App = {
       const ct = String(q.headers && q.headers.get ? q.headers.get('content-type') || '' : '').toLowerCase();
       const len = Number(q.headers && q.headers.get ? q.headers.get('content-length') || 0 : 0);
       if (len > 8192 || (ct && !ct.includes('application/json'))) throw Error('bad response');
-      const text = await q.text(); if (text.length > 8192) throw Error('large response');
+      let text = '', reader = q.body && q.body.getReader ? q.body.getReader() : null;
+      if (!reader) throw Error('stream unavailable');
+      let total = 0;
+      for (;;) { const part = await reader.read(); if (part.done) break; total += part.value.byteLength; if (total > 8192) { try { await reader.cancel(); } catch (_) {} throw Error('large response'); } text += new TextDecoder().decode(part.value, {stream:true}); }
       const res = JSON.parse(text);
       $('status').textContent = res && res.ok ? `已加入个人电台：${r.name}` : '加入失败：探活未通过或服务不可用';
       if (res && res.ok) this.reloadMain();

@@ -17,6 +17,17 @@ internal object SyncBarrier {
     if (!marker.isFile) writeTextAtomic(marker, "pending")
     if (!marker.isFile) throw IOException("端内同步屏障写入失败")
   }
+  fun logoRetryPending(dir: File): Boolean = File(dir, "full-sync-logo-retry").exists()
+  fun prepareLogoRetry(dir: File, logosWritten: Boolean, delete: (File) -> Boolean = { it.delete() }) {
+    val retry = File(dir, "full-sync-logo-retry")
+    val light = File(dir, "light-update.pending")
+    if (logosWritten) {
+      if (retry.exists() && (!delete(retry) || retry.exists())) throw IOException("台标待复核标记清理失败，请重试端内同步")
+    } else if (light.exists() && !retry.isFile) {
+      writeTextAtomic(retry, "pending")
+      if (!retry.isFile) throw IOException("台标待复核标记写入失败，请重试端内同步")
+    }
+  }
   fun finish(dir: File, delete: (File) -> Boolean = { it.delete() }) {
     val light = File(dir, "light-update.pending")
     if (light.exists() && (!delete(light) || light.exists())) throw IOException("旧轻更新标记清理失败，请重试端内同步")

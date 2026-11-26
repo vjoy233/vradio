@@ -48,3 +48,8 @@ fun lightUpdateMessage(r: LightUpdate.Result, metaBound: Boolean): String {
 /** 仅存在同步屏障时提示可能的内存/磁盘差异和恢复路径。 */
 fun syncFailureMessage(why: String, barrier: Boolean): String =
   "同步未完成：$why" + if (barrier) "；数据可能已部分写入，请重启应用以载入磁盘数据，再重新执行端内同步" else ""
+
+fun logoRetryNotice(pending: Boolean): String =
+  if (pending) "台标可能仍需更新；可重新执行端内同步修复台标" else ""
+
+fun metadataUnavailable(parsed: Boolean, bound: Boolean): Boolean = !parsed || !bound

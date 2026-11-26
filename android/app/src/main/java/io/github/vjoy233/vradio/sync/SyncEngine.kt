@@ -162,6 +162,7 @@ class SyncEngine(private val gh: Gh, private val check: CheckStream, private val
       } catch (_: Exception) { log("logos.txt 写入失败（不影响电台列表）") }
     }
     // 全部资产写入结束后废弃旧轻更新重试意图，最后移除屏障。
+    SyncBarrier.prepareLogoRetry(filesDir, logosCount >= 0)
     SyncBarrier.finish(filesDir)
     val delta = after - before
     val diffTxt = if (addedNames.isNotEmpty() || removedNames.isNotEmpty()) "；新增 ${addedNames.size}、消失 ${removedNames.size}" else ""

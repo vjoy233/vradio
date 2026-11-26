@@ -2058,7 +2058,7 @@ const App = {
         if (!response.ok || !j || !Array.isArray(j.results) || !j.results.length) throw new Error('诊断响应无效');
         for (const i of batch) {
           const r = j.results.find(r => norm(urls[i]) === r.url || urls[i] === r.url);
-          if (r && valid()) { this.detail.results[i] = r; QualityStore.recordDiagnostic(identity, r, 'manual'); }
+          if (r && valid()) { this.detail.results[i] = r; QualityStore.recordDiagnostic(identity, Object.assign({}, r, { url: urls[i] }), 'manual'); }
           else if (valid()) this.detail.results[i] = { url: norm(urls[i]) || urls[i], code: 'INVALID_URL', ok: false }; // 成功响应中被服务端过滤，非探测结果，不写质量样本
         }
       }
@@ -2077,7 +2077,7 @@ const App = {
       const j = await response.json();
       if (!valid()) return;
       const r = j && Array.isArray(j.results) && j.results.find(x => { try { return new URL(url).href === x.url; } catch (_) { return url === x.url; } });
-      if (response.ok && r && valid()) { this.detail.results = this.detail.results.slice(); this.detail.results[i] = r; QualityStore.recordDiagnostic(identity, r, 'manual'); }
+      if (response.ok && r && valid()) { this.detail.results = this.detail.results.slice(); this.detail.results[i] = r; QualityStore.recordDiagnostic(identity, Object.assign({}, r, { url }), 'manual'); }
       else if (response.status === 400 && j && j.detail === '仅允许公网 http(s) 地址' && valid()) { this.detail.results = this.detail.results.slice(); this.detail.results[i] = { url: (() => { try { return new URL(url).href; } catch (_) { return url; } })(), code: 'INVALID_URL', ok: false }; }
       else if (valid()) this.detail.error = '诊断无结果';
     } catch (e) { if (valid()) this.detail.error = '诊断请求失败：' + (e && e.message || e); }

@@ -192,7 +192,7 @@ async function run(chromium) {
     // —— [D] 发现卡真实点击：沿用 Player、筛选不变；不连接公网 ——
     console.log('[D] 本地发现播放与筛选');
     const prior = await page.evaluate(() => { App.state.cat = App.state.stations[0].c; return {cat: App.state.cat, scope: App.state.scope, keyword: App.state.keyword}; });
-    await page.click('#discBtn');
+    await page.click('#sideMore'); await page.click('#discBtn');
     await page.waitForSelector('#discBody .discrow');
     const disc = await page.evaluate(() => {
       const k = document.querySelector('#discBody .discrow').dataset.k;

@@ -561,7 +561,8 @@ const App = {
   metaPipe: null,  // 曲讯事件管线（B3-A）：boot 创建（Metadata.mpCreate）——世代校验/清洗/同曲去重/入史决策的唯一所在
   metaV2: false,   // sink 选择（boot 按 FEATURES.metadataV2 定格）：false=Legacy（现状行为）/true=V2（归一化字段消费），绝不双写
   metaLast: null,  // V2 sink 记的最近一次归一化事件（artist/track/program 供统计/发现派生；Legacy 不写）
-  metaCache: null, // radio-meta.json 懒加载缓存（B3-C 发现页「最近新增」；file:// 无 script 包装 → null 该组为空）
+  metaCache: null, // 仅绑定当前主列表且经 manifest 双哈希验证的元数据
+  metaMain: null, metaEpoch: 0,
   revives: new Map(), // dead→可用 状态转移记录（B3-C「最近恢复」唯一依据）：身份 URL → 时间戳，7 天过期，无记录不猜测
 
   /* ---------- 持久化（localStorage 全部容错读取 + 旧格式迁移） ---------- */
@@ -683,6 +684,7 @@ const App = {
 
   /* ---------- 数据装配（决策 B/C）：主列表 replace + STARTER 精选层（按精确名去重）+ 个人层常驻 ---------- */
   applySources(mainList, myList) {
+    this.metaCache = null; this.metaMain = null; this.metaEpoch++;
     const byKey = new Map(), byName = new Set();
     const starterNames = new Set(STARTER.map(x => x.n)), starterUrls = new Set(); // B3 originMask：精选身份 URL/精确名集合
     for (const st of STARTER) for (const u of st.u) starterUrls.add(u);
@@ -764,6 +766,7 @@ const App = {
     if (my === null) { myL = this._myKeep || []; this.toast('个人电台列表刷新失败，已保留当前显示'); }
     else { myL = this.parse(my); this._myKeep = myL; }
     this.applySources(this.parse(main), myL);
+    this.metaMain = main; // 绑定实际装配的字节文本；非 HTTP/备用数据不使用公共 meta
     return true;
   },
 
@@ -2185,12 +2188,26 @@ const App = {
     $('discovery').hidden = false;
     $('discBody').innerHTML = '<div class="empty">正在生成推荐…</div>';
     $('discClose').focus();
-    if (!this.metaCache) this.metaCache = await this.loadMeta(); // 懒加载一次（radio-meta.json 静态文件，非 dotfile/data 段天然可 GET）
-    this.renderDiscovery();
+    if (!this.metaCache) {
+      const epoch = this.metaEpoch, main = this.metaMain;
+      const meta = await this.loadMeta(main);
+      if (epoch === this.metaEpoch && main === this.metaMain) this.metaCache = meta;
+    }
+    if (!$('discovery').hidden) this.renderDiscovery();
   },
-  async loadMeta() { // file://：meta 无经典 script 包装不可读 → null（「最近新增」为空，其余组不受影响）
-    if (!location.protocol.startsWith('http')) return null;
-    try { return await fetch('radio-meta.json').then(r => r.ok ? r.json() : null); } catch (_) { return null; }
+  async loadMeta(main) { // 缺 crypto/manifest、批次混态或时序竞争均保守不展示公共来源
+    if (!location.protocol.startsWith('http') || typeof main !== 'string' || !globalThis.crypto || !crypto.subtle) return null;
+    try {
+      const get = async p => { const r = await fetch(p + '?t=' + Date.now(), { cache:'no-store' }); if (!r.ok) throw Error('fetch'); return r.text(); };
+      const manifest = JSON.parse(await get('sync-manifest.json'));
+      const raw = await get('radio-meta.json');
+      const hash = async text => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))), x => x.toString(16).padStart(2, '0')).join('');
+      const files = Array.isArray(manifest.files) ? manifest.files : [];
+      const radio = files.find(x => x.path === 'radio.txt'), meta = files.find(x => x.path === 'radio-meta.json');
+      if (!radio || !meta || await hash(main) !== radio.sha256 || await hash(raw) !== meta.sha256) return null;
+      const parsed = JSON.parse(raw);
+      return parsed && parsed.v === 1 && parsed.stations && typeof parsed.stations === 'object' ? parsed : null;
+    } catch (_) { return null; }
   },
   closeDiscovery() {
     if ($('discovery').hidden) return;

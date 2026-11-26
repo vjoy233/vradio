@@ -128,8 +128,8 @@ async function boot(opts) {
       try { srv.kill(); } catch (_) {}
       const i = cleanups.indexOf(cleanup); if (i >= 0) cleanups.splice(i, 1);
       await new Promise(ok => {
-        if (srv.exitCode !== null) return ok();
-        const hard = setTimeout(() => { try { srv.kill('SIGKILL'); } catch (_) {} setTimeout(ok, 300); }, 1500);
+        if (srv.exitCode !== null || srv.signalCode !== null) return ok();
+        const hard = setTimeout(() => { try { srv.kill('SIGKILL'); } catch (_) {} }, 1500);
         srv.once('exit', () => { clearTimeout(hard); ok(); });
       });
       if (ownsRoot) rmRoot(root);

@@ -2177,7 +2177,8 @@ const App = {
     $('discClose').focus();
     if (!this.metaCache) this.metaCache = await this.loadMeta(); // 懒加载一次（radio-meta.json 静态文件，非 dotfile/data 段天然可 GET）
     if (FEATURES.discoverySidecar && !this.discoverySidecar && window.DiscoverySidecar) {
-      this.discoverySidecar = await DiscoverySidecar.load(u => fetch(u), 'radio-discovery.json');
+      const rows = await DiscoverySidecar.load((u, opts) => fetch(u, opts), 'radio-discovery.json');
+      if (rows.length) this.discoverySidecar = rows;
     }
     this.renderDiscovery();
     if (FEATURES.discoverySidecar && this.discoverySidecar && this.discoverySidecar.length) this.renderDiscoverySidecar();
@@ -2195,7 +2196,7 @@ const App = {
   renderDiscoverySidecar() {
     const host = $('discBody'); if (!host) return;
     const rows = this.discoverySidecar || [];
-    const html = '<div class="dsec"><b>精选候选（需手动加入）</b><span class="srcs">独立来源，不改变主库</span></div>' + rows.slice(0, 300).map((r, i) => `<button type="button" class="btn mbtn discrow" data-sidecar="${i}"><span class="dn">${this.esc(r.name)}</span><span class="badge">${this.esc(r.genre || '精选')}</span><span class="srcs">试听/加入个人电台</span></button>`).join('');
+    const html = '<div class="dsec"><b>精选候选（需手动加入）</b><span class="srcs">独立来源，来源信息仅格式校验，未验证真实性</span></div>' + rows.slice(0, 300).map((r, i) => `<button type="button" class="btn mbtn discrow" data-sidecar="${i}"><span class="dn">${this.esc(r.name)}</span><span class="badge">${this.esc(r.genre || '精选')}</span><span class="srcs">探活并加入个人电台</span></button>`).join('');
     host.insertAdjacentHTML('beforeend', html);
     host.querySelectorAll('[data-sidecar]').forEach(b => b.onclick = () => this.addDiscoveryStation(rows[+b.dataset.sidecar]));
   },

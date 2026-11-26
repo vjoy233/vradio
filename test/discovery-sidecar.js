@@ -1,10 +1,20 @@
 const assert = require('assert');
 const S = require('../discovery-sidecar');
-assert.deepStrictEqual(S.normalize({v:1,items:[{name:' A\nB ',url:'https://x/a'},{name:'bad',url:'javascript:x'},{name:'dup',url:'https://x/a'}]}), []);
-assert.deepStrictEqual(S.normalize({v:2,items:[]}), []);
-assert.deepStrictEqual(S.normalize({v:1,source:'recommended-radio-streams',license:'CC0-1.0',commit:'abc',items:[{name:'x',url:'https://x'}]}), [{name:'x',url:'https://x',genre:'',upstream:'recommended-radio-streams',commit:''}]);
+const sha = 'a'.repeat(40), raw = {v:1,source:'recommended-radio-streams',license:'CC0-1.0',commit:sha,items:[{name:'x',url:'https://x'}]};
+assert.equal(S.normalize(raw).length, 1);
+assert.deepStrictEqual(S.normalize({...raw,commit:'abc'}), []);
+assert.deepStrictEqual(S.normalize({...raw,license:'invalid'}), []);
+assert.deepStrictEqual(S.normalize({...raw,items:[{name:'x',url:'https://x',commit:'b'.repeat(40)}]}), []);
 (async()=>{
-  assert.deepStrictEqual(await S.load(async()=>new Promise(()=>{}), 'x', 5), []);
-  assert.deepStrictEqual(await S.load(async()=>({ok:false}), 'x'), []);
-  console.log('discovery-sidecar: 4 passed');
-})().catch(e=>{ console.error(e); process.exitCode=1; });
+  let aborted = false;
+  assert.deepStrictEqual(await S.load((u,o)=>{o.signal.addEventListener('abort',()=>aborted=true);return new Promise(()=>{});}, 'x', 5), []);
+  assert(aborted);
+  let cancelled = false;
+  const response = data => ({ok:true,headers:{get:k=>k==='content-type'?'application/json':null},body:{getReader:()=>({read:async()=>data.shift() || {done:true},cancel:async()=>{cancelled=true;}})}});
+  assert.deepStrictEqual(await S.load(async()=>response([{value:new Uint8Array(512*1024+1),done:false}]), 'x'), []);
+  assert(cancelled);
+  const bytes = new TextEncoder().encode(JSON.stringify(raw));
+  assert.equal((await S.load(async()=>response([{value:bytes,done:false}]),'x')).length,1);
+  assert.deepStrictEqual(await S.load(async()=>({ok:true,headers:{get:()=>null}}), 'x'), []);
+  console.log('discovery-sidecar: safety tests passed');
+})().catch(e=>{console.error(e);process.exitCode=1;});

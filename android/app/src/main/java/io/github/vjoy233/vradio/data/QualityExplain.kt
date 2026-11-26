@@ -22,8 +22,9 @@ fun qExplain(summary: QualityStore.QualityAggregate?, now: Long): QualityExplana
 }
 
 fun diagnosticAction(code: String?, httpStatus: Int?): QualityExplanation {
-  if (code == "OK") return QualityExplanation("good", "none", "ok")
+  // 字节门可能在 401/403 下仍判 OK；保留真实 code，优先提示检查服务配置。
   if (httpStatus == 401 || httpStatus == 403) return QualityExplanation("unknown", "configure", "service_refused")
+  if (code == "OK") return QualityExplanation("good", "none", "ok")
   val (action, reason) = when (code) {
     "NETWORK" -> "retry" to "network"
     "HTML" -> "check_source" to "html"

@@ -2180,6 +2180,7 @@ const App = {
       this.discoverySidecar = await DiscoverySidecar.load(u => fetch(u), 'radio-discovery.json');
     }
     this.renderDiscovery();
+    if (FEATURES.discoverySidecar && this.discoverySidecar && this.discoverySidecar.length) this.renderDiscoverySidecar();
   },
   async loadMeta() { // file://：meta 无经典 script 包装不可读 → null（「最近新增」为空，其余组不受影响）
     if (!location.protocol.startsWith('http')) return null;
@@ -2190,6 +2191,20 @@ const App = {
     $('discovery').hidden = true;
     const b = this.dscOpener && this.dscOpener.isConnected ? this.dscOpener : null;
     if (b && b.focus) b.focus();
+  },
+  renderDiscoverySidecar() {
+    const host = $('discBody'); if (!host) return;
+    const rows = this.discoverySidecar || [];
+    const html = '<div class="dsec"><b>精选候选（需手动加入）</b><span class="srcs">独立来源，不改变主库</span></div>' + rows.slice(0, 300).map((r, i) => `<button type="button" class="btn mbtn discrow" data-sidecar="${i}"><span class="dn">${this.esc(r.name)}</span><span class="badge">${this.esc(r.genre || '精选')}</span><span class="srcs">试听/加入个人电台</span></button>`).join('');
+    host.insertAdjacentHTML('beforeend', html);
+    host.querySelectorAll('[data-sidecar]').forEach(b => b.onclick = () => this.addDiscoveryStation(rows[+b.dataset.sidecar]));
+  },
+  async addDiscoveryStation(r) {
+    if (!r || !/^https?:\/\//.test(r.url) || !confirm(`将「${r.name}」加入个人电台并先探活？`)) return;
+    if (!location.protocol.startsWith('http')) { $('status').textContent = 'file:// 无法写入个人电台，请使用 npm start'; return; }
+    const res = await fetch('/api/mystation', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({n:r.name,u:r.url,c:'精选'})}).then(x=>x.json()).catch(()=>null);
+    $('status').textContent = res && res.ok ? `已加入个人电台：${r.name}` : '加入失败：探活未通过或服务不可用';
+    if (res && res.ok) this.reloadMain();
   },
   renderDiscovery() {
     const d = buildDiscovery({

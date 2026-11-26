@@ -8,7 +8,7 @@ assert(app.includes('val gate by vm.netGate.collectAsState()'), '网络确认在
 assert(app.includes('onOk = vm::proceedGate, onDismiss = vm::cancelGate'), '根页面确认或取消网络门');
 assert(!settings.includes('val gate by vm.netGate.collectAsState()'), '设置页不重复展示确认');
 assert(vm.includes('fun syncFromFreshness() { freshnessPrompt.value = false; fullSyncNow() }'), '提醒走手动同步策略门');
-assert(vm.includes('freshnessPref.value = Freshness.parse(Store.get(C.K_SYNC_FRESHNESS))\n            freshnessPrompt.value = false'), '导入成功刷新偏好');
+assert(/freshnessPref\.value = Freshness\.parse\(Store\.get\(C\.K_SYNC_FRESHNESS\)\)\s+freshnessPrompt\.value = false/.test(vm), '导入成功刷新偏好');
 for (const fn of ['setFreshnessDays', 'disableFreshness', 'dismissFreshness']) {
   const line = vm.split('\n').find(s => s.includes('fun ' + fn + '('));
   assert(line && line.includes('Freshness.parse(Store.get(C.K_SYNC_FRESHNESS))'), fn + ' 写前读最新偏好');

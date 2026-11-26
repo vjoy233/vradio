@@ -19,7 +19,7 @@ class PlaybackServiceSmokeTest {
   @get:Rule val guard = TestUtil.dataGuard()
 
   @Test
-  fun `service session可连接且默认不自动播放`() {
+  fun serviceSessionConnectsWithoutAutoplay() {
     val ctx = InstrumentationRegistry.getInstrumentation().targetContext
     val token = SessionToken(ctx, android.content.ComponentName(ctx, PlaybackService::class.java))
     val future = MediaController.Builder(ctx, token).buildAsync()

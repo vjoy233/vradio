@@ -1983,12 +1983,14 @@ const App = {
   /* ---------- 详情中心（B1，plan-expansion-r4 §5.3）：台信息 + 逐源诊断 + 源生命周期动作 + 歌曲历史。
      入口 = 列表行/网格卡「⋯」按钮、footer ⓘ 按钮、⚙ 面板源管理「详情」；探活走 /api/check?detail=1（≤4/批）。 ---------- */
   detail: { stationKey: '', results: [], loading: false, error: '', openedAt: 0 },
+  detailGeneration: 0, // 独立单调世代；关闭、重开和每次诊断均作废旧请求
   dOpener: null, // 打开时焦点（关闭归还，同 manage 面板口径）
   detailStation() { return this.state.stations.find(x => keyOf(x) === this.detail.stationKey); },
   openDetail(s) {
     const d = this.mEditor && this.mEditor.getDraft();
     if (d && !(d.kind === 'src' && d.identityUrl === s.u[0])) // 开别的台详情：他台草稿先过三选门（§5.3，AIbot P1）
       return this.mDepart(() => { this.mEditorEnd(); this.openDetail(s); }); // stay=中止不打开；保存/放弃后才关旧草稿换台
+    this.detailGeneration++;
     this.detail = { stationKey: keyOf(s), results: [], loading: false, error: '', openedAt: Date.now() };
     this.dOpener = document.activeElement;
     $('detail').hidden = false;
@@ -1998,6 +2000,7 @@ const App = {
     this.checkStationSources(s); // 打开即诊断全部源（file:// 下给出降级提示）
   },
   closeDetail() { // 原始关闭（离开流程批准后调用）
+    this.detailGeneration++;
     if ($('detail').hidden) return;
     $('detail').hidden = true;
     const b = this.dOpener && this.dOpener.isConnected ? this.dOpener : null;
@@ -2025,66 +2028,71 @@ const App = {
   /* 逐源诊断（B1）：>4 源分批（服务端单次放大面 4 封顶不变）；名单走 diagIdx（禁用源不发请求 + 每台 6 封顶，
      review P1）；结果按 new URL 归一化回绑 u 空间索引（safeTarget 归一 = new URL().href，客户端同款归一可精确
      对上）；被护栏拒收的 URL 本地落 INVALID_URL 占位 */
+  detailRequest(s) {
+    const generation = ++this.detailGeneration, stationKey = keyOf(s), urls = s.u.slice();
+    return () => {
+      const current = this.detailStation();
+      return generation === this.detailGeneration && !$('detail').hidden && this.detail.stationKey === stationKey &&
+        current && current.u.length === urls.length && current.u.every((u, i) => u === urls[i]);
+    };
+  },
   async checkStationSources(s) {
-    const k = keyOf(s);
-    if (this.detail.stationKey !== k) return;
-    if (!location.protocol.startsWith('http')) { this.detail.error = 'file:// 降级模式无后端，诊断不可用——npm start 后可用'; this.renderDetail(); return; }
+    if ($('detail').hidden || this.detail.stationKey !== keyOf(s)) return;
+    const valid = this.detailRequest(s), urls = s.u.slice(), identity = urls[0];
+    if (!valid()) return;
+    if (!location.protocol.startsWith('http')) { this.detail.loading = false; this.detail.error = 'file:// 降级模式无后端，诊断不可用——npm start 后可用'; this.renderDetail(); return; }
     const idx = this.diagIdx(s), norm = x => { try { return new URL(x).href; } catch (_) { return null; } };
-    this.detail.loading = true; this.detail.error = '';
-    this.detail.results = new Array(s.u.length);
-    this.renderDetail();
+    this.detail.loading = true; this.detail.error = ''; this.detail.results = new Array(urls.length); this.renderDetail();
     try {
       for (let b = 0; b < idx.length; b += 4) {
-        const batch = idx.slice(b, b + 4);
-        const qs = batch.map(i => 'url=' + encodeURIComponent(s.u[i])).join('&');
-        const j = await fetch('/api/check?detail=1&' + qs).then(x => x.json());
-        if (this.detail.stationKey !== k) return; // 诊断期间切了台/重开详情：丢弃过期结果
+        const batch = idx.slice(b, b + 4), qs = batch.map(i => 'url=' + encodeURIComponent(urls[i])).join('&');
+        const response = await fetch('/api/check?detail=1&' + qs);
+        if (!valid()) return;
+        const j = await response.json();
+        if (!valid()) return;
         for (const r of (j && Array.isArray(j.results) ? j.results : [])) {
-          const bi = batch.findIndex(i => norm(s.u[i]) === r.url || s.u[i] === r.url);
-          if (bi >= 0) this.detail.results[batch[bi]] = r;
+          const i = batch.find(i => norm(urls[i]) === r.url || urls[i] === r.url);
+          if (i !== undefined && valid()) { this.detail.results[i] = r; QualityStore.recordDiagnostic(identity, r, 'manual'); }
         }
-        batch.forEach(i => { // 服务端 safeTarget 拒收（私网/非 http）→ 无结果：本地 INVALID_URL 占位
-          if (!this.detail.results[i]) {
-            const h = /\.m3u8?(\?|$)/i.test(s.u[i]);
-            this.detail.results[i] = { url: s.u[i], ok: false, code: 'INVALID_URL', hls: h, mode: h ? 'hls' : 'direct',
-              httpStatus: 0, contentType: '', bytes: 0, latencyMs: 0, why: '地址被服务端安全护栏拒收（仅公网 http(s)）', checkedAt: Date.now() };
-          }
-        });
       }
-    } catch (e) {
-      if (this.detail.stationKey === k) this.detail.error = '诊断请求失败：' + (e && e.message || e);
-    }
-    if (this.detail.stationKey === k) {
-      this.detail.loading = false;
-      for (const r of this.detail.results) if (r) QualityStore.recordDiagnostic(s.u[0], r, 'manual'); // B2：手动逐源诊断样本
-      this.renderDetail();
-    }
+    } catch (e) { if (valid()) this.detail.error = '诊断请求失败：' + (e && e.message || e); }
+    finally { if (valid()) { this.detail.loading = false; this.renderDetail(); } }
   },
-  async recheckSource(s, i) { // 单源复诊（详情源行「诊断」）：禁用源不发请求（B1 拍板——显示禁用原因 + 取消禁用入口）
-    if ((s.dis || []).includes(i)) return;
-    if (!location.protocol.startsWith('http')) { this.detail.error = 'file:// 降级模式无后端，诊断不可用——npm start 后可用'; this.renderDetail(); return; }
-    const k = keyOf(s);
-    this.detail.loading = true; this.renderDetail();
+  async recheckSource(s, i) {
+    if ($('detail').hidden || this.detail.stationKey !== keyOf(s) || !s.u[i] || (s.dis || []).includes(i)) return;
+    const valid = this.detailRequest(s), url = s.u[i], identity = s.u[0];
+    if (!valid()) return;
+    if (!location.protocol.startsWith('http')) { this.detail.loading = false; this.detail.error = 'file:// 降级模式无后端，诊断不可用——npm start 后可用'; this.renderDetail(); return; }
+    this.detail.loading = true; this.detail.error = ''; this.renderDetail();
     try {
-      const j = await fetch('/api/check?detail=1&url=' + encodeURIComponent(s.u[i])).then(x => x.json());
-      if (this.detail.stationKey !== k) return;
-      const r = j && Array.isArray(j.results) && j.results[0];
-      if (r) { this.detail.results = this.detail.results.slice(); this.detail.results[i] = r; QualityStore.recordDiagnostic(s.u[0], r, 'manual'); } // B2 诊断样本
-      else this.detail.error = '诊断无结果';
-    } catch (e) { if (this.detail.stationKey === k) this.detail.error = '诊断请求失败：' + (e && e.message || e); }
-    if (this.detail.stationKey === k) { this.detail.loading = false; this.renderDetail(); }
+      const response = await fetch('/api/check?detail=1&url=' + encodeURIComponent(url));
+      if (!valid()) return;
+      const j = await response.json();
+      if (!valid()) return;
+      const r = j && Array.isArray(j.results) && j.results.find(x => { try { return new URL(url).href === x.url; } catch (_) { return url === x.url; } });
+      if (r && valid()) { this.detail.results = this.detail.results.slice(); this.detail.results[i] = r; QualityStore.recordDiagnostic(identity, r, 'manual'); }
+      else if (valid()) this.detail.error = '诊断无结果';
+    } catch (e) { if (valid()) this.detail.error = '诊断请求失败：' + (e && e.message || e); }
+    finally { if (valid()) { this.detail.loading = false; this.renderDetail(); } }
   },
-  copySource(url) { // 复制源地址：clipboard API 优先（localhost 属安全上下文），旧接口兜底
-    const done = () => { $('status').textContent = '已复制源地址'; };
-    if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(url).then(done, () => this.copyFallback(url, done));
-    this.copyFallback(url, done);
+  async copyText(text) {
+    try { if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(text); return true; } } catch (_) {}
+    let t;
+    try {
+      t = document.createElement('textarea'); t.value = text; t.style.position = 'fixed'; t.style.opacity = '0';
+      document.body.appendChild(t); t.select(); return !!document.execCommand('copy');
+    } catch (_) { return false; } finally { if (t) t.remove(); }
   },
-  copyFallback(url, done) {
-    const t = document.createElement('textarea');
-    t.value = url; t.style.position = 'fixed'; t.style.opacity = '0';
-    document.body.appendChild(t); t.select();
-    try { if (document.execCommand('copy')) done(); } catch (_) {}
-    t.remove();
+  async copySource(url) { const ok = await this.copyText(url); this.toast(ok ? '已复制源地址' : '复制源地址失败'); return ok; },
+  async copyDiagnostic(s) {
+    const lines = ['诊断摘要（台名和分类可能包含个人信息，请审阅后分享）', '电台：' + s.n, '分类：' + s.c];
+    s.u.forEach((url, i) => {
+      let safe = '地址已隐藏';
+      try { const u = new URL(url); if (u.protocol === 'http:' || u.protocol === 'https:') safe = u.protocol + '//' + u.host + '/（路径已隐藏）'; } catch (_) {}
+      const r = this.detail.results.find(x => { if (!x) return false; try { return new URL(url).href === x.url; } catch (_) { return url === x.url; } });
+      lines.push('源 ' + (i + 1) + '：' + safe + (r ? ' · ' + (['OK','NETWORK','HTML','HTTP','EMPTY_PLAYLIST','NO_SEGMENT','SHORT_BODY','REDIRECT_REJECTED','INVALID_URL'].includes(r.code) ? r.code : 'UNKNOWN') : ' · 未诊断'));
+    });
+    const ok = await this.copyText(lines.join('\n')); this.toast(ok ? '已复制诊断摘要，请审阅台名和分类后分享' : '复制诊断摘要失败'); return ok;
   },
   playSource(s, i) { this.startPlay(s, i); this.renderDetail(); }, // 详情不关：底部栏可见连接进展，可连续试源
   /* 质量摘要片段（B2）：QualityStore.summary（与 Android 冻结口径一致的四档稳定性）——稳定性徽标 +
@@ -2098,7 +2106,7 @@ const App = {
     const rate = total ? Math.round(100 * qa.okCount / total) : 0;
     const icy = { icy: '有曲讯（直流）', none: '无曲讯', mixed: '混合源' }[qa.metadata] || qa.metadata;
     return `<div class="srcs" style="padding:2px 0 6px">
-      <span class="badge ${cls}" title="stability: ${this.esc(qa.stability)}（近 30 天成功率/延迟/连续失败综合）">● ${Q_TXT[qa.stability] || qa.stability}</span>
+      <span class="badge ${cls}" title="stability: ${this.esc(qa.stability)}（累计成功率/延迟/连续失败综合）">● ${Q_TXT[qa.stability] || qa.stability}</span>
       成功率 ${rate}%（${qa.okCount}/${total}）· 平均延迟 ${qa.avgLatencyMs}ms · 断流 ${qa.disconnects} 次 · ${icy}
       · 最近播放 ${qa.lastPlaybackAt ? this.fmtAgo(qa.lastPlaybackAt) : '—'}
     </div>`;
@@ -2114,7 +2122,7 @@ const App = {
     let songs; try { songs = JSON.parse(Store.get('radio.songs') || '{}')[s.u[0]] || []; } catch (_) { songs = []; }
     const dv = this.dSrcRows(s), dis = dv.dis, urls = dv.urls; // 源行序/禁用/标签：草稿在编时随草稿实时（含待保存追加，review-r2 P1）
     const pendU = new Set(dv.pends || []);
-    const rmap = {}; (this.detail.results || []).forEach((r, ri) => { if (r) rmap[s.u[ri]] = r; }); // 诊断结果按 URL 回绑：草稿行序与 s.u 下标不同空间
+    const rmap = {}; (this.detail.results || []).forEach(r => { if (r) s.u.forEach(u => { try { if (new URL(u).href === r.url) rmap[u] = r; } catch (_) { if (u === r.url) rmap[u] = r; } }); }); // 结果依 URL 回绑，不把旧下标误归到更换后的源
     const onU = on && st.sourceIndex >= 0 ? s.u[st.sourceIndex] : null, memU = on && st.srcMemIndex >= 0 ? s.u[st.srcMemIndex] : null; // 徽标按 URL 对齐
     const CODE_TXT = { OK: '可用', NETWORK: '网络失败', HTML: 'HTML 假流', HTTP: 'HTTP 错误', EMPTY_PLAYLIST: '空清单', NO_SEGMENT: '无可用分片', SHORT_BODY: '字节不足', REDIRECT_REJECTED: '重定向被拒', INVALID_URL: '地址不合法' };
     const rows = [...dv.order, ...dv.dis].slice(0, SRC_CAP).map(i => { // 每台 6 封顶（与装配/批量诊断同口径，review P1）
@@ -2151,7 +2159,7 @@ const App = {
         <span class="srcs">${this.esc(s.c)} · ${urls.length} 个源${dv.pends && dv.pends.length ? ` · ${dv.pends.length} 条待保存追加` : ''}${dis.length ? ` · ${dis.length} 个已禁用` : ''}${on && st.connecting ? ' · 连接中…' : on && !Player.isPaused() ? ' · 播放中' : ''}</span>
       </div>${this.favBtn(k, fav, s)}</div>
       ${on ? `<div class="dcur">当前源：${st.sourceIndex >= 0 ? `源 ${st.sourceIndex + 1}` : '—'}${st.variantUrl ? ` · ${st.mode === 'hls' ? 'HLS' : '直流'}` : ''}${st.connecting ? '（连接中）' : ''}</div>` : ''}
-      <div class="dsec"><b>源诊断</b>${this.detail.loading ? '<span class="srcs">诊断中…</span>' : '<button type="button" class="btn mbtn" data-act="dAll">全部诊断</button>'}</div>
+      <div class="dsec"><b>源诊断</b><button type="button" class="btn mbtn" data-act="dCopyDiagnostic" title="地址脱敏；台名和分类可能含个人信息，分享前请审阅">复制诊断摘要</button>${this.detail.loading ? '<span class="srcs">诊断中…</span>' : '<button type="button" class="btn mbtn" data-act="dAll">全部诊断</button>'}</div>
       ${this.detail.error ? `<div class="derr">${this.esc(this.detail.error)}</div>` : ''}
       ${rows}
       <div class="dsec"><b>源管理</b></div>
@@ -2653,7 +2661,8 @@ const App = {
       const s = this.detailStation(); if (!s) return;
       const i = +b.dataset.i, act = b.dataset.act; // i 是 dSrcRows 行序（草稿集合空间，review-r2 P1）
       const u = this.dSrcRows(s).urls[i];
-      if (act === 'dCopy') { if (u) this.copySource(u); }
+      if (act === 'dCopyDiagnostic') this.copyDiagnostic(s);
+      else if (act === 'dCopy') { if (u) this.copySource(u); }
       else if (act === 'dPlay') { // 试听=立即动作；有待保存源先三选（§6.9）。播放/诊断按 URL 回落 s.u 装配下标
         const si = u ? s.u.indexOf(u) : -1; // 待保存追加未入 s.u：行内本就无 ▶，此处兜底
         if (si >= 0) this.mDepart(() => this.playSource(s, si));

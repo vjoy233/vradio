@@ -62,7 +62,8 @@ object SafeTarget {
 /** Test-only seam; production leaves hooks null. */
 internal object AtomicWriteTestHook {
   var rename: ((File, File) -> Boolean)? = null
-  var temp: ((File) -> File)? = null
+  var tempCreate: ((File) -> File)? = null
+  var tempWrite: ((File, String) -> Unit)? = null
 }
 
 private fun rename(from: File, to: File): Boolean {
@@ -76,16 +77,16 @@ private fun rename(from: File, to: File): Boolean {
 private val atomicLocks = java.util.concurrent.ConcurrentHashMap<String, Any>()
 
 /* 统一原子写：同目标进程内串行，独立临时文件，rename 成功才提交；失败直接抛错，旧目标不触碰。
-   仅保留既有 .tmp 路径作为故障注入兼容（目录存在时），生产正常路径使用唯一临时文件。 */
+   生产使用 createTempFile；测试 hook 仅包装创建/写阶段，不改变临时文件策略。 */
 internal fun writeTextAtomic(f: File, text: String) {
   val lock = atomicLocks.computeIfAbsent(f.absolutePath) { Any() }
   synchronized(lock) {
     // Legacy .tmp is used only when an explicit test hook is active; production never reuses
     // crash leftovers or another writer's temporary file.
-    val tmp = AtomicWriteTestHook.temp?.invoke(f)
+    val tmp = AtomicWriteTestHook.tempCreate?.invoke(f)
       ?: File.createTempFile(f.name + ".", ".tmp", f.parentFile)
     try {
-      tmp.writeText(text)
+      AtomicWriteTestHook.tempWrite?.invoke(tmp, text) ?: tmp.writeText(text)
       if (!rename(tmp, f)) throw java.io.IOException("atomic rename failed: ${f.name}")
     } finally {
       if (tmp.exists() && tmp != f) tmp.delete()

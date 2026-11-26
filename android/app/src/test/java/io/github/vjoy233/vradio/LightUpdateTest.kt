@@ -21,7 +21,7 @@ import org.junit.rules.TemporaryFolder
 /* D7 轻更新：判新旧（commits API vs stamp）→ 下载落盘（tmp+rename + stamp.json）→ keyOf 口径 diff
    + addedCheck（欧美两节过滤）。FakeHttp 按 URL 喂罐头，全程离线。 */
 class LightUpdateTest {
-  @After fun clearAtomicHook() { AtomicWriteTestHook.rename = null; AtomicWriteTestHook.temp = null }
+  @After fun clearAtomicHook() { AtomicWriteTestHook.rename = null; AtomicWriteTestHook.tempCreate = null; AtomicWriteTestHook.tempWrite = null }
 
   @get:Rule val tmp = TemporaryFolder()
 
@@ -222,7 +222,7 @@ class LightUpdateTest {
   /** 注入「radio-meta.json.tmp 为目录」：writeTextAtomic 的 tmp.writeText 必抛（Windows/Linux 双平台），
    *  模拟 meta 落盘的磁盘/权限故障，其余文件照常可写。 */
   private fun injectRenameFail(name: String) {
-    AtomicWriteTestHook.temp = { f -> java.io.File(f.parentFile, f.name + ".test-unique.tmp") }
+    
 
     AtomicWriteTestHook.rename = { from, to ->
       if (to.name == name) false else runCatching {
@@ -340,7 +340,7 @@ class LightUpdateTest {
 
   @Test fun temp创建失败安全失败() {
     val dir = tmp.newFolder(); val target = File(dir, "x.txt")
-    AtomicWriteTestHook.temp = { throw java.io.IOException("temp create injected") }
+    AtomicWriteTestHook.tempCreate = { throw java.io.IOException("temp create injected") }
     try { writeTextAtomic(target, "x") ; throw AssertionError("expected failure") }
     catch (_: java.io.IOException) { assertFalse(target.exists()) }
   }
@@ -348,7 +348,7 @@ class LightUpdateTest {
   @Test fun temp写失败安全失败() {
     val dir = tmp.newFolder(); val target = File(dir, "x.txt")
     val temp = File(dir, "unique.tmp")
-    AtomicWriteTestHook.temp = { temp }
+    AtomicWriteTestHook.tempWrite = { _, _ -> throw java.io.IOException("temp write injected") }
     temp.mkdirs()
     try { writeTextAtomic(target, "x") ; throw AssertionError("expected failure") }
     catch (_: java.io.IOException) { assertFalse(target.exists()) }

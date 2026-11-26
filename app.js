@@ -2030,11 +2030,12 @@ const App = {
      对上）；被护栏拒收的 URL 本地落 INVALID_URL 占位 */
   detailRequest(s) {
     const generation = ++this.detailGeneration, stationKey = keyOf(s), urls = s.u.slice();
-    return () => {
+    const session = () => generation === this.detailGeneration && !$('detail').hidden && this.detail.stationKey === stationKey;
+    const valid = () => {
       const current = this.detailStation();
-      return generation === this.detailGeneration && !$('detail').hidden && this.detail.stationKey === stationKey &&
-        current && current.u.length === urls.length && current.u.every((u, i) => u === urls[i]);
+      return session() && current && current.u.length === urls.length && current.u.every((u, i) => u === urls[i]);
     };
+    valid.session = session; return valid;
   },
   async checkStationSources(s) {
     if ($('detail').hidden || this.detail.stationKey !== keyOf(s)) return;
@@ -2050,13 +2051,19 @@ const App = {
         if (!valid()) return;
         const j = await response.json();
         if (!valid()) return;
-        for (const r of (j && Array.isArray(j.results) ? j.results : [])) {
-          const i = batch.find(i => norm(urls[i]) === r.url || urls[i] === r.url);
-          if (i !== undefined && valid()) { this.detail.results[i] = r; QualityStore.recordDiagnostic(identity, r, 'manual'); }
+        if (response.status === 400 && j && j.detail === '仅允许公网 http(s) 地址') {
+          for (const i of batch) if (valid()) this.detail.results[i] = { url: norm(urls[i]) || urls[i], code: 'INVALID_URL', ok: false };
+          continue;
+        }
+        if (!response.ok || !j || !Array.isArray(j.results) || !j.results.length) throw new Error('诊断响应无效');
+        for (const i of batch) {
+          const r = j.results.find(r => norm(urls[i]) === r.url || urls[i] === r.url);
+          if (r && valid()) { this.detail.results[i] = r; QualityStore.recordDiagnostic(identity, r, 'manual'); }
+          else if (valid()) this.detail.results[i] = { url: norm(urls[i]) || urls[i], code: 'INVALID_URL', ok: false }; // 成功响应中被服务端过滤，非探测结果，不写质量样本
         }
       }
     } catch (e) { if (valid()) this.detail.error = '诊断请求失败：' + (e && e.message || e); }
-    finally { if (valid()) { this.detail.loading = false; this.renderDetail(); } }
+    finally { if (valid.session()) { this.detail.loading = false; this.renderDetail(); } }
   },
   async recheckSource(s, i) {
     if ($('detail').hidden || this.detail.stationKey !== keyOf(s) || !s.u[i] || (s.dis || []).includes(i)) return;
@@ -2070,10 +2077,11 @@ const App = {
       const j = await response.json();
       if (!valid()) return;
       const r = j && Array.isArray(j.results) && j.results.find(x => { try { return new URL(url).href === x.url; } catch (_) { return url === x.url; } });
-      if (r && valid()) { this.detail.results = this.detail.results.slice(); this.detail.results[i] = r; QualityStore.recordDiagnostic(identity, r, 'manual'); }
+      if (response.ok && r && valid()) { this.detail.results = this.detail.results.slice(); this.detail.results[i] = r; QualityStore.recordDiagnostic(identity, r, 'manual'); }
+      else if (response.status === 400 && j && j.detail === '仅允许公网 http(s) 地址' && valid()) { this.detail.results = this.detail.results.slice(); this.detail.results[i] = { url: (() => { try { return new URL(url).href; } catch (_) { return url; } })(), code: 'INVALID_URL', ok: false }; }
       else if (valid()) this.detail.error = '诊断无结果';
     } catch (e) { if (valid()) this.detail.error = '诊断请求失败：' + (e && e.message || e); }
-    finally { if (valid()) { this.detail.loading = false; this.renderDetail(); } }
+    finally { if (valid.session()) { this.detail.loading = false; this.renderDetail(); } }
   },
   async copyText(text) {
     try { if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(text); return true; } } catch (_) {}
@@ -2097,6 +2105,11 @@ const App = {
   playSource(s, i) { this.startPlay(s, i); this.renderDetail(); }, // 详情不关：底部栏可见连接进展，可连续试源
   /* 质量摘要片段（B2）：QualityStore.summary（与 Android 冻结口径一致的四档稳定性）——稳定性徽标 +
      成功率/平均延迟/断流/最近播放；质量只做展示，永不替代死台隐藏判定（契约硬点） */
+  successfulSource(s) {
+    const sources = QualityStore.stations && QualityStore.stations[s.u[0]] && QualityStore.stations[s.u[0]].sources || {};
+    return this.diagIdx(s).filter(i => sources[s.u[i]] && sources[s.u[i]].lastOkAt > 0)
+      .sort((a, b) => sources[s.u[b]].lastOkAt - sources[s.u[a]].lastOkAt)[0];
+  },
   qualityHtml(s) {
     const qa = QualityStore.summary(s.u[0], s.u);
     if (!qa) return '<div class="srcs" style="padding:2px 0 6px">暂无质量样本（播放与体检后自动累计）</div>';
@@ -2134,10 +2147,11 @@ const App = {
       const tag = (u === s.u[0] ? '<span class="badge" title="主源（身份键，不可替换/不可删）">主源</span>' : pend ? '<span class="badge" title="探活已通过、点「保存」才并入本台源（取消即丢弃）">追加·待保存</span>' : (s.dU.includes(u) ? '' : '<span class="badge">追加</span>')) + lb
         + (u === onU ? '<span class="badge acc">正在用</span>' : '')
         + (u === memU && u !== onU ? '<span class="badge">源记忆</span>' : '');
+      const refused = r && (r.httpStatus === 401 || r.httpStatus === 403);
       const state = d
         ? '<span class="badge permb">已禁用</span><span class="srcs">该源已被手动禁用，不能诊断</span>'
         : pend ? '<span class="srcs">追加时探活已通过（保存后可诊断/试听）</span>'
-        : r ? `<span class="badge ${r.ok ? 'okb' : 'badb'}" title="code: ${this.esc(r.code)}">${this.esc(CODE_TXT[r.code] || '未知结果')}</span><span class="srcs">${this.esc(ACTION_TXT[diagnosticAction(r.code, r.httpStatus).action])} · 检测于 ${r.checkedAt ? this.fmtAgo(r.checkedAt) : '时间未知'} · ${Number(r.latencyMs) || 0}ms · ${Number(r.bytes) || 0}B · ${this.esc(r.mode || '未知模式')}</span>`
+        : r ? `<span class="badge ${refused ? '' : r.ok ? 'okb' : 'badb'}" title="code: ${this.esc(r.code)}">${this.esc(refused && r.code === 'OK' ? '字节检测通过' : CODE_TXT[r.code] || '未知结果')}</span><span class="srcs">${refused ? `HTTP ${r.httpStatus} · ` : ''}${this.esc(ACTION_TXT[diagnosticAction(r.code, r.httpStatus).action])} · 检测于 ${r.checkedAt ? this.fmtAgo(r.checkedAt) : '时间未知'} · ${Number(r.latencyMs) || 0}ms · ${Number(r.bytes) || 0}B · ${this.esc(r.mode || '未知模式')}</span>`
         : '<span class="srcs">未诊断</span>';
       const acts = [
         d ? `<button type="button" class="btn mbtn" data-act="dUndis" data-i="${i}" title="取消禁用该源（写进本台源草稿，保存后生效）">启用</button>`
@@ -2171,6 +2185,11 @@ const App = {
       </div>
       <div class="dsec"><b>质量摘要</b></div>
       ${this.qualityHtml(s)}
+      <div class="dacts">
+        ${on && st.sourceIndex >= 0 && !(s.dis || []).includes(st.sourceIndex) ? '<button type="button" class="btn mbtn" data-act="dCurrent">重测当前源</button>' : ''}
+        <button type="button" class="btn mbtn" data-act="dAll">重测启用源</button>
+        ${this.successfulSource(s) !== undefined ? '<button type="button" class="btn mbtn" data-act="dSuccessful">播放有成功记录的源</button>' : ''}
+      </div>
       <div class="dsec"><b>歌曲历史（本台最近）</b></div>
       ${songs.length ? songs.map(x => `<div class="shrow">${this.esc(x.t)}</div>`).join('') : '<div class="srcs" style="padding:2px 0 6px">暂无历史（换歌后自动记录）</div>'}`;
   },
@@ -2671,6 +2690,8 @@ const App = {
       }
       else if (act === 'dRecheck') { const si = u ? s.u.indexOf(u) : -1; if (si >= 0) this.recheckSource(s, si); }
       else if (act === 'dAll') this.checkStationSources(s);
+      else if (act === 'dCurrent') { const st = Player.getSourceState(); if (st.station && keyOf(st.station) === keyOf(s) && st.sourceIndex >= 0) this.recheckSource(s, st.sourceIndex); }
+      else if (act === 'dSuccessful') { const si = this.successfulSource(s); if (si !== undefined) this.mDepart(() => this.playSource(s, si)); }
       else if (act === 'dDis' || act === 'dUndis') this.mSrcDetailOp(s, i, act === 'dDis' ? 'dis' : 'undis'); // 启停 → 本台源草稿（§6.9 共用编辑器）
       else if (act === 'dUp') this.mSrcDetailOp(s, i, 'up');
       else if (act === 'dDown') this.mSrcDetailOp(s, i, 'down');

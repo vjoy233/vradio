@@ -51,7 +51,7 @@ class SelfConnectionModelTest {
   }
   private fun close(id: Long) = listOf(SelfConnectionModel.Effect.Close(id))
 
-  @Test fun singleFlightAndConnectedIdempotence() {
+  @Test fun logicalSingleFlightAndConnectedIdempotence() {
     val m = SelfConnectionModel(); val a = begin(m)
     repeat(3) { assertTrue(m.authorized().isEmpty()) }
     assertTrue(m.connected(a).isEmpty())
@@ -82,10 +82,10 @@ class SelfConnectionModelTest {
     assertEquals(close(b), m.disconnected(b))
   }
 
-  @Test fun cancellationAndSynchronousReleaseReentryAreIdempotent() {
+  @Test fun manuallyDeliveredCancellationAndOldDisconnectAreIdempotent() {
     val m = SelfConnectionModel(); val a = begin(m)
     assertEquals(close(a), m.cancel())
-    // 执行 Close 时同步回调断连；新代已开启也不能被旧回调清空。
+    // 手动模拟旧断连事件；此处没有执行 Close 或真实回调。
     val b = begin(m)
     assertTrue(m.disconnected(a).isEmpty())
     assertTrue(m.connected(a).isEmpty())
@@ -95,7 +95,7 @@ class SelfConnectionModelTest {
     assertTrue(m.disconnected(b).isEmpty())
   }
 
-  @Test fun synchronousBeginFailureCanBeReportedWithoutAutomaticRetry() {
+  @Test fun manuallyReportedBeginFailureWaitsForAuthorization() {
     val m = SelfConnectionModel(); val a = begin(m)
     // adapter 若在 Begin 执行中同步抛错，必须反馈 failed(a)，不能吞掉在飞状态。
     assertEquals(close(a), m.failed(a))

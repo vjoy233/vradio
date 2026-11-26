@@ -36,4 +36,4 @@
 
 ## 本次验证
 
-独立 worktree 以 PR #68 head 检出。首次运行 `gradlew.bat --offline test` 因独立 worktree 未配置 SDK 失败（`SDK location not found`）；设置已有 SDK 的 `ANDROID_HOME=D:\\Dev\\android-sdk` 后通过，任务大量 `FROM-CACHE`，这是**基线 JVM 测试**，不是新方案或 adapter 验证。另有 test 源集纯模型测试：单飞、失败/断连后仅新授权重试、提前断连、旧代迟到、取消与释放回调重入、同步创建失败。模型输出 Begin/Close 指令，无真实 Media3 adapter 或调用链，因此不证明旧 future 的实际释放与线程安全；没有设备验证。研究结论和模型测试不能替代实现与实测。
+独立 worktree 以 PR #68 head 检出。首次运行 `gradlew.bat --offline test` 因独立 worktree 未配置 SDK 失败（`SDK location not found`）；设置已有 SDK 的 `ANDROID_HOME=D:\\Dev\\android-sdk` 后通过，任务大量 `FROM-CACHE`，这是**基线 JVM 测试**，不是新方案或 adapter 验证。另有 test 源集纯模型测试：逻辑单飞及手动送入的失败、提前断连、旧代事件与取消；它只输出 Begin/Close，不执行释放或抛错。单独 fake harness 则实际执行假连接器的同步抛错（分配前）与 close 回调重入，并计数模拟资源；刻意延迟释放显示取消后开启新代时可有两个物理存活资源，故逻辑单飞不等于物理单飞。该 harness 是独立简化模型，不验证第一模型的执行器、真实 future 取消后迟到结果清理、分配后抛错、真实线程及 Media3 adapter；没有设备验证。研究结论和模型测试不能替代实现与实测。

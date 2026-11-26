@@ -60,7 +60,11 @@ object SafeTarget {
 }
 
 /** Test-only seam; production leaves hooks null. */
-internal object AtomicWriteTestHook { var rename: ((File, File) -> Boolean)? = null }
+internal object AtomicWriteTestHook {
+  var rename: ((File, File) -> Boolean)? = null
+  var temp: ((File) -> File)? = null
+}
+
 private fun rename(from: File, to: File): Boolean {
   AtomicWriteTestHook.rename?.let { return it(from, to) }
   return try {
@@ -78,8 +82,8 @@ internal fun writeTextAtomic(f: File, text: String) {
   synchronized(lock) {
     // Legacy .tmp is used only when an explicit test hook is active; production never reuses
     // crash leftovers or another writer's temporary file.
-    val tmp = if (AtomicWriteTestHook.rename != null) File(f.parentFile, f.name + ".tmp")
-      else File.createTempFile(f.name + ".", ".tmp", f.parentFile)
+    val tmp = AtomicWriteTestHook.temp?.invoke(f)
+      ?: File.createTempFile(f.name + ".", ".tmp", f.parentFile)
     try {
       tmp.writeText(text)
       if (!rename(tmp, f)) throw java.io.IOException("atomic rename failed: ${f.name}")

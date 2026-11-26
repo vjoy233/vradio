@@ -4,8 +4,16 @@ import io.github.vjoy233.vradio.sync.Gh
 import io.github.vjoy233.vradio.data.HttpText
 import io.github.vjoy233.vradio.sync.LightUpdate
 import io.github.vjoy233.vradio.sync.RadioMeta
+import io.github.vjoy233.vradio.sync.SyncBarrier
+import io.github.vjoy233.vradio.sync.SyncEngine
+import io.github.vjoy233.vradio.check.CheckStream
+import io.github.vjoy233.vradio.check.RawHttp
 import io.github.vjoy233.vradio.ui.lightUpdateMessage
+import io.github.vjoy233.vradio.ui.syncFailureMessage
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -90,7 +98,7 @@ class LightUpdateTest {
 
   @Test fun apply全流程() = runBlocking {
     val lu = LightUpdate(Gh(FakeHttp(fullMap()), 0), tmp.newFolder())
-    val r = lu.apply(radioV1)!!
+    val r = lu.applyForTest(radioV1)!!
     assertEquals("2026-10-10T00:00:00Z", r.commitIso)
     assertTrue(r.radioChanged); assertTrue(r.logosChanged)
     // keyOf 口径：新增 华语音乐|台B、欧美音乐|EU X [美国]、新闻资讯|台C；消失 华语音乐|旧台
@@ -101,13 +109,13 @@ class LightUpdateTest {
     assertEquals(radioV2, lu.radioText()); assertEquals(logosV2, lu.logosText())
     assertEquals("2026-10-10T00:00:00Z", lu.stamp())
     // 内容未变时 radioChanged=false（stamp 变但文件同——logos-only 提交场景）
-    val again = LightUpdate(Gh(FakeHttp(fullMap()), 0), tmp.root).apply(radioV2)!!
+    val again = LightUpdate(Gh(FakeHttp(fullMap()), 0), tmp.root).applyForTest(radioV2)!!
     assertFalse(again.radioChanged)
   }
 
   @Test fun apply缺logos不阻断() = runBlocking {
     val lu = LightUpdate(Gh(FakeHttp(fullMap(logos = null)), 0), tmp.newFolder())
-    val r = lu.apply(radioV1)!!
+    val r = lu.applyForTest(radioV1)!!
     assertEquals(LightUpdate.LogosStatus.DOWNLOAD_FAILED, r.logosStatus)
     assertEquals(LightUpdate.MetaStatus.DOWNLOAD_FAILED, r.metaStatus)
     assertEquals(LightUpdate.CleanupStatus.ABSENT, r.metaCleanup)
@@ -121,14 +129,14 @@ class LightUpdateTest {
     m["https://api.github.com/repos/vjoy233/vradio/contents/radio.txt"] =
       "限流短错误页"   // body ≤100 → Gh.file 按失败处理
     val lu = LightUpdate(Gh(FakeHttp(m)), tmp.newFolder())
-    assertNull(lu.apply(radioV1))
+    assertNull(lu.applyForTest(radioV1))
     assertTrue(lu.lastFailWhy.isNotEmpty())
     assertNull(lu.radioText())   // 未落任何文件
   }
 
   @Test fun apply网络全挂失败明示() = runBlocking {
     val lu = LightUpdate(Gh(FakeHttp(emptyMap())), tmp.newFolder())
-    assertNull(lu.apply(radioV1))
+    assertNull(lu.applyForTest(radioV1))
     assertTrue(lu.lastFailWhy.isNotEmpty())
   }
 
@@ -151,7 +159,7 @@ class LightUpdateTest {
 
   @Test fun apply写meta并随行落盘() = runBlocking {
     val lu = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), tmp.newFolder())
-    val r = lu.apply(radioV1)!!
+    val r = lu.applyForTest(radioV1)!!
     assertTrue(r.metaChanged); assertFalse(r.metaInvalid)
     assertEquals(metaV1, lu.metaText())
     assertEquals(true, lu.stampMetaOk())                    // AIbot P1-4：stamp.meta 同批见证（bound 放行）
@@ -164,12 +172,12 @@ class LightUpdateTest {
   @Test fun meta校验失败删旧件不阻断主库() = runBlocking {
     val dir = tmp.newFolder()
     val lu1 = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
-    lu1.apply(radioV1)
+    lu1.applyForTest(radioV1)
     // 第二轮：仓库 meta 换成 v2（版本不认识）→ 删旧 meta（AIbot P1-4：新 radio 配旧 meta 是混态，宁缺勿混），
     // radio 照常更新；stamp.meta=false → RadioMeta.bound 拦下「最近新增」
     val lu2 = LightUpdate(Gh(FakeHttp(fullMap(radio = radioV2, logos = null, radioAt = "2026-10-11T00:00:00Z",
       logosAt = "2026-10-09T00:00:00Z", meta = metaV2Bad)), 0), dir)
-    val r = lu2.apply(radioV1)!!
+    val r = lu2.applyForTest(radioV1)!!
     assertTrue(r.metaInvalid); assertFalse(r.metaChanged)
     assertEquals(LightUpdate.MetaStatus.INVALID, r.metaStatus)
     assertEquals(LightUpdate.CleanupStatus.DELETED, r.metaCleanup)
@@ -185,10 +193,10 @@ class LightUpdateTest {
   @Test fun 仓库未提供meta静默不误报且删旧件() = runBlocking {
     val dir = tmp.newFolder()
     val lu1 = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)   // 先落一份旧 meta
-    lu1.apply(radioV1)
+    lu1.applyForTest(radioV1)
     val lu2 = LightUpdate(Gh(FakeHttp(fullMap(radioAt = "2026-10-12T00:00:00Z",
       logosAt = "2026-10-09T00:00:00Z")), 0), dir)   // 第二轮 meta=null（404/网络失败同面）
-    val r = lu2.apply(radioV1)!!
+    val r = lu2.applyForTest(radioV1)!!
     assertFalse(r.metaChanged); assertFalse(r.metaInvalid)  // 无「校验失败」误报（Web 侧生成落地前不吵）
     assertEquals(radioV2, lu2.radioText())
     assertNull(lu2.metaText())                              // AIbot P1-4：旧 meta 删除（新库不留旧 meta）
@@ -231,11 +239,11 @@ class LightUpdateTest {
   @Test fun meta写失败失效见证与旧件不误报整体失败() = runBlocking {
     val dir = tmp.newFolder()
     val lu1 = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
-    lu1.apply(radioV1)                                    // 批次一：radio+meta+stamp 全量成功（旧批次三件套）
+    lu1.applyForTest(radioV1)                                    // 批次一：radio+meta+stamp 全量成功（旧批次三件套）
     injectMetaWriteFail(dir)                              // 批次二：meta 写盘故障注入
     val lu2 = LightUpdate(Gh(FakeHttp(fullMap(radioAt = "2026-10-11T00:00:00Z",
       logosAt = "2026-10-09T00:00:00Z", meta = metaV1)), 0), dir)
-    val r = lu2.apply(radioV1)!!
+    val r = lu2.applyForTest(radioV1)!!
     // radio 已更新、apply 不整体失败（≠ 抛异常/返回 null——UI 不会误报「已保留原数据」）
     assertEquals(radioV2, lu2.radioText())
     assertFalse(r.metaChanged); assertFalse(r.metaInvalid)
@@ -255,7 +263,7 @@ class LightUpdateTest {
     val dir = tmp.newFolder()
     runBlocking {
       val lu1 = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
-      lu1.apply(radioV1)
+      lu1.applyForTest(radioV1)
       assertTrue(lu1.stampMetaOk()!!)
       // 注入「radio.txt 被换成新内容而 stamp/meta 未动」（= 上述部分写失败后的等价盘面）
       java.io.File(dir, "radio.txt").writeText(radioV2 + "台D,http://d/1.mp3\r\n")
@@ -271,13 +279,13 @@ class LightUpdateTest {
   @Test fun radio写失败保留旧批次() = runBlocking {
     val dir = tmp.newFolder()
     val lu = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
-    assertNotNull(lu.apply(radioV1))
+    assertNotNull(lu.applyForTest(radioV1))
     val before = listOf("radio.txt", "logos.txt", "radio-meta.json", "stamp.json")
       .associateWith { java.io.File(dir, it).readText() }
     assertTrue(java.io.File(dir, "radio.txt.tmp").mkdir())
     val next = LightUpdate(Gh(FakeHttp(fullMap(radio = radioV2 + "新台,http://new/1.mp3\r\n",
       radioAt = "2026-10-11T00:00:00Z", meta = metaV1)), 0), dir)
-    assertNull(next.apply(radioV2))
+    assertNull(next.applyForTest(radioV2))
     assertTrue(next.lastFailWhy.contains("落盘失败"))
     before.forEach { (name, text) -> assertEquals(text, java.io.File(dir, name).readText()) }
   }
@@ -285,13 +293,13 @@ class LightUpdateTest {
   @Test fun logos写失败不回滚且结果只表示已下载() = runBlocking {
     val dir = tmp.newFolder()
     val lu = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
-    assertNotNull(lu.apply(radioV1))
+    assertNotNull(lu.applyForTest(radioV1))
     val oldLogo = lu.logosText()
     assertTrue(java.io.File(dir, "logos.txt.tmp").mkdir())
     val newRadio = radioV2 + "新台,http://new/1.mp3\r\n"
     val next = LightUpdate(Gh(FakeHttp(fullMap(radio = newRadio, logos = logosV2 + "新标志",
       radioAt = "2026-10-11T00:00:00Z", meta = metaV1)), 0), dir)
-    val result = next.apply(radioV2)!!
+    val result = next.applyForTest(radioV2)!!
     assertFalse(result.logosChanged)
     assertEquals(LightUpdate.LogosStatus.WRITE_FAILED, result.logosStatus)
     assertTrue(lightUpdateMessage(result, false).contains("台标写入失败"))
@@ -303,13 +311,13 @@ class LightUpdateTest {
   @Test fun stamp写失败不回滚并由哈希拒绝旧见证() = runBlocking {
     val dir = tmp.newFolder()
     val lu = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
-    assertNotNull(lu.apply(radioV1))
+    assertNotNull(lu.applyForTest(radioV1))
     val oldStamp = lu.stamp()
     assertTrue(java.io.File(dir, "stamp.json.tmp").mkdir())
     val newRadio = radioV2 + "新台,http://new/1.mp3\r\n"
     val next = LightUpdate(Gh(FakeHttp(fullMap(radio = newRadio,
       radioAt = "2026-10-11T00:00:00Z", meta = metaV1)), 0), dir)
-    val result = next.apply(radioV2)!!
+    val result = next.applyForTest(radioV2)!!
     assertFalse(result.stampWritten)
     assertTrue(lightUpdateMessage(result, false).contains("更新标记写入失败"))
     assertEquals(newRadio, next.radioText())
@@ -327,7 +335,7 @@ class LightUpdateTest {
     val dir = tmp.newFolder()
     runBlocking {
       val lu1 = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
-      lu1.apply(radioV1)
+      lu1.applyForTest(radioV1)
       // 手工降级 stamp 为旧形态（meta=true 无哈希）
       java.io.File(dir, "stamp.json").writeText("""{"commitIso":"2026-10-10T00:00:00Z","meta":true}""")
       val lu2 = LightUpdate(Gh(FakeHttp(emptyMap())), dir)
@@ -339,9 +347,9 @@ class LightUpdateTest {
   @Test fun 删除旧meta失败如实报告并禁止绑定() = runBlocking {
     val dir = tmp.newFolder()
     val first = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
-    first.apply(radioV1)!!
+    first.applyForTest(radioV1)!!
     val next = LightUpdate(Gh(FakeHttp(fullMap(radio = radioV2 + "新台,http://new/1.mp3\r\n", meta = metaV2Bad)), 0), dir) { false }
-    val r = next.apply(radioV2)!!
+    val r = next.applyForTest(radioV2)!!
     assertEquals(LightUpdate.MetaStatus.INVALID, r.metaStatus)
     assertEquals(LightUpdate.CleanupStatus.FAILED, r.metaCleanup)
     assertEquals(metaV1, next.metaText())
@@ -357,13 +365,13 @@ class LightUpdateTest {
         meta = if (failure == "meta") null else metaV1)
       if (failure == "stamp") assertTrue(java.io.File(dir, "stamp.json.tmp").mkdir())
       val first = LightUpdate(Gh(FakeHttp(broken), 0), dir)
-      val result = first.apply(radioV1)!!
+      val result = first.applyForTest(radioV1)!!
       assertTrue(result.retryPending)
       assertEquals(radioV2, first.radioText())
       if (failure == "stamp") assertTrue(java.io.File(dir, "stamp.json.tmp").delete())
       val restarted = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
       assertEquals("2026-10-10T00:00:00Z", restarted.check("2026-10-10T00:00:00Z"))
-      val recovered = restarted.apply(radioV2)!!
+      val recovered = restarted.applyForTest(radioV2)!!
       assertFalse(recovered.retryPending)
       assertEquals(logosV2, restarted.logosText())
       assertEquals(metaV1, restarted.metaText())
@@ -375,15 +383,165 @@ class LightUpdateTest {
   @Test fun 旧stamp恰好匹配时按见证而非写入结果显示绑定() = runBlocking {
     val dir = tmp.newFolder()
     val lu = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
-    lu.apply(radioV1)!!
+    lu.applyForTest(radioV1)!!
     assertTrue(java.io.File(dir, "stamp.json.tmp").mkdir())
-    val r = lu.apply(radioV2)!!
+    val r = lu.applyForTest(radioV2)!!
     assertFalse(r.stampWritten)
     val h = lu.stampHashOk()
     val bound = RadioMeta.bound(true, true, lu.stampMetaOk(), h.first, h.second)
     assertTrue(bound)
     assertTrue(lightUpdateMessage(r, bound).contains("元数据同批见证通过"))
     assertTrue(r.retryPending)
+  }
+
+  @Test fun 端内同步屏障跨重启禁止旧轻更新覆盖() = runBlocking {
+    for (stage in listOf("beforeRadio", "sameRadio", "newRadio", "afterStamp")) {
+      val dir = tmp.newFolder()
+      val old = LightUpdate(Gh(FakeHttp(fullMap(meta = null)), 0), dir)
+      assertTrue(old.applyForTest(radioV1)!!.retryPending)
+      SyncBarrier.begin(dir)
+      if (stage == "sameRadio") java.io.File(dir, "radio.txt").writeText(radioV2)
+      if (stage == "newRadio" || stage == "afterStamp") java.io.File(dir, "radio.txt").writeText(radioV2 + "本机同步,http://local/1.mp3\r\n")
+      if (stage == "afterStamp") java.io.File(dir, "stamp.json").writeText("{\"commitIso\":\"2026-10-20T00:00:00Z\",\"meta\":false}")
+      val before = java.io.File(dir, "radio.txt").readText()
+      val next = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
+      assertNull(next.check("2026-10-10T00:00:00Z"))
+      assertTrue(next.lastFailWhy.contains("端内同步未完成"))
+      assertNull(next.applyForTest(before))
+      assertEquals(before, java.io.File(dir, "radio.txt").readText())
+      SyncBarrier.finish(dir)
+      assertFalse(SyncBarrier.active(dir))
+      assertFalse(java.io.File(dir, "light-update.pending").exists())
+    }
+  }
+
+  @Test fun 端内同步屏障清理故障保守阻断() = runBlocking {
+    val dir = tmp.newFolder()
+    java.io.File(dir, "light-update.pending").writeText("pending")
+    SyncBarrier.begin(dir)
+    assertTrue(runCatching { SyncBarrier.finish(dir) { false } }.isFailure)
+    assertTrue(SyncBarrier.active(dir))
+    assertTrue(java.io.File(dir, "light-update.pending").exists())
+    SyncBarrier.finish(dir)
+    assertFalse(SyncBarrier.active(dir))
+  }
+
+  @Test fun 轻更新重试期间远端前进使用新版本() = runBlocking {
+    val dir = tmp.newFolder()
+    val first = LightUpdate(Gh(FakeHttp(fullMap(meta = null)), 0), dir)
+    assertTrue(first.applyForTest(radioV1)!!.retryPending)
+    val freshRadio = radioV2 + "更新台,http://fresh/1.mp3\r\n"
+    val next = LightUpdate(Gh(FakeHttp(fullMap(radio = freshRadio, radioAt = "2026-10-11T00:00:00Z", meta = metaV1)), 0), dir)
+    assertEquals("2026-10-11T00:00:00Z", next.check("2026-10-10T00:00:00Z"))
+    assertFalse(next.applyForTest(radioV2)!!.retryPending)
+    assertEquals(freshRadio, next.radioText())
+  }
+
+  @Test fun 检查后端内同步完成旧检查不能覆盖() = runBlocking {
+    val dir = tmp.newFolder()
+    val lu = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
+    assertNotNull(lu.check("2026-10-01T00:00:00Z"))
+    SyncBarrier.begin(dir)
+    val synced = radioV2 + "本机同步,http://local/1.mp3\r\n"
+    java.io.File(dir, "radio.txt").writeText(synced)
+    java.io.File(dir, "stamp.json").writeText("{\"commitIso\":\"2026-10-20T00:00:00Z\",\"meta\":false}")
+    SyncBarrier.finish(dir)
+    assertNull(lu.apply(synced))
+    assertTrue(lu.lastFailWhy.contains("重新检查"))
+    assertEquals(synced, lu.radioText())
+  }
+
+  @Test fun 未检查不得直接应用() = runBlocking {
+    val dir = tmp.newFolder()
+    val lu = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
+    assertNull(lu.apply(radioV1))
+    assertTrue(lu.lastFailWhy.contains("先检查"))
+    assertNull(lu.radioText())
+  }
+
+  @Test fun 检查挂起期间同步等待且旧凭证失效() = runBlocking {
+    val dir = tmp.newFolder()
+    val entered = CompletableDeferred<Unit>()
+    val resume = CompletableDeferred<Unit>()
+    val data = fullMap(meta = metaV1)
+    val http = object : HttpText {
+      override suspend fun get(url: String, timeoutMs: Long, maxBytes: Long, headers: Map<String, String>): String? {
+        if (url.contains("commits?path=radio.txt")) { entered.complete(Unit); resume.await() }
+        return data[url]
+      }
+    }
+    val lu = LightUpdate(Gh(http, 0), dir)
+    val checking = async { lu.check("2026-10-01T00:00:00Z") }
+    entered.await()
+    val sync = async { SyncBarrier.mutex.lock(); try { SyncBarrier.begin(dir); SyncBarrier.finish(dir) } finally { SyncBarrier.mutex.unlock() } }
+    yield()
+    assertFalse(sync.isCompleted)
+    resume.complete(Unit)
+    assertNotNull(checking.await())
+    sync.await()
+    assertNull(lu.apply(radioV1))
+    assertTrue(lu.lastFailWhy.contains("重新检查"))
+    assertNull(lu.radioText())
+  }
+
+  @Test fun 同步排队时使用轻更新后的实际主库() = runBlocking {
+    val dir = tmp.newFolder()
+    val large = "华语音乐,#genre#\r\n" + (1..810).joinToString("\r\n") { "台$it,http://radio/$it.mp3" } + "\r\n"
+    val entered = CompletableDeferred<Unit>(); val resume = CompletableDeferred<Unit>()
+    val map = fullMap(radio = large, meta = metaV1)
+    val http = object : HttpText {
+      override suspend fun get(url: String, timeoutMs: Long, maxBytes: Long, headers: Map<String, String>): String? {
+        if (url.endsWith("contents/radio.txt")) { entered.complete(Unit); resume.await() }
+        return map[url]
+      }
+    }
+    val lu = LightUpdate(Gh(http, 0), dir)
+    assertNotNull(lu.check("2026-10-01T00:00:00Z"))
+    val update = async { lu.apply(radioV1) }
+    entered.await()
+    val raw = object : RawHttp {
+      override suspend fun get(url: String, timeoutMs: Long, maxBytes: Long, headers: Map<String, String>): RawHttp.Resp? = null
+    }
+    val engine = SyncEngine(Gh(FakeHttp(emptyMap()), 0), CheckStream(raw), dir)
+    val sync = async { engine.run(radioV1) }
+    yield(); assertFalse(sync.isCompleted)
+    resume.complete(Unit)
+    assertNotNull(update.await())
+    val result = sync.await()
+    assertTrue(result.ok)
+    assertTrue(lu.radioText()!!.contains("台810,http://radio/810.mp3"))
+  }
+
+  @Test fun 失败检查会作废旧凭证() = runBlocking {
+    val dir = tmp.newFolder()
+    val lu = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
+    assertNotNull(lu.check("2026-10-01T00:00:00Z"))
+    SyncBarrier.begin(dir)
+    assertNull(lu.check("2026-10-01T00:00:00Z"))
+    SyncBarrier.finish(dir)
+    assertNull(lu.apply(radioV1))
+    assertTrue(lu.lastFailWhy.contains("先检查"))
+  }
+
+  @Test fun 同步异常只在屏障存在时提示重启恢复() {
+    assertTrue(syncFailureMessage("磁盘故障", true).contains("重启应用"))
+    assertTrue(syncFailureMessage("磁盘故障", true).contains("重新执行端内同步"))
+    assertFalse(syncFailureMessage("网络故障", false).contains("重启应用"))
+  }
+
+  @Test fun 屏障创建与最终清除故障保守处理() = runBlocking {
+    val dir = tmp.newFolder()
+    assertTrue(java.io.File(dir, "full-sync.pending.tmp").mkdir())
+    assertTrue(runCatching { SyncBarrier.begin(dir) }.isFailure)
+    assertFalse(SyncBarrier.active(dir))
+    assertTrue(java.io.File(dir, "full-sync.pending.tmp").delete())
+    SyncBarrier.begin(dir)
+    assertTrue(runCatching { SyncBarrier.finish(dir) { false } }.isFailure)
+    assertTrue(SyncBarrier.active(dir))
+    val lu = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
+    assertNull(lu.check("2026-10-01T00:00:00Z"))
+    SyncBarrier.finish(dir)
+    assertFalse(SyncBarrier.active(dir))
   }
 
 }

@@ -44,3 +44,7 @@ fun lightUpdateMessage(r: LightUpdate.Result, metaBound: Boolean): String {
   val retry = if (r.retryPending) "；下次检查将重试未完成的更新" else ""
   return "主库已写入（${r.commitIso.take(10)}）· 台数 +${r.added}/-${r.removed}；$logos；$meta；$stamp；$binding$retry"
 }
+
+/** 仅存在同步屏障时提示可能的内存/磁盘差异和恢复路径。 */
+fun syncFailureMessage(why: String, barrier: Boolean): String =
+  "同步未完成：$why" + if (barrier) "；数据可能已部分写入，请重启应用以载入磁盘数据，再重新执行端内同步" else ""

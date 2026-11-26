@@ -6,6 +6,7 @@ import org.json.JSONObject
 import java.io.File
 import java.time.Instant
 import java.time.OffsetDateTime
+import kotlinx.coroutines.sync.withLock
 
 /* D7 轻更新通道：从本仓库 GitHub（GhRepos.SELF）拉成品 radio.txt/logos.txt 落 filesDir 副本 +
    stamp.json（已应用 commitIso）。判新旧 = Gh.lastCommitIso(SELF, path) vs 本地 stamp
@@ -30,23 +31,56 @@ class LightUpdate(private val gh: Gh, private val filesDir: File,
                     val retryPending: Boolean)
 
   /** check/apply 的失败原因（""=无更新/成功）：契约返回 null 不抛，UI 据此区分「无更新」与「网络失败」。 */
+  private var checkedGeneration: Long? = null
+  private var checkedBase: String? = null
   var lastFailWhy = ""
     private set
 
   /** 有新版返回最新 commitIso（radio/logos 两路径取较新者），null=无更新/网络失败。 */
-  suspend fun check(localStampIso: String): String? {
+  suspend fun check(localStampIso: String): String? = SyncBarrier.mutex.withLock {
+    checkLocked(localStampIso)
+  }
+
+  private suspend fun checkLocked(localStampIso: String): String? {
+    checkedGeneration = null; checkedBase = null
     lastFailWhy = ""
+    if (SyncBarrier.active(filesDir)) { lastFailWhy = "端内同步未完成，请重新执行端内同步后再检查轻更新"; return null }
+    val generation = SyncBarrier.generation.get()
     val latest = latestIso() ?: run { lastFailWhy = "GitHub 不可达（api.github.com，检查网络或稍后再试）"; return null }
-    return if (File(filesDir, "light-update.pending").exists() || iso(latest) > iso(localStampIso)) latest else null
+    val eligible = File(filesDir, "light-update.pending").exists() || iso(latest) > iso(localStampIso)
+    checkedGeneration = if (eligible) generation else null
+    checkedBase = if (eligible) localStampIso else null
+    return if (eligible) latest else null
   }
 
   /** 下载两文件 → filesDir/radio.txt+logos.txt（tmp+rename）+ 落 stamp（批次提交标记，末位写：
    *  meta=true + radioHash/metaHash 内容哈希双见证，任一写失败即不记 meta 见证并删旧 meta——详见
    *  apply 内注释）。radio 拿不到/写失败即整体失败，logos 失败保旧，meta 失败尽力删除旧件；stamp 失败不回滚。
    *  oldRadioText = 当前生效全文（diff 旧侧）。 */
-  suspend fun apply(oldRadioText: String): Result? {
+  suspend fun apply(oldRadioText: String): Result? = SyncBarrier.mutex.withLock {
+    if (checkedGeneration == null) { lastFailWhy = "请先检查更新"; null }
+    else applyLocked(oldRadioText)
+  }
+
+  internal suspend fun applyForTest(oldRadioText: String): Result? = SyncBarrier.mutex.withLock {
+    applyLocked(oldRadioText)
+  }
+
+  private suspend fun applyLocked(oldRadioText: String): Result? {
     lastFailWhy = ""
+    val checked = checkedGeneration
+    val base = checkedBase
+    checkedGeneration = null
+    checkedBase = null
+    if (checked != null && checked != SyncBarrier.generation.get()) {
+      lastFailWhy = "端内同步已改变数据，请重新检查更新"; return null
+    }
+    if (SyncBarrier.active(filesDir)) { lastFailWhy = "端内同步未完成，请重新执行端内同步后再尝试轻更新"; return null }
     val commitIso = latestIso() ?: run { lastFailWhy = "GitHub 不可达（api.github.com，检查网络或稍后再试）"; return null }
+    if (base != null && !File(filesDir, "light-update.pending").exists() &&
+        iso(commitIso) <= iso(stamp() ?: base)) {
+      lastFailWhy = "数据基线已变化，请重新检查更新"; return null
+    }
     val radio = gh.file(GhRepos.SELF, "radio.txt")
     if (radio == null) { lastFailWhy = "radio.txt 下载失败（网络/限流）"; return null }
     val logos = gh.file(GhRepos.SELF, "logos.txt")

@@ -1277,7 +1277,10 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         toast(syncMsg.value)
         pointGone(before)
         if (d.addedCheck.isNotEmpty()) { delay(800); incCheck(d.addedCheck.take(C.ADDED_CHECK_CAP)) }   // D4
-      } catch (e: Exception) { syncMsg.value = "同步失败：${e.message ?: "网络错误"}"; toast(syncMsg.value) }
+      } catch (e: Exception) {
+        syncMsg.value = syncFailureMessage(e.message ?: "网络错误", java.io.File(ctx.filesDir, "full-sync.pending").exists())
+        toast(syncMsg.value)
+      }
       finally { syncBusy.value = false }
     }
   }

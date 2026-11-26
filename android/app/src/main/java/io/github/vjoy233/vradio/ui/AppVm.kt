@@ -1255,7 +1255,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     when (val n = gate.enter(NetworkPolicy.Op.SYNC, NetGate.Act.SYNC, netRules())) {
       is NetGate.Next.Deny -> {
         syncMsg.value = "未开始：${n.why}"; toast(syncMsg.value)
-        if (policy.state() == NetworkPolicy.State.CELLULAR) onDenied?.invoke()
+        if (n.cellularPolicy) onDenied?.invoke()
       }
       is NetGate.Next.Confirm -> netGate.value = n.act to n.why
       NetGate.Next.Run -> runFullSync()

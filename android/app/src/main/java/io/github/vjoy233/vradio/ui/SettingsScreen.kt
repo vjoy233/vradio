@@ -27,7 +27,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
-import kotlinx.coroutines.launch
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedButton
@@ -40,7 +39,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -114,13 +112,12 @@ fun SettingsScreen(vm: AppVm, pad: PaddingValues) {
   // 旋转重建同样回默认，丢折叠态是拍板取舍（折叠只是纯 UI 展示态，不写 AppVm/Store）
   var openIds by remember { mutableStateOf(defaultExpandedIds()) }
   val listState = rememberLazyListState()
-  val scope = rememberCoroutineScope()
   val focusNetwork by vm.focusNetworkSettings.collectAsState()
   LaunchedEffect(focusNetwork) {
     if (focusNetwork) {
       openIds = openIds + "network"
-      scope.launch { listState.animateScrollToItem(settingsGroups.indexOfFirst { it.id == "network" }) }
-      vm.consumeNetworkSettingsFocus()
+      val index = settingsGroups.indexOfFirst { it.id == "network" }
+      if (index >= 0) { listState.scrollToItem(index); vm.consumeNetworkSettingsFocus() }
     }
   }
 

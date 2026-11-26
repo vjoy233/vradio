@@ -165,6 +165,30 @@ class LibraryTest {
     assertTrue(Store.get("radio.recents")!!.contains("台1"))
   }
 
+  @Test fun recentsRebindByUrlAndDeduplicateAfterRename() {
+    Store.set("radio.recents", """[{"k":"旧分类|旧名","n":"旧名","u":["http://a/2"]},{"k":"华语音乐|新名","n":"新名","u":["http://a/1"]}]""")
+    val l = lib("华语音乐,#genre#\n新名,http://a/1\n新名,http://a/2")
+    l.reload()
+    assertEquals(1, l.recents.size)
+    assertEquals("华语音乐|新名", l.recents[0].k)
+    assertEquals("新名", l.recents[0].n)
+    assertEquals(listOf("http://a/1", "http://a/2"), l.recents[0].u)
+    assertEquals("新名", l.resolve(l.recents[0].k)?.n)
+    val reloaded = lib("华语音乐,#genre#\n新名,http://a/1\n新名,http://a/2")
+    reloaded.reload()
+    assertEquals(l.recents, reloaded.recents)
+  }
+
+  @Test fun missingRecentRemainsDormantButCannotResolveToGhostStation() {
+    Store.set("radio.recents", """[{"k":"旧分类|消失台","n":"消失台","u":["http://gone/1"]}]""")
+    val l = lib("华语音乐,#genre#\n新台,http://a/1")
+    l.reload()
+    assertEquals(1, l.recents.size) // URL 快照保留，供将来回绑
+    assertNull(l.resolve(l.recents.first().k))
+    assertNull(l.resolveByUrl("http://gone/1"))
+    assertFalse(l.stations.any { it.n == "消失台" })
+  }
+
   // —— 歌史 ——
 
   @Test fun pushSongDedupeAndFifo() { // 队首同曲不入；每台 12；台数 50（按各台最新歌时间砍最旧）

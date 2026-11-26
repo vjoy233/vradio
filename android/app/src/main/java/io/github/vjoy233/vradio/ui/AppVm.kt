@@ -187,7 +187,13 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   fun navigate(to: Destination) { destination.value = navigateGuard(to); secondary.value = null }
 
   /** 次级页开合：先记来源目的地再设 secondary（返回时回跳来源页，Q11/Q15） */
-  fun openSettings() { secondary.value = SecondaryRoute.SETTINGS }
+  private val settingsFocusNetwork = MutableStateFlow(false)
+  val focusNetworkSettings: StateFlow<Boolean> = settingsFocusNetwork
+  fun openSettings(focusNetwork: Boolean = false) {
+    settingsFocusNetwork.value = focusNetwork
+    secondary.value = SecondaryRoute.SETTINGS
+  }
+  fun consumeNetworkSettingsFocus() { settingsFocusNetwork.value = false }
   fun openAddStation() { secondary.value = SecondaryRoute.ADD_STATION }
   fun closeSecondary() { secondary.value = null }
 
@@ -223,7 +229,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   fun setFreshnessDays(days: Int) { saveFreshness(Freshness.parse(Store.get(C.K_SYNC_FRESHNESS)).copy(reminderDays = if (days in listOf(7, 14, 30)) days else 14, disabled = false)) }
   fun disableFreshness() { freshnessPrompt.value = false; saveFreshness(Freshness.parse(Store.get(C.K_SYNC_FRESHNESS)).copy(disabled = true)) }
   fun dismissFreshness() { freshnessPrompt.value = false; saveFreshness(Freshness.parse(Store.get(C.K_SYNC_FRESHNESS)).copy(dismissedUntil = System.currentTimeMillis() + Freshness.DAY)) }
-  fun syncFromFreshness() { freshnessPrompt.value = false; fullSyncNow() }
+  fun syncFromFreshness() { freshnessPrompt.value = false; fullSyncNow(onDenied = { openSettings(focusNetwork = true) }) }
   private suspend fun checkFreshness() {
     while (healthBusy.value || syncBusy.value || updateBusy.value || PlayerHolder.ui.value.st == PState.PLAYING || PlayerHolder.ui.value.st == PState.CONNECTING) delay(5000)
     val p = Freshness.parse(Store.get(C.K_SYNC_FRESHNESS)); freshnessPref.value = p
@@ -1245,9 +1251,12 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   /* ---------- M4 端内同步（B5：移动数据按策略门默认需确认；完成后 diff 摘要 + 收藏点名 + 增量体检） ---------- */
 
-  fun fullSyncNow() {                                                    // 入口：先过网络策略门，再过电量门（与 checkUpdate 同构）
+  fun fullSyncNow(onDenied: (() -> Unit)? = null) {                         // 入口：先过网络策略门，再过电量门（与 checkUpdate 同构）
     when (val n = gate.enter(NetworkPolicy.Op.SYNC, NetGate.Act.SYNC, netRules())) {
-      is NetGate.Next.Deny -> { syncMsg.value = "未开始：${n.why}"; toast(syncMsg.value) }
+      is NetGate.Next.Deny -> {
+        syncMsg.value = "未开始：${n.why}"; toast(syncMsg.value)
+        onDenied?.invoke()
+      }
       is NetGate.Next.Confirm -> netGate.value = n.act to n.why
       NetGate.Next.Run -> runFullSync()
     }

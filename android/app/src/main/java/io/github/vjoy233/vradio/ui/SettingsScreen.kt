@@ -35,6 +35,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -109,6 +110,10 @@ fun SettingsScreen(vm: AppVm, pad: PaddingValues) {
   // 折叠态（Q26/Q18，review#48）：plain remember——进程死亡回默认（Q18 严格口径，不进 SavedStateRegistry）；
   // 旋转重建同样回默认，丢折叠态是拍板取舍（折叠只是纯 UI 展示态，不写 AppVm/Store）
   var openIds by remember { mutableStateOf(defaultExpandedIds()) }
+  val focusNetwork by vm.focusNetworkSettings.collectAsState()
+  LaunchedEffect(focusNetwork) {
+    if (focusNetwork) { openIds = openIds + "network"; vm.consumeNetworkSettingsFocus() }
+  }
 
   // SAF 导出（CreateDocument 预填文件名）与导入（OpenDocument 放宽到 */*——SAF 的 mime 上报不稳定）
   val expBackup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { u -> if (u != null) vm.exportTo(u, AppVm.Exp.BACKUP) }

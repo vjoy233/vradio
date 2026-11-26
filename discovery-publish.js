@@ -4,6 +4,9 @@ const fs = require('fs'), path = require('path'), crypto = require('crypto');
 const Sidecar = require('./discovery-sidecar');
 const SOURCE = 'recommended-radio-streams', LICENSE = 'CC0-1.0';
 const hash = b => crypto.createHash('sha256').update(b).digest('hex');
+let publishBusy = false;
+const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+function validIso(s) { return ISO.test(String(s)) && !Number.isNaN(Date.parse(s)) && new Date(s).toISOString() === s; }
 function build(input, mainUrls) {
   if (!input || !/^[a-f0-9]{40}$/.test(input.commit) || !Array.isArray(input.items)) throw Error('候选或 commit 无效');
   const main = new Set(mainUrls || []), seen = new Set();
@@ -14,7 +17,7 @@ function build(input, mainUrls) {
     seen.add(x.url); items.push({name:x.name,url:x.url,genre:x.genre || '',upstream:SOURCE,commit:input.commit});
   }
   const raw = {v:1,source:SOURCE,license:LICENSE,commit:input.commit,generatedAt:input.generatedAt,items};
-  if (!/^\d{4}-\d\d-\d\dT/.test(String(raw.generatedAt))) throw Error('生成时间无效');
+  if (!validIso(raw.generatedAt)) throw Error('生成时间无效');
   raw.items = Sidecar.normalize(raw); if (!raw.items.length) throw Error('无合格候选，不发布空快照');
   return raw;
 }
@@ -25,7 +28,7 @@ function readSnapshot(dir, generation) {
     const data = fs.readFileSync(path.join(base,'radio-discovery.json'));
     if (manifest.v !== 1 || manifest.sha256 !== generation || hash(data) !== generation || manifest.bytes !== data.length || data.length > 512*1024) return null;
     const raw = JSON.parse(data.toString('utf8'));
-    if (!Sidecar.normalize(raw).length) return null;
+    if (!validIso(raw.generatedAt) || !Sidecar.normalize(raw).length) return null;
     return {manifest,raw};
   } catch (_) { return null; }
 }
@@ -36,6 +39,9 @@ function load(dir) {
   } catch (_) { return null; }
 }
 function publish(dir, raw) {
+  if (publishBusy) throw Error('发布进行中');
+  publishBusy = true;
+  try {
   if (!Sidecar.normalize(raw).length) throw Error('sidecar 无效');
   const data = Buffer.from(JSON.stringify(raw)+'\n'); if (data.length > 512*1024) throw Error('sidecar 超限');
   const sha = hash(data), previous = load(dir); fs.mkdirSync(dir,{recursive:true});
@@ -48,9 +54,10 @@ function publish(dir, raw) {
     fs.writeFileSync(path.join(base,'manifest.json'), JSON.stringify({v:1,sha256:sha,bytes:data.length})+'\n', {flag:'wx'});
   }
   if (!readSnapshot(dir,sha)) throw Error('快照校验失败');
-  const tmp = path.join(dir,'current.'+process.pid+'.tmp');
+  const tmp = path.join(dir,'current.'+process.pid+'.'+crypto.randomBytes(8).toString('hex')+'.tmp');
   try { fs.writeFileSync(tmp,JSON.stringify({v:1,current:sha,previous:previous ? previous.manifest.sha256 : null})+'\n'); fs.renameSync(tmp,path.join(dir,'current.json')); }
   finally { try { fs.unlinkSync(tmp); } catch (_) {} }
   return sha;
+  } finally { publishBusy = false; }
 }
 module.exports = {build,load,publish,readSnapshot};

@@ -2045,6 +2045,7 @@ const App = {
     const idx = this.diagIdx(s), norm = x => { try { return new URL(x).href; } catch (_) { return null; } };
     this.detail.loading = true; this.detail.error = ''; this.detail.results = new Array(urls.length); this.renderDetail();
     try {
+      const recorded = new Set();
       for (let b = 0; b < idx.length; b += 4) {
         const batch = idx.slice(b, b + 4), qs = batch.map(i => 'url=' + encodeURIComponent(urls[i])).join('&');
         const response = await fetch('/api/check?detail=1&' + qs);
@@ -2058,7 +2059,10 @@ const App = {
         if (!response.ok || !j || !Array.isArray(j.results) || !j.results.length) throw new Error('诊断响应无效');
         for (const i of batch) {
           const r = j.results.find(r => norm(urls[i]) === r.url || urls[i] === r.url);
-          if (r && valid()) { this.detail.results[i] = r; QualityStore.recordDiagnostic(identity, Object.assign({}, r, { url: urls[i] }), 'manual'); }
+          if (r && valid()) {
+            this.detail.results[i] = r;
+            if (!recorded.has(r.url)) { recorded.add(r.url); QualityStore.recordDiagnostic(identity, Object.assign({}, r, { url: urls[i] }), 'manual'); }
+          }
           else if (valid()) this.detail.results[i] = { url: norm(urls[i]) || urls[i], code: 'INVALID_URL', ok: false }; // 成功响应中被服务端过滤，非探测结果，不写质量样本
         }
       }
@@ -2107,8 +2111,14 @@ const App = {
      成功率/平均延迟/断流/最近播放；质量只做展示，永不替代死台隐藏判定（契约硬点） */
   successfulSource(s) {
     const sources = QualityStore.stations && QualityStore.stations[s.u[0]] && QualityStore.stations[s.u[0]].sources || {};
-    return this.diagIdx(s).filter(i => sources[s.u[i]] && sources[s.u[i]].lastOkAt > 0)
-      .sort((a, b) => sources[s.u[b]].lastOkAt - sources[s.u[a]].lastOkAt)[0];
+    const norm = u => { try { return new URL(u).href; } catch (_) { return u; } };
+    const stamp = i => {
+      const key = norm(s.u[i]);
+      const direct = sources[s.u[i]]; if (direct && direct.lastOkAt > 0 && (s.u[i] !== key || s.u.filter(u => norm(u) === key).length === 1)) return direct.lastOkAt;
+      // 旧版本写入规范化 URL；只有唯一原始源对应此键时才能回绑，歧义绝不猜。
+      return s.u.filter(u => norm(u) === key).length === 1 && sources[key] && sources[key].lastOkAt || 0;
+    };
+    return this.diagIdx(s).filter(i => stamp(i) > 0).sort((a, b) => stamp(b) - stamp(a))[0];
   },
   qualityHtml(s) {
     const qa = QualityStore.summary(s.u[0], s.u);

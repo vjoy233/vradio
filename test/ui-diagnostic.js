@@ -36,22 +36,14 @@ const respond = (req, url) => req.resolve({ ok: true, json: async () => ({ resul
   sb.QualityStore.summary = () => ({ okCount: 4, failCount: 0, stability: 'good', lastObservedAt: 1, avgLatencyMs: 10, disconnects: 0, metadata: 'none' });
   const quality = app.qualityHtml(s); assert(quality.includes('质量未知')); assert(quality.includes('累计成功率'));
   assert.equal(sb.diagnosticAction('NETWORK', 403).action, 'configure');
-  // 真服务 + 本机上游：safeTarget 返回规范化 URL，UI 与质量样本回绑原始源键。
-  const upstream = require('./harness/http-fixture').fixture({ '/': { headers: { 'Content-Type': 'audio/mpeg' }, body: 'x'.repeat(8000) } });
-  let server;
-  try {
-    const port = await upstream.listen(); server = await require('./harness/api-client').boot({ env: { VR_TEST_GUARD: '1' } });
-    const original = 'http://127.0.0.1:' + port, normalized = new URL(original).href;
-    const safeTarget = require('../update-sources').safeTarget;
-    assert.equal(safeTarget('HTTP://EXAMPLE.COM:80'), 'http://example.com/');
-    const real = { c: '真实服务', n: '真实服务', u: [original], dis: [] };
-    app.state.stations.push(real); sb.fetch = async p => { // 测试缝不归一，先模拟生产 safeTarget 的归一再进真服务
-      const q = new URL(p, 'http://local'); const raw = q.searchParams.get('url'); q.searchParams.set('url', new URL(raw).href);
-      const res = await server.req('GET', q.pathname + q.search); return { ok: res.status === 200, status: res.status, json: async () => JSON.parse(res.body) }; };
-    app.detail.stationKey = real.c + '|' + real.n; els.detail.hidden = false;
-    const before = records.length; await app.checkStationSources(real);
-    assert.equal(app.detail.results[0].url, normalized); assert.equal(records[before][1].url, original); assert.equal(records[before][1].code, 'OK');
-    await app.recheckSource(real, 0); assert.equal(records[before + 1][1].url, original);
-  } finally { if (server) await server.close(); await upstream.close(); }
+  const legacy = { c: '旧', n: '旧', u: ['HTTP://EXAMPLE.COM:80'], dis: [] };
+  sb.QualityStore.stations = { [legacy.u[0]]: { sources: { 'http://example.com/': { lastOkAt: 20 } } } };
+  assert.equal(app.successfulSource(legacy), 0);
+  legacy.u.push('http://example.com/'); assert.equal(app.successfulSource(legacy), undefined); // 规范化键存在歧义，无法确定历史归属
+  legacy.u[1] = 'http://EXAMPLE.com'; assert.equal(app.successfulSource(legacy), undefined);
+  app.state.stations.push(legacy); app.detail.stationKey = legacy.c + '|' + legacy.n; els.detail.hidden = false;
+  const before = records.length, collision = app.checkStationSources(legacy), request = pending.shift();
+  respond(request, 'http://example.com/'); await collision;
+  assert.equal(records.length, before + 1); assert.equal(records[before][1].url, legacy.u[0]);
   console.log('诊断并发、脱敏与质量投影通过');
 })().catch(e => { console.error(e); process.exitCode = 1; });

@@ -2169,12 +2169,16 @@ const App = {
      关时隐藏）。纯本地派生——buildDiscovery 数据注入（质量摘要/健康/最近/radio-meta/revives 全本地），不联网、
      不改主列表排序；点击行统一 startPlay→Player.play（不复制播放决策）。 ---------- */
   dscOpener: null,
+  discoverySidecar: null,
   async openDiscovery() {
     this.dscOpener = document.activeElement;
     $('discovery').hidden = false;
     $('discBody').innerHTML = '<div class="empty">正在生成推荐…</div>';
     $('discClose').focus();
     if (!this.metaCache) this.metaCache = await this.loadMeta(); // 懒加载一次（radio-meta.json 静态文件，非 dotfile/data 段天然可 GET）
+    if (FEATURES.discoverySidecar && !this.discoverySidecar && window.DiscoverySidecar) {
+      this.discoverySidecar = await DiscoverySidecar.load(u => fetch(u), 'radio-discovery.json');
+    }
     this.renderDiscovery();
   },
   async loadMeta() { // file://：meta 无经典 script 包装不可读 → null（「最近新增」为空，其余组不受影响）

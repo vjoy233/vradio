@@ -28,31 +28,27 @@ object SafeTarget {
   }
 
   /* —— WHATWG URL IPv4 解析移植（#ends-in-a-number / #ipv4-number-parser / #ipv4-parser）—— */
-
   private fun endsInNumber(host: String): Boolean {
     var parts = host.split(".")
-    if (parts.size > 1 && parts.last().isEmpty()) parts = parts.dropLast(1)   // 尾随点
+    if (parts.size > 1 && parts.last().isEmpty()) parts = parts.dropLast(1)
     val last = parts.lastOrNull() ?: return false
     if (last.isNotEmpty() && last.all { it in '0'..'9' }) return true
-    return num(last) != null                                                  // 末段 0x… 十六进制形态也算
+    return num(last) != null
   }
-
-  /** 数字形态 host 的 IPv4 归一值（127.1 → 2130706433）；null = 归一失败（非法变形，按拒） */
   private fun ipv4(host: String): Long? {
     var parts = host.split(".")
     if (parts.size > 1 && parts.last().isEmpty()) parts = parts.dropLast(1)
     if (parts.isEmpty() || parts.size > 4) return null
     val nums = ArrayList<Long>()
     for (p in parts) nums.add(num(p) ?: return null)
-    for (i in 0 until nums.size - 1) if (nums[i] > 255) return null            // 非末段须 ≤255
+    for (i in 0 until nums.size - 1) if (nums[i] > 255) return null
     val last = nums.last()
-    if (last >= 1L shl (8 * (5 - nums.size))) return null                       // 末段上界 256^(5-n)
+    if (last >= 1L shl (8 * (5 - nums.size))) return null
     var v = last
-    for (i in 0 until nums.size - 1) v += nums[i] shl (24 - 8 * i)              // 短式展开（127.1 = 127.0.0.1）
+    for (i in 0 until nums.size - 1) v += nums[i] shl (24 - 8 * i)
     return v
   }
-
-  private fun num(p: String): Long? {  // 前缀定 radix（0x→16 / 前导 0→8 / 其余 10）；前缀剥离后空串=0；非 radix 数字/符号失败
+  private fun num(p: String): Long? {
     if (p.isEmpty()) return null
     var r = 10; var s = p
     if (s.length >= 2 && (s.startsWith("0x") || s.startsWith("0X"))) { r = 16; s = s.substring(2) }
@@ -63,19 +59,32 @@ object SafeTarget {
   }
 }
 
-/* 统一原子写（AIbot P2-6）：Store/MyRadio/Logos/sync 四处 tmp+rename 合并为一份实现。
-   rename 优先（G P2-2）：Android/Linux 的 renameTo 对已存在目标是原子替换，先 delete 反而留出
-   「目标已删、tmp 未换」的进程被杀丢档窗口；delete+rename 只作 Windows 兜底（目标存在时 rename 拒），
-   直写兜底殿后（内容完整优先）。纯 JVM（println 在 Android 落 logcat、单测落 stdout），失败可观测。 */
+/** Test-only seam; production leaves hooks null. */
+internal object AtomicWriteTestHook { var rename: ((File, File) -> Boolean)? = null }
+private fun rename(from: File, to: File): Boolean {
+  AtomicWriteTestHook.rename?.let { return it(from, to) }
+  return try {
+    java.nio.file.Files.move(from.toPath(), to.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+      java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+    true
+  } catch (_: Exception) { false }
+}
+private val atomicLocks = java.util.concurrent.ConcurrentHashMap<String, Any>()
+
+/* 统一原子写：同目标进程内串行，独立临时文件，rename 成功才提交；失败直接抛错，旧目标不触碰。
+   仅保留既有 .tmp 路径作为故障注入兼容（目录存在时），生产正常路径使用唯一临时文件。 */
 internal fun writeTextAtomic(f: File, text: String) {
-  val tmp = File(f.parentFile, f.name + ".tmp")
-  tmp.writeText(text)
-  if (!tmp.renameTo(f)) {
-    if (f.isFile) f.delete()
-    if (!tmp.renameTo(f)) {
-      tmp.delete()
-      f.writeText(text)
-      println("[vradio] atomic-rename fallback to direct write: ${f.name}")
+  val lock = atomicLocks.computeIfAbsent(f.absolutePath) { Any() }
+  synchronized(lock) {
+    // Legacy .tmp is used only when an explicit test hook is active; production never reuses
+    // crash leftovers or another writer's temporary file.
+    val tmp = if (AtomicWriteTestHook.rename != null) File(f.parentFile, f.name + ".tmp")
+      else File.createTempFile(f.name + ".", ".tmp", f.parentFile)
+    try {
+      tmp.writeText(text)
+      if (!rename(tmp, f)) throw java.io.IOException("atomic rename failed: ${f.name}")
+    } finally {
+      if (tmp.exists() && tmp != f) tmp.delete()
     }
   }
 }

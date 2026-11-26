@@ -2,6 +2,9 @@ package io.github.vjoy233.vradio
 
 import io.github.vjoy233.vradio.sync.Gh
 import io.github.vjoy233.vradio.data.HttpText
+import io.github.vjoy233.vradio.data.AtomicWriteTestHook
+import io.github.vjoy233.vradio.data.writeTextAtomic
+import java.io.File
 import io.github.vjoy233.vradio.sync.LightUpdate
 import io.github.vjoy233.vradio.sync.RadioMeta
 import kotlinx.coroutines.runBlocking
@@ -10,6 +13,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -17,6 +21,7 @@ import org.junit.rules.TemporaryFolder
 /* D7 轻更新：判新旧（commits API vs stamp）→ 下载落盘（tmp+rename + stamp.json）→ keyOf 口径 diff
    + addedCheck（欧美两节过滤）。FakeHttp 按 URL 喂罐头，全程离线。 */
 class LightUpdateTest {
+  @After fun clearAtomicHook() { AtomicWriteTestHook.rename = null }
 
   @get:Rule val tmp = TemporaryFolder()
 
@@ -216,15 +221,20 @@ class LightUpdateTest {
 
   /** 注入「radio-meta.json.tmp 为目录」：writeTextAtomic 的 tmp.writeText 必抛（Windows/Linux 双平台），
    *  模拟 meta 落盘的磁盘/权限故障，其余文件照常可写。 */
-  private fun injectMetaWriteFail(dir: java.io.File) {
-    java.io.File(dir, "radio-meta.json.tmp").mkdirs()
+  private fun injectRenameFail(name: String) {
+    AtomicWriteTestHook.rename = { from, to ->
+      if (to.name == name) false else runCatching {
+        java.nio.file.Files.move(from.toPath(), to.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+          java.nio.file.StandardCopyOption.REPLACE_EXISTING); true
+      }.getOrDefault(false)
+    }
   }
 
   @Test fun meta写失败失效见证与旧件不误报整体失败() = runBlocking {
     val dir = tmp.newFolder()
     val lu1 = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
     lu1.apply(radioV1)                                    // 批次一：radio+meta+stamp 全量成功（旧批次三件套）
-    injectMetaWriteFail(dir)                              // 批次二：meta 写盘故障注入
+    injectRenameFail("radio-meta.json")                 // 批次二：meta 写盘故障注入
     val lu2 = LightUpdate(Gh(FakeHttp(fullMap(radioAt = "2026-10-11T00:00:00Z",
       logosAt = "2026-10-09T00:00:00Z", meta = metaV1)), 0), dir)
     val r = lu2.apply(radioV1)!!
@@ -263,7 +273,7 @@ class LightUpdateTest {
     assertNotNull(lu.apply(radioV1))
     val before = listOf("radio.txt", "logos.txt", "radio-meta.json", "stamp.json")
       .associateWith { java.io.File(dir, it).readText() }
-    assertTrue(java.io.File(dir, "radio.txt.tmp").mkdir())
+    injectRenameFail("radio.txt")
     val next = LightUpdate(Gh(FakeHttp(fullMap(radio = radioV2 + "新台,http://new/1.mp3\r\n",
       radioAt = "2026-10-11T00:00:00Z", meta = metaV1)), 0), dir)
     assertNull(next.apply(radioV2))
@@ -276,7 +286,7 @@ class LightUpdateTest {
     val lu = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
     assertNotNull(lu.apply(radioV1))
     val oldLogo = lu.logosText()
-    assertTrue(java.io.File(dir, "logos.txt.tmp").mkdir())
+    injectRenameFail("logos.txt")
     val newRadio = radioV2 + "新台,http://new/1.mp3\r\n"
     val next = LightUpdate(Gh(FakeHttp(fullMap(radio = newRadio, logos = logosV2 + "新标志",
       radioAt = "2026-10-11T00:00:00Z", meta = metaV1)), 0), dir)
@@ -292,7 +302,7 @@ class LightUpdateTest {
     val lu = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
     assertNotNull(lu.apply(radioV1))
     val oldStamp = lu.stamp()
-    assertTrue(java.io.File(dir, "stamp.json.tmp").mkdir())
+    injectRenameFail("stamp.json")
     val newRadio = radioV2 + "新台,http://new/1.mp3\r\n"
     val next = LightUpdate(Gh(FakeHttp(fullMap(radio = newRadio,
       radioAt = "2026-10-11T00:00:00Z", meta = metaV1)), 0), dir)
@@ -303,6 +313,27 @@ class LightUpdateTest {
     assertEquals(false to true, h)
     assertFalse(RadioMeta.bound(true, true, next.stampMetaOk(), h.first, h.second))
     assertEquals("2026-10-11T00:00:00Z", next.check(next.stamp()!!))
+  }
+
+  @Test fun rename失败保留旧文件并恢复() {
+    val dir = tmp.newFolder(); val target = File(dir, "radio.txt")
+    target.writeText("旧内容")
+    AtomicWriteTestHook.rename = { _, _ -> false } // tmp→target 拒绝覆盖：旧目标必须原样保留
+    try {
+      var failed = false
+      try { writeTextAtomic(target, "新内容") } catch (_: java.io.IOException) { failed = true }
+      assertTrue(failed)
+      assertEquals("旧内容", target.readText())
+      assertFalse(File(dir, "radio.txt.bak.atomic").exists())
+      assertFalse(File(dir, "radio.txt.tmp").exists())
+    } finally { AtomicWriteTestHook.rename = null }
+  }
+
+  @Test fun 既有调用成功路径保持兼容() {
+    val dir = tmp.newFolder(); val target = File(dir, "radio.txt")
+    target.writeText("旧")
+    try { writeTextAtomic(target, "新") } finally { AtomicWriteTestHook.rename = null }
+    assertEquals("新", target.readText())
   }
 
   @Test fun 旧stamp无哈希字段保守不绑定() {

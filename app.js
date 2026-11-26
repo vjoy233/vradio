@@ -2141,7 +2141,7 @@ const App = {
     const s = this.detailStation();
     if (!s) return this.closeDetail(); // 台已消失（同步重建失配）：详情随之关闭
     const k = keyOf(s), fav = this.favKeys().has(k);
-    const st = Player.getSourceState();
+    const st = Player.getSourceState(), failure = Player.getFailureSnapshot();
     const on = !!(st.station && keyOf(st.station) === k);
     let songs; try { songs = JSON.parse(Store.get('radio.songs') || '{}')[s.u[0]] || []; } catch (_) { songs = []; }
     const dv = this.dSrcRows(s), dis = dv.dis, urls = dv.urls; // 源行序/禁用/标签：草稿在编时随草稿实时（含待保存追加，review-r2 P1）
@@ -2185,6 +2185,7 @@ const App = {
         <span class="srcs">${this.esc(s.c)} · ${urls.length} 个源${dv.pends && dv.pends.length ? ` · ${dv.pends.length} 条待保存追加` : ''}${dis.length ? ` · ${dis.length} 个已禁用` : ''}${on && st.connecting ? ' · 连接中…' : on && !Player.isPaused() ? ' · 播放中' : ''}</span>
       </div>${this.favBtn(k, fav, s)}</div>
       ${on ? `<div class="dcur">当前源：${st.sourceIndex >= 0 ? `源 ${st.sourceIndex + 1}` : '—'}${st.variantUrl ? ` · ${st.mode === 'hls' ? 'HLS' : '直流'}` : ''}${st.connecting ? '（连接中）' : ''}</div>` : ''}
+      ${failure && failure.stationUrl === s.u[0] ? `<div class="dcur">最近播放失败事实（非诊断）：${this.esc({ error: '播放错误', watchdog: '卡流超时', exhaust: '尝试耗尽' }[failure.reason])} · 源 ${failure.sourceIndex + 1}（${this.esc(failure.sourceUrl)}） · ${this.esc(failure.mode)} · 尝试 ${failure.attempts} 次 · ${this.fmtAgo(failure.at)}${failure.reason === 'exhaust' ? '（不代表停运）' : ''}</div>` : ''}
       <div class="dsec"><b>源诊断</b><button type="button" class="btn mbtn" data-act="dCopyDiagnostic" title="地址脱敏；台名和分类可能含个人信息，分享前请审阅">复制诊断摘要</button>${this.detail.loading ? '<span class="srcs">诊断中…</span>' : '<button type="button" class="btn mbtn" data-act="dAll">全部诊断</button>'}</div>
       ${this.detail.error ? `<div class="derr">${this.esc(this.detail.error)}</div>` : ''}
       ${rows}

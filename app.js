@@ -2100,14 +2100,15 @@ const App = {
   qualityHtml(s) {
     const qa = QualityStore.summary(s.u[0], s.u);
     if (!qa) return '<div class="srcs" style="padding:2px 0 6px">暂无质量样本（播放与体检后自动累计）</div>';
-    const Q_TXT = { good: '稳定', fair: '一般', poor: '不稳定', unknown: '样本不足' };
-    const cls = qa.stability === 'good' ? 'okb' : qa.stability === 'poor' ? 'badb' : '';
+    const explanation = qExplain(qa, Date.now());
+    const Q_TXT = { good: '稳定', fair: '一般', poor: '不稳定', unknown: '质量未知，建议重测' };
+    const cls = explanation.level === 'good' ? 'okb' : explanation.level === 'poor' ? 'badb' : '';
     const total = qa.okCount + qa.failCount;
     const rate = total ? Math.round(100 * qa.okCount / total) : 0;
     const icy = { icy: '有曲讯（直流）', none: '无曲讯', mixed: '混合源' }[qa.metadata] || qa.metadata;
     return `<div class="srcs" style="padding:2px 0 6px">
-      <span class="badge ${cls}" title="stability: ${this.esc(qa.stability)}（累计成功率/延迟/连续失败综合）">● ${Q_TXT[qa.stability] || qa.stability}</span>
-      成功率 ${rate}%（${qa.okCount}/${total}）· 平均延迟 ${qa.avgLatencyMs}ms · 断流 ${qa.disconnects} 次 · ${icy}
+      <span class="badge ${cls}" title="stability: ${this.esc(qa.stability)}（累计成功率/延迟/连续失败综合）">● ${Q_TXT[explanation.level]}</span>
+      累计成功率 ${rate}%（${qa.okCount}/${total}）· 平均延迟 ${qa.avgLatencyMs}ms · 断流 ${qa.disconnects} 次 · ${icy}
       · 最近播放 ${qa.lastPlaybackAt ? this.fmtAgo(qa.lastPlaybackAt) : '—'}
     </div>`;
   },
@@ -2125,6 +2126,7 @@ const App = {
     const rmap = {}; (this.detail.results || []).forEach(r => { if (r) s.u.forEach(u => { try { if (new URL(u).href === r.url) rmap[u] = r; } catch (_) { if (u === r.url) rmap[u] = r; } }); }); // 结果依 URL 回绑，不把旧下标误归到更换后的源
     const onU = on && st.sourceIndex >= 0 ? s.u[st.sourceIndex] : null, memU = on && st.srcMemIndex >= 0 ? s.u[st.srcMemIndex] : null; // 徽标按 URL 对齐
     const CODE_TXT = { OK: '可用', NETWORK: '网络失败', HTML: 'HTML 假流', HTTP: 'HTTP 错误', EMPTY_PLAYLIST: '空清单', NO_SEGMENT: '无可用分片', SHORT_BODY: '字节不足', REDIRECT_REJECTED: '重定向被拒', INVALID_URL: '地址不合法' };
+    const ACTION_TXT = { none: '无需操作', retry: '稍后重试或换源', configure: '服务拒绝访问，请检查配置', check_source: '请检查源地址或换源', retest: '建议重新诊断' };
     const rows = [...dv.order, ...dv.dis].slice(0, SRC_CAP).map(i => { // 每台 6 封顶（与装配/批量诊断同口径，review P1）
       const u = urls[i], r = rmap[u], d = dis.includes(i), pend = pendU.has(u);
       const lbv = Object.prototype.hasOwnProperty.call(dv.labels, u) ? dv.labels[u] : this.cfg.srcLabels[u];
@@ -2135,7 +2137,7 @@ const App = {
       const state = d
         ? '<span class="badge permb">已禁用</span><span class="srcs">该源已被手动禁用，不能诊断</span>'
         : pend ? '<span class="srcs">追加时探活已通过（保存后可诊断/试听）</span>'
-        : r ? `<span class="badge ${r.ok ? 'okb' : 'badb'}" title="code: ${this.esc(r.code)}">${CODE_TXT[r.code] || r.code}</span><span class="srcs" title="${this.esc(r.why)}">${this.esc(r.why)} · ${r.latencyMs || 0}ms · ${r.bytes || 0}B · ${r.mode}</span>`
+        : r ? `<span class="badge ${r.ok ? 'okb' : 'badb'}" title="code: ${this.esc(r.code)}">${this.esc(CODE_TXT[r.code] || '未知结果')}</span><span class="srcs">${this.esc(ACTION_TXT[diagnosticAction(r.code, r.httpStatus).action])} · 检测于 ${r.checkedAt ? this.fmtAgo(r.checkedAt) : '时间未知'} · ${Number(r.latencyMs) || 0}ms · ${Number(r.bytes) || 0}B · ${this.esc(r.mode || '未知模式')}</span>`
         : '<span class="srcs">未诊断</span>';
       const acts = [
         d ? `<button type="button" class="btn mbtn" data-act="dUndis" data-i="${i}" title="取消禁用该源（写进本台源草稿，保存后生效）">启用</button>`

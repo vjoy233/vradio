@@ -8,6 +8,7 @@ const sb = { console, URL, setTimeout, clearTimeout, location: { protocol: 'http
   QualityStore: { recordDiagnostic: (...x) => records.push(x) }, fetch: () => new Promise((resolve, reject) => pending.push({ resolve, reject })) };
 vm.createContext(sb); vm.runInContext(src.slice(0, m.index) + '\nthis.App = App;', sb);
 const app = sb.App; app.renderDetail = () => {}; app.mEditorRepaint = () => {}; app.toast = x => toasts.push(x);
+const projection = require('../quality-store'); sb.qExplain = projection.qExplain; sb.diagnosticAction = projection.diagnosticAction;
 const s = { c: '分类', n: '电台', u: ['https://user:pass@example.com/secret?token=abc#frag', 'https://example.org/live'], dis: [] };
 app.state.stations = [s];
 const respond = (req, url) => req.resolve({ json: async () => ({ results: [{ url, code: 'OK', ok: true, why: 'secret' }] }) });
@@ -22,5 +23,8 @@ const respond = (req, url) => req.resolve({ json: async () => ({ results: [{ url
   let copied = ''; sb.navigator.clipboard = { writeText: async x => { copied = x; } }; app.detail.results[0] = { code: 'HTTP', why: 'password' };
   assert.equal(await app.copyDiagnostic(s), true); assert(copied.includes('https://example.com/')); for (const x of ['user', 'pass', 'secret', 'token', 'abc', 'frag', 'password']) assert(!copied.includes(x), x);
   sb.navigator.clipboard.writeText = async () => { throw Error('denied'); }; assert.equal(await app.copyDiagnostic(s), false); assert(toasts.pop().includes('失败'));
-  console.log('诊断并发与脱敏通过');
+  sb.QualityStore.summary = () => ({ okCount: 4, failCount: 0, stability: 'good', lastObservedAt: 1, avgLatencyMs: 10, disconnects: 0, metadata: 'none' });
+  const quality = app.qualityHtml(s); assert(quality.includes('质量未知')); assert(quality.includes('累计成功率'));
+  assert.equal(sb.diagnosticAction('NETWORK', 403).action, 'configure');
+  console.log('诊断并发、脱敏与质量投影通过');
 })().catch(e => { console.error(e); process.exitCode = 1; });

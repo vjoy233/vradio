@@ -45,5 +45,11 @@ const respond = (req, url) => req.resolve({ ok: true, json: async () => ({ resul
   const before = records.length, collision = app.checkStationSources(legacy), request = pending.shift();
   respond(request, 'http://example.com/'); await collision;
   assert.equal(records.length, before + 1); assert.equal(records[before][1].url, legacy.u[0]);
+  const canonical = { c: '碰撞', n: '碰撞', u: ['http://example.com/', 'HTTP://EXAMPLE.COM:80'], dis: [] };
+  app.state.stations.push(canonical); app.detail.stationKey = canonical.c + '|' + canonical.n;
+  const singleCollision = app.recheckSource(canonical, 0), req = pending.shift(); respond(req, canonical.u[0]); await singleCollision;
+  assert.equal(records[records.length - 1][1].url, canonical.u[0]);
+  sb.QualityStore.stations = { [canonical.u[0]]: { sources: { [canonical.u[0]]: { lastOkAt: 30 } } } };
+  assert.equal(app.successfulSource(canonical), undefined); // 新记录与旧规范化键不可区分，保守不推荐
   console.log('诊断并发、脱敏与质量投影通过');
 })().catch(e => { console.error(e); process.exitCode = 1; });

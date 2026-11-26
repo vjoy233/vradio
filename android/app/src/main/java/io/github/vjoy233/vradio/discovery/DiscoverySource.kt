@@ -45,7 +45,7 @@ object DiscoverySourceParser {
         o.optString("license") != "CC0-1.0") return@runCatching null
       val commit = o.optString("commit")
       val generated = o.optString("generatedAt")
-      if (!SHA.matches(commit) || runCatching { Instant.parse(generated) }.isFailure) return@runCatching null
+      if (!SHA.matches(commit) || !ISO.matches(generated) || runCatching { Instant.parse(generated) }.isFailure || Instant.parse(generated).toString() != generated) return@runCatching null
       val a = o.optJSONArray("items") ?: return@runCatching null
       if (a.length() > MAX_ITEMS) return@runCatching null
       val items = ArrayList<DiscoveryItem>(a.length())

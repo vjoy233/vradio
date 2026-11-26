@@ -8,7 +8,7 @@ import java.security.MessageDigest
 
 class DiscoverySourceTest {
   private val commit = "0123456789abcdef0123456789abcdef01234567"
-  private val body = """{"v":1,"source":"recommended-radio-streams","license":"CC0-1.0","commit":"$commit","generatedAt":"2026-11-26T00:00:00Z","items":[{"name":"Test","url":"http://example.com/a","genre":"ambient","upstream":"recommended-radio-streams","commit":"$commit"}]}"""
+  private val body = """{"v":1,"source":"recommended-radio-streams","license":"CC0-1.0","commit":"$commit","generatedAt":"2026-11-26T00:00:00.000Z","items":[{"name":"Test","url":"http://example.com/a","genre":"ambient","upstream":"recommended-radio-streams","commit":"$commit"}]}"""
   private fun hash(s: String) = MessageDigest.getInstance("SHA-256").digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
 
   @Test fun validFixtureAndManifest() {
@@ -20,7 +20,7 @@ class DiscoverySourceTest {
 
   @Test fun rejectsWrongCommitAndHttpStillAllowed() {
     assertNotNull(DiscoverySourceParser.parse(body))
-    assertNull(DiscoverySourceParser.parse(body.replace(commit, "f".repeat(40)).replace("0123456789abcdef0123456789abcdef01234567", commit)))
+    assertNull(DiscoverySourceParser.parse(body.replaceFirst("\"commit\":\"$commit\"", "\"commit\":\"${"f".repeat(40)}\"")))
   }
 
   @Test fun rejectsOversizeAndTooManyItems() {

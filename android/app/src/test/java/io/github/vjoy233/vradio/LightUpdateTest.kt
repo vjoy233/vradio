@@ -2,6 +2,9 @@ package io.github.vjoy233.vradio
 
 import io.github.vjoy233.vradio.sync.Gh
 import io.github.vjoy233.vradio.data.HttpText
+import io.github.vjoy233.vradio.data.AtomicWriteTestHook
+import io.github.vjoy233.vradio.data.writeTextAtomic
+import java.io.File
 import io.github.vjoy233.vradio.sync.LightUpdate
 import io.github.vjoy233.vradio.sync.RadioMeta
 import io.github.vjoy233.vradio.sync.SyncBarrier
@@ -19,6 +22,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -26,6 +30,7 @@ import org.junit.rules.TemporaryFolder
 /* D7 轻更新：判新旧（commits API vs stamp）→ 下载落盘（tmp+rename + stamp.json）→ keyOf 口径 diff
    + addedCheck（欧美两节过滤）。FakeHttp 按 URL 喂罐头，全程离线。 */
 class LightUpdateTest {
+  @After fun clearAtomicHook() { AtomicWriteTestHook.rename = null; AtomicWriteTestHook.tempCreate = null; AtomicWriteTestHook.tempWrite = null }
 
   @get:Rule val tmp = TemporaryFolder()
 
@@ -230,17 +235,21 @@ class LightUpdateTest {
 
   /* ---------- AIbot 三轮 P1：D7 批次提交协议回归（部分写失败不得误绑） ---------- */
 
-  /** 注入「radio-meta.json.tmp 为目录」：writeTextAtomic 的 tmp.writeText 必抛（Windows/Linux 双平台），
-   *  模拟 meta 落盘的磁盘/权限故障，其余文件照常可写。 */
-  private fun injectMetaWriteFail(dir: java.io.File) {
-    java.io.File(dir, "radio-meta.json.tmp").mkdirs()
+  /** 指定目标的原子替换失败；其他目标沿用真实原子替换。 */
+  private fun injectRenameFail(name: String) {
+    AtomicWriteTestHook.rename = { from, to ->
+      if (to.name == name) false else runCatching {
+        java.nio.file.Files.move(from.toPath(), to.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+          java.nio.file.StandardCopyOption.REPLACE_EXISTING); true
+      }.getOrDefault(false)
+    }
   }
 
   @Test fun meta写失败失效见证与旧件不误报整体失败() = runBlocking {
     val dir = tmp.newFolder()
     val lu1 = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
-    lu1.applyForTest(radioV1)                                    // 批次一：radio+meta+stamp 全量成功（旧批次三件套）
-    injectMetaWriteFail(dir)                              // 批次二：meta 写盘故障注入
+    lu1.applyForTest(radioV1) // 先写旧批次
+    injectRenameFail("radio-meta.json") // 第二批模拟替换失败
     val lu2 = LightUpdate(Gh(FakeHttp(fullMap(radioAt = "2026-10-11T00:00:00Z",
       logosAt = "2026-10-09T00:00:00Z", meta = metaV1)), 0), dir)
     val r = lu2.applyForTest(radioV1)!!
@@ -282,7 +291,7 @@ class LightUpdateTest {
     assertNotNull(lu.applyForTest(radioV1))
     val before = listOf("radio.txt", "logos.txt", "radio-meta.json", "stamp.json")
       .associateWith { java.io.File(dir, it).readText() }
-    assertTrue(java.io.File(dir, "radio.txt.tmp").mkdir())
+    injectRenameFail("radio.txt")
     val next = LightUpdate(Gh(FakeHttp(fullMap(radio = radioV2 + "新台,http://new/1.mp3\r\n",
       radioAt = "2026-10-11T00:00:00Z", meta = metaV1)), 0), dir)
     assertNull(next.applyForTest(radioV2))
@@ -295,7 +304,7 @@ class LightUpdateTest {
     val lu = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
     assertNotNull(lu.applyForTest(radioV1))
     val oldLogo = lu.logosText()
-    assertTrue(java.io.File(dir, "logos.txt.tmp").mkdir())
+    injectRenameFail("logos.txt")
     val newRadio = radioV2 + "新台,http://new/1.mp3\r\n"
     val next = LightUpdate(Gh(FakeHttp(fullMap(radio = newRadio, logos = logosV2 + "新标志",
       radioAt = "2026-10-11T00:00:00Z", meta = metaV1)), 0), dir)
@@ -313,7 +322,7 @@ class LightUpdateTest {
     val lu = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
     assertNotNull(lu.applyForTest(radioV1))
     val oldStamp = lu.stamp()
-    assertTrue(java.io.File(dir, "stamp.json.tmp").mkdir())
+    injectRenameFail("stamp.json")
     val newRadio = radioV2 + "新台,http://new/1.mp3\r\n"
     val next = LightUpdate(Gh(FakeHttp(fullMap(radio = newRadio,
       radioAt = "2026-10-11T00:00:00Z", meta = metaV1)), 0), dir)
@@ -328,6 +337,49 @@ class LightUpdateTest {
     assertFalse(bound)
     assertTrue(lightUpdateMessage(result, bound).contains("元数据未通过同批见证"))
     assertEquals("2026-10-11T00:00:00Z", next.check(next.stamp()!!))
+  }
+
+  @Test fun rename失败保留旧文件并恢复() {
+    val dir = tmp.newFolder(); val target = File(dir, "radio.txt")
+    target.writeText("旧内容")
+    AtomicWriteTestHook.rename = { _, _ -> false } // tmp→target 拒绝覆盖：旧目标必须原样保留
+    try {
+      var failed = false
+      try { writeTextAtomic(target, "新内容") } catch (_: java.io.IOException) { failed = true }
+      assertTrue(failed)
+      assertEquals("旧内容", target.readText())
+      assertFalse(File(dir, "radio.txt.bak.atomic").exists())
+      assertFalse(File(dir, "radio.txt.tmp").exists())
+    } finally { AtomicWriteTestHook.rename = null }
+  }
+
+  @Test fun 既有调用成功路径保持兼容() {
+    val dir = tmp.newFolder(); val target = File(dir, "radio.txt")
+    target.writeText("旧")
+    try { writeTextAtomic(target, "新") } finally { AtomicWriteTestHook.rename = null }
+    assertEquals("新", target.readText())
+  }
+
+  @Test fun temp创建失败安全失败() {
+    val dir = tmp.newFolder(); val target = File(dir, "x.txt")
+    target.writeText("old-bytes")
+    AtomicWriteTestHook.tempCreate = { throw java.io.IOException("temp create injected") }
+    try { writeTextAtomic(target, "x") ; throw AssertionError("expected failure") }
+    catch (_: java.io.IOException) { assertEquals("old-bytes", target.readText()) }
+    assertEquals(listOf("x.txt"), dir.listFiles()!!.map { it.name }.sorted())
+  }
+
+  @Test fun temp写失败安全失败() {
+    val dir = tmp.newFolder(); val target = File(dir, "x.txt")
+    target.writeText("old-bytes")
+    var actual: File? = null
+    AtomicWriteTestHook.tempCreate = { f -> File.createTempFile(f.name + ".", ".tmp", f.parentFile).also { actual = it } }
+    AtomicWriteTestHook.tempWrite = { f, text -> f.writeText(text.take(1)); throw java.io.IOException("temp write injected") }
+    try { writeTextAtomic(target, "new") ; throw AssertionError("expected failure") }
+    catch (_: java.io.IOException) { assertEquals("old-bytes", target.readText()) }
+    assertNotNull(actual)
+    assertFalse(actual!!.exists())
+    assertEquals(listOf("x.txt"), dir.listFiles()!!.map { it.name }.sorted())
   }
 
   @Test fun 旧stamp无哈希字段保守不绑定() {
@@ -363,12 +415,12 @@ class LightUpdateTest {
       val dir = tmp.newFolder()
       val broken = fullMap(logos = if (failure == "logos") null else logosV2,
         meta = if (failure == "meta") null else metaV1)
-      if (failure == "stamp") assertTrue(java.io.File(dir, "stamp.json.tmp").mkdir())
+      if (failure == "stamp") injectRenameFail("stamp.json")
       val first = LightUpdate(Gh(FakeHttp(broken), 0), dir)
       val result = first.applyForTest(radioV1)!!
       assertTrue(result.retryPending)
       assertEquals(radioV2, first.radioText())
-      if (failure == "stamp") assertTrue(java.io.File(dir, "stamp.json.tmp").delete())
+      if (failure == "stamp") AtomicWriteTestHook.rename = null
       val restarted = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
       assertEquals("2026-10-10T00:00:00Z", restarted.check("2026-10-10T00:00:00Z"))
       val recovered = restarted.applyForTest(radioV2)!!
@@ -384,7 +436,7 @@ class LightUpdateTest {
     val dir = tmp.newFolder()
     val lu = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
     lu.applyForTest(radioV1)!!
-    assertTrue(java.io.File(dir, "stamp.json.tmp").mkdir())
+    injectRenameFail("stamp.json")
     val r = lu.applyForTest(radioV2)!!
     assertFalse(r.stampWritten)
     val h = lu.stampHashOk()
@@ -531,10 +583,10 @@ class LightUpdateTest {
 
   @Test fun 屏障创建与最终清除故障保守处理() = runBlocking {
     val dir = tmp.newFolder()
-    assertTrue(java.io.File(dir, "full-sync.pending.tmp").mkdir())
+    injectRenameFail("full-sync.pending")
     assertTrue(runCatching { SyncBarrier.begin(dir) }.isFailure)
     assertFalse(SyncBarrier.active(dir))
-    assertTrue(java.io.File(dir, "full-sync.pending.tmp").delete())
+    AtomicWriteTestHook.rename = null
     SyncBarrier.begin(dir)
     assertTrue(runCatching { SyncBarrier.finish(dir) { false } }.isFailure)
     assertTrue(SyncBarrier.active(dir))

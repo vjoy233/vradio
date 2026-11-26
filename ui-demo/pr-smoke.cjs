@@ -189,6 +189,24 @@ async function run(chromium) {
     await playProbe(page, st1, 'P', () => page.click('#heroPlay'), true, check, note);
     check('P1 点播记最近', await page.evaluate(r0 => App.recents.length === r0 + 1, rec0));
 
+    // —— [D] 发现卡真实点击：沿用 Player、筛选不变；不连接公网 ——
+    console.log('[D] 本地发现播放与筛选');
+    const prior = await page.evaluate(() => { App.state.cat = App.state.stations[0].c; return {cat: App.state.cat, scope: App.state.scope, keyword: App.state.keyword}; });
+    await page.click('#discBtn');
+    await page.waitForSelector('#discBody .discrow');
+    const disc = await page.evaluate(() => {
+      const k = document.querySelector('#discBody .discrow').dataset.k;
+      const s = App.state.stations.find(x => x.c + '|' + x.n === k);
+      window.__discCalls = 0; const original = Player.play;
+      Player.play = function (...args) { window.__discCalls++; return original.apply(this, args); };
+      return {k, u0:s.u[0]};
+    });
+    check('D1 发现展示来源与质量摘要', await page.locator('#discBody .discrow .badge').count() > 0 && await page.locator('#discBody .discrow .srcs').count() > 0);
+    await page.locator('#discBody .discrow').first().click();
+    check('D2 卡片仅调用既有播放入口一次且指向选中台', await page.evaluate(d => window.__discCalls === 1 && !!Player.connecting && Player.connecting.u[0] === d.u0, disc));
+    check('D3 返回后筛选不变', await page.evaluate(p => App.state.cat === p.cat && App.state.scope === p.scope && App.state.keyword === p.keyword && document.getElementById('discovery').hidden, prior));
+    await page.evaluate(() => Player.stop());
+
     // —— [M] 维护离开三选（dirty → 保存/放弃/继续）——
     console.log('[M] 维护离开三选');
     await page.click('#sideManage');

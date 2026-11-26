@@ -123,5 +123,19 @@ ok('质量关注仅取可信差异样本，来源混合且不推断分类', () =
   assert.deepStrictEqual(d.groups.needsAttention[0].origins, ['adjusted','gao','personal']);
   assert.strictEqual(d.groups.unheard.find(x => x.n === '台2').explain.level, 'unknown');
 });
+ok('跨端共享 fixture：全部分组及排序、可见性和 URL 回绑', () => {
+  const f = require('../contracts/fixtures/discovery.json');
+  const rows = f.stations.map(s => ({ k:'X|'+s.name, n:s.name, c:'X', u0:s.id, u:[s.id], om:s.starter, hidden:s.hidden, dead:s.dead }));
+  const q = {}, stations = {}, revives = new Map();
+  f.stations.forEach(s => {
+    if (s.quality) q[s.id] = s.quality;
+    stations[s.id] = {firstSeenAt:s.firstSeenAt, sources:[{url:s.id, verification:'sync', lastVerifiedAt:s.verifiedAt}]};
+    if (s.recoveredAt) revives.set(s.id, s.recoveredAt);
+  });
+  const d = buildDiscovery({rows, quality:u => q[u] || null, meta:{stations}, revives,
+    recents:[{u:f.recentUrls}], playingKey:'X|'+f.playing, connectingKey:'X|'+f.connecting, now:f.now,
+    explain:q => ({level:q && q.stability || 'unknown', action:q && q.stability === 'fair' ? 'retest' : 'none'})});
+  for (const key of Object.keys(f.expected)) assert.deepStrictEqual(names(d.groups[key]), f.expected[key], key);
+});
 console.log(`\n${pass} 通过，${fail} 失败`);
 process.exit(fail ? 1 : 0);

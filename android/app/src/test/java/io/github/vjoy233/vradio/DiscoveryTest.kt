@@ -34,6 +34,30 @@ class DiscoveryTest {
   private fun good(url: String, lastObs: Long, icy: Boolean = true, direct: Int = 1) =
     url to QInfo("good", direct, if (icy) "icy" else "none", lastObs)
 
+  @Test fun 跨端共享发现样本() {
+    val f = org.json.JSONObject(javaClass.classLoader!!.getResource("fixtures/discovery.json")!!.readText())
+    val data = f.getJSONArray("stations")
+    val stations = (0 until data.length()).map { i ->
+      val x = data.getJSONObject(i)
+      st(cat = "X", name = x.getString("name"), url = x.getString("id"), starter = x.optBoolean("starter"), hidden = x.optBoolean("hidden"), dead = x.optBoolean("dead"))
+    }
+    val quality = mutableMapOf<String, QInfo>(); val first = mutableMapOf<String, Long>()
+    val recovered = mutableMapOf<String, Long>(); val verified = mutableMapOf<String, Long>(); val attention = mutableMapOf<String, Long>()
+    for (i in stations.indices) {
+      val x = data.getJSONObject(i); val s = stations[i]; val q = x.optJSONObject("quality")
+      if (q != null) quality[s.u0] = QInfo(q.getString("stability"), q.getInt("directCount"), q.getString("metadata"), q.getLong("lastObservedAt"))
+      if (x.has("firstSeenAt")) first[s.u0] = x.getLong("firstSeenAt")
+      if (x.has("recoveredAt")) recovered[s.key] = x.getLong("recoveredAt")
+      if (x.has("verifiedAt")) verified[s.u0] = x.getLong("verifiedAt")
+      if (x.optBoolean("attention")) attention[s.u0] = q!!.getLong("lastObservedAt")
+    }
+    val urls = f.getJSONArray("recentUrls"); val recent = (0 until urls.length()).map { urls.getString(it) }.toSet()
+    val g = Discovery.build(DiscoveryInput(stations, playingKey = "X|" + f.getString("playing"), connectingKey = "X|" + f.getString("connecting"), quality = quality, firstSeenAt = first, recoveredAt = recovered, recentUrls = recent, verifiedAt = verified, attentionAt = attention, now = f.getLong("now")))
+    val groups = mapOf("starter" to g.featured, "stable" to g.stableDirect, "fresh" to g.recentlyAdded, "revived" to g.recentlyRecovered, "icy" to g.withMetadata, "unheard" to g.unlistened, "recentlyVerified" to g.recentlyVerified, "needsAttention" to g.needsAttention)
+    val expected = f.getJSONObject("expected")
+    for ((key, value) in groups) { val a = expected.getJSONArray(key); assertEquals(key, (0 until a.length()).map { a.getString(it) }, value.map { it.n }) }
+  }
+
   @Test fun 验证边界及最近URL回绑() {
     val a = st(name = "A", url = "http://a/1")
     val b = st(name = "B", url = "http://b/1")

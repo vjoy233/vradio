@@ -1,0 +1,17 @@
+{
+  "now": 3456000000,
+  "stations": [
+    {"id":"http://a/1","name":"A","starter":true,"quality":{"stability":"good","directCount":1,"metadata":"icy","lastObservedAt":300},"firstSeenAt":100,"recoveredAt":10,"verifiedAt":3455999999},
+    {"id":"http://b/1","name":"B","quality":{"stability":"fair","directCount":1,"metadata":"none","lastObservedAt":200},"firstSeenAt":200,"attention":true,"verifiedAt":864000000},
+    {"id":"http://c/1","name":"C","dead":true,"verifiedAt":3455999999},
+    {"id":"http://d/1","name":"D","hidden":true,"starter":true,"verifiedAt":3455999999},
+    {"id":"http://e/1","name":"E","dead":true,"verifiedAt":3456000001}
+  ],
+  "playing":"C",
+  "connecting":"E",
+  "recentUrls":["http://a/1"],
+  "expected":{
+    "starter":["A"],"stable":["A"],"fresh":["B","A"],"revived":["A"],"icy":["A"],
+    "unheard":["B","C","E"],"recentlyVerified":["A","C"],"needsAttention":["B"]
+  }
+}

@@ -910,6 +910,9 @@ const App = {
     // 用户主动操作走 #status——两通道不双写，读屏器不念两遍（R4 分工规则）。action = {label, fn} 确认门槛用；
     // dismiss = 「暂不」类纯关闭按钮的文案（常驻 toast 的显式出口，AIbot P3-5）
     const t = $('toast');
+    const replaced = !t.hidden && this._toastReplaced; this._toastReplaced = null;
+    if (replaced) replaced();
+    this._toastReplaced = opt.onReplace || null;
     t.innerHTML = '';
     const sp = document.createElement('span'); sp.textContent = msg; t.appendChild(sp);
     if (opt.action) {

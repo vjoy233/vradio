@@ -103,7 +103,6 @@ fun SettingsScreen(vm: AppVm, pad: PaddingValues) {
   val netSync by vm.netSync.collectAsState()
   val netLogo by vm.netLogoWifi.collectAsState()
   val traffic by vm.trafficTxt.collectAsState()
-  val gate by vm.netGate.collectAsState()
   val timeshiftOn by vm.timeshiftOn.collectAsState()   // B7 Spike 时移回听（本地 pref，默认关）
   // 折叠态（Q26/Q18，review#48）：plain remember——进程死亡回默认（Q18 严格口径，不进 SavedStateRegistry）；
   // 旋转重建同样回默认，丢折叠态是拍板取舍（折叠只是纯 UI 展示态，不写 AppVm/Store）
@@ -122,16 +121,6 @@ fun SettingsScreen(vm: AppVm, pad: PaddingValues) {
     ConfirmDialog("确认导入", msg, onOk = { vm.applyConfirmed() }, onDismiss = { vm.cancelConfirm() },
       checkLabel = if (impHasQ) "恢复备份内 sidecar（质量/收听统计，将覆盖本机对应数据）" else null,   // 默认不勾 = 保留本机（AIbot 三轮 P1-3；B4 双 sidecar 一勾整体覆盖）
       checked = impSc, onCheckedChange = { vm.impSidecar.value = it })
-  }
-  // B5：移动数据大流量操作确认门（全量体检/主库同步/轻更新，拒绝则不发；AIbot P1 后轻更新同入 SYNC 门）
-  gate?.let { (act, msg) ->
-    ConfirmDialog(
-      when (act) {
-        io.github.vjoy233.vradio.network.NetGate.Act.SYNC -> "移动数据同步确认"
-        io.github.vjoy233.vradio.network.NetGate.Act.LIGHT_UPDATE -> "移动数据更新确认"
-        else -> "移动数据体检确认"
-      },
-      msg, onOk = { vm.proceedGate() }, onDismiss = { vm.cancelGate() })
   }
 
   Column(Modifier.fillMaxSize().background(pal.bg).statusBarsPadding()) {

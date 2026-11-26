@@ -218,9 +218,9 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   val freshnessPrompt = MutableStateFlow(false)
   val freshnessAge = MutableStateFlow("unknown")
   private fun saveFreshness(p: Freshness.Pref) { freshnessPref.value = p; Store.set(C.K_SYNC_FRESHNESS, p.json()) }
-  fun setFreshnessDays(days: Int) { saveFreshness(freshnessPref.value.copy(reminderDays = if (days in listOf(7, 14, 30)) days else 14, disabled = false)) }
-  fun disableFreshness() { freshnessPrompt.value = false; saveFreshness(freshnessPref.value.copy(disabled = true)) }
-  fun dismissFreshness() { freshnessPrompt.value = false; saveFreshness(freshnessPref.value.copy(dismissedUntil = System.currentTimeMillis() + Freshness.DAY)) }
+  fun setFreshnessDays(days: Int) { saveFreshness(Freshness.parse(Store.get(C.K_SYNC_FRESHNESS)).copy(reminderDays = if (days in listOf(7, 14, 30)) days else 14, disabled = false)) }
+  fun disableFreshness() { freshnessPrompt.value = false; saveFreshness(Freshness.parse(Store.get(C.K_SYNC_FRESHNESS)).copy(disabled = true)) }
+  fun dismissFreshness() { freshnessPrompt.value = false; saveFreshness(Freshness.parse(Store.get(C.K_SYNC_FRESHNESS)).copy(dismissedUntil = System.currentTimeMillis() + Freshness.DAY)) }
   fun syncFromFreshness() { freshnessPrompt.value = false; fullSyncNow() }
   private suspend fun checkFreshness() {
     while (healthBusy.value || syncBusy.value || updateBusy.value || PlayerHolder.ui.value.st == PState.PLAYING || PlayerHolder.ui.value.st == PState.CONNECTING) delay(5000)
@@ -1272,7 +1272,9 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         texts.second?.let { runCatching { logos.loadBuiltins(it) } }
         lib.reload(); stamp.value++
         primeAll()
-        syncMsg.value = "同步完成：新增 ${d.added} 台、消失 ${d.removed} 台"
+        syncMsg.value = "同步完成：新增 ${d.added} 台、消失 ${d.removed} 台；" +
+          (if (d.cnUpdated) "国内已更新" else "国内未更新，保留旧数据") + "；" +
+          (if (d.euKept != null) "欧美已更新" else "欧美未更新，保留旧数据")
         toast(syncMsg.value)
         pointGone(before)
         if (d.addedCheck.isNotEmpty()) { delay(800); incCheck(d.addedCheck.take(C.ADDED_CHECK_CAP)) }   // D4
@@ -1485,6 +1487,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
             if (err != null) { toast("导入失败：$err，已回滚到导入前状态"); return@launch }
             // AIbot P1-2：Store 已被整体替换，三层内存态必须显式刷新——缺一层 = 重启才生效，
             // 且播放层旧 volperst/srcmem 内存会在下次调音量/换源时整体回写冲掉刚导入的值（数据损坏向）
+            freshnessPref.value = Freshness.parse(Store.get(C.K_SYNC_FRESHNESS))
+            freshnessPrompt.value = false
             lib.reloadStore()                                             // 收藏/最近/健康标记/cfg 内存重载
             lib.reload()                                                  // 主列表/my 层重装配 + 回绑
             quality.keepHint = runCatching { qualityKeepSnapshot() }.getOrDefault(quality.keepHint)   // B2：收藏整体替换后保护集重算

@@ -60,6 +60,7 @@ const Sync = {
     App.toast(state.age === 'unknown' ? '电台数据更新时间未知，请手动检查' : '电台数据已有一段时间未同步', {
       ms: 0, action: { label: '立即同步', fn: () => this.doSync() }, dismiss: '稍后',
       onDismiss: () => Store.set('radio.syncFreshness', JSON.stringify(Freshness.markDismissed(Store.get('radio.syncFreshness'), Date.now()))),
+      onReplace: () => { this.freshnessShown = false; setTimeout(() => this.scheduleFreshness(), Freshness.COOLDOWN); },
     });
   },
 
@@ -94,6 +95,8 @@ const Sync = {
     });
   },
   async forceSync(reportHash) { // 两步协议：申请一次性 token（绑定报告指纹）→ 带 token 的 /api/sync 复用 stash 原料强制发布
+    if (this.syncInFlight) return;
+    this.syncInFlight = true;
     $('status').textContent = '强制同步中…';
     try {
       const t = await fetch('/api/sync/force-token', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reportHash }) }).then(x => x.json());
@@ -103,6 +106,7 @@ const Sync = {
       if (r.error) throw new Error(r.error);
       await this.syncDone(r);
     } catch (e) { $('status').textContent = '强制同步失败：' + (e && e.message || e); }
+    finally { this.syncInFlight = false; }
   },
   async syncDone(r) { // 同步完成态（普通/强制共用）：reloadMain + diff 摘要 + 消失收藏点名 + 同步后增量体检
     if (r.aborted) {
@@ -112,7 +116,8 @@ const Sync = {
     await App.reloadMain(); // 决策 B：主列表 replace + 个人层常驻（radio.txt 与 my-radio.txt 重拉重并）
     const eu = r.euKept != null ? `欧美音乐 ${r.euKept} 个实测可用` : '欧美音乐未更新（已保留旧列表）';
     const dd = (r.added || r.removed) ? `；新增 ${r.added} 台、消失 ${r.removed} 台` : ''; // 同步 diff 摘要（N4/r2 ⑥）
-    let msg = `同步完成：共 ${r.total} 台（${r.delta >= 0 ? '+' : ''}${r.delta}${dd}；${eu}${r.replacement === 'forced' ? '；已强制替换' : r.replacement === 'kept' ? '；欧美层保留旧数据' : ''}）`;
+    const cn = r.cn && r.cn.indexOf('保留') >= 0 ? '国内未更新（已保留旧列表）' : r.cn ? '国内已更新' : '国内更新状态未知';
+    let msg = `同步完成：共 ${r.total} 台（${r.delta >= 0 ? '+' : ''}${r.delta}${dd}；${cn}；${eu}${r.replacement === 'forced' ? '；已强制替换' : r.replacement === 'kept' ? '；欧美层保留旧数据' : ''}）`;
     const gone = r.removedNames && App.favsGone(r.removedNames, r.removedUrls); // 消失台含收藏台单独点名（收藏在 localStorage，比对必须在前端；名+URL 双通道，AIbot P3-1）
     if (gone && gone.length) {
       const show = gone.length > 5 ? gone.slice(0, 5).join('、') + ` 等 ${gone.length} 个` : gone.join('、');

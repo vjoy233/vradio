@@ -148,6 +148,21 @@ function mkSync(over) {
     assert.strictEqual(p.lastSuccessAt, undefined);
     await t.Sync.scheduleFreshness(); assert.strictEqual(t.calls.toast.length, 1);
   });
+  await ok('提醒被替换后重新排队，不记 24 小时关闭', async () => {
+    const t = mkSync(); t.el('toast').hidden = true;
+    await t.Sync.scheduleFreshness(); t.calls.toast[0].opt.onReplace();
+    assert.strictEqual(t.Sync.freshnessShown, false);
+    assert.strictEqual(JSON.parse(t.store.get('radio.syncFreshness')).dismissedUntil, 0);
+    t.clock.tick(60000); await t.Sync.scheduleFreshness();
+    assert.strictEqual(t.calls.toast.length, 2);
+  });
+  await ok('强制同步在途时延后提醒', async () => {
+    const t = mkSync(); t.el('toast').hidden = true;
+    const run = t.Sync.forceSync('hash');
+    assert.strictEqual(t.Sync.syncInFlight, true);
+    await t.Sync.scheduleFreshness(); assert.strictEqual(t.calls.toast.length, 0);
+    await run; assert.strictEqual(t.Sync.syncInFlight, false);
+  });
   await ok('播放中延迟提醒，不触发同步', async () => {
     const t = mkSync(); t.el('toast').hidden = true; t.sb.Player.audio.paused = false;
     await t.Sync.scheduleFreshness();
@@ -468,7 +483,7 @@ function mkSync(over) {
     const posts = t.f.calls.filter(c => c.url === '/api/sync');
     assert.strictEqual(JSON.parse(posts[1].opt.body).forceToken, 'tk1', '带 token 强制发布');
     assert.strictEqual(posts[1].opt.headers['Content-Type'], 'application/json');
-    assert.strictEqual(t.el('status').textContent, '同步完成：共 90 台（+0；欧美音乐 90 个实测可用）', '强制成功进 syncDone');
+    assert.strictEqual(t.el('status').textContent, '同步完成：共 90 台（+0；国内更新状态未知；欧美音乐 90 个实测可用）', '强制成功进 syncDone');
     assert.strictEqual(t.calls.reload, 1, 'reloadMain 重拉重并');
     assert.strictEqual(t.span('syncBtn').textContent, '同步源', '按钮复位');
   });
@@ -512,7 +527,7 @@ function mkSync(over) {
     assert.strictEqual(t.el('syncBtn').disabled, false, '收尾复位');
     assert.strictEqual(t.span('syncBtn').textContent, '同步源');
     assert.strictEqual(t.el('prog').hidden, true);
-    assert.strictEqual(t.el('status').textContent, '同步完成：共 10 台（+0；欧美音乐 8 个实测可用）');
+    assert.strictEqual(t.el('status').textContent, '同步完成：共 10 台（+0；国内更新状态未知；欧美音乐 8 个实测可用）');
   });
 
   console.log('[8] forceSync');
@@ -537,7 +552,7 @@ function mkSync(over) {
     await t.Sync.forceSync('h9'); await drain();
     assert.strictEqual(JSON.parse(t.f.calls.filter(c => c.url === '/api/sync/force-token')[0].opt.body).reportHash, 'h9', 'token 绑定报告指纹');
     assert.strictEqual(t.calls.reload, 1);
-    assert.strictEqual(t.el('status').textContent, '同步完成：共 50 台（+5；欧美音乐 10 个实测可用；已强制替换）');
+    assert.strictEqual(t.el('status').textContent, '同步完成：共 50 台（+5；国内更新状态未知；欧美音乐 10 个实测可用；已强制替换）');
   });
 
   console.log('[9] syncDone');
@@ -551,9 +566,9 @@ function mkSync(over) {
   await ok('汇总文案分支：delta 正负/euKept 有无/replacement forced·kept', async () => {
     const t = mkSync();
     await t.Sync.syncDone({ total: 100, delta: -3, added: 2, removed: 5, euKept: 40, replacement: 'kept' });
-    assert.strictEqual(t.el('status').textContent, '同步完成：共 100 台（-3；新增 2 台、消失 5 台；欧美音乐 40 个实测可用；欧美层保留旧数据）');
+    assert.strictEqual(t.el('status').textContent, '同步完成：共 100 台（-3；新增 2 台、消失 5 台；国内更新状态未知；欧美音乐 40 个实测可用；欧美层保留旧数据）');
     await t.Sync.syncDone({ total: 90, delta: 5, euKept: null, replacement: 'forced' });
-    assert.strictEqual(t.el('status').textContent, '同步完成：共 90 台（+5；欧美音乐未更新（已保留旧列表）；已强制替换）');
+    assert.strictEqual(t.el('status').textContent, '同步完成：共 90 台（+5；国内更新状态未知；欧美音乐未更新（已保留旧列表）；已强制替换）');
     assert.strictEqual(t.calls.favsGone.length, 0, '无 removedNames 不比对');
   });
   await ok('收藏台消失点名：favsGone(名+URL 双通道)，≤5 全列、>5 截断「等 N 个」', async () => {

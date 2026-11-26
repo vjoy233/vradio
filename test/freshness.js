@@ -27,6 +27,12 @@ try {
   assert.strictEqual(U.freshnessFact(root), null);
   U.publishSync(root, arts, { version: 'v1', ts: now + 1, freshness: true });
   assert.deepStrictEqual(U.freshnessFact(root), { version: 'v1', refreshedAt: now + 1, provenance: 'pipeline-full' });
+  const manifestPath = path.join(root, 'sync-manifest.json');
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const logos = manifest.files.find(x => x.path === 'logos.txt');
+  fs.writeFileSync(manifestPath, JSON.stringify(Object.assign({}, manifest, { files: [logos, logos, logos, logos] })));
+  assert.strictEqual(U.freshnessFact(root), null, '重复文件不能伪造资产绑定');
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest));
   fs.writeFileSync(path.join(root, 'radio.txt'), 'changed');
   assert.strictEqual(U.freshnessFact(root), null);
 } finally { fs.rmSync(root, { recursive: true, force: true }); }

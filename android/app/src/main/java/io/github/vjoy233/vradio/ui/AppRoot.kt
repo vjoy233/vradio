@@ -54,6 +54,14 @@ fun AppRoot() {
     val detailDiag by vm.detailDiag.collectAsState()
     val detailBusy by vm.detailBusy.collectAsState()
     val ui by PlayerHolder.ui.collectAsState()
+    val gate by vm.netGate.collectAsState()
+    gate?.let { (act, msg) ->
+      ConfirmDialog(when (act) {
+        io.github.vjoy233.vradio.network.NetGate.Act.SYNC -> "移动数据同步确认"
+        io.github.vjoy233.vradio.network.NetGate.Act.LIGHT_UPDATE -> "移动数据更新确认"
+        else -> "移动数据体检确认"
+      }, msg, onOk = vm::proceedGate, onDismiss = vm::cancelGate)
+    }
     val freshPrompt by vm.freshnessPrompt.collectAsState()
     val freshAge by vm.freshnessAge.collectAsState()
     if (freshPrompt) AlertDialog(onDismissRequest = vm::dismissFreshness,

@@ -530,6 +530,7 @@ function readManifestOf(dir) {
   try {
     const m = JSON.parse(fs.readFileSync(path.join(dir, 'sync-manifest.json'), 'utf8'));
     if (m && Array.isArray(m.files) && m.files.length === SYNC_ASSETS.length &&
+      new Set(m.files.map(f => f && f.path)).size === SYNC_ASSETS.length &&
       m.files.every(f => f && SYNC_ASSETS.includes(f.path) && Number.isFinite(f.bytes) && typeof f.sha256 === 'string')) return m;
   } catch (_) {}
   return null;

@@ -192,6 +192,12 @@ async function run(chromium) {
     // —— [D] 发现卡真实点击：沿用 Player、筛选不变；不连接公网 ——
     console.log('[D] 本地发现播放与筛选');
     const prior = await page.evaluate(() => { App.state.cat = App.state.stations[0].c; return {cat: App.state.cat, scope: App.state.scope, keyword: App.state.keyword}; });
+    const boundWithoutSubtle = await page.evaluate(async () => {
+      const original = Object.getOwnPropertyDescriptor(window, 'crypto');
+      try { Object.defineProperty(window, 'crypto', { configurable:true, value:undefined }); return !!(await App.loadMeta(App.metaMain)); }
+      finally { if (original) Object.defineProperty(window, 'crypto', original); else delete window.crypto; }
+    });
+    check('D0 无 crypto.subtle 的 HTTP 环境仍验证绑定', boundWithoutSubtle);
     await page.click('#sideMore'); await page.click('#discBtn');
     await page.waitForSelector('#discBody .discrow');
     const disc = await page.evaluate(() => {

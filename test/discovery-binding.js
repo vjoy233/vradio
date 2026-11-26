@@ -1,13 +1,16 @@
 // 本地 meta 同批绑定及异步换代：只用内存 fixture，不联网。
 const assert = require('assert'), crypto = require('crypto');
-const { App } = require('../app');
-global.location = {protocol:'http:'}; global.crypto = crypto.webcrypto;
+const { App, discoverySha256 } = require('../app');
+global.location = {protocol:'http:', hostname:'192.168.1.42'}; // LAN HTTP：不可依赖 secure context
+// 故意无 crypto.subtle；Node 14 不依赖 crypto.webcrypto。
+global.crypto = undefined;
 const hash = s => crypto.createHash('sha256').update(s).digest('hex');
 const radio = 'X,#genre#\r\nA,http://a/1\r\n';
 const raw = JSON.stringify({v:1,stations:{'http://a/1':{sources:[{url:'http://a/1',upstream:'gao'}]}}});
 let manifest = JSON.stringify({files:[{path:'radio.txt',sha256:hash(radio)},{path:'radio-meta.json',sha256:hash(raw)}]});
 global.fetch = async p => ({ok:true,text:async () => p.startsWith('sync-manifest') ? manifest : raw});
 (async () => {
+  for (const text of ['', 'abc', '中文😀', 'a'.repeat(55), 'a'.repeat(56), 'a'.repeat(64), 'a'.repeat(100000)]) assert.strictEqual(discoverySha256(text), hash(text));
   assert.ok(await App.loadMeta(radio));
   assert.strictEqual(await App.loadMeta(radio + 'changed'), null);
   manifest = JSON.stringify({files:[{path:'radio.txt',sha256:hash(radio)},{path:'radio-meta.json',sha256:hash('old')}]});

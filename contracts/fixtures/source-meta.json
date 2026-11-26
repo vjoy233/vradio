@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "kind": "source-meta",
+  "source": {
+    "url": "https://stream.example/radio.mp3",
+    "upstream": "gao",
+    "upstreamId": "row-1",
+    "kind": "main",
+    "firstSeenAt": 1732500000000,
+    "lastSeenAt": 1732600000000,
+    "lastVerifiedAt": 1732600000000,
+    "verification": "sync"
+  }
+}

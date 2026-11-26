@@ -4,7 +4,7 @@
 
 ## 范围与结论
 
-目标仅为明确用户播放意图后，首次自连失败或后来断开时单飞补建；连接本身不得播放、后台重连、释放共享 ExoPlayer/MediaSession 或改变暂停意图。不能把自动续播、播放器错误、焦点恢复或定时器当作新的用户授权。本次没有实现状态机或接线：仅凭 JVM fake 可证明单飞算法，无法证明真实服务重建与共享 session 复用满足上述约束。尤其不能把外部控制器连接成功或 `stopService` 返回成功误判为产品自连和服务已重建。
+目标仅为明确用户播放意图后，首次自连失败或后来断开时单飞补建；连接本身不得播放、后台重连、释放共享 ExoPlayer/MediaSession 或改变暂停意图。不能把自动续播、播放器错误、焦点恢复或定时器当作新的用户授权。本次仅在 test 源集实现未接产品的纯状态模型及 JVM 测试；它不进入 APK、不持有 Media3 对象，不能证明真实服务重建与共享 session 复用满足上述约束。尤其不能把外部控制器连接成功或 `stopService` 返回成功误判为产品自连和服务已重建。
 
 ## 代码和 Media3 1.11.1 实证
 
@@ -14,6 +14,20 @@
 - [MediaSessionService 1.11.1 源码](https://github.com/androidx/media/blob/1.11.1/libraries/session/src/main/java/androidx/media3/session/MediaSessionService.java)：服务 `addSession` 会注册 notification manager 并覆盖 session listener；`onDestroy` 释放 service stub，但源码本身不能证明 Android 上原绑定已解除、旧服务彻底销毁或新旧 listener 与通知回调无交叠。[MediaNotificationManager](https://github.com/androidx/media/blob/1.11.1/libraries/session/src/main/java/androidx/media3/session/MediaNotificationManager.java) 为每个 session 另建异步 controller，连接失败可移除 session。产品自连的单飞并不等于服务内部控制器与通知生命周期的单飞。
 - 服务连接可能使 Media3 重新管理通知与前台生命周期；仅声明“连接动作不调用 play”不足以证明平台侧不会影响暂停意图或造成前后台服务问题。特别是异步旧 controller 完成、断连、service 销毁与共享 session 再挂载交叠时，目前没有设备实验证明。
 
+## 意图入口矩阵（候选，尚未接线）
+
+| 来源 | 候选资格及边界 |
+|---|---|
+| UI 选台、播放/续听、刷新 | 明确用户操作可授权一次补建；暂停按钮不可。刷新原语义可起播，补建本身不可。 |
+| 用户点击桌面快捷方式 | 明确操作可授权；失配回退与启动自动续播必须区分，不能把整个启动流程算显式。 |
+| 通知栏或耳机媒体键播放、切台 | 若可确认是用户发出的播放/切台命令可授权；系统状态回调不是媒体键意图。 |
+| Widget 播放/切台 | 明确点击可授权；Widget 更新及单纯绑定服务不是播放意图。 |
+| 用户开启的启动自动续播 | 用户已授权现有自动续播，不能禁用或改变其播放行为；但本专项限定仅显式播放意图，不赋予额外自连重试资格。首次自连维持原样。 |
+| 音频焦点恢复、错误级联、看门狗、时移回直播 | 不是新的显式播放意图，不触发补建；保持原有播放行为。 |
+| 断连回调或后台定时器 | 不自动补建；播放中意外断连后缺通知等风险仍是明确遗留，不能声称完整恢复。 |
+
+上述资格是待实现方案，必须沿真实调用链传递，不能仅靠 `play`、`resumeLast` 或 `toggle` 的方法名判定。原启动自连保留，所有播放及暂停语义不变。
+
 ## 下一步证明条件
 
 1. 定义显式意图入口与传递方式，覆盖台列表、续听、刷新、快捷方式、媒体键和 Widget；明确排除自动续播、焦点恢复及故障自愈。新入口在停播/暂停时不得自行改播放意图，保留原有各动作语义。
@@ -22,4 +36,4 @@
 
 ## 本次验证
 
-独立 worktree 以 PR #68 head 检出。首次运行 `gradlew.bat --offline test` 因独立 worktree 未配置 SDK 失败（`SDK location not found`）；设置已有 SDK 的 `ANDROID_HOME=D:\\Dev\\android-sdk` 后通过，任务大量 `FROM-CACHE`，这是**基线 JVM 测试**，不是新方案或 adapter 验证。没有新增产品单元测试、没有设备验证。研究结论和候选测试计划不能替代实现与实测。
+独立 worktree 以 PR #68 head 检出。首次运行 `gradlew.bat --offline test` 因独立 worktree 未配置 SDK 失败（`SDK location not found`）；设置已有 SDK 的 `ANDROID_HOME=D:\\Dev\\android-sdk` 后通过，任务大量 `FROM-CACHE`，这是**基线 JVM 测试**，不是新方案或 adapter 验证。另有 test 源集纯模型测试：单飞、失败/断连后仅新授权重试、提前断连、旧代迟到、取消与释放回调重入、同步创建失败。模型输出 Begin/Close 指令，无真实 Media3 adapter 或调用链，因此不证明旧 future 的实际释放与线程安全；没有设备验证。研究结论和模型测试不能替代实现与实测。

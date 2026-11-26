@@ -344,7 +344,7 @@ class LightUpdateTest {
     AtomicWriteTestHook.tempCreate = { throw java.io.IOException("temp create injected") }
     try { writeTextAtomic(target, "x") ; throw AssertionError("expected failure") }
     catch (_: java.io.IOException) { assertEquals("old-bytes", target.readText()) }
-    assertEquals(1, dir.listFiles()!!.count { it.name == "x.txt" })
+    assertEquals(listOf("x.txt"), dir.listFiles()!!.map { it.name }.sorted())
   }
 
   @Test fun temp写失败安全失败() {

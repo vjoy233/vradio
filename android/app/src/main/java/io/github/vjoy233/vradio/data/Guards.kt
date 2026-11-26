@@ -81,8 +81,6 @@ private val atomicLocks = java.util.concurrent.ConcurrentHashMap<String, Any>()
 internal fun writeTextAtomic(f: File, text: String) {
   val lock = atomicLocks.computeIfAbsent(f.absolutePath) { Any() }
   synchronized(lock) {
-    // Legacy .tmp is used only when an explicit test hook is active; production never reuses
-    // crash leftovers or another writer's temporary file.
     val tmp = AtomicWriteTestHook.tempCreate?.invoke(f)
       ?: File.createTempFile(f.name + ".", ".tmp", f.parentFile)
     try {

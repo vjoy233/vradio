@@ -340,18 +340,22 @@ class LightUpdateTest {
 
   @Test fun temp创建失败安全失败() {
     val dir = tmp.newFolder(); val target = File(dir, "x.txt")
+    target.writeText("old-bytes")
     AtomicWriteTestHook.tempCreate = { throw java.io.IOException("temp create injected") }
     try { writeTextAtomic(target, "x") ; throw AssertionError("expected failure") }
-    catch (_: java.io.IOException) { assertFalse(target.exists()) }
+    catch (_: java.io.IOException) { assertEquals("old-bytes", target.readText()) }
+    assertEquals(1, dir.listFiles()!!.count { it.name == "x.txt" })
   }
 
   @Test fun temp写失败安全失败() {
     val dir = tmp.newFolder(); val target = File(dir, "x.txt")
-    val temp = File(dir, "unique.tmp")
-    AtomicWriteTestHook.tempWrite = { _, _ -> throw java.io.IOException("temp write injected") }
-    temp.mkdirs()
-    try { writeTextAtomic(target, "x") ; throw AssertionError("expected failure") }
-    catch (_: java.io.IOException) { assertFalse(target.exists()) }
+    target.writeText("old-bytes")
+    var actual: File? = null
+    AtomicWriteTestHook.tempCreate = { f -> File.createTempFile(f.name + ".", ".tmp", f.parentFile).also { actual = it } }
+    AtomicWriteTestHook.tempWrite = { f, text -> f.writeText(text.take(1)); throw java.io.IOException("temp write injected") }
+    try { writeTextAtomic(target, "new") ; throw AssertionError("expected failure") }
+    catch (_: java.io.IOException) { assertEquals("old-bytes", target.readText()) }
+    assertFalse(actual?.exists() == true)
   }
 
   @Test fun 旧stamp无哈希字段保守不绑定() {

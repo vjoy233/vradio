@@ -51,5 +51,10 @@ const respond = (req, url) => req.resolve({ ok: true, json: async () => ({ resul
   assert.equal(records[records.length - 1][1].url, canonical.u[0]);
   sb.QualityStore.stations = { [canonical.u[0]]: { sources: { [canonical.u[0]]: { lastOkAt: 30 } } } };
   assert.equal(app.successfulSource(canonical), undefined); // 新记录与旧规范化键不可区分，保守不推荐
+  const fact = { stationUrl: s.u[0], sourceUrl: s.u[1], sourceIndex: 1, mode: 'direct', reason: 'watchdog', attempts: 2, at: 1700000000000 };
+  const history = app.failureHtml(s, fact);
+  assert(history.includes('历史播放失败（非当前状态、非诊断）')); assert(history.includes('发生于'));
+  assert(history.includes(new Date(fact.at).toLocaleString())); assert(history.includes('断流自愈'));
+  assert.equal(app.failureHtml(canonical, fact), '');
   console.log('诊断并发、脱敏与质量投影通过');
 })().catch(e => { console.error(e); process.exitCode = 1; });

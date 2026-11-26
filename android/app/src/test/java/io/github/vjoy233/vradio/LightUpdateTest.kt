@@ -4,6 +4,7 @@ import io.github.vjoy233.vradio.sync.Gh
 import io.github.vjoy233.vradio.data.HttpText
 import io.github.vjoy233.vradio.sync.LightUpdate
 import io.github.vjoy233.vradio.sync.RadioMeta
+import io.github.vjoy233.vradio.ui.lightUpdateMessage
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -107,6 +108,10 @@ class LightUpdateTest {
   @Test fun apply缺logos不阻断() = runBlocking {
     val lu = LightUpdate(Gh(FakeHttp(fullMap(logos = null)), 0), tmp.newFolder())
     val r = lu.apply(radioV1)!!
+    assertEquals(LightUpdate.LogosStatus.DOWNLOAD_FAILED, r.logosStatus)
+    assertEquals(LightUpdate.MetaStatus.DOWNLOAD_FAILED, r.metaStatus)
+    assertEquals(LightUpdate.CleanupStatus.ABSENT, r.metaCleanup)
+    assertTrue(r.stampWritten)
     assertFalse(r.logosChanged)      // logos 下载失败：保留旧（此处从未有 → 仍 null），radio 照常落盘
     assertEquals(radioV2, lu.radioText()); assertNull(lu.logosText())
   }
@@ -166,6 +171,9 @@ class LightUpdateTest {
       logosAt = "2026-10-09T00:00:00Z", meta = metaV2Bad)), 0), dir)
     val r = lu2.apply(radioV1)!!
     assertTrue(r.metaInvalid); assertFalse(r.metaChanged)
+    assertEquals(LightUpdate.MetaStatus.INVALID, r.metaStatus)
+    assertEquals(LightUpdate.CleanupStatus.DELETED, r.metaCleanup)
+    assertTrue(lightUpdateMessage(r).contains("元数据校验失败，旧文件已删除"))
     assertNull(lu2.metaText())                              // 旧 meta 已删（混态拦截）
     assertEquals(radioV2, lu2.radioText())                  // 主库不受影响
     assertEquals(false, lu2.stampMetaOk())                  // 见证为 false：bound(files=true, files=true, false) = 不绑定
@@ -230,7 +238,10 @@ class LightUpdateTest {
     val r = lu2.apply(radioV1)!!
     // radio 已更新、apply 不整体失败（≠ 抛异常/返回 null——UI 不会误报「已保留原数据」）
     assertEquals(radioV2, lu2.radioText())
-    assertFalse(r.metaChanged); assertFalse(r.metaInvalid)   // 写失败与「校验失败」「未提供」同面：静默
+    assertFalse(r.metaChanged); assertFalse(r.metaInvalid)
+    assertEquals(LightUpdate.MetaStatus.WRITE_FAILED, r.metaStatus)
+    assertEquals(LightUpdate.CleanupStatus.DELETED, r.metaCleanup)
+    assertTrue(lightUpdateMessage(r).contains("元数据写入失败，旧文件已删除"))
     assertNull(lu2.metaText())                             // 旧 meta 已删（新 radio 不留旧 meta——宁缺勿混）
     assertEquals(false, lu2.stampMetaOk())                 // 见证失效：本批未落成 meta
     val h = lu2.stampHashOk()
@@ -281,7 +292,9 @@ class LightUpdateTest {
     val next = LightUpdate(Gh(FakeHttp(fullMap(radio = newRadio, logos = logosV2 + "新标志",
       radioAt = "2026-10-11T00:00:00Z", meta = metaV1)), 0), dir)
     val result = next.apply(radioV2)!!
-    assertTrue(result.logosChanged) // 非空下载，不代表落盘成功
+    assertFalse(result.logosChanged)
+    assertEquals(LightUpdate.LogosStatus.WRITE_FAILED, result.logosStatus)
+    assertTrue(lightUpdateMessage(result).contains("台标写入失败"))
     assertEquals(oldLogo, next.logosText())
     assertEquals(newRadio, next.radioText())
     assertEquals(true to true, next.stampHashOk())
@@ -296,7 +309,9 @@ class LightUpdateTest {
     val newRadio = radioV2 + "新台,http://new/1.mp3\r\n"
     val next = LightUpdate(Gh(FakeHttp(fullMap(radio = newRadio,
       radioAt = "2026-10-11T00:00:00Z", meta = metaV1)), 0), dir)
-    assertNotNull(next.apply(radioV2))
+    val result = next.apply(radioV2)!!
+    assertFalse(result.stampWritten)
+    assertTrue(lightUpdateMessage(result).contains("更新标记写入失败"))
     assertEquals(newRadio, next.radioText())
     assertEquals(oldStamp, next.stamp())
     val h = next.stampHashOk()
@@ -319,4 +334,18 @@ class LightUpdateTest {
       assertFalse(RadioMeta.bound(true, true, true, null, null))
     }
   }
+  @Test fun 删除旧meta失败如实报告并禁止绑定() = runBlocking {
+    val dir = tmp.newFolder()
+    val first = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
+    first.apply(radioV1)!!
+    val next = LightUpdate(Gh(FakeHttp(fullMap(radio = radioV2 + "新台,http://new/1.mp3\r\n", meta = metaV2Bad)), 0), dir) { false }
+    val r = next.apply(radioV2)!!
+    assertEquals(LightUpdate.MetaStatus.INVALID, r.metaStatus)
+    assertEquals(LightUpdate.CleanupStatus.FAILED, r.metaCleanup)
+    assertEquals(metaV1, next.metaText())
+    assertTrue(lightUpdateMessage(r).contains("旧文件删除失败"))
+    val h = next.stampHashOk()
+    assertFalse(RadioMeta.bound(true, true, next.stampMetaOk(), h.first, h.second))
+  }
+
 }

@@ -13,6 +13,8 @@ import io.github.vjoy233.vradio.check.CheckStream
 import io.github.vjoy233.vradio.check.RawHttp
 import io.github.vjoy233.vradio.ui.lightUpdateMessage
 import io.github.vjoy233.vradio.ui.syncFailureMessage
+import io.github.vjoy233.vradio.ui.logoRetryNotice
+import io.github.vjoy233.vradio.ui.metadataUnavailable
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -600,6 +602,97 @@ class LightUpdateTest {
     assertNull(lu.check("2026-10-01T00:00:00Z"))
     SyncBarrier.finish(dir)
     assertFalse(SyncBarrier.active(dir))
+  }
+
+  @Test fun 同步降级保留台标复核且绝不重放主库() = runBlocking {
+    val dir = tmp.newFolder()
+    val light = LightUpdate(Gh(FakeHttp(fullMap(logos = null)), 0), dir)
+    assertTrue(light.applyForTest(radioV1)!!.retryPending)
+    SyncBarrier.begin(dir)
+    val synced = radioV2 + "端内同步,http://local/1.mp3\r\n"
+    File(dir, "radio.txt").writeText(synced)
+    File(dir, "stamp.json").writeText("{\"commitIso\":\"2026-10-20T00:00:00Z\",\"meta\":false}")
+    SyncBarrier.prepareLogoRetry(dir, false); SyncBarrier.finish(dir)
+    assertTrue(SyncBarrier.logoRetryPending(dir))
+    assertTrue(logoRetryNotice(true).contains("可能"))
+    val restarted = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
+    assertNull(restarted.check("2026-10-20T00:00:00Z"))
+    assertEquals(synced, restarted.radioText())
+    SyncBarrier.begin(dir); SyncBarrier.prepareLogoRetry(dir, false); SyncBarrier.finish(dir)
+    assertTrue(SyncBarrier.logoRetryPending(dir))
+    SyncBarrier.begin(dir); SyncBarrier.prepareLogoRetry(dir, true); SyncBarrier.finish(dir)
+    assertFalse(SyncBarrier.logoRetryPending(dir))
+  }
+
+  @Test fun 台标标记创建失败及清除失败保留屏障() {
+    val dir = tmp.newFolder()
+    File(dir, "light-update.pending").writeText("pending")
+    SyncBarrier.begin(dir)
+    injectRenameFail("full-sync-logo-retry")
+    assertTrue(runCatching { SyncBarrier.prepareLogoRetry(dir, false) }.isFailure)
+    assertTrue(SyncBarrier.active(dir)); assertTrue(File(dir, "light-update.pending").exists())
+    AtomicWriteTestHook.rename = null
+    SyncBarrier.prepareLogoRetry(dir, false)
+    assertTrue(runCatching { SyncBarrier.prepareLogoRetry(dir, true) { false } }.isFailure)
+    assertTrue(SyncBarrier.active(dir)); assertTrue(SyncBarrier.logoRetryPending(dir))
+  }
+
+  @Test fun logo成功后清标与清旧意图之间中断保守恢复() {
+    val dir = tmp.newFolder()
+    File(dir, "light-update.pending").writeText("pending")
+    SyncBarrier.begin(dir); SyncBarrier.prepareLogoRetry(dir, false)
+    SyncBarrier.prepareLogoRetry(dir, true) // logo 成功；清旧 light 前进程退出
+    assertFalse(SyncBarrier.logoRetryPending(dir)); assertTrue(SyncBarrier.active(dir))
+    SyncBarrier.begin(dir); SyncBarrier.prepareLogoRetry(dir, false); SyncBarrier.finish(dir)
+    assertTrue(SyncBarrier.logoRetryPending(dir)) // 新一轮降级保守提示，允许假阳性
+  }
+
+  @Test fun 真实端内同步降级转移提示且不会重放轻更新() = runBlocking {
+    val dir = tmp.newFolder()
+    val large = "华语音乐,#genre#\r\n" + (1..810).joinToString("\r\n") { "台$it,http://radio/$it.mp3" } + "\r\n"
+    File(dir, "radio.txt").writeText(large)
+    File(dir, "light-update.pending").writeText("pending")
+    val raw = object : RawHttp {
+      override suspend fun get(url: String, timeoutMs: Long, maxBytes: Long, headers: Map<String, String>): RawHttp.Resp? = null
+    }
+    val engine = SyncEngine(Gh(FakeHttp(emptyMap()), 0), CheckStream(raw), dir)
+    assertTrue(engine.run(large).ok)
+    assertTrue(SyncBarrier.logoRetryPending(dir))
+    assertFalse(File(dir, "light-update.pending").exists())
+    val synced = File(dir, "radio.txt").readText()
+    val lu = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
+    assertNull(lu.check(lu.stamp()!!)); assertEquals(synced, lu.radioText())
+    assertTrue(logoRetryNotice(SyncBarrier.logoRetryPending(dir)).contains("可能"))
+  }
+
+  @Test fun 元数据失败后全同步无法凭台标恢复绑定() = runBlocking {
+    val dir = tmp.newFolder()
+    val large = "华语音乐,#genre#\r\n" + (1..810).joinToString("\r\n") { "台$it,http://radio/$it.mp3" } + "\r\n"
+    val lu = LightUpdate(Gh(FakeHttp(fullMap(radio = large, meta = null)), 0), dir)
+    assertTrue(lu.applyForTest(radioV1)!!.retryPending)
+    val raw = object : RawHttp {
+      override suspend fun get(url: String, timeoutMs: Long, maxBytes: Long, headers: Map<String, String>): RawHttp.Resp? = null
+    }
+    assertTrue(SyncEngine(Gh(FakeHttp(emptyMap()), 0), CheckStream(raw), dir).run(large).ok)
+    val h = lu.stampHashOk()
+    assertFalse(RadioMeta.bound(true, lu.metaText() != null, lu.stampMetaOk(), h.first, h.second))
+    assertTrue(SyncBarrier.logoRetryPending(dir))
+    SyncBarrier.begin(dir); SyncBarrier.prepareLogoRetry(dir, true); SyncBarrier.finish(dir)
+    assertFalse(SyncBarrier.logoRetryPending(dir))
+    val h2 = lu.stampHashOk()
+    assertFalse(RadioMeta.bound(true, lu.metaText() != null, lu.stampMetaOk(), h2.first, h2.second))
+  }
+
+  @Test fun 元数据可用需解析成功且见证通过() {
+    assertTrue(metadataUnavailable(false, true)) // assets 来源一致但文件缺失或非法
+    assertTrue(metadataUnavailable(false, false))
+    assertTrue(metadataUnavailable(true, false)) // 存在且解析成功但见证不成立
+    assertFalse(metadataUnavailable(true, true))
+    assertTrue(metadataUnavailable(RadioMeta.parse(null) != null, true))
+    assertTrue(metadataUnavailable(RadioMeta.parse("invalid") != null, true))
+    val empty = RadioMeta.parse("{\"v\":1,\"stations\":{}}")
+    assertNotNull(empty); assertTrue(empty!!.stations.isEmpty())
+    assertFalse(metadataUnavailable(true, true))
   }
 
 }

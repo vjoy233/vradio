@@ -214,6 +214,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   val healthBusy = MutableStateFlow(false); val healthProg = MutableStateFlow(""); val healthResult = MutableStateFlow("")
   val updateBusy = MutableStateFlow(false); val updateMsg = MutableStateFlow("")
   val syncBusy = MutableStateFlow(false); val syncMsg = MutableStateFlow("")
+  val logoRetryPending = MutableStateFlow(false)
+  private fun refreshLogoRetry() { logoRetryPending.value = io.github.vjoy233.vradio.sync.SyncBarrier.logoRetryPending(ctx.filesDir) }
   val freshnessPref = MutableStateFlow(Freshness.parse(Store.get(C.K_SYNC_FRESHNESS)))
   val freshnessPrompt = MutableStateFlow(false)
   val freshnessAge = MutableStateFlow("unknown")
@@ -343,6 +345,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   /** radio-meta 与当前 radio 资产同批绑定（AIbot P1-4 + 三轮 P1）：false/混态时发现页「最近新增」置空（不猜）。
    *  判据见 RadioMeta.bound（filesDir/assets 来源配对 + stamp.meta 见证 + radio/meta 内容哈希核对）。 */
   var metaBound = false; private set
+  val metadataUnbound = MutableStateFlow(false)
 
   /** 渲染快照（唯一渲染入口精神：列表 + 分类角标 + 死台开关可见性 + 空态文案）；
    *  ver = stamp 哨兵进值域（审计 P2）：StateFlow 按相等合并，内容未变的 stamp++ 会被判等丢弃——
@@ -459,11 +462,13 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     val logosTxt = light.logosText() ?: aLogos
     val fMeta = light.metaText()
     runCatching { quality.load() }                            // B2 质量侧车（坏文件按空库恢复）
-    radioMeta.value = RadioMeta.parse(fMeta ?: readAsset("radio-meta.json")) ?: RadioMeta.EMPTY   // 缺件/坏件空对象兜底
+    val parsedMeta = RadioMeta.parse(fMeta ?: readAsset("radio-meta.json"))
+    radioMeta.value = parsedMeta ?: RadioMeta.EMPTY   // 缺件/坏件空对象兜底
     // AIbot P1-4 混态拦截：meta 与当前 radio 资产须同批（filesDir/assets 来源配对 + stamp.meta 见证 +
     // 三轮 P1 内容哈希核对——新 radio 配残留旧 stamp 时哈希对不上）→ 不绑定则发现页「最近新增」置空（不猜）
     val hashW = light.stampHashOk()
     metaBound = RadioMeta.bound(fRadio != null, fMeta != null, light.stampMetaOk(), hashW.first, hashW.second)
+    metadataUnbound.value = metadataUnavailable(parsedMeta != null, metaBound)
     withContext(Dispatchers.Main) {                           // Library 装配收敛主线程（审计 P2：非线程安全集合与渲染读侧单线程化）
       lib.mainText = mainTxt
       lib.myText = myTxt
@@ -475,6 +480,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     stamp.value++
     primeAll()
     withContext(Dispatchers.Main) {
+      refreshLogoRetry()
       booted = true
       consumePending()   // batch1 启动末梢：E3 快捷方式点播 > E4 接流预填 > N4 自动续播（默认关）
       updateShortcuts()  // E3 动态快捷方式初装（收藏变更/导入时增量刷新）
@@ -1225,6 +1231,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         radioMeta.value = withContext(Dispatchers.IO) { RadioMeta.parse(nfMeta) ?: RadioMeta.EMPTY }   // B2 meta 随更新收口（缺件空对象；混态已被 apply 删件拦截）
         val hW = light.stampHashOk()   // AIbot 三轮 P1：apply 后即时核对（radio/meta 内容哈希 vs stamp 见证）
         metaBound = RadioMeta.bound(true, nfMeta != null, light.stampMetaOk(), hW.first, hW.second)   // AIbot P1-4：更新后重算绑定（apply 已写 stamp 见证）
+        metadataUnbound.value = metadataUnavailable(RadioMeta.parse(nfMeta) != null, metaBound)
         lib.reload(); stamp.value++
         primeAll()
         updateMsg.value = lightUpdateMessage(res, metaBound)
@@ -1269,6 +1276,11 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         val texts = withContext(Dispatchers.IO) { light.radioText() to light.logosText() }
         texts.first?.let { lib.mainText = it }
         texts.second?.let { runCatching { logos.loadBuiltins(it) } }
+        val nfMeta = light.metaText()
+        radioMeta.value = RadioMeta.parse(nfMeta) ?: RadioMeta.EMPTY
+        val h = light.stampHashOk()
+        metaBound = RadioMeta.bound(true, nfMeta != null, light.stampMetaOk(), h.first, h.second)
+        metadataUnbound.value = metadataUnavailable(RadioMeta.parse(nfMeta) != null, metaBound)
         lib.reload(); stamp.value++
         primeAll()
         syncMsg.value = "同步完成：新增 ${d.added} 台、消失 ${d.removed} 台；" +
@@ -1281,7 +1293,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         syncMsg.value = syncFailureMessage(e.message ?: "网络错误", java.io.File(ctx.filesDir, "full-sync.pending").exists())
         toast(syncMsg.value)
       }
-      finally { syncBusy.value = false }
+      finally { refreshLogoRetry(); syncBusy.value = false }
     }
   }
 

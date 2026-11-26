@@ -92,6 +92,8 @@ fun SettingsScreen(vm: AppVm, pad: PaddingValues) {
   val updateMsg by vm.updateMsg.collectAsState()
   val syncBusy by vm.syncBusy.collectAsState()
   val syncMsg by vm.syncMsg.collectAsState()
+  val logoRetryPending by vm.logoRetryPending.collectAsState()
+  val metadataUnbound by vm.metadataUnbound.collectAsState()
   val freshness by vm.freshnessPref.collectAsState()
   val confirm by vm.confirmReq.collectAsState()
   val impHasQ by vm.impHasQuality.collectAsState()     // 备份含质量 sidecar（确认框复选显隐，B4 三轮 P1-3）
@@ -191,6 +193,8 @@ fun SettingsScreen(vm: AppVm, pad: PaddingValues) {
                   Text(if (syncBusy) "同步中…" else "立即同步")
                 }
                 if (syncMsg.isNotEmpty()) Info(syncMsg)
+                if (logoRetryPending) Info(logoRetryNotice(true))
+                if (metadataUnbound) Info("元数据缺失、无效或无法确认与主库同批，最近新增不可用；需等待仓库后续更新并成功应用同批元数据后恢复。")
               }
               "network" -> {   // B5（plan-expansion-r4 §9.2）：播放永不阻断；仅约束大流量后台操作（原样归位）
                 ItemTitle("移动数据 · 全量体检", "逐台探测全部电台，移动数据下流量较大")

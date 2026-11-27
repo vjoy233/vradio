@@ -1,4 +1,15 @@
 const assert = require('assert');
+const cp = require('child_process');
+// 生产边界回归：未提供 Web API 时 discovery-sidecar 必须 fail-closed，不能依赖测试 shim。
+const noWebApi = cp.execFileSync(process.execPath, ['-e', `
+  delete global.AbortController; delete global.TextDecoder;
+  const S = require(${JSON.stringify(require.resolve('../discovery-sidecar'))});
+  Promise.all([
+    S.load(() => { throw Error('fetch must not run'); }, 'x', 1),
+    S.loadSnapshot(() => { throw Error('fetch must not run'); }, 'x', 1)
+  ]).then(v => { if (JSON.stringify(v) !== '[[],[]]') process.exit(2); });
+`], {encoding:'utf8'});
+assert.strictEqual(noWebApi, '');
 require('./harness/web-api').install();
 const S = require('../discovery-sidecar');
 const sha = 'a'.repeat(40), raw = {v:1,source:'recommended-radio-streams',license:'CC0-1.0',commit:sha,items:[{name:'x',url:'https://x'}]};

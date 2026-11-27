@@ -82,8 +82,8 @@ class PlaybackSmokeTest {
     instr.runOnMainSync { PlayerHolder.play(station) }
     assertTrue("fixture 未进入 PLAYING", awaitSt(PState.PLAYING, 12_000))
     val future = MediaController.Builder(ctx, SessionToken(ctx, ComponentName(ctx, PlaybackService::class.java))).buildAsync()
-    val controller = future.get(10, TimeUnit.SECONDS)
     try {
+      val controller = future.get(10, TimeUnit.SECONDS)
       instr.runOnMainSync { controller.pause() }
       assertTrue("媒体控制器暂停未到达产品播放器", awaitSt(PState.PAUSED, 5_000))
       // 跨过 12 秒看门狗窗口；每次同时检查产品 UI 与真实播放器意图。
@@ -96,7 +96,7 @@ class PlaybackSmokeTest {
         SystemClock.sleep(200)
       }
     } finally {
-      instr.runOnMainSync { controller.release() }
+      instr.runOnMainSync { MediaController.releaseFuture(future) }
     }
   }
 

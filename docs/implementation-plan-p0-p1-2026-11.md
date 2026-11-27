@@ -215,7 +215,9 @@ verification = "unknown"
 
 ## B.6 Android 轻量数据更新
 
-当前实现不是跨文件事务：radio 下载/原子写失败返回 null 并保旧；radio 写成功立即生效。logos 下载或写失败保旧、不阻断；现有 `logosChanged` 只反映下载非空，不能证明写成功。meta 缺失、非法或写失败时尽力删除旧 meta 防混态，stamp 的 meta 标志及 radioHash/metaHash 在读取时核验绑定；删除失败或 stamp 失败由哈希不匹配保守不绑定。stamp 最后尽力写，失败不回滚已生效 radio，旧 stamp 使后续可重试；`Result` 非空不证明 logos/meta/stamp 全成功。补故障注入和可观察结果，必要时扩结果字段，不宣称整批回滚。端内 SyncEngine 写 radio 后删除旧 meta、stamp.meta=false，且其本机时钟 stamp 不是远端 commit 事实。
+当前实现不是跨文件事务：radio 下载/原子写失败返回 null 并保旧；radio 写成功立即生效。logos 下载或写失败保旧、不阻断；现有 `logosChanged` 只反映下载非空，不能证明写成功。meta 缺失、非法或写失败时尽力删除旧 meta 防混态，stamp 的 meta 标志及 radioHash/metaHash 在读取时核验绑定；删除失败或 stamp 失败由哈希不匹配保守不绑定。stamp 最后尽力写，失败不回滚已生效 radio，旧 stamp 使后续可重试；`Result` 非空不证明 logos/meta/stamp 全成功。补故障注入和可观察结果，必要时扩结果字段，不宣称整批回滚。
+
+端内 SyncEngine 写 radio 后删除旧 meta，设置 `stamp.meta=false`。其本机时钟 stamp 不是远端 commit 事实。
 
 ## B.7 后置真机发布门（不属于本批完成条件）
 
@@ -370,7 +372,9 @@ Player 已有 `refresh()`，复用而非新建 `refreshCurrent()`；必要时新
 
 唯一新持久键 `radio.syncFreshness`，形状 `{reminderDays,disabled,dismissedUntil,lastPromptAt}`，上限 1024 字节；坏 JSON、非法数值及未知字段安全归一，7/14/30 天，默认 14，disabled 默认 false。Store/server/Android C.KEYS、contracts/radio-keys、backup v3/schema/fixtures 三侧同步。不存在 `radio.lastsync` 迁移。不保存 lastSuccessAt/lastVersion；同步/备份不伪造资产事实。
 
-资产事实由当前实际生效批次独立提供 `{version, refreshedAt, provenance}`：Web 只从经验证、与生效资产一致的 manifest/stamp 和可信生成流程读取；Android 只用与当前生效 radio 绑定的可信远端 commit 或明确端内真实同步成功事实。`generatedAt`、`commitIso` 必须标注来源：bootstrap/init 生成时间和 Android SyncEngine 的本地当前时钟 stamp 不能冒充上游刷新。既有 stamp 缺乏证明时为 unknown，实施须增加可校验 provenance/事实接口，不能将 bootstrap 当成功。CLI 同步或 git pull 后重新读取当前有效 manifest，不能依用户键；多浏览器取同一服务端事实，用户键沿用 Store LWW，不能承诺跨客户端恰好一次。Android 包内资产取可证明的打包时间/版本，否则 unknown；LightUpdate 的 radio 已生效但 stamp 写失败视为事实未知而非回滚。允许显示“时间未知，请手动检查”，不能断言刚更新或无限静默。
+资产事实由当前实际生效批次独立提供 `{version, refreshedAt, provenance}`：Web 只从经验证、与生效资产一致的 manifest/stamp 和可信生成流程读取；Android 只用与当前生效 radio 绑定的可信远端 commit 或明确端内真实同步成功事实。
+
+`generatedAt`、`commitIso` 必须标注来源：bootstrap/init 生成时间和 Android SyncEngine 的本地当前时钟 stamp 不能冒充上游刷新。既有 stamp 缺乏证明时为 unknown，实施须增加可校验 provenance/事实接口，不能将 bootstrap 当成功。CLI 同步或 git pull 后重新读取当前有效 manifest，不能依用户键；多浏览器取同一服务端事实，用户键沿用 Store LWW，不能承诺跨客户端恰好一次。Android 包内资产取可证明的打包时间/版本，否则 unknown；LightUpdate 的 radio 已生效但 stamp 写失败视为事实未知而非回滚。允许显示“时间未知，请手动检查”，不能断言刚更新或无限静默。
 
 ### E.2 统一状态机与时钟
 
@@ -521,7 +525,7 @@ cd android
 
 # I. 最终产品验收标准
 
-五项全部完成后，用户应获得以下体验：
+以下六项全部完成后，用户应获得以下体验：
 
 1. 列表中的电台有可解释来源和质量摘要，但不会被一次网络波动粗暴隐藏。
 2. 播放失败时可以直接重测、换源、刷新、复制诊断或追加救援源。

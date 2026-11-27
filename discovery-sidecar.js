@@ -67,15 +67,22 @@
     if (typeof AbortController === 'undefined' || typeof TextDecoder === 'undefined') return [];
     async function stage(task) {
       const ctl = new AbortController(); let reader, timer;
-      const timeout = new Promise((_, reject) => { timer = setTimeout(() => { ctl.abort(); if (reader) reader.cancel().catch(() => {}); reject(Error('timeout')); }, timeoutMs); });
+      function cancel(r) { try { Promise.resolve(r.cancel()).catch(() => {}); } catch (_) {} }
+      const timeout = new Promise((_, reject) => { timer = setTimeout(() => { ctl.abort(); if (reader) cancel(reader); reject(Error('timeout')); }, timeoutMs); });
       async function bytes(url, max) {
       const r = await fetcher(url, {signal:ctl.signal, cache:'no-store'});
-      if (!r || !r.ok || !r.headers || !/^application\/(?:[\w.+-]*\+)?json(?:\s*;|$)/i.test(r.headers.get('content-type') || '') || Number(r.headers.get('content-length')) > max || !r.body || !r.body.getReader) { if (r && r.body && r.body.cancel) { try { await r.body.cancel(); } catch (_) {} } throw Error('invalid response'); }
-      reader = r.body.getReader(); const chunks = []; let size = 0;
-      for (;;) { const part = await reader.read(); if (part.done) break; size += part.value.byteLength; if (size > max) { await reader.cancel(); throw Error('too large'); } chunks.push(part.value); }
-      reader = null; const out = new Uint8Array(size); let off = 0; for (const part of chunks) { out.set(part, off); off += part.byteLength; } return out;
+      if (!r || !r.ok || !r.headers || !/^application\/(?:[\w.+-]*\+)?json(?:\s*;|$)/i.test(r.headers.get('content-type') || '') || Number(r.headers.get('content-length')) > max || !r.body || !r.body.getReader) { if (r && r.body && r.body.cancel) cancel(r.body); throw Error('invalid response'); }
+      const active = r.body.getReader(); reader = active; const chunks = []; let size = 0, complete = false;
+      try {
+        for (;;) { const part = await active.read(); if (part.done) { complete = true; break; } size += part.value.byteLength; if (size > max) throw Error('too large'); chunks.push(part.value); }
+        const out = new Uint8Array(size); let off = 0; for (const part of chunks) { out.set(part, off); off += part.byteLength; } return out;
+      } finally {
+        if (!complete) cancel(active);
+        try { active.releaseLock(); } catch (_) {}
+        if (reader === active) reader = null;
+      }
     }
-      try { return await Promise.race([task(bytes), timeout]); } finally { clearTimeout(timer); }
+      try { return await Promise.race([task(bytes), timeout]); } finally { clearTimeout(timer); ctl.abort(); if (reader) cancel(reader); }
     }
     const parse = b => JSON.parse(new TextDecoder('utf-8', {fatal:true}).decode(b));
     try {

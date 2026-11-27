@@ -29,6 +29,10 @@ assert.deepStrictEqual(S.normalize({...raw,items:[{name:'x',url:'https://x',comm
   const observed = (u,o) => { if (u.includes(broken)) o.signal.addEventListener('abort',()=>{readAborted=true;}); return stalledRead(u,o); };
   assert.equal((await S.loadSnapshot(observed,'snap',10)).length,1);
   assert(readCancelled && readAborted, 'stalled reader is cancelled and aborted');
+  let streamCancelled = false;
+  const realStream = async (u,o) => u.includes(broken) ? {ok:true,headers:{get:k=>k==='content-type'?'application/json':null},body:new ReadableStream({pull(){return new Promise(()=>{});},cancel(){streamCancelled=true; return new Promise(()=>{});}})} : fetcher(u,o);
+  assert.equal((await S.loadSnapshot(realStream,'snap',10)).length,1, 'real stream cancel never blocks fallback');
+  assert(streamCancelled);
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
   Object.defineProperty(globalThis, 'crypto', {configurable:true, value:undefined});
   assert.equal((await S.loadSnapshot(fetcher,'snap',10)).length, 1, 'insecure context verifies hash without Web Crypto');

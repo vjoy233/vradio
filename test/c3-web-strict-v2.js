@@ -55,6 +55,14 @@ for(const c of draft.urlAdversarial) {
  if(c.formatAccept) assert.deepStrictEqual(plain(parser.sidecar(b)),specimen,c.url);
  else assert.throws(()=>parser.sidecar(b),c.url);
 }
+// 双端共享 bindingCases：使用原始代字节与外部测试注入，不证明可信来源。
+for(const c of adversarial.bindingCases) {
+ const raw=bytes(c.sidecarBase64), p=parser.pointer(bytes(c.pointerBase64)), m=bytes(c.manifestBase64);
+ assert.strictEqual(digest(raw),c.sidecarId,c.id); assert.strictEqual(p.current,c.sidecarId,c.id);
+ const run=()=>parser.generation(p.current,m,raw,c.controlledCommit,digest);
+ if(c.proposed==='accept') assert.strictEqual(run().commit,c.controlledCommit,c.id);
+ else expectControlledFailure(run,null,c.id);
+}
 // 绑定来自测试环境而非可信来源；共享 first 的原始代数据验证绑定。
 const first=fixture.pointer.find(c=>c.id==='first');
 const firstPointer=parser.pointer(bytes(first.pointerBase64));

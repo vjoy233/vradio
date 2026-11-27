@@ -23,7 +23,7 @@ function wav() {
   const sockets = new Set();
   upstream.on('connection', socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
   await new Promise((resolve, reject) => upstream.listen(0, '127.0.0.1', resolve).on('error', reject));
-  let app, browser;
+  let app, browser, primaryError;
   try {
     app = await boot({ env: { VR_TEST_GUARD: '1' } });
     browser = await chromium.launch({ headless: true, args: ['--autoplay-policy=no-user-gesture-required'] });
@@ -45,7 +45,7 @@ function wav() {
     }), proxy('wav'));
     assert(played.ended && played.time >= 0.9, 'WAV 必须真实播至末尾');
     console.log('proxy browser: JS + 媒体伪装脚本被拒；PCM WAV 播放完成');
-  } finally {
+  } catch (e) { primaryError = e; } finally {
     const failures = [];
     if (browser) try { await bounded(browser.close(), 'browser'); } catch (e) { failures.push(e.message); }
     if (app) try {
@@ -59,6 +59,11 @@ function wav() {
       await bounded(closed, 'upstream');
       assert.strictEqual(sockets.size, 0, 'fixture socket 未清理');
     } catch (e) { failures.push(e.message); }
-    if (failures.length) throw new Error('清理失败: ' + failures.join('; '));
+    if (failures.length) {
+      const detail = '清理失败: ' + failures.join('; ');
+      if (primaryError) { console.error(detail); primaryError.message += '\n' + detail; }
+      else primaryError = new Error(detail);
+    }
   }
+  if (primaryError) throw primaryError;
 })().catch(e => { console.error(e); process.exitCode = 1; });

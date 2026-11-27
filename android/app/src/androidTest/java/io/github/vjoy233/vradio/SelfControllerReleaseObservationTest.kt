@@ -11,18 +11,28 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
+import org.junit.rules.RuleChain
+import org.junit.rules.TestRule
+import org.junit.runners.model.Statement
 import org.junit.Test
 import org.junit.runner.RunWith
 
 /** 隔离设备专用：主动释放真正的产品自连，不等同服务故障，不证明服务重建。 */
 @RunWith(AndroidJUnit4::class)
 class SelfControllerReleaseObservationTest {
-  @get:Rule val guard = TestUtil.dataGuard()
+  private val isolatedOnly = TestRule { base, _ -> object : Statement() {
+    override fun evaluate() {
+      val args = InstrumentationRegistry.getArguments()
+      assumeTrue("仅允许专用隔离设备的独立 instrumentation 执行",
+        args.getString("observeSelfRelease") == "true" &&
+          args.getString("class") == SelfControllerReleaseObservationTest::class.java.name)
+      base.evaluate()
+    }
+  } }
+  @get:Rule val rules: RuleChain = RuleChain.outerRule(isolatedOnly).around(TestUtil.dataGuard())
 
   @Test fun productControllerReleaseDoesNotRebuildWithoutAuthorization() {
     val instr = InstrumentationRegistry.getInstrumentation()
-    assumeTrue("仅允许显式启用的隔离设备运行破坏性自连探针",
-      InstrumentationRegistry.getArguments().getString("observeSelfRelease") == "true")
     val field = PlayerHolder::class.java.getDeclaredField("selfCtl").apply { isAccessible = true }
     val deadline = SystemClock.elapsedRealtime() + 10000
     var ctl: MediaController? = null

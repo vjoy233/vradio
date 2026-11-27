@@ -94,6 +94,7 @@ fun SettingsScreen(vm: AppVm, pad: PaddingValues) {
   val updateMsg by vm.updateMsg.collectAsState()
   val syncBusy by vm.syncBusy.collectAsState()
   val syncMsg by vm.syncMsg.collectAsState()
+  val healthScopeWarning by vm.healthScopeWarning.collectAsState()
   val logoRetryPending by vm.logoRetryPending.collectAsState()
   val metadataUnbound by vm.metadataUnbound.collectAsState()
   val freshness by vm.freshnessPref.collectAsState()
@@ -205,6 +206,10 @@ fun SettingsScreen(vm: AppVm, pad: PaddingValues) {
                   Text(if (syncBusy) "同步中…" else "立即同步")
                 }
                 if (syncMsg.isNotEmpty()) Info(syncMsg)
+                if (healthScopeWarning) {
+                  Info("同步后的新增电台体检范围可能不完整；若同步曾中断，范围未知。建议手动进行全量体检。确认仅关闭提示，不代表已完成体检。")
+                  Button(onClick = vm::acknowledgeHealthScopeWarning, modifier = Modifier.fillMaxWidth()) { Text("知道了") }
+                }
                 if (logoRetryPending) Info(logoRetryNotice(true))
                 if (metadataUnbound) Info("元数据缺失、无效或无法确认与主库同批，最近新增不可用；需等待仓库后续更新并成功应用同批元数据后恢复。")
               }

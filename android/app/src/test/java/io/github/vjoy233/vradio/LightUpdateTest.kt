@@ -7,6 +7,7 @@ import io.github.vjoy233.vradio.data.writeTextAtomic
 import java.io.File
 import io.github.vjoy233.vradio.sync.LightUpdate
 import io.github.vjoy233.vradio.sync.RadioMeta
+import io.github.vjoy233.vradio.sync.HealthScopeWarning
 import io.github.vjoy233.vradio.sync.SyncBarrier
 import io.github.vjoy233.vradio.sync.SyncEngine
 import io.github.vjoy233.vradio.check.CheckStream
@@ -581,6 +582,40 @@ class LightUpdateTest {
     SyncBarrier.finish(dir)
     assertNull(lu.apply(radioV1))
     assertTrue(lu.lastFailWhy.contains("先检查"))
+  }
+
+  @Test fun 轻更新告警失败不发布且重启可见() = runBlocking {
+    val dir = tmp.newFolder(); val radio = File(dir, "radio.txt"); radio.writeText(radioV1)
+    injectRenameFail("health-scope-warning.pending")
+    val lu = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
+    assertNull(lu.applyForTest(radioV1)); assertEquals(radioV1, radio.readText())
+    assertFalse(File(dir, "light-update.pending").exists())
+    AtomicWriteTestHook.rename = null
+    assertNotNull(lu.applyForTest(radioV1)); val seen = HealthScopeWarning.snapshot(dir)
+    assertNotNull(seen.token); assertEquals(seen, HealthScopeWarning.snapshot(dir))
+    assertNull(HealthScopeWarning.acknowledge(dir, seen).token)
+  }
+
+  @Test fun 全同步告警失败不发布且旧屏障不被确认清除() = runBlocking {
+    val dir = tmp.newFolder()
+    val large = "华语音乐,#genre#\r\n" + (1..810).joinToString("\r\n") { "台$it,http://radio/$it.mp3" } + "\r\n"
+    val radio = File(dir, "radio.txt"); radio.writeText(large)
+    val raw = object : RawHttp { override suspend fun get(url: String, timeoutMs: Long, maxBytes: Long, headers: Map<String, String>): RawHttp.Resp? = null }
+    val engine = SyncEngine(Gh(FakeHttp(emptyMap()), 0), CheckStream(raw), dir)
+    injectRenameFail("health-scope-warning.pending")
+    assertTrue(runCatching { engine.run(large) }.isFailure); assertEquals(large, radio.readText()); assertFalse(SyncBarrier.active(dir))
+    AtomicWriteTestHook.rename = null
+    SyncBarrier.begin(dir); val old = HealthScopeWarning.snapshot(dir); assertTrue(old.legacyBarrier)
+    assertTrue(HealthScopeWarning.acknowledge(dir, old).legacyBarrier); assertTrue(SyncBarrier.active(dir))
+    assertTrue(engine.run(large).ok); assertNotNull(HealthScopeWarning.snapshot(dir).token); assertFalse(SyncBarrier.active(dir))
+  }
+
+  @Test fun 旧确认不能删除新发布告警() = runBlocking {
+    val dir = tmp.newFolder(); val lu = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
+    assertNotNull(lu.applyForTest(radioV1)); val old = HealthScopeWarning.snapshot(dir)
+    assertNotNull(lu.applyForTest(radioV2)); val newer = HealthScopeWarning.snapshot(dir)
+    assertTrue(old.token != newer.token)
+    assertEquals(newer, HealthScopeWarning.acknowledge(dir, old))
   }
 
   @Test fun 同步异常只在屏障存在时提示重启恢复() {

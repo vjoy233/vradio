@@ -220,6 +220,30 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   val healthBusy = MutableStateFlow(false); val healthProg = MutableStateFlow(""); val healthResult = MutableStateFlow("")
   val updateBusy = MutableStateFlow(false); val updateMsg = MutableStateFlow("")
   val syncBusy = MutableStateFlow(false); val syncMsg = MutableStateFlow("")
+  val healthScopeWarning = MutableStateFlow(false)
+  private var healthScopeSeen: io.github.vjoy233.vradio.sync.HealthScopeWarning.Snapshot? = null
+  private var healthScopeDismissed: io.github.vjoy233.vradio.sync.HealthScopeWarning.Snapshot? = null
+  private var healthScopeEpoch = 0L
+  private fun refreshHealthScopeWarning() {
+    val epoch = ++healthScopeEpoch
+    viewModelScope.launch {
+      val state = withContext(Dispatchers.IO) { io.github.vjoy233.vradio.sync.HealthScopeWarning.snapshot(ctx.filesDir) }
+      if (epoch != healthScopeEpoch) return@launch
+      healthScopeSeen = state
+      healthScopeWarning.value = (state.token != null || state.legacyBarrier) && state != healthScopeDismissed
+    }
+  }
+  fun acknowledgeHealthScopeWarning() {
+    val seen = healthScopeSeen ?: return
+    val epoch = ++healthScopeEpoch
+    viewModelScope.launch {
+      val state = withContext(Dispatchers.IO) { io.github.vjoy233.vradio.sync.HealthScopeWarning.acknowledge(ctx.filesDir, seen) }
+      if (epoch != healthScopeEpoch) return@launch
+      healthScopeSeen = state
+      healthScopeDismissed = if (state.token == null && state.legacyBarrier) state else null
+      healthScopeWarning.value = (state.token != null || state.legacyBarrier) && state != healthScopeDismissed
+    }
+  }
   val logoRetryPending = MutableStateFlow(false)
   private fun refreshLogoRetry() { logoRetryPending.value = io.github.vjoy233.vradio.sync.SyncBarrier.logoRetryPending(ctx.filesDir) }
   val freshnessPref = MutableStateFlow(Freshness.parse(Store.get(C.K_SYNC_FRESHNESS)))
@@ -486,7 +510,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     stamp.value++
     primeAll()
     withContext(Dispatchers.Main) {
-      refreshLogoRetry()
+      refreshLogoRetry(); refreshHealthScopeWarning()
       booted = true
       consumePending()   // batch1 启动末梢：E3 快捷方式点播 > E4 接流预填 > N4 自动续播（默认关）
       updateShortcuts()  // E3 动态快捷方式初装（收藏变更/导入时增量刷新）
@@ -1234,6 +1258,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   }
 
   private fun runCheckUpdate() {                                          // 门后执行体（直跑或确认后续跑，唯一调 light.check/apply 的路径）
+    healthScopeDismissed = null
     viewModelScope.launch {
       if (updateBusy.value) return@launch
       if (syncBusy.value) { updateMsg.value = "同步进行中，等同步完成后再检查更新（两通道写同一份 filesDir 数据，并发会互相覆盖）"; return@launch }   // 审计 P2：互锁
@@ -1251,6 +1276,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         updateMsg.value = "发现新数据（${newer.take(10)}），下载中…"
         val before = lib.favs.mapNotNull { f -> runCatching { lib.resolve(f.k) }.getOrNull()?.let { f to it } }
         val res = withContext(Dispatchers.IO) { runCatching { light.apply(lib.mainText) }.getOrNull() }
+        refreshHealthScopeWarning()
         if (res == null) { updateMsg.value = "更新未完成：${light.lastFailWhy.ifEmpty { "发生异常，请检查本地数据" }}"; return@launch }
         val texts = withContext(Dispatchers.IO) { light.radioText() to light.logosText() }
         texts.first?.let { lib.mainText = it }
@@ -1267,7 +1293,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         pointGone(before)                                                 // 收藏台消失点名（removed ∩ 收藏）
         if (res.addedCheck.isNotEmpty()) { delay(800); incCheck(res.addedCheck.take(C.ADDED_CHECK_CAP)) }   // D4 增量体检（审计 P2）：D7 是主更新通道且安卓无首启基线——缺此调用 D7 新增国内台永远零体检（Web 唯一同步路径必跑 incHealth）
       } catch (e: Exception) { updateMsg.value = "检查更新失败：${e.message ?: "网络错误"}" }
-      finally { updateBusy.value = false }
+      finally { refreshHealthScopeWarning(); updateBusy.value = false }
     }
   }
 
@@ -1285,6 +1311,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   }
 
   private fun runFullSync() {
+    healthScopeDismissed = null
     viewModelScope.launch {
       if (syncBusy.value) return@launch
       if (updateBusy.value) { syncMsg.value = "数据更新进行中，稍后再同步"; return@launch }   // 审计 P2：互锁（与 checkUpdate 对称）
@@ -1301,6 +1328,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       try {
         val before = lib.favs.mapNotNull { f -> runCatching { lib.resolve(f.k) }.getOrNull()?.let { f to it } }
         val d = withContext(Dispatchers.IO) { engine.run(lib.mainText) }
+        refreshHealthScopeWarning()
         if (!d.ok) {
           syncMsg.value = "同步失败：合并结果异常，已保留原列表"; toast(syncMsg.value); return@launch
         }
@@ -1324,7 +1352,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         syncMsg.value = syncFailureMessage(e.message ?: "网络错误", java.io.File(ctx.filesDir, "full-sync.pending").exists())
         toast(syncMsg.value)
       }
-      finally { refreshLogoRetry(); syncBusy.value = false }
+      finally { refreshLogoRetry(); refreshHealthScopeWarning(); syncBusy.value = false }
     }
   }
 

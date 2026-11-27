@@ -43,7 +43,7 @@ internal object StrictV2 {
       checkIt(labels.size == 4 && labels.all { it.matches(Regex("0|[1-9][0-9]{0,2}")) && (it.toIntOrNull() ?: 256) <= 255 })
     }
     var i = 0
-    val allowed = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~:/?[]@!$&'()*+,;="
+    val allowed = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~:/?@!$&'()*+,;="
     while (i < rest.length) {
       if (rest[i] == '%') { checkIt(i + 2 < rest.length && rest.substring(i + 1, i + 3).matches(Regex("[0-9a-fA-F]{2}"))); i += 3 }
       else { checkIt(rest[i] in allowed); i++ }
@@ -84,14 +84,19 @@ internal object StrictV2 {
     checkIt(actual == h); return sidecar(raw).also { checkIt(it["commit"] == binding) }
   }
 
+  // 仅用于检验容器深度护栏；不是协议入口。
+  fun depthProbe(raw: ByteArray) = json(raw, 524288)
+
   /** 小型严格 JSON；不使用 Android 的宽松 org.json。 */
   private class Json(private val s: String) {
     private var i = 0
     private fun ws() { while (i < s.length && s[i] in " \t\r\n") i++ }
     private fun take(c: Char): Boolean { ws(); if (i < s.length && s[i] == c) { i++; return true }; return false }
     fun parse(): Any? { val v = value(); ws(); require(i == s.length); return v }
+    private var depth = 0
     private fun value(): Any? { ws(); require(i < s.length); return when (s[i]) {
-      '{' -> obj(); '[' -> arr(); '"' -> string(); 't' -> literal("true", true); 'f' -> literal("false", false); 'n' -> literal("null", null)
+      '{', '[' -> { require(depth < 3); depth++; try { if (s[i] == '{') obj() else arr() } finally { depth-- } }
+      '"' -> string(); 't' -> literal("true", true); 'f' -> literal("false", false); 'n' -> literal("null", null)
       else -> number()
     } }
     private fun literal(t: String, v: Any?): Any? { require(s.startsWith(t, i)); i += t.length; return v }

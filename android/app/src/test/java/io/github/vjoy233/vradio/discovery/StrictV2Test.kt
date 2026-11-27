@@ -29,6 +29,9 @@ class StrictV2Test {
         else runCatching { StrictV2.manifest(raw) }.isSuccess
       assertEquals(c.getString("id"), c.getBoolean("accept"), ok)
     }
+    assertFalse(StrictV2.url("https://example.com/[a]"))
+    assertFalse(StrictV2.url("https://example.com/?x=[a]"))
+    assertTrue(StrictV2.url("https://example.com/%5Ba%5D"))
     val concepts = JSONObject(javaClass.classLoader!!.getResourceAsStream("fixtures/c3-strict-v2-cases.json")!!.bufferedReader().use { it.readText() })
     each(concepts.getJSONArray("urlAdversarial")) { c -> assertEquals(c.getString("url"), c.getBoolean("formatAccept"), StrictV2.url(c.getString("url"))) }
   }
@@ -44,6 +47,13 @@ class StrictV2Test {
     assertEquals(c.getString("id"), expected.getString("selection"), selection)
     if (expected.has("degraded")) assertEquals(c.getString("id"), expected.getBoolean("degraded"), p?.second != null && previous == null)
     if (expected.has("output")) assertEquals(c.getString("id"), comparable(expected.getJSONObject("output")), current ?: previous)
+  }
+  @Test fun nestedInputIsBounded() {
+    fun nested(n: Int) = ("{\"x\":" + "[".repeat(n - 1) + "0" + "]".repeat(n - 1) + "}").toByteArray()
+    assertTrue(runCatching { StrictV2.depthProbe(nested(3)) }.isSuccess)
+    assertTrue(runCatching { StrictV2.depthProbe(nested(4)) }.exceptionOrNull() is IllegalArgumentException)
+    val failure = runCatching { StrictV2.depthProbe(nested(10000)) }.exceptionOrNull()
+    assertTrue("必须主动拒绝，不能栈溢出", failure is IllegalArgumentException)
   }
   @Test fun rawHashAndBindingAreMandatory() {
     val g = fixture.getJSONArray("pointer").getJSONObject(0).getJSONObject("generations")

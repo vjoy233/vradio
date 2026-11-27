@@ -2176,13 +2176,15 @@ const App = {
     $('discBody').innerHTML = '<div class="empty">正在生成推荐…</div>';
     $('discClose').focus();
     if (!this.metaCache) this.metaCache = await this.loadMeta(); // 懒加载一次（radio-meta.json 静态文件，非 dotfile/data 段天然可 GET）
-    if (FEATURES.discoverySidecar && !this.discoverySidecar && window.DiscoverySidecar) {
+    // 快照哈希仅证明一致性，尚无可信发布与证据链；即使开发开关开启也不得消费候选。
+    const trustedC3Release = false;
+    if (trustedC3Release && FEATURES.discoverySidecar && !this.discoverySidecar && window.DiscoverySidecar) {
       const rows = await DiscoverySidecar.loadSnapshot((u, opts) => fetch(u, opts), 'discovery-snapshots');
       if (rows === null) $('status').textContent = '当前页面缺少安全校验能力，精选候选不可用；请使用 localhost 或 HTTPS';
       else if (rows.length) this.discoverySidecar = rows;
     }
     this.renderDiscovery();
-    if (FEATURES.discoverySidecar && this.discoverySidecar && this.discoverySidecar.length) this.renderDiscoverySidecar();
+    if (trustedC3Release && FEATURES.discoverySidecar && this.discoverySidecar && this.discoverySidecar.length) this.renderDiscoverySidecar();
   },
   async loadMeta() { // file://：meta 无经典 script 包装不可读 → null（「最近新增」为空，其余组不受影响）
     if (!location.protocol.startsWith('http')) return null;

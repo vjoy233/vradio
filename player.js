@@ -332,7 +332,7 @@ const Player = {
     lastPlaybackFailure = Object.freeze({ stationUrl: this.pctx.stationUrl, sourceUrl: this.curSourceUrl, sourceIndex: this.curSi,
       variantUrl: this.curPlay, mode: this.qosMode(), at: Date.now(), reason, attempts: this.attemptCount });
   },
-  getFailureSnapshot() { return lastPlaybackFailure; },
+  getFailureSnapshot() { return lastPlaybackFailure ? Object.freeze(Object.assign({}, lastPlaybackFailure)) : null; },
   getSourceState() { // 只读快照（B1 详情中心）：app 不直接读 audio/HLS/token；mode 按 variant URL 形态判（/proxy 包裹的 m3u8 亦判 hls）
     const s = this.station, m = s ? this.srcMem[s.u[0]] : null;
     return {

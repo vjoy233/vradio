@@ -287,7 +287,7 @@ class BackupV3Test {
     Store.init(File(blocker, "sub"))                       // 父路径是文件：mkdirs 失败 → 写入必失败
     Store.set(C.K_VOL, "30")                               // set 吞失败路径不受影响（内存态仍在）
     assertFalse(Store.applyAllChecked(mapOf(C.K_VOL to "90")))
-    assertEquals("90", Store.get(C.K_VOL))                 // 内存已应用（内存态 = 全部）——false 只是把磁盘写失败上报给事务
+    assertEquals("30", Store.get(C.K_VOL))                 // 失败时内存也回滚，避免事务假成功
     Store.init(dir)                                        // 恢复正常目录（不污染其它用例）
     assertTrue(Store.applyAllChecked(mapOf(C.K_VOL to "90")))
   }

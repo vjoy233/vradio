@@ -74,12 +74,16 @@ object Store {
   }
 
   @Synchronized
-  fun applyAllChecked(data: Map<String, String>): Boolean { // 备份事务专用（AIbot 三轮 P1-2）：同 applyAll 但落盘失败可被调用方感知（false）——
-    for (k in C.KEYS) {                                      // 吞失败的 persist 只适合普通 set/remove（内存态仍在下次重试），
-      val v = data[k]                                        // 事务需要「任一步失败整体回滚」，不能不知情地继续替换 my-radio/quality
+  fun applyAllChecked(data: Map<String, String>): Boolean { // 备份事务专用：真实落盘失败时内存也回滚，避免假成功/半事务
+    if (file == null) return false                                  // 未 init 不允许内存态假成功
+    val old = HashMap(mem)                                          // 锁内保存完整快照（含白名单外/其他既有键）
+    for (k in C.KEYS) {
+      val v = data[k]
       if (v != null) mem[k] = v else mem.remove(k)
     }
-    return persist()
+    if (persist()) return true
+    mem.clear(); mem.putAll(old)                                    // 原子写失败：恢复完整内存快照
+    return false
   }
 
   private fun persist(): Boolean { // 全量落盘：tmp+rename 原子写，进程写一半被杀不丢收藏（A3 纪律）。

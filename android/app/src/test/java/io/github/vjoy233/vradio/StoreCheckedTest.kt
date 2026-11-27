@@ -11,6 +11,15 @@ import java.util.concurrent.TimeUnit
 import kotlin.io.path.createTempDirectory
 
 class StoreCheckedTest {
+  @Test fun applyAllCheckedFailureRestoresFullMemorySnapshot() {
+    val d = createTempDirectory("checked-all").toFile()
+    try {
+      Store.init(d); Store.set(C.K_VOL, "30"); Store.set(C.K_THEME, "dark")
+      AtomicWriteTestHook.rename = { _, _ -> false }
+      assertFalse(Store.applyAllChecked(mapOf(C.K_VOL to "90")))
+      assertEquals("30", Store.get(C.K_VOL)); assertEquals("dark", Store.get(C.K_THEME))
+    } finally { AtomicWriteTestHook.rename = null; d.deleteRecursively() }
+  }
   @Test fun setCheckedFailureRestoresOldMemory() {
     val d=createTempDirectory("checked").toFile(); try {
       Store.init(d); Store.set(C.K_VOL,"30")

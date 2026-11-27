@@ -197,19 +197,29 @@ object Backup {
                    listenData: JSONObject? = null): String? {
     // 只报告各回滚调用的回执；跨存储并发及进程中断不在此处得到隔离保证。
     fun attempt(f: () -> Boolean): Boolean = try { f() } catch (_: Exception) { false }
-    fun failed(reason: String, stage: Int): String {
+    var myAttempted = false; var qualityAttempted = false; var listenAttempted = false
+    fun failed(reason: String): String {
       val bad = mutableListOf<String>()
       if (!attempt(io.rollbackStore)) bad.add("主数据")
-      if (stage >= 2 && !attempt(io.rollbackMy)) bad.add("个人电台")
-      if (stage >= 3 && !attempt(io.rollbackQuality)) bad.add("质量 sidecar")
-      if (stage >= 4 && !attempt(io.rollbackListenStats)) bad.add("收听统计 sidecar")
+      if (myAttempted && !attempt(io.rollbackMy)) bad.add("个人电台")
+      if (qualityAttempted && !attempt(io.rollbackQuality)) bad.add("质量 sidecar")
+      if (listenAttempted && !attempt(io.rollbackListenStats)) bad.add("收听统计 sidecar")
       return reason + if (bad.isEmpty()) "；已尝试回滚，但并发操作可能影响结果，请核对数据"
         else "；回滚失败或结果未知：${bad.joinToString("、")}，请核对数据并考虑重新导入"
     }
-    if (!attempt(io.applyStore)) return failed("主数据持久化失败（store.json 写入失败或异常）", 1)
-    if (!attempt(io.applyMy)) return failed("个人电台恢复失败（可能超限或写入异常）", 2)
-    if (!attempt(io.applyQuality)) return failed("质量 sidecar 恢复失败", 3)
-    if (listenData != null && !attempt(io.applyListenStats)) return failed("收听统计 sidecar 恢复失败", 4)
+    if (!attempt(io.applyStore)) return failed("主数据持久化失败（store.json 写入失败或异常）")
+    if (my != null) {
+      myAttempted = true // 失败或异常也可能部分写入，必须补偿
+      if (!attempt(io.applyMy)) return failed("个人电台恢复失败（可能超限或写入异常）")
+    }
+    if (qualityData != null) {
+      qualityAttempted = true
+      if (!attempt(io.applyQuality)) return failed("质量 sidecar 恢复失败")
+    }
+    if (listenData != null) {
+      listenAttempted = true
+      if (!attempt(io.applyListenStats)) return failed("收听统计 sidecar 恢复失败")
+    }
     return null
   }
 

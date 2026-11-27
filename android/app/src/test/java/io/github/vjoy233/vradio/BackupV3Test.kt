@@ -213,12 +213,12 @@ class BackupV3Test {
     }
     run {                                                   // quality 失败：三件整体回滚（§13.2-5 不允许半恢复；LS 未提交不动）
       val c = mutableListOf<String>()
-      assertEquals("质量 sidecar 恢复失败；已尝试回滚，但并发操作可能影响结果，请核对数据", Backup.commitImport(data, null, q, io(c, true, false), ls))
+      assertEquals("质量 sidecar 恢复失败；已尝试回滚，但并发操作可能影响结果，请核对数据", Backup.commitImport(data, listOf("台"), q, io(c, true, false), ls))
       assertEquals(listOf("store", "my", "q", "store-rb", "my-rb", "q-rb"), c)
     }
     run {                                                   // listenStats 失败：四件整体回滚（B4 四件事务收官位）
       val c = mutableListOf<String>()
-      assertEquals("收听统计 sidecar 恢复失败；已尝试回滚，但并发操作可能影响结果，请核对数据", Backup.commitImport(data, null, q, io(c, true, true, false), ls))
+      assertEquals("收听统计 sidecar 恢复失败；已尝试回滚，但并发操作可能影响结果，请核对数据", Backup.commitImport(data, listOf("台"), q, io(c, true, true, false), ls))
       assertEquals(listOf("store", "my", "q", "ls", "store-rb", "my-rb", "q-rb", "ls-rb"), c)
     }
     run {                                                   // Store 落盘失败（AIbot 三轮 P1-2）：中止 + 回滚 Store，my/quality 根本不动
@@ -243,17 +243,38 @@ class BackupV3Test {
       { true }, { calls.add("my"); false },
       { true }, { calls.add("quality"); throw IllegalStateException("disk") },
       { throw IllegalStateException("apply") }, { calls.add("listen"); false })
-    val err = Backup.commitImport(emptyMap(), null, null, io, JSONObject())!!
+    val err = Backup.commitImport(emptyMap(), listOf("台"), JSONObject(), io, JSONObject())!!
     assertEquals(listOf("store", "my", "quality", "listen"), calls)
     assertTrue(err.contains("收听统计 sidecar 恢复失败"))
     assertTrue(err.contains("主数据、个人电台、质量 sidecar、收听统计 sidecar"))
+  }
+  @Test fun unselectedStepsAreNeverAppliedOrRolledBack() {
+    val calls = mutableListOf<String>()
+    val io = Backup.ImportIO(
+      { calls.add("store"); true }, { calls.add("store-rb"); true },
+      { calls.add("my"); true }, { calls.add("my-rb"); false },
+      { calls.add("quality"); true }, { calls.add("quality-rb"); false },
+      { calls.add("listen"); false }, { calls.add("listen-rb"); true })
+    val err = Backup.commitImport(emptyMap(), null, null, io, JSONObject())!!
+    assertEquals(listOf("store", "listen", "store-rb", "listen-rb"), calls)
+    assertFalse(err.contains("个人电台")); assertFalse(err.contains("质量 sidecar"))
+  }
+
+  @Test fun attemptedFailureStillRollsBackEvenOnException() {
+    val calls = mutableListOf<String>()
+    val io = Backup.ImportIO(
+      { true }, { calls.add("store-rb"); true },
+      { calls.add("my"); throw IllegalStateException("partial write") }, { calls.add("my-rb"); true },
+      { calls.add("quality"); true }, { calls.add("quality-rb"); true })
+    assertNotNull(Backup.commitImport(emptyMap(), listOf("台"), JSONObject(), io))
+    assertEquals(listOf("my", "store-rb", "my-rb"), calls)
   }
   @Test fun realMyRadioRollbackWriteFailureIsReported() {
     val blocker = File.createTempFile("vradio-rollback-blocker", ".tmp")
     try {
       val my = MyRadio(File(blocker, "sub"))
       val calls = mutableListOf<String>()
-      val err = Backup.commitImport(emptyMap(), null, null, Backup.ImportIO(
+      val err = Backup.commitImport(emptyMap(), listOf("台"), JSONObject(), Backup.ImportIO(
         { true }, { calls.add("store"); true },
         { true }, { calls.add("my"); my.replace("旧台,http://example.com/live") },
         { false }, { calls.add("quality"); true }))!!

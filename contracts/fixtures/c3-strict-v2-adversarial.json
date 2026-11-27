@@ -1,4 +1,69 @@
 {
+  "bindingCases": [
+    {
+      "id": "binding-match",
+      "controlledCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "proposed": "accept",
+      "sidecarBase64": "eyJ2IjoyLCJzb3VyY2UiOiJyZWNvbW1lbmRlZC1yYWRpby1zdHJlYW1zIiwibGljZW5zZSI6IkNDMC0xLjAiLCJjb21taXQiOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZ2VuZXJhdGVkQXQiOiIyMDI2LTExLTI2VDAxOjAyOjAzLjEyM1oiLCJpdGVtcyI6W3sibmFtZSI6IuekuuS+iyIsInVybCI6Imh0dHBzOi8vZXhhbXBsZS5pbnZhbGlkL2xpdmUiLCJnZW5yZSI6IiIsInVwc3RyZWFtIjoicmVjb21tZW5kZWQtcmFkaW8tc3RyZWFtcyIsImNvbW1pdCI6ImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEifV19",
+      "sidecarId": "c5998554798b54942575cf0163f87c93780f2596c1555ec292b71b44e6895292",
+      "manifestBase64": "eyJ2IjoyLCJzaGEyNTYiOiJjNTk5ODU1NDc5OGI1NDk0MjU3NWNmMDE2M2Y4N2M5Mzc4MGYyNTk2YzE1NTVlYzI5MmI3MWI0NGU2ODk1MjkyIiwiYnl0ZXMiOjMyNH0=",
+      "pointerBase64": "eyJ2IjoyLCJjdXJyZW50IjoiYzU5OTg1NTQ3OThiNTQ5NDI1NzVjZjAxNjNmODdjOTM3ODBmMjU5NmMxNTU1ZWMyOTJiNzFiNDRlNjg5NTI5MiIsInByZXZpb3VzIjpudWxsfQ=="
+    },
+    {
+      "id": "binding-missing",
+      "controlledCommit": null,
+      "proposed": "reject",
+      "sidecarBase64": "eyJ2IjoyLCJzb3VyY2UiOiJyZWNvbW1lbmRlZC1yYWRpby1zdHJlYW1zIiwibGljZW5zZSI6IkNDMC0xLjAiLCJjb21taXQiOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZ2VuZXJhdGVkQXQiOiIyMDI2LTExLTI2VDAxOjAyOjAzLjEyM1oiLCJpdGVtcyI6W3sibmFtZSI6IuekuuS+iyIsInVybCI6Imh0dHBzOi8vZXhhbXBsZS5pbnZhbGlkL2xpdmUiLCJnZW5yZSI6IiIsInVwc3RyZWFtIjoicmVjb21tZW5kZWQtcmFkaW8tc3RyZWFtcyIsImNvbW1pdCI6ImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEifV19",
+      "sidecarId": "c5998554798b54942575cf0163f87c93780f2596c1555ec292b71b44e6895292",
+      "manifestBase64": "eyJ2IjoyLCJzaGEyNTYiOiJjNTk5ODU1NDc5OGI1NDk0MjU3NWNmMDE2M2Y4N2M5Mzc4MGYyNTk2YzE1NTVlYzI5MmI3MWI0NGU2ODk1MjkyIiwiYnl0ZXMiOjMyNH0=",
+      "pointerBase64": "eyJ2IjoyLCJjdXJyZW50IjoiYzU5OTg1NTQ3OThiNTQ5NDI1NzVjZjAxNjNmODdjOTM3ODBmMjU5NmMxNTU1ZWMyOTJiNzFiNDRlNjg5NTI5MiIsInByZXZpb3VzIjpudWxsfQ=="
+    },
+    {
+      "id": "binding-empty",
+      "controlledCommit": "",
+      "proposed": "reject",
+      "sidecarBase64": "eyJ2IjoyLCJzb3VyY2UiOiJyZWNvbW1lbmRlZC1yYWRpby1zdHJlYW1zIiwibGljZW5zZSI6IkNDMC0xLjAiLCJjb21taXQiOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZ2VuZXJhdGVkQXQiOiIyMDI2LTExLTI2VDAxOjAyOjAzLjEyM1oiLCJpdGVtcyI6W3sibmFtZSI6IuekuuS+iyIsInVybCI6Imh0dHBzOi8vZXhhbXBsZS5pbnZhbGlkL2xpdmUiLCJnZW5yZSI6IiIsInVwc3RyZWFtIjoicmVjb21tZW5kZWQtcmFkaW8tc3RyZWFtcyIsImNvbW1pdCI6ImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEifV19",
+      "sidecarId": "c5998554798b54942575cf0163f87c93780f2596c1555ec292b71b44e6895292",
+      "manifestBase64": "eyJ2IjoyLCJzaGEyNTYiOiJjNTk5ODU1NDc5OGI1NDk0MjU3NWNmMDE2M2Y4N2M5Mzc4MGYyNTk2YzE1NTVlYzI5MmI3MWI0NGU2ODk1MjkyIiwiYnl0ZXMiOjMyNH0=",
+      "pointerBase64": "eyJ2IjoyLCJjdXJyZW50IjoiYzU5OTg1NTQ3OThiNTQ5NDI1NzVjZjAxNjNmODdjOTM3ODBmMjU5NmMxNTU1ZWMyOTJiNzFiNDRlNjg5NTI5MiIsInByZXZpb3VzIjpudWxsfQ=="
+    },
+    {
+      "id": "binding-short",
+      "controlledCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "proposed": "reject",
+      "sidecarBase64": "eyJ2IjoyLCJzb3VyY2UiOiJyZWNvbW1lbmRlZC1yYWRpby1zdHJlYW1zIiwibGljZW5zZSI6IkNDMC0xLjAiLCJjb21taXQiOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZ2VuZXJhdGVkQXQiOiIyMDI2LTExLTI2VDAxOjAyOjAzLjEyM1oiLCJpdGVtcyI6W3sibmFtZSI6IuekuuS+iyIsInVybCI6Imh0dHBzOi8vZXhhbXBsZS5pbnZhbGlkL2xpdmUiLCJnZW5yZSI6IiIsInVwc3RyZWFtIjoicmVjb21tZW5kZWQtcmFkaW8tc3RyZWFtcyIsImNvbW1pdCI6ImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEifV19",
+      "sidecarId": "c5998554798b54942575cf0163f87c93780f2596c1555ec292b71b44e6895292",
+      "manifestBase64": "eyJ2IjoyLCJzaGEyNTYiOiJjNTk5ODU1NDc5OGI1NDk0MjU3NWNmMDE2M2Y4N2M5Mzc4MGYyNTk2YzE1NTVlYzI5MmI3MWI0NGU2ODk1MjkyIiwiYnl0ZXMiOjMyNH0=",
+      "pointerBase64": "eyJ2IjoyLCJjdXJyZW50IjoiYzU5OTg1NTQ3OThiNTQ5NDI1NzVjZjAxNjNmODdjOTM3ODBmMjU5NmMxNTU1ZWMyOTJiNzFiNDRlNjg5NTI5MiIsInByZXZpb3VzIjpudWxsfQ=="
+    },
+    {
+      "id": "binding-uppercase",
+      "controlledCommit": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "proposed": "reject",
+      "sidecarBase64": "eyJ2IjoyLCJzb3VyY2UiOiJyZWNvbW1lbmRlZC1yYWRpby1zdHJlYW1zIiwibGljZW5zZSI6IkNDMC0xLjAiLCJjb21taXQiOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZ2VuZXJhdGVkQXQiOiIyMDI2LTExLTI2VDAxOjAyOjAzLjEyM1oiLCJpdGVtcyI6W3sibmFtZSI6IuekuuS+iyIsInVybCI6Imh0dHBzOi8vZXhhbXBsZS5pbnZhbGlkL2xpdmUiLCJnZW5yZSI6IiIsInVwc3RyZWFtIjoicmVjb21tZW5kZWQtcmFkaW8tc3RyZWFtcyIsImNvbW1pdCI6ImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEifV19",
+      "sidecarId": "c5998554798b54942575cf0163f87c93780f2596c1555ec292b71b44e6895292",
+      "manifestBase64": "eyJ2IjoyLCJzaGEyNTYiOiJjNTk5ODU1NDc5OGI1NDk0MjU3NWNmMDE2M2Y4N2M5Mzc4MGYyNTk2YzE1NTVlYzI5MmI3MWI0NGU2ODk1MjkyIiwiYnl0ZXMiOjMyNH0=",
+      "pointerBase64": "eyJ2IjoyLCJjdXJyZW50IjoiYzU5OTg1NTQ3OThiNTQ5NDI1NzVjZjAxNjNmODdjOTM3ODBmMjU5NmMxNTU1ZWMyOTJiNzFiNDRlNjg5NTI5MiIsInByZXZpb3VzIjpudWxsfQ=="
+    },
+    {
+      "id": "binding-non-hex",
+      "controlledCommit": "gggggggggggggggggggggggggggggggggggggggg",
+      "proposed": "reject",
+      "sidecarBase64": "eyJ2IjoyLCJzb3VyY2UiOiJyZWNvbW1lbmRlZC1yYWRpby1zdHJlYW1zIiwibGljZW5zZSI6IkNDMC0xLjAiLCJjb21taXQiOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZ2VuZXJhdGVkQXQiOiIyMDI2LTExLTI2VDAxOjAyOjAzLjEyM1oiLCJpdGVtcyI6W3sibmFtZSI6IuekuuS+iyIsInVybCI6Imh0dHBzOi8vZXhhbXBsZS5pbnZhbGlkL2xpdmUiLCJnZW5yZSI6IiIsInVwc3RyZWFtIjoicmVjb21tZW5kZWQtcmFkaW8tc3RyZWFtcyIsImNvbW1pdCI6ImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEifV19",
+      "sidecarId": "c5998554798b54942575cf0163f87c93780f2596c1555ec292b71b44e6895292",
+      "manifestBase64": "eyJ2IjoyLCJzaGEyNTYiOiJjNTk5ODU1NDc5OGI1NDk0MjU3NWNmMDE2M2Y4N2M5Mzc4MGYyNTk2YzE1NTVlYzI5MmI3MWI0NGU2ODk1MjkyIiwiYnl0ZXMiOjMyNH0=",
+      "pointerBase64": "eyJ2IjoyLCJjdXJyZW50IjoiYzU5OTg1NTQ3OThiNTQ5NDI1NzVjZjAxNjNmODdjOTM3ODBmMjU5NmMxNTU1ZWMyOTJiNzFiNDRlNjg5NTI5MiIsInByZXZpb3VzIjpudWxsfQ=="
+    },
+    {
+      "id": "binding-mismatch",
+      "controlledCommit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "proposed": "reject",
+      "sidecarBase64": "eyJ2IjoyLCJzb3VyY2UiOiJyZWNvbW1lbmRlZC1yYWRpby1zdHJlYW1zIiwibGljZW5zZSI6IkNDMC0xLjAiLCJjb21taXQiOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZ2VuZXJhdGVkQXQiOiIyMDI2LTExLTI2VDAxOjAyOjAzLjEyM1oiLCJpdGVtcyI6W3sibmFtZSI6IuekuuS+iyIsInVybCI6Imh0dHBzOi8vZXhhbXBsZS5pbnZhbGlkL2xpdmUiLCJnZW5yZSI6IiIsInVwc3RyZWFtIjoicmVjb21tZW5kZWQtcmFkaW8tc3RyZWFtcyIsImNvbW1pdCI6ImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEifV19",
+      "sidecarId": "c5998554798b54942575cf0163f87c93780f2596c1555ec292b71b44e6895292",
+      "manifestBase64": "eyJ2IjoyLCJzaGEyNTYiOiJjNTk5ODU1NDc5OGI1NDk0MjU3NWNmMDE2M2Y4N2M5Mzc4MGYyNTk2YzE1NTVlYzI5MmI3MWI0NGU2ODk1MjkyIiwiYnl0ZXMiOjMyNH0=",
+      "pointerBase64": "eyJ2IjoyLCJjdXJyZW50IjoiYzU5OTg1NTQ3OThiNTQ5NDI1NzVjZjAxNjNmODdjOTM3ODBmMjU5NmMxNTU1ZWMyOTJiNzFiNDRlNjg5NTI5MiIsInByZXZpb3VzIjpudWxsfQ=="
+    }
+  ],
   "format": "c3-v2-adversarial-1",
   "note": "实验建议而非原 v2 规范既定结论；proposed 不代表解析器已通过；仅解码 rawBase64 消费字节。",
   "entries": [

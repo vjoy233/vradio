@@ -25,7 +25,20 @@ for(const [fn,n] of [[parser.sidecar,100000],[parser.manifest,2000],[parser.poin
  expectControlledFailure(fn,Buffer.from('['.repeat(n)+']'.repeat(n)),'deep arrays '+n);
  expectControlledFailure(fn,Buffer.from('{"x":'.repeat(n)+'0'+'}'.repeat(n)),'deep objects '+n);
 }
-// 暂以原始 JSON 字节固定跨端建议；待共享对抗 fixture 合入后同步消费。
+// 消费跨端共享实验性原始字节；proposed 是待评审建议，不是冻结规范。
+const adversarial=JSON.parse(fs.readFileSync(path.join(__dirname,'../contracts/fixtures/c3-strict-v2-adversarial.json'),'utf8'));
+for(const c of adversarial.entries) {
+ const b=bytes(c.rawBase64), fn=c.kind==='sidecar'?parser.sidecar:parser.manifest;
+ assert.strictEqual(b.length,c.bytes,c.id); assert.strictEqual(digest(b),c.sha256,c.id);
+ if(c.proposed==='accept') fn(b); else expectControlledFailure(fn,b,c.id);
+ if(c.kind==='manifest') {
+  const side=bytes(c.sidecarBase64), p=parser.pointer(bytes(c.pointerBase64));
+  assert.strictEqual(digest(side),c.sidecarId,c.id); assert.strictEqual(p.current,c.sidecarId,c.id);
+  if(c.proposed==='accept') parser.generation(p.current,b,side,digest);
+  else expectControlledFailure(()=>parser.generation(p.current,b,side,digest),null,c.id);
+ }
+}
+// 补充字面量变体，使用原始 JSON 字节。
 const rawItem=bytes(validDepth.rawBase64).toString('utf8');
 for(const literal of ['2.0','2e0','2E+0']) expectControlledFailure(parser.sidecar,Buffer.from(rawItem.replace('"v":2,','"v":'+literal+',')),'version '+literal);
 const goodManifest=Buffer.from(JSON.stringify({v:2,sha256:'a'.repeat(64),bytes:100}));

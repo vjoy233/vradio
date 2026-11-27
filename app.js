@@ -2130,7 +2130,7 @@ const App = {
     const rate = total ? Math.round(100 * qa.okCount / total) : 0;
     const icy = { icy: '有曲讯（直流）', none: '无曲讯', mixed: '混合源' }[qa.metadata] || qa.metadata;
     return `<div class="srcs" style="padding:2px 0 6px">
-      <span class="badge ${cls}" title="stability: ${this.esc(qa.stability)}（累计成功率/延迟/连续失败综合）">● ${Q_TXT[explanation.level]}</span>
+      <span class="badge ${cls}" title="stability: ${this.esc(qa.stability)}（累计成功率/延迟/连续失败综合；最近观测用于新鲜度判断）">● ${Q_TXT[explanation.level]}</span>
       累计成功率 ${rate}%（${qa.okCount}/${total}）· 平均延迟 ${qa.avgLatencyMs}ms · 断流 ${qa.disconnects} 次 · ${icy}
       · 最近播放 ${qa.lastPlaybackAt ? this.fmtAgo(qa.lastPlaybackAt) : '—'}
     </div>`;

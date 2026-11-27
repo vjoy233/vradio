@@ -1217,7 +1217,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         updateMsg.value = "发现新数据（${newer.take(10)}），下载中…"
         val before = lib.favs.mapNotNull { f -> runCatching { lib.resolve(f.k) }.getOrNull()?.let { f to it } }
         val res = withContext(Dispatchers.IO) { runCatching { light.apply(lib.mainText) }.getOrNull() }
-        if (res == null) { updateMsg.value = "更新失败：下载未完成（已保留原数据）"; return@launch }
+        if (res == null) { updateMsg.value = "更新未完成：${light.lastFailWhy.ifEmpty { "发生异常，请检查本地数据" }}"; return@launch }
         val texts = withContext(Dispatchers.IO) { light.radioText() to light.logosText() }
         texts.first?.let { lib.mainText = it }
         texts.second?.let { runCatching { logos.loadBuiltins(it) } }
@@ -1227,9 +1227,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         metaBound = RadioMeta.bound(true, nfMeta != null, light.stampMetaOk(), hW.first, hW.second)   // AIbot P1-4：更新后重算绑定（apply 已写 stamp 见证）
         lib.reload(); stamp.value++
         primeAll()
-        updateMsg.value = "已更新到 ${res.commitIso.take(10)} · 台数 +${res.added}/-${res.removed}"
+        updateMsg.value = lightUpdateMessage(res, metaBound)
         toast(updateMsg.value)
-        if (res.metaInvalid) toast("质量元数据（radio-meta.json）校验失败，已保留旧数据（不影响播放）")   // B2：仅「下载到但非法」明示；仓库未提供时静默
         pointGone(before)                                                 // 收藏台消失点名（removed ∩ 收藏）
         if (res.addedCheck.isNotEmpty()) { delay(800); incCheck(res.addedCheck.take(C.ADDED_CHECK_CAP)) }   // D4 增量体检（审计 P2）：D7 是主更新通道且安卓无首启基线——缺此调用 D7 新增国内台永远零体检（Web 唯一同步路径必跑 incHealth）
       } catch (e: Exception) { updateMsg.value = "检查更新失败：${e.message ?: "网络错误"}" }
@@ -1278,7 +1277,10 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         toast(syncMsg.value)
         pointGone(before)
         if (d.addedCheck.isNotEmpty()) { delay(800); incCheck(d.addedCheck.take(C.ADDED_CHECK_CAP)) }   // D4
-      } catch (e: Exception) { syncMsg.value = "同步失败：${e.message ?: "网络错误"}"; toast(syncMsg.value) }
+      } catch (e: Exception) {
+        syncMsg.value = syncFailureMessage(e.message ?: "网络错误", java.io.File(ctx.filesDir, "full-sync.pending").exists())
+        toast(syncMsg.value)
+      }
       finally { syncBusy.value = false }
     }
   }

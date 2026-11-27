@@ -74,9 +74,9 @@ for(const expected of ['b'.repeat(40),'','A'.repeat(40),'a'.repeat(39)]) expectC
 function selection(c, delivery) {
  let p; try {p=parser.pointer(bytes(c.pointerBase64));} catch (_) {return {selection:'unavailable'};}
  function get(id) {try {const g=c.generations[id]; if(!g) return null; return parser.generation(id,bytes(g.manifestBase64),bytes(g.sidecarBase64),null,digest).sidecar;} catch (_) {return null;}}
- const cur=get(p.current), prev=p.previous && get(p.previous);
+ const cur=delivery.pointerRevision===delivery.currentRevision && get(p.current), prev=p.previous && delivery.pointerRevision===delivery.previousRevision && get(p.previous);
  if(cur) return {selection:'current',degraded:!!p.previous && !prev,output:plain(cur)};
- if(prev && delivery.pointerRevision===delivery.currentRevision && delivery.pointerRevision===delivery.previousRevision) return {selection:'previous',output:plain(prev)};
+ if(prev) return {selection:'previous',output:plain(prev)};
  return {selection:'unavailable'};
 }
 for(const c of fixture.pointer) assert.deepStrictEqual(selection(c,c.deliveryBinding || {pointerRevision:'D1',currentRevision:'D1',previousRevision:'D1'}),c.expected,c.id);
@@ -88,6 +88,14 @@ assert.strictEqual(previousResult.sidecar.commit,'b'.repeat(40)); assert.strictE
 assert.strictEqual(parser.pointer(bytes(same.pointerBase64)).previous,crossPointer.previous);
 assert.deepStrictEqual(selection(cross,cross.deliveryBinding),{selection:'unavailable'});
 assert.deepStrictEqual(selection(same,same.deliveryBinding),{selection:'previous',output:plain(previousResult.sidecar)});
+// 两代原始内容均有效；异投递 current 不得被选，同投递 previous 可以回退。
+const both=fixture.pointer.find(c=>c.id==='both'), bothPointer=parser.pointer(bytes(both.pointerBase64));
+for(const id of [bothPointer.current,bothPointer.previous]) {const g=both.generations[id]; assert.strictEqual(parser.generation(id,bytes(g.manifestBase64),bytes(g.sidecarBase64),null,digest).provenance,'unverified');}
+const prevGood=both.generations[bothPointer.previous];
+const prevOutput=parser.generation(bothPointer.previous,bytes(prevGood.manifestBase64),bytes(prevGood.sidecarBase64),null,digest).sidecar;
+assert.deepStrictEqual(selection(both,{pointerRevision:'D1',currentRevision:'D2',previousRevision:'D1'}),{selection:'previous',output:plain(prevOutput)});
+assert.deepStrictEqual(selection(both,{pointerRevision:'D1',currentRevision:'D2',previousRevision:'D3'}),{selection:'unavailable'});
+assert.deepStrictEqual(selection(both,{pointerRevision:'D1',currentRevision:'D1',previousRevision:'D2'}),{selection:'current',degraded:true,output:both.expected.output});
 // 测试本地回退独立于远端；策略结果仅为注入的测试材料。
 for(const c of fixture.localFallback) {
  assert.throws(()=>parser.pointer(bytes(c.pointerBase64)),c.id);

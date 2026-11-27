@@ -1,11 +1,12 @@
 'use strict';
+require('./harness/web-api').install();
 // 真临时目录中的发布结果经真实 Web 快照加载器校验，覆盖指针版本损坏修复。
 const assert=require('assert'),fs=require('fs'),os=require('os'),path=require('path'),crypto=require('crypto');
 const P=require('../discovery-publish'),S=require('../discovery-sidecar');
 Object.defineProperty(globalThis,'crypto',{configurable:true,value:crypto.webcrypto});
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'vradio-publish-client-'));
 const mk=url=>P.build({commit:'a'.repeat(40),generatedAt:'2026-11-26T00:00:00.000Z',items:[{name:url,url,ok:true,code:'OK'}]},[]);
-const fetcher=async url=>{ const data=fs.readFileSync(path.join(root,...url.split('/').slice(1))); let done=false; return {ok:true,headers:{get:k=>k==='content-type'?'application/json':null},body:{getReader:()=>({read:async()=>done?{done:true}:(done=true,{done:false,value:data}),cancel:async()=>{}})}}; };
+const fetcher=async url=>{ const rel=url.split('/').slice(1).join(path.sep); let data; try { data=fs.readFileSync(path.join(root,rel)); } catch (e) { if (e.code !== 'ENOENT') throw e; return {ok:false,headers:{get:()=>null}}; } let done=false; return {ok:true,headers:{get:k=>k==='content-type'?'application/json':null},body:{getReader:()=>({read:async()=>done?{done:true}:(done=true,{done:false,value:data}),cancel:async()=>{}})}}; };
 (async()=>{ try {
  const a=mk('https://example.com/a'),b=mk('https://example.com/b'),old=P.publish(root,a),current=P.publish(root,b);
  for (const version of [2,null]) {
@@ -32,6 +33,14 @@ const fetcher=async url=>{ const data=fs.readFileSync(path.join(root,...url.spli
   assert.strictEqual(P.publish(root,b),current);
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(root,'current.json'),'utf8')),{v:1,current,previous:null});
  }
+ // 读者遇到缺失清单时回退上一代；两代均缺失则失败关闭。
+ const currentManifest=fs.readFileSync(path.join(root,current,'manifest.json'));
+ fs.unlinkSync(path.join(root,current,'manifest.json'));
+ fs.writeFileSync(path.join(root,'current.json'),JSON.stringify({v:1,current,previous:old}));
+ assert.strictEqual((await S.loadSnapshot(fetcher,'snap'))[0].url,'https://example.com/a');
+ fs.writeFileSync(path.join(root,'current.json'),JSON.stringify({v:1,current,previous:'f'.repeat(64)}));
+ assert.deepStrictEqual(await S.loadSnapshot(fetcher,'snap'),[]);
+ fs.writeFileSync(path.join(root,current,'manifest.json'),currentManifest);
  // 损坏 current，previous 正是目标：不能把损坏代当回退。
  const oldManifest=fs.readFileSync(path.join(root,old,'manifest.json'));
  fs.writeFileSync(path.join(root,old,'manifest.json'),'broken');

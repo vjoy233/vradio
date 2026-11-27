@@ -1,69 +1,40 @@
 package io.github.vjoy233.vradio.data
 
-import org.json.JSONObject
-import java.io.File
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 
-/**
- * Default-off, read-only inspection of store.json trust state.
- * This class never writes, repairs, or replaces the inspected bytes. It is
- * deliberately not wired into Store/AppVm/SyncEngine/LightUpdate.
- */
-object StoreRecoveryInspection {
-  // Reserved private metadata name; no existing radio.* key is reinterpreted.
-  const val WITNESS_KEY = "__vradio_health_recovery_v1"
-  // 检查器自身的资源预算，不代表现有 Store 的合法容量。
+/** 只读、默认不接线；不验证 JSON、见证或文件真实性。 */
+internal object StoreRecoveryInspection {
+  // 检查预算而非 Store 合法大小的上限。
   const val MAX_BYTES = 1024 * 1024
-
-  enum class State { MISSING, CORRUPT, LEGACY_NO_WITNESS, UNTRUSTED }
-
-  data class Result(
-    val state: State,
-    /** 完整读取时的原字节；缺失、不可读或超过预算时为 null。 */
-    val originalBytes: ByteArray?,
-    val reason: String,
-    val hasWitness: Boolean
-  ) {
-    init { originalBytes?.let { require(it.isNotEmpty() || state != State.MISSING) } }
-  }
+  enum class Trust { UNTRUSTED }
+  enum class Observation { MISSING, UNREADABLE, OVER_BUDGET, INVALID_UTF8, CONTENT_UNKNOWN }
+  data class Result(val trust: Trust, val observation: Observation, val originalBytes: ByteArray?)
 
   fun inspect(file: File): Result {
+    fun result(observation: Observation, bytes: ByteArray? = null) = Result(Trust.UNTRUSTED, observation, bytes)
     val bytes = try {
       file.inputStream().use { input ->
         val out = ByteArrayOutputStream(); val buf = ByteArray(8192)
         while (true) {
           val n = input.read(buf); if (n < 0) break
-          if (n > MAX_BYTES - out.size()) return Result(State.UNTRUSTED, null, "store exceeds inspection budget", false)
+          if (n > MAX_BYTES - out.size()) return result(Observation.OVER_BUDGET)
           out.write(buf, 0, n)
         }
         out.toByteArray()
       }
     } catch (e: java.io.FileNotFoundException) {
-      return if (!file.exists()) Result(State.MISSING, null, "store.json missing", false)
-      else Result(State.UNTRUSTED, null, "store.json unreadable", false)
+      return result(if (!file.exists()) Observation.MISSING else Observation.UNREADABLE)
     } catch (e: java.io.IOException) {
-      return Result(State.UNTRUSTED, null, "store.json unreadable", false)
+      return result(Observation.UNREADABLE)
     }
-    val text = runCatching {
-      Charsets.UTF_8.newDecoder()
-        .onMalformedInput(CodingErrorAction.REPORT)
-        .onUnmappableCharacter(CodingErrorAction.REPORT)
-        .decode(ByteBuffer.wrap(bytes)).toString()
-    }.getOrElse { return Result(State.CORRUPT, bytes, "invalid UTF-8", false) }
-    val obj = runCatching { JSONObject(text) }.getOrElse {
-      return Result(State.CORRUPT, bytes, "invalid JSON", false)
-    }
-    if (!obj.has(WITNESS_KEY)) {
-      return Result(State.LEGACY_NO_WITNESS, bytes, "valid store without recovery witness", false)
-    }
-    // A witness is only an observed marker here. Verification and atomic
-    // commit belong to a later phase; never call this trusted.
-    val witness = obj.opt(WITNESS_KEY)
-    if (witness !is JSONObject) {
-      return Result(State.UNTRUSTED, bytes, "recovery witness has invalid shape", true)
-    }
-    return Result(State.UNTRUSTED, bytes, "recovery witness is not verified", true)
+    val validUtf8 = runCatching {
+      Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+        .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes))
+    }.isSuccess
+    // UTF-8 合法不表示 JSON 合法或见证可信，绝不推断旧版/损坏状态。
+    return result(if (validUtf8) Observation.CONTENT_UNKNOWN else Observation.INVALID_UTF8, bytes)
   }
 }

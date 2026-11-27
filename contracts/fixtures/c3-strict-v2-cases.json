@@ -1,5 +1,5 @@
 {
-  "note": "草案样本：纯合成、不联网；各端尚未实现 v2，不表示已通过。raw 是原始 JSON 文本，不能先解析再序列化。",
+  "note": "草案样本：纯合成、不联网；尚非完整可执行测试，各端尚未实现 v2，不表示已通过。raw 是原始 JSON 文本，不能先解析再序列化。",
   "sidecar": [
     {"id":"empty-valid", "accept":true, "raw":"{\"v\":2,\"source\":\"recommended-radio-streams\",\"license\":\"CC0-1.0\",\"commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"generatedAt\":\"2026-11-26T01:02:03.123Z\",\"items\":[]}"},
     {"id":"valid-item", "accept":true, "raw":"{\"v\":2,\"source\":\"recommended-radio-streams\",\"license\":\"CC0-1.0\",\"commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"generatedAt\":\"2026-11-26T01:02:03.123Z\",\"items\":[{\"name\":\"示例\",\"url\":\"https://example.invalid/live\",\"genre\":\"\",\"upstream\":\"recommended-radio-streams\",\"commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}]}"},
@@ -15,6 +15,13 @@
     {"url":"http://0x7f000001/live", "formatAccept":false},
     {"url":"http://2130706433/live", "formatAccept":false},
     {"url":"http://example.0x7f/live", "formatAccept":false},
+    {"url":"http://example.0X7F/live", "formatAccept":false},
+    {"url":"http://example.3com/live", "formatAccept":false},
+    {"url":"http://999.1.1.1/live", "formatAccept":false},
+    {"url":"http://127.000.000.001/live", "formatAccept":false},
+    {"url":"http://EXAMPLE.COM./live", "formatAccept":false},
+    {"url":"http://EXAMPLE.COM/live", "formatAccept":true},
+    {"url":"http://3com.example/live", "formatAccept":true},
     {"url":"http://user@example.invalid/live", "formatAccept":false}
   ],
   "binding": [

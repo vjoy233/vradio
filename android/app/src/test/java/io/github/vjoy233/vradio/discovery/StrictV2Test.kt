@@ -36,14 +36,14 @@ class StrictV2Test {
     each(concepts.getJSONArray("urlAdversarial")) { c -> assertEquals(c.getString("url"), c.getBoolean("formatAccept"), StrictV2.url(c.getString("url"))) }
   }
   @Test fun generationsAndSelection() = each(fixture.getJSONArray("pointer")) { c ->
-    // 旧 cross-commit 把 upstream 和 delivery 混为一谈，不能用其选择期望。
-    if (c.getString("id") == "cross-commit") return@each
     val expected = c.getJSONObject("expected"); val gs = c.getJSONObject("generations")
-    fun get(id: String): Map<String, Any?>? = runCatching {
+    val delivery = c.optJSONObject("deliveryBinding") // 仅测试注入标签，不是获取认证
+    fun get(id: String, revisionField: String): Map<String, Any?>? = runCatching {
+      if (delivery != null) require(delivery.getString("pointerRevision") == delivery.getString(revisionField))
       val g = gs.getJSONObject(id); StrictV2.generation(id, bytes(g, "manifestBase64"), bytes(g, "sidecarBase64")).sidecar
     }.getOrNull()
     val p = runCatching { StrictV2.pointer(bytes(c, "pointerBase64")) }.getOrNull()
-    val current = p?.let { get(it.first) }; val previous = p?.second?.let { get(it) }
+    val current = p?.let { get(it.first, "currentRevision") }; val previous = p?.second?.let { get(it, "previousRevision") }
     val selection = when { current != null -> "current"; previous != null -> "previous"; else -> "unavailable" }
     assertEquals(c.getString("id"), expected.getString("selection"), selection)
     if (expected.has("degraded")) assertEquals(c.getString("id"), expected.getBoolean("degraded"), p?.second != null && previous == null)
@@ -51,7 +51,7 @@ class StrictV2Test {
   }
   @Test fun simulatedDeliveryIsolation() {
     val cases = fixture.getJSONArray("pointer")
-    val cross = (0 until cases.length()).map { cases.getJSONObject(it) }.first { it.getString("id") == "cross-commit" }
+    val cross = (0 until cases.length()).map { cases.getJSONObject(it) }.first { it.getString("id") == "same-delivery-different-upstream" }
     val p = StrictV2.pointer(bytes(cross, "pointerBase64")); val gs = cross.getJSONObject("generations")
     val previous = gs.getJSONObject(p.second!!)
     var calls = 0

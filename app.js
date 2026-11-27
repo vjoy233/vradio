@@ -2177,7 +2177,7 @@ const App = {
     $('discClose').focus();
     if (!this.metaCache) this.metaCache = await this.loadMeta(); // 懒加载一次（radio-meta.json 静态文件，非 dotfile/data 段天然可 GET）
     if (FEATURES.discoverySidecar && !this.discoverySidecar && window.DiscoverySidecar) {
-      const rows = await DiscoverySidecar.load((u, opts) => fetch(u, opts), 'radio-discovery.json');
+      const rows = await DiscoverySidecar.loadSnapshot((u, opts) => fetch(u, opts), 'discovery-snapshots');
       if (rows.length) this.discoverySidecar = rows;
     }
     this.renderDiscovery();
@@ -2215,12 +2215,14 @@ const App = {
       if (len > 8192 || (ct && !ct.includes('application/json'))) throw Error('bad response');
       let text = '', reader = q.body && q.body.getReader ? q.body.getReader() : null;
       if (!reader) throw Error('stream unavailable');
-      let total = 0;
-      for (;;) { const part = await reader.read(); if (part.done) break; total += part.value.byteLength; if (total > 8192) { try { await reader.cancel(); } catch (_) {} throw Error('large response'); } text += new TextDecoder().decode(part.value, {stream:true}); }
+      let total = 0; const decoder = new TextDecoder('utf-8', {fatal:true});
+      for (;;) { const part = await reader.read(); if (part.done) break; total += part.value.byteLength; if (total > 8192) { try { await reader.cancel(); } catch (_) {} throw Error('large response'); } text += decoder.decode(part.value, {stream:true}); }
+      text += decoder.decode();
       const res = JSON.parse(text);
+      if (!res || typeof res.ok !== 'boolean') throw Error('invalid response');
       $('status').textContent = res && res.ok ? `已加入个人电台：${r.name}` : '加入失败：探活未通过或服务不可用';
       if (res && res.ok) this.reloadMain();
-    } catch (_) { $('status').textContent = '加入失败：探活未通过或服务不可用'; }
+    } catch (_) { $('status').textContent = '请求结果未知，服务端可能已加入；请稍后刷新个人电台确认后再重试'; try { await this.reloadMain(); } catch (_) {} }
     finally { clearTimeout(timer); }
   },
   renderDiscovery() {

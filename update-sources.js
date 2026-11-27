@@ -265,7 +265,7 @@ async function buildEuLines(log) {
   }
   const nTalk = cand.filter(s => s.talk).length;
   log(`欧美候选 ${cand.length} 个（非音乐 ${nTalk} 待拆出），开始实测（约40s）…`);
-  await mapLimit(cand, 18, async s => { const r = await checkStream(s.url); s.ok = r.ok; });
+  await mapLimit(cand, 18, async s => { const r = await checkDetail(s.url); s.ok = r.ok; s.verification = r; });
   const ok = cand.filter(s => s.ok);
   // 按国家分组排序（组大在前、组内按名），名字挂中文国名；台标随行带走（logos.txt 用，按 URL 严格对应）
   const build = list => {
@@ -276,7 +276,7 @@ async function buildEuLines(log) {
         const name = `${s.name.replace(/,/g, ' ')} [${EU_COUNTRIES[s.country]}]`;
         lines.push(`${name},${s.url}`);
         if (s.logo) logos.push(name + ',' + s.logo);
-        meta.push({ name, url: s.url, uuid: s.uuid || '' });
+        meta.push({ name, url: s.url, uuid: s.uuid || '', verification: s.verification });
       });
     });
     return { lines, logos, meta };
@@ -471,8 +471,17 @@ function buildRadioMeta(merged, prevMeta, cnCands, euLines, now, upstreamDefault
   for (const g of groups.values())
     stations[g.urls[0]] = { name: g.name, category: g.category, sources: g.urls.map(url => {
       const c = cnMap.get(url), e = euMap.get(url), p = prevUrl.get(url);
-      return { url, upstream: c ? c.upstream || 'gao' : e ? 'eu' : (p ? p.upstream : upstreamDefault),
-        upstreamId: (e && e.uuid) || (p && p.upstreamId) || '', kind: 'main', firstSeenAt: (p && p.firstSeenAt) || now };
+      const evidence = e && e.verification;
+      const verified = evidence && evidence.ok === true && evidence.url === url && Number.isFinite(evidence.checkedAt) && evidence.checkedAt > 0;
+      const previousVerified = p && p.verification === 'sync' && Number.isFinite(p.lastVerifiedAt) && p.lastVerifiedAt > 0;
+      const upstream = (c && c.upstream) || (e ? 'eu' : '') || (p && p.upstream) || upstreamDefault || 'unknown';
+      // ID 与来源成对选取：只继承同一上游的旧 ID，不能混用另一个候选的 ID。
+      const currentId = c && c.upstream ? c.upstreamId : e ? e.uuid : '';
+      const upstreamId = currentId || (p && p.upstream === upstream && p.upstreamId) || '';
+      return { url, upstream, upstreamId, kind: 'main',
+        firstSeenAt: (p && p.firstSeenAt) || now, lastSeenAt: now,
+        lastVerifiedAt: verified ? Math.max(evidence.checkedAt, previousVerified ? p.lastVerifiedAt : 0) : previousVerified ? p.lastVerifiedAt : 0,
+        verification: verified || previousVerified ? 'sync' : 'unknown' };
     }) };
   return { v: 1, generatedAt: now, stations };
 }
@@ -702,7 +711,7 @@ async function runPipeline(log = () => {}, opt = {}) {
     arts['logos.txt'] = lg.join('\r\n') + '\r\n';
     sum.logos = lg.length - 1; sum.logosNews = euSrc.news.logoLines.length;
   } else arts['logos.txt'] = fs.existsSync(P('logos.txt')) ? fs.readFileSync(P('logos.txt'), 'utf8') : LOGOS_HEADER + '\r\n';
-  const meta = buildRadioMeta(merged, readMetaFile(P('radio-meta.json')), cands, euLines, Date.now());
+  const meta = buildRadioMeta(merged, readMetaFile(P('radio-meta.json')), cnText ? cands : [], euLines, Date.now());
   let metaTxt = JSON.stringify(meta);
   report.metaOverTarget = Buffer.byteLength(metaTxt) > META_TARGET;
   if (report.metaOverTarget) { // 超目标：先删 name/category 冗余（可由 radio.txt 反解，不削弱来源追踪字段）

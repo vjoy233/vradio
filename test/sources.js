@@ -101,6 +101,16 @@ const euOf = (lines, metas) => ({
     assert.strictEqual(r.candidates[0].upstream, 'gao');
   });
 
+  await ok('国内上游失败时旧库不是上游证据，未知来源保持 unknown', async () => {
+    const root = tmpRoot();
+    seedRoot(root, '国际新闻·谈话,#genre#\r\nBBC Radio,http://old.example/bbc\r\n华语音乐,#genre#\r\n旧台,http://old.example/cn\r\n');
+    const r = await U.runPipeline(() => {}, { root, floor: 0, inputs: { cn: null, eu: null } });
+    const meta = JSON.parse(r.arts['radio-meta.json']);
+    for (const url of ['http://old.example/bbc', 'http://old.example/cn']) {
+      assert.strictEqual(meta.stations[url].sources[0].upstream, 'unknown');
+    }
+  });
+
   console.log('[4] 质量门矩阵（runPipeline 注入原料，floor=0；临时根目录）');
   const EU_OK = euOf(['Foo Radio [英国],http://eu.new/1.mp3']);
   await ok('good fixture：门通过、四生成物齐备、hash 产出', async () => {

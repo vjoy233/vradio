@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "kind": "quality-explain",
+  "explain": [
+    {"summary": null, "now": 2592001000, "expected": {"level":"unknown","action":"retest","reason":"no_samples"}},
+    {"summary": {"okCount":3,"failCount":0,"lastObservedAt":0,"stability":"good"}, "now":2592001000, "expected":{"level":"unknown","action":"retest","reason":"missing_observation"}},
+    {"summary": {"okCount":3,"failCount":0,"lastObservedAt":2592001001,"stability":"good"}, "now":2592001000, "expected":{"level":"unknown","action":"retest","reason":"future_observation"}},
+    {"summary": {"okCount":2,"failCount":0,"lastObservedAt":1000,"stability":"good"}, "now":2000, "expected":{"level":"unknown","action":"retest","reason":"insufficient_samples"}},
+    {"summary": {"okCount":3,"failCount":0,"lastObservedAt":1000,"stability":"good"}, "now":2592000999, "expected":{"level":"good","action":"none","reason":"stable"}},
+    {"summary": {"okCount":3,"failCount":0,"lastObservedAt":1000,"stability":"good"}, "now":2592001000, "expected":{"level":"unknown","action":"retest","reason":"stale"}},
+    {"summary": {"okCount":3,"failCount":0,"lastObservedAt":1000,"stability":"good"}, "now":2592001001, "expected":{"level":"unknown","action":"retest","reason":"stale"}},
+    {"summary": {"okCount":2,"failCount":1,"lastObservedAt":1000,"stability":"fair"}, "now":2000, "expected":{"level":"fair","action":"retest","reason":"variable"}},
+    {"summary": {"okCount":1,"failCount":2,"lastObservedAt":1000,"stability":"poor"}, "now":2000, "expected":{"level":"poor","action":"retest","reason":"unstable"}}
+  ],
+  "diagnostic": [
+    {"code":"OK","httpStatus":200,"expected":{"level":"good","action":"none","reason":"ok"}},
+    {"code":"OK","httpStatus":403,"expected":{"level":"unknown","action":"configure","reason":"service_refused"}},
+    {"code":"NETWORK","httpStatus":0,"expected":{"level":"unknown","action":"retry","reason":"network"}},
+    {"code":"HTML","httpStatus":200,"expected":{"level":"unknown","action":"check_source","reason":"html"}},
+    {"code":"HTTP","httpStatus":500,"expected":{"level":"unknown","action":"retry","reason":"http"}},
+    {"code":"HTTP","httpStatus":401,"expected":{"level":"unknown","action":"configure","reason":"service_refused"}},
+    {"code":"SHORT_BODY","httpStatus":403,"expected":{"level":"unknown","action":"configure","reason":"service_refused"}},
+    {"code":"EMPTY_PLAYLIST","httpStatus":200,"expected":{"level":"unknown","action":"check_source","reason":"empty_playlist"}},
+    {"code":"NO_SEGMENT","httpStatus":200,"expected":{"level":"unknown","action":"retry","reason":"no_segment"}},
+    {"code":"SHORT_BODY","httpStatus":200,"expected":{"level":"unknown","action":"check_source","reason":"short_body"}},
+    {"code":"REDIRECT_REJECTED","httpStatus":302,"expected":{"level":"unknown","action":"check_source","reason":"redirect_rejected"}},
+    {"code":"INVALID_URL","httpStatus":0,"expected":{"level":"unknown","action":"check_source","reason":"invalid_url"}},
+    {"code":"FUTURE_CODE","httpStatus":0,"expected":{"level":"unknown","action":"retest","reason":"unknown_code"}}
+  ]
+}

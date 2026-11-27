@@ -257,6 +257,54 @@ class LightUpdateTest {
     }
   }
 
+  @Test fun radio写失败保留旧批次() = runBlocking {
+    val dir = tmp.newFolder()
+    val lu = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
+    assertNotNull(lu.apply(radioV1))
+    val before = listOf("radio.txt", "logos.txt", "radio-meta.json", "stamp.json")
+      .associateWith { java.io.File(dir, it).readText() }
+    assertTrue(java.io.File(dir, "radio.txt.tmp").mkdir())
+    val next = LightUpdate(Gh(FakeHttp(fullMap(radio = radioV2 + "新台,http://new/1.mp3\r\n",
+      radioAt = "2026-10-11T00:00:00Z", meta = metaV1)), 0), dir)
+    assertNull(next.apply(radioV2))
+    assertTrue(next.lastFailWhy.contains("落盘失败"))
+    before.forEach { (name, text) -> assertEquals(text, java.io.File(dir, name).readText()) }
+  }
+
+  @Test fun logos写失败不回滚且结果只表示已下载() = runBlocking {
+    val dir = tmp.newFolder()
+    val lu = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
+    assertNotNull(lu.apply(radioV1))
+    val oldLogo = lu.logosText()
+    assertTrue(java.io.File(dir, "logos.txt.tmp").mkdir())
+    val newRadio = radioV2 + "新台,http://new/1.mp3\r\n"
+    val next = LightUpdate(Gh(FakeHttp(fullMap(radio = newRadio, logos = logosV2 + "新标志",
+      radioAt = "2026-10-11T00:00:00Z", meta = metaV1)), 0), dir)
+    val result = next.apply(radioV2)!!
+    assertTrue(result.logosChanged) // 非空下载，不代表落盘成功
+    assertEquals(oldLogo, next.logosText())
+    assertEquals(newRadio, next.radioText())
+    assertEquals(true to true, next.stampHashOk())
+  }
+
+  @Test fun stamp写失败不回滚并由哈希拒绝旧见证() = runBlocking {
+    val dir = tmp.newFolder()
+    val lu = LightUpdate(Gh(FakeHttp(fullMap(meta = metaV1)), 0), dir)
+    assertNotNull(lu.apply(radioV1))
+    val oldStamp = lu.stamp()
+    assertTrue(java.io.File(dir, "stamp.json.tmp").mkdir())
+    val newRadio = radioV2 + "新台,http://new/1.mp3\r\n"
+    val next = LightUpdate(Gh(FakeHttp(fullMap(radio = newRadio,
+      radioAt = "2026-10-11T00:00:00Z", meta = metaV1)), 0), dir)
+    assertNotNull(next.apply(radioV2))
+    assertEquals(newRadio, next.radioText())
+    assertEquals(oldStamp, next.stamp())
+    val h = next.stampHashOk()
+    assertEquals(false to true, h)
+    assertFalse(RadioMeta.bound(true, true, next.stampMetaOk(), h.first, h.second))
+    assertEquals("2026-10-11T00:00:00Z", next.check(next.stamp()!!))
+  }
+
   @Test fun 旧stamp无哈希字段保守不绑定() {
     // B2/B3 早期 stamp（无 radioHash/metaHash 字段）：无法证明与当前文件同批 → 保守不绑定（沿用既有拍板）
     val dir = tmp.newFolder()

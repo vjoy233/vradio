@@ -26,8 +26,9 @@ class StoreCheckedTest {
   }
 
   @Test fun checkedFailsClosedBeforeInit() {
-    Store.init(File.createTempFile("blocker", ".tmp"))
-    assertFalse(Store.setChecked(C.K_VOL, "pre-init"))
+    Store.resetForTest()
+    try { assertFalse(Store.setChecked(C.K_VOL, "pre-init")) }
+    finally { Store.resetForTest() }
   }
 
   @Test fun checkedAndOrdinaryWritesSerializeDeterministically() {

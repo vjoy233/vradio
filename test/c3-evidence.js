@@ -50,6 +50,11 @@ e=fixture(); e.rounds.forEach(a=>a.results.forEach((x,i)=>{if(i<26)x.code='SHORT
 e=fixture(); e.rounds[0].results[0].code='EXCEPTION'; assert(E.evaluate(e).failures.some(x=>x.includes('程序异常')));
 e=fixture(); e.rounds[0].results=[]; assert(E.evaluate(e).failures.some(x=>x.includes('覆盖率')));
 e=fixture(); e.rounds[0].scriptCommit=commit; assert.equal(E.evaluate(e).structure,'INVALID');
+// RegExp.test 会将数组隐式转为字符串；commit 必须是 JSON 字符串。
+['commit','scriptCommit'].forEach(key=>{
+  const x=fixture(); x[key]=[x[key]]; x.rounds.forEach(round=>{round[key]=x[key];});
+  const result=E.evaluate(x); assert.equal(result.structure,'INVALID'); assert.equal(result.arithmetic,'NOT_EVALUATED'); assert.equal(result.decision,'NO_GO');
+});
 e=fixture(); e.candidates[0].url='https://u:p@example.test/a'; assert.equal(E.evaluate(e).structure,'INVALID');
 e=fixture(); e.mainUrls=null; assert.equal(E.evaluate(e).structure,'INVALID');
 assert.equal(E.evaluate(null).decision,'NO_GO');

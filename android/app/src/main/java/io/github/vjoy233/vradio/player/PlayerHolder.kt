@@ -96,16 +96,17 @@ object PlayerHolder {
   var onMetadata: ((MetadataEvent) -> Unit)? = null
   var logoProvider: ((Station) -> String)? = null            // 锁屏 artwork 同步窥探（player.js:30 onlogo）
 
-  private var token = 0                    // 世代令牌防串台（player.js:137）
-  private var pctx: Pctx? = null           // 本次 play 的级联上下文（player.js:14）
-  private var station: Station? = null
-  private var connecting: Station? = null  // 连接中/换源重试中的台（player.js:7）
+  private val lifecycle = PlaybackLifecycle<Station, Pctx>()
+  private var token by lifecycle::token
+  private var pctx by lifecycle::pctx
+  private var station by lifecycle::station
+  private var connecting by lifecycle::connecting
   private var halt = false                 // 有意暂停守卫（player.js:17-18）
   private var heldNext = false             // 暂停期级联搁浅标记（player.js:19）
-  private var retried = false              // 当前源是否已「先重连一次」（player.js:16）
-  private var curSi = -1                   // 正在试的源序号（player.js:20）
-  private var curPlay = ""                 // 当前装载的 variant URL（player.js:21）
-  private var lastKbps = 0                 // 最近 icy-br（事件随行字段；换源清零与 ui.kbps 同口径）
+  private var retried by lifecycle::retried
+  private var curSi by lifecycle::curSi
+  private var curPlay by lifecycle::curPlay
+  private var lastKbps by lifecycle::lastKbps
   private var lastPos = 0L                 // 上次采样位置（进展检测）
   private var wdAt = 0L                    // 最近进展时刻（看门狗基准）
   private var vol = 0.9f                   // 逻辑音量（渐弱/取消的恢复基准，player.js:8）
@@ -174,11 +175,10 @@ object PlayerHolder {
   /* ---------- 播放决策链 ---------- */
 
   /** 冷启动仅选择：不建流、不更改播放记忆；已有播放意图优先。 */
-  private var selectionGeneration = 0L
+  private var selectionGeneration by lifecycle::selectionGeneration
   fun selectionToken(): Long = selectionGeneration
   fun selectIfEmpty(s: Station, expected: Long): Boolean {
-    if (!inited || station != null || selectionGeneration != expected) return false
-    station = s
+    if (!inited || !lifecycle.selectIfEmpty(s, expected)) return false
     uiMut.update { it.copy(st = PState.IDLE, station = s, status = "") }
     return true
   }
@@ -230,7 +230,7 @@ object PlayerHolder {
   fun resume() { // player.js:264-271
     if (!inited) return
     val s = station ?: return // 无台可续：媒体键路径已转 onPlayLast（player.js:265）
-    if (curPlay.isEmpty()) { play(s); return } // 仅选中态首次播放走完整选源链
+    if (lifecycle.resumeRequiresPlay()) { play(s); return } // 仅选中态首次播放走完整选源链
     if (s.effOrder().isEmpty()) { play(s); return } // B1：全禁台恢复 = 仍 NO_ENABLED_SOURCE（重进提示路径，不复活）
     halt = false
     connecting = s; say("连接中…"); syncState()
@@ -357,8 +357,9 @@ object PlayerHolder {
   private fun next() { // error 级联：换下一个 variant（player.js:151-170）
     val p = pctx ?: return
     if (p.my != token) return
-    if (p.i >= p.urls.size) { // 全部耗尽善后（player.js:154-159）；清 song/kbps——PlayerBar 第二行 song 优先，残留旧曲讯会永久掩盖 ⚠ 提示
-      station = null; connecting = null
+    if (lifecycle.exhaustIfNeeded(p, p.my, p.i, p.urls.size)) { // 全部耗尽善后（player.js:154-159）；清 song/kbps——PlayerBar 第二行 song 优先，残留旧曲讯会永久掩盖 ⚠ 提示
+      // 终结本次播放世代：新 VM 可能在耗尽后复用旧 boot token；若不递增，selectIfEmpty 会把
+      // 已失败台当成仅选择态，而 resume() 又会沿用旧 curPlay/pctx 重连旧流（真实旧流误播）。
       markProgress()
       exo.stop(); exo.clearMediaItems()
       uiMut.update { it.copy(st = PState.IDLE, station = null, srcIdx = -1, mode = "", noSrc = false, song = "", kbps = 0,

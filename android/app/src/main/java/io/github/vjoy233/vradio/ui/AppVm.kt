@@ -1531,7 +1531,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
                 { Store.applyAllChecked(pay.data) },                     // 白名单键写入/缺键 remove；落盘失败可感知（三轮 P1-2）
                 { Store.applyAllChecked(snap) },
                 { pay.my == null || runCatching { myRadio.replace(pay.my!!.joinToString("\n")) }.getOrDefault(false) },   // v1 无 my 不动；v2 读 my；v3 读 myRadio
-                { runCatching { myRadio.replace(myOld) } },
+                { runCatching { myRadio.replace(myOld) }.getOrDefault(false) },
                 { qData == null || quality.replaceImport(qData) },        // sidecar 最后提交（覆盖语义，§13.2-6）
                 { qSnap == null || quality.restore(qSnap) },             // 失败恢复旧 quality 快照（replaceImport 内部已自恢复，此处兜底盘面）
                 { lsData == null || lsApply() },                         // 收听统计四件事务收官（B4）
@@ -1540,7 +1540,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
               lib.myText = myRadio.readText()
               e
             }
-            if (err != null) { toast("导入失败：$err，已回滚到导入前状态"); return@launch }
+            if (err != null) { toast("导入失败：$err"); return@launch }
             // AIbot P1-2：Store 已被整体替换，三层内存态必须显式刷新——缺一层 = 重启才生效，
             // 且播放层旧 volperst/srcmem 内存会在下次调音量/换源时整体回写冲掉刚导入的值（数据损坏向）
             freshnessPref.value = Freshness.parse(Store.get(C.K_SYNC_FRESHNESS))

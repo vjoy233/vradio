@@ -53,5 +53,21 @@ const badPrevious=scenario('invalid-previous',current,previous,{selection:'curre
 // 破坏 previous manifest，但保留不相同的代 id。
 badPrevious.pointerBase64=enc({v:2,current:current.id,previous:previous.id}).toString('base64'); badPrevious.generations[previous.id]={...previous,manifestBase64:enc({v:2,sha256:previous.id,bytes:1}).toString('base64')}; pointers.push(badPrevious);
 const invalid=scenario('invalid-pointer',current,previous,{selection:'unavailable'}); invalid.pointerBase64=enc({v:2,current:current.id,previous:current.id}).toString('base64'); pointers.push(invalid);
-const result={format:'c3-v2-shared-fixtures-1',note:'离线合成；原始字节仅 base64 解码，sha256 为真实字节哈希；不是解析器、许可或联网证明。output 是完整解析结果。',undefinedBehavior:['受控 commit 绑定及其传递方式未定义；跨 commit 用显式外部 binding 标识。','previous 回退时的降级标记和错误分类未定义，故不予断言。','规范未定义解析 API 返回值形状；output 是协议 JSON 值，不规定实现接口。'],sidecar:cases,pointer:pointers};
+const pad = (b,n) => Buffer.concat([b,Buffer.alloc(n-b.length,0x20)]);
+const manifestBytes=enc({v:2,sha256:current.id,bytes:decode64(current.sidecarBase64).length});
+function decode64(s) { return Buffer.from(s,'base64'); }
+const pointerBytes=enc({v:2,current:current.id,previous:null});
+const controls = [
+ entry('manifest-limit',pad(manifestBytes,4096),true,JSON.parse(manifestBytes)),
+ entry('manifest-over-limit',pad(manifestBytes,4097),false),
+ entry('pointer-limit',pad(pointerBytes,4096),true,JSON.parse(pointerBytes)),
+ entry('pointer-over-limit',pad(pointerBytes,4097),false)
+];
+// 本地撤销策略由调用者注入，不推定其具体形式；仅断言远端与本地结果分离。
+const localFallback = [
+ {id:'invalid-pointer-local-valid',pointerBase64:enc({v:2,current:current.id,previous:current.id}).toString('base64'),local:otherCommit,localRevocationPolicyResult:'allow',expected:{remote:'unavailable',selection:'local',output:{...side([]),commit:B}}},
+ {id:'invalid-pointer-local-revoked',pointerBase64:enc({v:2,current:current.id,previous:current.id}).toString('base64'),local:otherCommit,localRevocationPolicyResult:'deny',expected:{remote:'unavailable',selection:'unavailable'}},
+ {id:'invalid-pointer-local-bad-hash',pointerBase64:enc({v:2,current:current.id,previous:current.id}).toString('base64'),local:{...otherCommit,id:'0'.repeat(64)},localRevocationPolicyResult:'allow',expected:{remote:'unavailable',selection:'unavailable'}}
+];
+const result={controls,localFallback,format:'c3-v2-shared-fixtures-1',note:'离线合成；原始字节仅 base64 解码，sha256 为真实字节哈希；不是解析器、许可或联网证明。output 是完整解析结果。',undefinedBehavior:['受控 commit 绑定及其传递方式未定义；跨 commit 用显式外部 binding 标识。','previous 回退时的降级标记和错误分类未定义，故不予断言。','规范未定义解析 API 返回值形状；output 是协议 JSON 值，不规定实现接口。'],sidecar:cases,pointer:pointers};
 process.stdout.write(JSON.stringify(result,null,2)+'\n');

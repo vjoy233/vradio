@@ -1,4 +1,15 @@
 const assert = require('assert');
+const cp = require('child_process');
+const noWebApi = cp.execFileSync(process.execPath, ['-e', `
+  delete global.AbortController; delete global.TextDecoder;
+  const S = require(${JSON.stringify(require.resolve('../discovery-sidecar'))});
+  Promise.all([
+    S.load(() => { throw Error('fetch must not run'); }, 'x', 1),
+    S.loadSnapshot(() => { throw Error('fetch must not run'); }, 'x', 1)
+  ]).then(v => { if (JSON.stringify(v) !== '[[],[]]') process.exit(2); });
+`], {encoding:'utf8'});
+assert.strictEqual(noWebApi, '');
+require('./harness/web-api').install();
 const S = require('../discovery-sidecar');
 const sha = 'a'.repeat(40), raw = {v:1,source:'recommended-radio-streams',license:'CC0-1.0',commit:sha,items:[{name:'x',url:'https://x'}]};
 assert.equal(S.normalize(raw).length, 1);
@@ -22,6 +33,10 @@ assert.deepStrictEqual(S.normalize({...raw,items:[{name:'x',url:'https://x',comm
   const routes = {'snap/current.json':JSON.stringify({v:1,current:broken,previous:id}), ['snap/'+broken+'/manifest.json']:JSON.stringify({v:1,sha256:broken,bytes:1}), ['snap/'+broken+'/radio-discovery.json']:'x', ['snap/'+id+'/manifest.json']:JSON.stringify({v:1,sha256:id,bytes:payload.length}), ['snap/'+id+'/radio-discovery.json']:payload};
   const fetcher = async url => { if (!(url in routes)) throw Error('missing'); return response([{value:Buffer.from(routes[url]),done:false}]); };
   assert.equal((await S.loadSnapshot(fetcher,'snap')).length,1, 'corrupt current falls back');
+  let successfulAbort = false;
+  const observeSuccess = (u,o) => { o.signal.addEventListener('abort', () => { successfulAbort = true; }); return fetcher(u,o); };
+  assert.equal((await S.loadSnapshot(observeSuccess,'snap')).length,1);
+  assert.equal(successfulAbort, false, 'completed stages do not abort');
   const stalled = async (url, opts) => url.includes(broken) ? new Promise(() => {}) : fetcher(url, opts);
   assert.equal((await S.loadSnapshot(stalled,'snap',10)).length,1, 'stalled current falls back within independent deadline');
   let readCancelled = false, readAborted = false;
@@ -29,6 +44,14 @@ assert.deepStrictEqual(S.normalize({...raw,items:[{name:'x',url:'https://x',comm
   const observed = (u,o) => { if (u.includes(broken)) o.signal.addEventListener('abort',()=>{readAborted=true;}); return stalledRead(u,o); };
   assert.equal((await S.loadSnapshot(observed,'snap',10)).length,1);
   assert(readCancelled && readAborted, 'stalled reader is cancelled and aborted');
+  let streamCancelled = false;
+  // 新版 Node 保留真实流覆盖；Node14 无 ReadableStream，用 reader 桩覆盖不完成的 cancel。
+  const body = typeof ReadableStream === 'function'
+    ? new ReadableStream({pull(){return new Promise(()=>{});},cancel(){streamCancelled=true; return new Promise(()=>{});}})
+    : {getReader:()=>({read:()=>new Promise(()=>{}),cancel:()=>{streamCancelled=true; return new Promise(()=>{});}})};
+  const realStream = async (u,o) => u.includes(broken) ? {ok:true,headers:{get:k=>k==='content-type'?'application/json':null},body} : fetcher(u,o);
+  assert.equal((await S.loadSnapshot(realStream,'snap',10)).length,1, 'real stream cancel never blocks fallback');
+  assert(streamCancelled);
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
   Object.defineProperty(globalThis, 'crypto', {configurable:true, value:undefined});
   assert.equal((await S.loadSnapshot(fetcher,'snap',10)).length, 1, 'insecure context verifies hash without Web Crypto');

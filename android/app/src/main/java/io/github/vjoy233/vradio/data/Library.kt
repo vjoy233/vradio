@@ -155,7 +155,9 @@ class Library(
   }
   fun resolve(key: String): Station? = stations.firstOrNull { it.key == key }
   fun resolveByUrl(u0: String): Station? = stations.firstOrNull { u0 in it.u }
-  fun resolveRecent(r: RecentEntry): Station? = if (r.u.isNotEmpty()) resolveByUrl(r.u.first()) else resolve(r.k)
+  fun resolveRecent(r: RecentEntry): Station? = if (r.u.isNotEmpty()) {
+    r.u.asSequence().mapNotNull { u -> resolveByUrl(u) }.firstOrNull()
+  } else resolve(r.k)
 
   /** N2 m3u 泛导入分流（纯决策不变异，AIbot P1-1 语义修复）：库内可解析台（键优先、任一源 URL 兜底，
    *  resolveEntry 同口径；任一 URL 命中即整条算命中）→ favHits 交调用方批量恢复收藏；

@@ -107,6 +107,25 @@ class SyncEngine(private val gh: Gh, private val check: CheckStream, private val
       log("合并结果异常（仅 $after 台 < $MIN_TOTAL 下限），中止写盘，保留原文件")
       return SyncResult(false, before, 0, 0, 0, emptyList(), emptyList(), emptyList(), emptyList(), null, null, cnUpdated, -1)
     }
+    // 4.5) diff 摘要（N4/r2 ⑥）：按台名集合对比——分类变化不算（重分类是常规操作），改名 = 消失+新增如实呈现
+    val oldNames = entryNamesOf(oldSecs.flatMap { it.lines })
+    val neuNames = entryNamesOf(merged)
+    val addedNames = neuNames.filter { !oldNames.contains(it) }
+    val removedNames = oldNames.filter { !neuNames.contains(it) }
+    val addedSet = addedNames.toHashSet()
+    // 体检测名单（D4/R4）：新增台里的国内台（欧美两节同步期已逐个实测，跳过）；行序去重，超限则拒绝发布
+    val cnAdded = ArrayList<String>()
+    var secCat = ""
+    for (l in merged) {
+      if (l.endsWith("#genre#")) { secCat = l.removeSuffix(",#genre#"); continue }
+      if (secCat == EU_CAT || secCat == INTL_CAT) continue
+      val nm = l.substringBefore(',').trim()
+      if (nm.isNotEmpty() && addedSet.contains(nm) && !cnAdded.contains(nm)) cnAdded.add(nm)
+    }
+    if (cnAdded.size > C.ADDED_CHECK_CAP) {
+      log("新增电台体检名单超过上限 ${C.ADDED_CHECK_CAP}，中止写盘，保留原文件")
+      throw IllegalStateException("新增电台体检名单超过上限 ${C.ADDED_CHECK_CAP}，未开始写入资产")
+    }
     val mergedText = merged.joinToString("\r\n") + "\r\n"
     // 写主库前立持久屏障；中断后轻更新不得用旧 pending 或旧 stamp 覆盖端内数据。
     SyncBarrier.begin(filesDir)
@@ -125,22 +144,6 @@ class SyncEngine(private val gh: Gh, private val check: CheckStream, private val
       .put("radioHash", hashText(mergedText))
     if (cnUpdated && eu != null) stamp.put("freshnessProvenance", "device-full-sync").put("freshnessAt", System.currentTimeMillis())
     writeTextAtomic(File(filesDir, "stamp.json"), stamp.toString())
-    // 4.5) diff 摘要（N4/r2 ⑥）：按台名集合对比——分类变化不算（重分类是常规操作），改名 = 消失+新增如实呈现
-    val oldNames = entryNamesOf(oldSecs.flatMap { it.lines })
-    val neuNames = entryNamesOf(merged)
-    val addedNames = neuNames.filter { !oldNames.contains(it) }
-    val removedNames = oldNames.filter { !neuNames.contains(it) }
-    val addedSet = addedNames.toHashSet()
-    // 体检测名单（D4/R4）：新增台里的国内台（欧美两节同步期已逐个实测，跳过）；行序去重、500 封顶
-    val cnAdded = ArrayList<String>()
-    var secCat = ""
-    for (l in merged) {
-      if (l.endsWith("#genre#")) { secCat = l.removeSuffix(",#genre#"); continue }
-      if (secCat == EU_CAT || secCat == INTL_CAT) continue
-      val nm = l.substringBefore(',').trim()
-      if (nm.isNotEmpty() && addedSet.contains(nm) && !cnAdded.contains(nm)) cnAdded.add(nm)
-    }
-    if (cnAdded.size > C.ADDED_CHECK_CAP) cnAdded.subList(C.ADDED_CHECK_CAP, cnAdded.size).clear()
     // 消失台 URL 集合（收藏点名第二通道——URL 快照按身份公理仍对得上）；只收名单封顶内的台
     val oldUrlOf = HashMap<String, MutableList<String>>()
     for (l in oldSecs.flatMap { it.lines }) {

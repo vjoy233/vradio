@@ -99,7 +99,9 @@ class LightUpdate(private val gh: Gh, private val filesDir: File,
       val nm = t.substringBefore(',').trim()
       if (nm.isNotEmpty() && nm in addedNames && !addedCheck.contains(nm)) addedCheck.add(nm)
     }
-    if (addedCheck.size > C.ADDED_CHECK_CAP) addedCheck.subList(C.ADDED_CHECK_CAP, addedCheck.size).clear()
+    if (addedCheck.size > C.ADDED_CHECK_CAP) {
+      lastFailWhy = "新增电台体检名单超过上限 ${C.ADDED_CHECK_CAP}，未开始写入资产"; return null
+    }
     // 落盘（批次提交协议，AIbot 三轮 P1：radio/meta/stamp 三件套须同批，stamp 末位写 = 提交标记）：
     // radio 必写——落盘失败即返回 null（底层兜底写失败时不保证旧文件原样留存）；
     // logos 非关键件失败不阻断（可重建，按实际盘面报告）；meta 写失败（磁盘/权限）≠ 整体失败——radio 已新，

@@ -29,13 +29,18 @@ const server = http.createServer((req,res) => {
   fs.readFile(file,(e,b)=>{ if(e){res.writeHead(404);return res.end();} const ext=path.extname(file); res.setHeader('Content-Type',({'.html':'text/html','.js':'text/javascript','.json':'application/json','.txt':'text/plain','.css':'text/css'})[ext] || 'application/octet-stream'); res.end(b); });
 });
 server.on('connection',s=>{sockets.add(s);s.on('close',()=>sockets.delete(s));});
+let cancelled = false;
 const limit = (promise, ms, label) => { let t; return Promise.race([promise, new Promise((_,reject)=>{t=setTimeout(()=>reject(Error(label)),ms);})]).finally(()=>clearTimeout(t)); };
-(async()=>{ try {
- await limit((async()=>{
+const alive = () => { if (cancelled) throw Error('测试已取消'); };
+(async()=>{ let work; try {
+ await limit(work = (async()=>{
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
+  if (cancelled) { server.close(); return; }
   const base=`http://127.0.0.1:${server.address().port}`;
-  browser=await chromium.launch({headless:true});
-  const context=await browser.newContext();
+  const launched = await chromium.launch({headless:true});
+  if (cancelled) { await launched.close().catch(()=>{}); return; }
+  browser = launched;
+  const context=await browser.newContext(); alive();
   await context.route('**/*',route=>{ const u=new URL(route.request().url()); return u.origin===base ? route.continue() : route.abort(); });
   await context.addInitScript(()=>{ localStorage.setItem('feat.discovery','1'); localStorage.setItem('feat.uiRefresh','0'); if (localStorage.getItem('feat.discoverySidecar') === null) localStorage.setItem('feat.discoverySidecar','0'); });
   const page=await context.newPage(); const errors=[]; page.on('pageerror',e=>errors.push(e.message));
@@ -56,11 +61,13 @@ const limit = (promise, ms, label) => { let t; return Promise.race([promise, new
   assert.deepStrictEqual(errors,[]); await context.close(); console.log('c3-http-browser: 真实页面慢流取消与上一代回退通过');
  })(), 30000, '测试总超时');
 } finally {
+  cancelled = true;
   // 清理互不依赖：浏览器关闭失败或挂起不得跳过 socket 和服务关闭。
   for(const s of sockets) s.destroy();
   const closing = [];
   if(server.listening) closing.push(limit(new Promise(r=>server.close(r)),3000,'服务关闭超时'));
   if(browser) closing.push(limit(browser.close(),5000,'浏览器关闭超时'));
+  if(work) closing.push(limit(work.catch(()=>{}),5000,'测试任务未能结束，晚到资源将自行关闭'));
   const results = await Promise.allSettled(closing);
   for(const r of results) if(r.status==='rejected') { console.error(r.reason); process.exitCode=1; }
 } })().catch(e=>{console.error(e);process.exitCode=1;});

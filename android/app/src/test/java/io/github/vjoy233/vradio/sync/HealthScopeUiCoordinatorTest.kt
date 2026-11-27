@@ -46,11 +46,32 @@ class HealthScopeUiCoordinatorTest {
       ui.refresh(); ui.acknowledge(); assertTrue(shown)
     } finally { dir.deleteRecursively() }
   }
+  @Test fun deleteFailureIsExplicitAndOnlyDismissesThisDisplay() = runBlocking {
+    val dir = java.nio.file.Files.createTempDirectory("scope-delete-failure").toFile()
+    try {
+      val marker = java.io.File(dir, "health-scope-warning.pending")
+      marker.writeText("token-a")
+      val old = HealthScopeWarning.snapshot(dir)
+      val state = HealthScopeWarning.acknowledge(dir, old) { false }
+      assertEquals(old.token, state.token)
+      assertTrue(marker.exists())
+      var shown = false; val messages = mutableListOf<String>()
+      val ui = HealthScopeUiCoordinator({ HealthScopeWarning.snapshot(dir) }, { state }, { shown = it }, { it?.let(messages::add) })
+      ui.refresh(); assertTrue(shown); ui.acknowledge(); assertFalse(shown)
+      assertTrue(messages.single().contains("未持久保存"))
+      ui.refresh(); assertTrue(shown)
+      val thrown = HealthScopeWarning.acknowledge(dir, old) { throw SecurityException("denied") }
+      assertEquals(old.token, thrown.token)
+      assertTrue(marker.exists())
+    } finally { dir.deleteRecursively() }
+  }
+
   @Test fun unknownMarkerDismissesOnlyUntilNextRefresh() = runBlocking {
     val disk = HealthScopeWarning.Snapshot("?", false)
-    var shown = false
-    val ui = HealthScopeUiCoordinator({ disk }, { disk }, { shown = it })
+    var shown = false; val messages = mutableListOf<String>()
+    val ui = HealthScopeUiCoordinator({ disk }, { disk }, { shown = it }, { it?.let(messages::add) })
     ui.refresh(); assertTrue(shown); ui.acknowledge(); assertFalse(shown)
+    assertTrue(messages.single().contains("无法确认状态"))
     ui.refresh(); assertTrue(shown)
   }
   @Test fun newLegacyBarrierGenerationIsNotDismissed() = runBlocking {

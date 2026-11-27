@@ -73,6 +73,26 @@ try {
   const oversized = obj('blob', Buffer.alloc(1024 * 1024));
   const oversizedTree = treeFor(Buffer.concat([Buffer.from('100644 x\0'), Buffer.from(oversized, 'hex')]));
   assert.throws(() => open(commitFor(oversizedTree)).read('x'));
+  const sizeWrong = store(Buffer.from('commit 1\0'));
+  assert.throws(() => open(sizeWrong), /invalid object type or size/);
+  const wrongType = obj('tree', Buffer.alloc(0));
+  assert.throws(() => open(wrongType), /invalid object type or size/);
+  // 原始对象完整头部加正文恰好 1 MiB 可读，超过则拒绝。
+  const boundary = obj('blob', Buffer.alloc(1024 * 1024 - 13));
+  const boundaryTree = treeFor(Buffer.concat([Buffer.from('100644 x\0'), Buffer.from(boundary, 'hex')]));
+  assert.strictEqual(open(commitFor(boundaryTree)).read('x').length, 1024 * 1024 - 13);
+  const hugeId = 'f'.repeat(40), hugeDir = path.join(anchor.objectsDir, 'ff');
+  fs.mkdirSync(hugeDir, { recursive: true });
+  fs.writeFileSync(path.join(hugeDir, hugeId.slice(2)), Buffer.alloc(1024 * 1024 + 1));
+  assert.throws(() => open(hugeId), /invalid object file/);
+  // 末端 loose 文件真实 symlink；Windows 无创建权限时明确跳过。
+  const linkId = 'e'.repeat(40), linkDir = path.join(anchor.objectsDir, 'ee');
+  fs.mkdirSync(linkDir, { recursive: true });
+  const linkFile = path.join(linkDir, linkId.slice(2));
+  let linked = false;
+  try { fs.symlinkSync(path.join(anchor.objectsDir, first.slice(0, 2), first.slice(2)), linkFile, 'file'); linked = true; }
+  catch (e) { if (e.code !== 'EPERM' && e.code !== 'EACCES' && e.code !== 'ENOSYS') throw e; console.log('SKIP: filesystem symlink creation unavailable'); }
+  if (linked) assert.throws(() => open(linkId), /invalid object file/);
   const wrongHash = path.join(anchor.objectsDir, blob.slice(0, 2), blob.slice(2));
   fs.chmodSync(wrongHash, 0o600);
   fs.writeFileSync(wrongHash, zlib.deflateSync(Buffer.from('blob 3\0bad')));

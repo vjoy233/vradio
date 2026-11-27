@@ -9,7 +9,7 @@ global.document = {activeElement:null,getElementById:id => els[id]};
 global.FEATURES = {discoverySidecar:true}; let calls = 0;
 global.window = {DiscoverySidecar:{loadSnapshot:() => { calls++; return Promise.resolve([{name:'x'}]); }}};
 global.DiscoverySidecar = global.window.DiscoverySidecar;
-global.Player = {station:null,connecting:null}; global.QualityStore = {summary:() => null};
+global.Player = {station:null,connecting:null}; global.QualityStore = {summary:() => null}; global.qExplain = () => ({level:'unknown'});
 App.state.stations = []; App.cfg = {hideC:{}}; App.recents = []; App.revives = new Map();
 App.metaCache = {}; App.discoverySidecar = null;
 App.renderDiscoverySidecar = () => { throw Error('硬门未生效'); };

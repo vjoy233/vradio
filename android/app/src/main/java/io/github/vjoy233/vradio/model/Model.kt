@@ -29,6 +29,8 @@ data class Station(
      Library.reload 装配 STARTER 与主列表按精确台名去重时打位——同名但 URL 已由主列表提供的精选台也带位。
      发现页「精选」分组按此位判定，不按 u[0] 与 STARTER URL 现场比对。 */
   var starter: Boolean = false
+  var personalUrls: Set<String> = emptySet()
+  var adjustedUrls: Set<String> = emptySet()
 
   val key: String get() = "$c|$n"   // keyOf 同款（显示/回绑用，URL 才是持久身份）
   val u0: String get() = u[0]

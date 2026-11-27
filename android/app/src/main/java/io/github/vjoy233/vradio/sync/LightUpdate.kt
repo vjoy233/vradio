@@ -108,6 +108,9 @@ class LightUpdate(private val gh: Gh, private val filesDir: File,
     // 即便删件/stamp 写失败残留旧值，「新 radio + 旧 stamp」的内容哈希也对不上，RadioMeta.bound 仍判
     // 不绑定（发现页「最近新增」保守置空，不猜），且旧 stamp 使下次 check 重走 apply 自愈。
     // 在任何资产变更前持久化重试意图；进程中断或末位 stamp 写失败也能在同一 commit 重试。
+    if (runCatching { HealthScopeWarning.markLocked(filesDir) }.isFailure) {
+      lastFailWhy = "体检范围提示写入失败，未开始发布主库"; return null
+    }
     val pending = File(filesDir, "light-update.pending")
     if (!pending.isFile && runCatching { writeTextAtomic(pending, "pending") }.isFailure) {
       lastFailWhy = "更新重试标记写入失败，未开始写入资产"; return null

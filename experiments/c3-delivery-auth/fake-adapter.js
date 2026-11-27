@@ -36,12 +36,16 @@ function createAdapter(config, provider) {
   // 非 fake provider 没有可用的验证契约，绝不回退到 URL、哈希或自报。
   if (!provider || typeof provider !== 'object') throw Error('no verified provider');
   return Object.freeze({
-    read(evidence, path) {
-      if (!validPath(path) || !paths.has(path)) throw Error('unauthorized path');
+    open(evidence) {
       const record = evidence && typeof evidence === 'object' ? issued.get(evidence) : null;
       if (!record || record.provider !== provider || record.repository !== repository || record.revision !== revision) throw Error('unverified delivery tree');
-      if (!record.files.has(path)) throw Error('missing tree member');
-      return Buffer.from(record.files.get(path));
+      return Object.freeze({
+        read(path) {
+          if (arguments.length !== 1 || !validPath(path) || !paths.has(path)) throw Error('unauthorized path');
+          if (!record.files.has(path)) throw Error('missing tree member');
+          return Buffer.from(record.files.get(path));
+        }
+      });
     }
   });
 }

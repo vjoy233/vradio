@@ -27,7 +27,8 @@ import org.junit.runner.RunWith
 /** 本地fixture，测试真实产品会话和通知；不模拟系统断连、任务移除或锁屏。 */
 @RunWith(AndroidJUnit4::class)
 class B3PlaybackAcceptanceTest {
-  // 测试会停止现有播放；只允许运行在专用隔离模拟器。
+  // 默认跳过；须人工确认专用隔离模拟器，参数本身不能验证设备身份。
+  // Application 会在 rule 之前启动并可能自连；dataGuard 也会停止现有播放。
   private val isolated = TestRule { base, _ -> object : Statement() {
     override fun evaluate() {
       assumeTrue("仅允许专用设备和指定测试类", InstrumentationRegistry.getArguments().getString("b3Isolated") == "true" &&
@@ -42,14 +43,19 @@ class B3PlaybackAcceptanceTest {
     val inst = InstrumentationRegistry.getInstrumentation()
     val ctx = inst.targetContext
     val notifications = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-    val before = notifications.activeNotifications.map { it.key }.toSet()
+    val before = notifications.activeNotifications.associate { n -> n.key to Pair(
+      n.notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString(),
+      n.notification.extras.getParcelable<android.media.session.MediaSession.Token>(Notification.EXTRA_MEDIA_SESSION)) }
+    val expectedToken = PlayerHolder.session.platformToken
     inst.runOnMainSync { PlayerHolder.play(Station("smoke", "B3本地流", mutableListOf(base + "/direct.mp3"))) }
     assertTrue("本地流未播放", await(12000) { PlayerHolder.ui.value.st == PState.PLAYING })
     assertTrue("播放时未发现本次新增应用通知", await(10000) {
-      notifications.activeNotifications.any { it.key !in before && it.packageName == ctx.packageName &&
-        it.notification.category == Notification.CATEGORY_TRANSPORT &&
-        it.notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() == "B3本地流" &&
-        it.notification.extras.containsKey(Notification.EXTRA_MEDIA_SESSION) }
+      notifications.activeNotifications.any { n ->
+        val title = n.notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
+        val token = n.notification.extras.getParcelable<android.media.session.MediaSession.Token>(Notification.EXTRA_MEDIA_SESSION)
+        n.packageName == ctx.packageName && n.notification.category == Notification.CATEGORY_TRANSPORT &&
+          title == "B3本地流" && token == expectedToken && before[n.key] != Pair(title, token)
+      }
     })
     val future = MediaController.Builder(ctx, SessionToken(ctx, ComponentName(ctx, PlaybackService::class.java))).buildAsync()
     try {

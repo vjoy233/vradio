@@ -70,7 +70,7 @@
       const timeout = new Promise((_, reject) => { timer = setTimeout(() => { ctl.abort(); if (reader) reader.cancel().catch(() => {}); reject(Error('timeout')); }, timeoutMs); });
       async function bytes(url, max) {
       const r = await fetcher(url, {signal:ctl.signal, cache:'no-store'});
-      if (!r || !r.ok || !r.headers || !/^application\/(?:[\w.+-]*\+)?json(?:\s*;|$)/i.test(r.headers.get('content-type') || '') || Number(r.headers.get('content-length')) > max || !r.body || !r.body.getReader) throw Error('invalid response');
+      if (!r || !r.ok || !r.headers || !/^application\/(?:[\w.+-]*\+)?json(?:\s*;|$)/i.test(r.headers.get('content-type') || '') || Number(r.headers.get('content-length')) > max || !r.body || !r.body.getReader) { if (r && r.body && r.body.cancel) { try { await r.body.cancel(); } catch (_) {} } throw Error('invalid response'); }
       reader = r.body.getReader(); const chunks = []; let size = 0;
       for (;;) { const part = await reader.read(); if (part.done) break; size += part.value.byteLength; if (size > max) { await reader.cancel(); throw Error('too large'); } chunks.push(part.value); }
       reader = null; const out = new Uint8Array(size); let off = 0; for (const part of chunks) { out.set(part, off); off += part.byteLength; } return out;
@@ -88,7 +88,12 @@
           const prefix = base + '/' + id, m = parse(await bytes(prefix + '/manifest.json', 4096));
           if (!m || m.v !== 1 || m.sha256 !== id || !Number.isInteger(m.bytes) || m.bytes < 1 || m.bytes > 512 * 1024) return [];
           const data = await bytes(prefix + '/radio-discovery.json', 512 * 1024);
-          const digest = sha256Bytes(data);
+          let digest;
+          if (globalThis.crypto && globalThis.crypto.subtle) {
+            try { digest = Array.from(new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', data)), x => x.toString(16).padStart(2, '0')).join(''); } catch (_) {}
+          }
+          // 不支持 Web Crypto 的 HTTP 局域网以已审核纯字节实现兜底；大文件同步计算可能阻塞 UI。
+          if (!digest) digest = sha256Bytes(data);
           if (data.length !== m.bytes || digest !== id) return [];
           const raw = parse(data), at = raw.generatedAt;
           if (typeof at !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(at) || !Number.isFinite(Date.parse(at)) || new Date(at).toISOString() !== at) return [];

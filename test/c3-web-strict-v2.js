@@ -76,17 +76,18 @@ function selection(c, delivery) {
  function get(id) {try {const g=c.generations[id]; if(!g) return null; return parser.generation(id,bytes(g.manifestBase64),bytes(g.sidecarBase64),null,digest).sidecar;} catch (_) {return null;}}
  const cur=get(p.current), prev=p.previous && get(p.previous);
  if(cur) return {selection:'current',degraded:!!p.previous && !prev,output:plain(cur)};
- if(prev && delivery.current===delivery.previous) return {selection:'previous',output:plain(prev)};
+ if(prev && delivery.pointerRevision===delivery.currentRevision && delivery.pointerRevision===delivery.previousRevision) return {selection:'previous',output:plain(prev)};
  return {selection:'unavailable'};
 }
-for(const c of fixture.pointer) assert.deepStrictEqual(selection(c,{current:'D1',previous:c.id==='cross-commit'?'D2':'D1'}),c.expected,c.id);
-// 旧 cross-commit 的 binding 字段不表示 delivery，必须先证明 previous 自身有效。
-const cross=fixture.pointer.find(c=>c.id==='cross-commit'), crossPointer=parser.pointer(bytes(cross.pointerBase64));
+for(const c of fixture.pointer) assert.deepStrictEqual(selection(c,c.deliveryBinding || {pointerRevision:'D1',currentRevision:'D1',previousRevision:'D1'}),c.expected,c.id);
+// 两个共享场景 previous 内容相同且独立有效，唯一区别是注入的投递 revision。
+const cross=fixture.pointer.find(c=>c.id==='cross-delivery'), same=fixture.pointer.find(c=>c.id==='same-delivery-different-upstream'), crossPointer=parser.pointer(bytes(cross.pointerBase64));
 const crossPrevious=cross.generations[crossPointer.previous];
 const previousResult=parser.generation(crossPointer.previous,bytes(crossPrevious.manifestBase64),bytes(crossPrevious.sidecarBase64),null,digest);
 assert.strictEqual(previousResult.sidecar.commit,'b'.repeat(40)); assert.strictEqual(previousResult.provenance,'unverified');
-assert.deepStrictEqual(selection(cross,{current:'D1',previous:'D2'}),{selection:'unavailable'});
-assert.deepStrictEqual(selection(cross,{current:'D1',previous:'D1'}),{selection:'previous',output:plain(previousResult.sidecar)});
+assert.strictEqual(parser.pointer(bytes(same.pointerBase64)).previous,crossPointer.previous);
+assert.deepStrictEqual(selection(cross,cross.deliveryBinding),{selection:'unavailable'});
+assert.deepStrictEqual(selection(same,same.deliveryBinding),{selection:'previous',output:plain(previousResult.sidecar)});
 // 测试本地回退独立于远端；策略结果仅为注入的测试材料。
 for(const c of fixture.localFallback) {
  assert.throws(()=>parser.pointer(bytes(c.pointerBase64)),c.id);

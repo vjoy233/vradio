@@ -48,6 +48,21 @@ class StrictV2Test {
     if (expected.has("degraded")) assertEquals(c.getString("id"), expected.getBoolean("degraded"), p?.second != null && previous == null)
     if (expected.has("output")) assertEquals(c.getString("id"), comparable(expected.getJSONObject("output")), current ?: previous)
   }
+  @Test fun sharedAdversarialBytes() {
+    val data = JSONObject(javaClass.classLoader!!.getResourceAsStream("fixtures/c3-strict-v2-adversarial.json")!!.bufferedReader(Charsets.UTF_8).use { it.readText() })
+    each(data.getJSONArray("entries")) { e ->
+      val raw = bytes(e, "rawBase64")
+      val result = runCatching {
+        if (e.getString("kind") == "sidecar") StrictV2.sidecar(raw)
+        else {
+          val p = StrictV2.pointer(bytes(e, "pointerBase64"))
+          StrictV2.generation(p.first, raw, bytes(e, "sidecarBase64"), "a".repeat(40))
+        }
+      }
+      assertEquals(e.getString("id"), e.getString("proposed") == "accept", result.isSuccess)
+      if (e.getString("id") == "depth-4099") assertTrue(result.exceptionOrNull() is IllegalArgumentException)
+    }
+  }
   @Test fun nestedInputIsBounded() {
     fun nested(n: Int) = ("{\"x\":" + "[".repeat(n - 1) + "0" + "]".repeat(n - 1) + "}").toByteArray()
     assertTrue(runCatching { StrictV2.depthProbe(nested(3)) }.isSuccess)

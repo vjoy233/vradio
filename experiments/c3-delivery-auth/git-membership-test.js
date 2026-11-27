@@ -4,6 +4,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const cp = require('child_process');
+const crypto = require('crypto');
+const zlib = require('zlib');
 const { createMembership } = require('./git-membership');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'git-membership-'));
 function git(...args) {
@@ -42,7 +44,40 @@ try {
   assert.throws(() => special.read('submodule'));
   assert.throws(() => special.read('link/x'));
   assert.throws(() => createMembership({ ...anchor, commit: blob }));
-  const blobFile = path.join(root, '.git', 'objects', blob.slice(0, 2), blob.slice(2));
+  // 手工构造并重新哈希，确保畸形语法不是因哈希错误被挡下。
+  function store(raw) {
+    const id = crypto.createHash('sha1').update(raw).digest('hex');
+    const dir = path.join(anchor.objectsDir, id.slice(0, 2));
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, id.slice(2)), zlib.deflateSync(raw));
+    return id;
+  }
+  function obj(type, body) { return store(Buffer.concat([Buffer.from(type + ' ' + body.length + '\0'), body])); }
+  function commitFor(tree) { return obj('commit', Buffer.from('tree ' + tree + '\n')); }
+  function open(commit, paths) { return createMembership({ ...anchor, commit, paths: paths || ['x'] }); }
+  function treeFor(entry) { return obj('tree', entry); }
+  const high = b => { b = Buffer.from(b); b[0] |= 128; return b; };
+  const oidBytes = Buffer.from(blob, 'hex');
+  const badHeader = store(Buffer.concat([high('commit'), Buffer.from(' 0\0')]));
+  assert.throws(() => open(badHeader), /non-ascii/);
+  const badCommit = obj('commit', Buffer.concat([high('tree'), Buffer.from(' ' + '0'.repeat(40) + '\n')]));
+  assert.throws(() => open(badCommit), /non-ascii/);
+  const badMode = treeFor(Buffer.concat([high('100644'), Buffer.from(' x\0'), oidBytes]));
+  assert.throws(() => open(commitFor(badMode)).read('x'), /non-ascii/);
+  const badName = treeFor(Buffer.concat([Buffer.from('100644 '), high('x'), Buffer.from([0]), oidBytes]));
+  assert.throws(() => open(commitFor(badName)).read('x'));
+  const truncated = treeFor(Buffer.concat([Buffer.from('100644 x\0'), oidBytes.slice(0, 19)]));
+  assert.throws(() => open(commitFor(truncated)).read('x'), /invalid tree/);
+  const duplicate = Buffer.concat([Buffer.from('100644 x\0'), oidBytes]);
+  assert.throws(() => open(commitFor(treeFor(Buffer.concat([duplicate, duplicate])))).read('x'), /invalid tree entry/);
+  const oversized = obj('blob', Buffer.alloc(1024 * 1024));
+  const oversizedTree = treeFor(Buffer.concat([Buffer.from('100644 x\0'), Buffer.from(oversized, 'hex')]));
+  assert.throws(() => open(commitFor(oversizedTree)).read('x'));
+  const wrongHash = path.join(anchor.objectsDir, blob.slice(0, 2), blob.slice(2));
+  fs.chmodSync(wrongHash, 0o600);
+  fs.writeFileSync(wrongHash, zlib.deflateSync(Buffer.from('blob 3\0bad')));
+  assert.throws(() => session.read('v2/data.json'), /object hash mismatch/);
+  const blobFile = wrongHash;
   fs.chmodSync(blobFile, 0o600);
   fs.writeFileSync(blobFile, 'corrupt');
   assert.throws(() => session.read('v2/data.json'));

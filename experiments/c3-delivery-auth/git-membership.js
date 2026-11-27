@@ -10,6 +10,10 @@ function validPath(p) {
   return typeof p === 'string' && p.length <= 1024 && p.length > 0 &&
     p.split('/').every(s => s !== '.' && s !== '..' && /^[A-Za-z0-9._-]+$/.test(s));
 }
+function ascii(bytes) {
+  for (const byte of bytes) if (byte > 0x7f) throw Error('non-ascii syntax');
+  return bytes.toString('ascii');
+}
 function createMembership(anchor) {
   // repository 是外部策略的身份标签；objectsDir 必须由外部策略绑定到受控仓库。
   if (!anchor || typeof anchor.repository !== 'string' || !/^[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+$/.test(anchor.repository) ||
@@ -28,14 +32,14 @@ function createMembership(anchor) {
     if (crypto.createHash('sha1').update(raw).digest('hex') !== id) throw Error('object hash mismatch');
     const zero = raw.indexOf(0);
     if (zero < 0 || zero > 64) throw Error('invalid object header');
-    const header = raw.slice(0, zero).toString('ascii');
+    const header = ascii(raw.slice(0, zero));
     const match = /^(commit|tree|blob) (0|[1-9][0-9]*)$/.exec(header);
     if (!match || match[1] !== expected || Number(match[2]) !== raw.length - zero - 1) throw Error('invalid object type or size');
     return raw.slice(zero + 1);
   }
   const body = object(commit, 'commit');
   const first = body.indexOf(10);
-  const line = body.slice(0, first).toString('ascii');
+  const line = ascii(body.slice(0, first));
   if (first < 0 || !/^tree [0-9a-f]{40}$/.test(line)) throw Error('invalid commit tree');
   const root = line.slice(5);
   function entry(tree, name) {
@@ -43,7 +47,7 @@ function createMembership(anchor) {
     while (pos < b.length) {
       const sp = b.indexOf(32, pos), nul = b.indexOf(0, sp + 1);
       if (sp <= pos || nul <= sp + 1 || nul + 21 > b.length) throw Error('invalid tree');
-      const mode = b.slice(pos, sp).toString('ascii'), bytes = b.slice(sp + 1, nul);
+      const mode = ascii(b.slice(pos, sp)), bytes = b.slice(sp + 1, nul);
       // 限制为无歧义 ASCII 名称，不接受替代字节编码。
       const n = bytes.toString('ascii');
       if (!Buffer.from(n, 'ascii').equals(bytes) || !validPath(n) || n.includes('/') || names.has(n) ||

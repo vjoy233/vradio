@@ -8,6 +8,8 @@ const { boot } = require('./harness/api-client');
       '/svg': ['image/svg+xml', '<svg xmlns="http://www.w3.org/2000/svg"><script>window.pwned=1</script></svg>'],
       '/js': ['application/javascript', 'window.pwned=1'],
       '/spoof': ['text/html', 'window.pwned=1'],
+      '/media-script': ['audio/mpeg', 'window.pwned=1'],
+      '/media-svg': ['video/mp4', '<svg xmlns="http://www.w3.org/2000/svg"><script>window.pwned=1</script></svg>'],
       '/missing': [null, '<script>window.pwned=1</script>'],
       '/mpeg': ['Audio/MPEG; charset=binary', 'media bytes'],
       '/hls': ['application/vnd.apple.mpegurl', '#EXTM3U\n#EXTINF:1,\nsegment.ts\n'],
@@ -21,7 +23,7 @@ const { boot } = require('./harness/api-client');
   let app;
   try {
     app = await boot({ env: { VR_TEST_GUARD: '1' } });
-    for (const [name, type] of Object.entries({ html:'application/octet-stream', svg:'application/octet-stream', js:'application/octet-stream', spoof:'application/octet-stream', missing:'application/octet-stream', mpeg:'audio/mpeg', hls:'application/vnd.apple.mpegurl', segment:'video/mp2t', unknown:'application/octet-stream' })) {
+    for (const [name, type] of Object.entries({ html:'application/octet-stream', svg:'application/octet-stream', js:'application/octet-stream', spoof:'application/octet-stream', 'media-script':'audio/mpeg', 'media-svg':'video/mp4', missing:'application/octet-stream', mpeg:'audio/mpeg', hls:'application/vnd.apple.mpegurl', segment:'video/mp2t', unknown:'application/octet-stream' })) {
       const url = 'http://127.0.0.1:' + upstream.address().port + '/' + name;
       const r = await app.req('GET', '/proxy?url=' + encodeURIComponent(url));
       assert.strictEqual(r.status, 200); assert.strictEqual(r.headers['content-type'], type);
@@ -30,6 +32,6 @@ const { boot } = require('./harness/api-client');
       if (name === 'hls') assert(r.body.startsWith('#EXTM3U'));
       if (name === 'js') assert.strictEqual(r.body, 'window.pwned=1');
     }
-    console.log('proxy security: 9 cases passed');
+    console.log('proxy security: 11 cases passed');
   } finally { if (app) await app.close(); await new Promise(r => upstream.close(r)); }
 })().catch(e => { console.error(e); process.exitCode = 1; });

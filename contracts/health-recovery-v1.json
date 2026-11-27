@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "kind": "health-recovery-v1",
+  "description": "增量体检恢复意图与完成见证的结构契约；本文件只定义边界，不启用恢复。",
+  "limits": {
+    "maxBytes": 1048576,
+    "maxDepth": 32,
+    "maxStations": 500,
+    "maxSourcesPerStation": 6,
+    "maxStringChars": 2048,
+    "maxCompleted": 500
+  },
+  "journal": {
+    "v": 1,
+    "batchId": "uuid",
+    "oldHash": "sha256",
+    "targetHash": "sha256",
+    "phase": "PREPARED|PUBLISHED",
+    "stations": [{"id":"url","sources":["url"]}],
+    "completed": ["url"]
+  },
+  "invariants": [
+    "strict UTF-8 and complete JSON consumption",
+    "duplicate keys, trailing data, non-standard numbers and over-limit input are rejected",
+    "encode and decode validate the same schema invariants",
+    "codec is default-off and does not prove source authenticity, rollback resistance, or atomic persistence"
+  ]
+}

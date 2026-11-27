@@ -13,14 +13,14 @@ class NetGate(private val policy: NetworkPolicy) {
   /** 入口三态：放行直跑 / 拒绝（why 给用户看）/ 需确认（挂起 act，用户确认后 proceedGate 才真跑） */
   sealed interface Next {
     object Run : Next
-    data class Deny(val why: String) : Next
+    data class Deny(val why: String, val cellularPolicy: Boolean = false) : Next
     data class Confirm(val act: Act, val why: String) : Next
   }
 
   fun enter(op: NetworkPolicy.Op, act: Act, rules: NetworkPolicy.Rules = NetworkPolicy.Rules()): Next {
     val d = policy.allow(op, rules)
     return when {
-      d.kind == NetworkPolicy.Kind.DENY -> Next.Deny(d.why)
+      d.kind == NetworkPolicy.Kind.DENY -> Next.Deny(d.why, d.cellularPolicy)
       d.confirm -> Next.Confirm(act, d.why)
       else -> Next.Run
     }

@@ -37,7 +37,7 @@ class NetworkPolicy(private val probe: NetProbe) {
     val overrideCellular: Boolean = false,                    // 「移动数据也允许」总开关（覆盖台标等 Wi-Fi 优先项）
   )
 
-  data class Decision(val kind: Kind, val why: String) {
+  data class Decision(val kind: Kind, val why: String, val cellularPolicy: Boolean = false) {
     val ok get() = kind == Kind.ALLOW
     val confirm get() = kind == Kind.CONFIRM
   }
@@ -73,7 +73,7 @@ class NetworkPolicy(private val probe: NetProbe) {
         when {
           rules.overrideCellular -> Decision(Kind.ALLOW, "已按设置允许移动数据")
           rule == CellularRule.ALLOW -> Decision(Kind.ALLOW, "已按设置允许移动数据")
-          rule == CellularRule.DENY -> Decision(Kind.DENY, "已按设置禁止移动数据${opName(op)}（设置 → 网络与流量可改）")
+          rule == CellularRule.DENY -> Decision(Kind.DENY, "已按设置禁止移动数据${opName(op)}（设置 → 网络与流量可改）", cellularPolicy = true)
           else -> Decision(Kind.CONFIRM, "移动数据下${opName(op)}流量较大，是否继续？")
         }
       }

@@ -31,6 +31,10 @@ data class DiscoveryInput(
   val firstSeenAt: Map<String, Long> = emptyMap(), // 身份 URL → radio-meta.firstSeenAt
   val recoveredAt: Map<String, Long> = emptyMap(), // 台 key → 复活时刻（7 天窗，调用侧已过期清理）
   val recentKeys: Set<String> = emptySet(),        // radio.recents 台键集（「未听过」判定）
+  val recentUrls: Set<String> = emptySet(),
+  val verifiedAt: Map<String, Long> = emptyMap(),
+  val attentionAt: Map<String, Long> = emptyMap(),
+  val now: Long = 0L,
 )
 
 /** 六分组 + 暂无质量数据兜底组。 */
@@ -42,6 +46,8 @@ data class Groups(
   val unlistened: List<Station>,
   val featured: List<Station>,
   val noQualityData: List<Station>,
+  val recentlyVerified: List<Station> = emptyList(),
+  val needsAttention: List<Station> = emptyList(),
 ) {
   companion object { val EMPTY = Groups(emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList()) }
 }
@@ -67,9 +73,11 @@ object Discovery {
       recentlyAdded = pick(added, { input.firstSeenAt[it.u0] ?: 0L }, { it.u0 }, { it.key }),
       recentlyRecovered = pick(recovered, ::time, { it.u0 }, { it.key }),
       withMetadata = pick(base.filter { input.quality[it.u0]?.metadata == "icy" }, ::time, { it.u0 }, { it.key }),
-      unlistened = pick(base.filter { it.key !in input.recentKeys }, ::time, { it.u0 }, { it.key }),
+      unlistened = pick(base.filter { it.key !in input.recentKeys && it.u.none { u -> u in input.recentUrls } }, ::time, { it.u0 }, { it.key }),
       featured = pick(base.filter { it.starter }, ::time, { it.u0 }, { it.key }),
       noQualityData = pick(base.filter { !input.quality.containsKey(it.u0) }, ::time, { it.u0 }, { it.key }),
+      recentlyVerified = pick(base.filter { val t = input.verifiedAt[it.u0] ?: 0L; t > 0 && t <= input.now && input.now - t < 30L * 86400000L }, { input.verifiedAt[it.u0] ?: 0L }, { it.u0 }, { it.key }),
+      needsAttention = pick(base.filter { input.attentionAt.containsKey(it.u0) }, ::time, { it.u0 }, { it.key }),
     )
   }
 }

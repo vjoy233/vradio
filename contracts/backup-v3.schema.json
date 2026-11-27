@@ -7,7 +7,7 @@
     "version": "常量 3",
     "createdAt": "number epoch ms",
     "app": "web|android——产出端标记",
-    "data": "对象——白名单 13 键（radio-keys.json keys），值一律字符串",
+    "data": "对象——白名单键（radio-keys.json keys，包含 radio.syncFreshness；旧备份缺失时使用默认偏好），值一律字符串",
     "myRadio": "字符串数组——my-radio.txt 原始行（不含结尾空行）",
     "extensions": "对象——默认空；勾选「包含本机 sidecar」后含 sidecars.quality / sidecars.listenStats（各 {v:1,data:{}}，只保留迁移所需字段，删除 raw response/DNS/IP/临时 token/rev/正文）。listenStats.data = 日桶 days 形态（yyyy-MM-dd:{ms,stations{u0:ms},categories{cat:ms},sessions}，与 sidecar 本体同构，经 lsTrim 迁移裁剪）"
   },

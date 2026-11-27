@@ -7,17 +7,23 @@ import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -25,10 +31,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -38,6 +51,9 @@ import io.github.vjoy233.vradio.model.PlayerUiState
 import io.github.vjoy233.vradio.model.Station
 import io.github.vjoy233.vradio.player.PlayerHolder
 import io.github.vjoy233.vradio.data.QualityStore
+import io.github.vjoy233.vradio.data.QualityExplanation
+import io.github.vjoy233.vradio.data.qExplain
+import io.github.vjoy233.vradio.data.diagnosticAction
 import io.github.vjoy233.vradio.ui.theme.LocalVrPalette
 import kotlin.math.roundToInt
 
@@ -115,16 +131,43 @@ sealed class SourceAction {
 }
 
 /** 诊断 code 徽标文案（code 是程序分支唯一依据；文案仅展示） */
-private fun codeBadge(r: DiagnosticResult): Pair<String, Int> = when (r.code) {
-  "OK" -> "✓ 可用" to 1
+fun codeBadge(code: String, httpStatus: Int): Pair<String, Int> = when (code) {
+  "OK" -> if (httpStatus == 401 || httpStatus == 403) "字节检测通过" to 0 else "✓ 可用" to 1
   "NETWORK" -> "网络失败" to 2
   "HTML" -> "HTML 错误页" to 2
-  "HTTP" -> "HTTP ${r.httpStatus}" to 2
+  "HTTP" -> "HTTP $httpStatus" to 2
   "EMPTY_PLAYLIST" -> "清单无分片" to 2
   "NO_SEGMENT" -> "无可用分片" to 2
   "SHORT_BODY" -> "字节不足" to 2
   "REDIRECT_REJECTED" -> "重定向被拒" to 2
-  else -> "地址不合法" to 2
+  "INVALID_URL" -> "地址不合法" to 2
+  else -> "未知结果" to 2
+}
+
+/** 机器值只映射固定文案，不根据 why 猜测原因或执行动作。 */
+fun qualityReasonText(reason: String): String = when (reason) {
+  "stable" -> "近期观察显示稳定"
+  "variable" -> "近期观察有波动"
+  "unstable" -> "近期观察不稳定"
+  "no_samples" -> "暂无样本"
+  "missing_observation" -> "缺少观察时间"
+  "future_observation" -> "观察时间异常"
+  "stale" -> "观察已过期"
+  "insufficient_samples" -> "样本不足"
+  else -> "质量未知"
+}
+
+fun diagnosticSuggestion(code: String, httpStatus: Int): String =
+  if (httpStatus == 401 || httpStatus == 403) "需要配置或服务拒绝，请检查服务权限"
+  else suggestionText(diagnosticAction(code, httpStatus))
+
+fun suggestionText(explanation: QualityExplanation): String = when (explanation.action) {
+  "none" -> "无需操作"
+  "retest" -> "建议重新检测"
+  "retry" -> "建议稍后重试"
+  "check_source" -> "建议检查源地址"
+  "configure" -> "需要配置或服务拒绝，请检查服务权限"
+  else -> "建议重新检测"
 }
 
 /** 源详情行可见动作（B1 review P1）：禁用行不渲染「播放/重播」——onPlay(i) 会落到其它启用源，
@@ -163,13 +206,13 @@ fun SourceDetailSheet(
   onDismiss: () -> Unit = {},
 ) {
   val pal = LocalVrPalette.current
-  val ctx = LocalContext.current
   val playing = player.station?.key == station.key && player.srcIdx >= 0
   ModalBottomSheet(onDismissRequest = onDismiss) {
     Column(
       Modifier.padding(horizontal = 16.dp).navigationBarsPadding().verticalScroll(rememberScrollState()),
     ) {
-      // 头部：台标 + 台名/分类 + 收藏态
+      // 头部（§5.7 a）：台标 + 台名/分类 + 收藏态 + 源数量（仅多源台显示实际 u.size）；ModalBottomSheet
+      // 内容首屏即本行，头部自然首屏可见，无 sticky 实现（§5.7 口径注明）
       Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         StationLogo(logo, station.n, station.key, 36.dp)   // 台标由调用方注入（vm.logoOf 同步窥探口径）
         Column(Modifier.weight(1f)) {
@@ -191,21 +234,26 @@ fun SourceDetailSheet(
         Text("该台所有源都已手动禁用，请先启用一个源", fontSize = 13.sp, color = pal.warn,
           modifier = Modifier.padding(vertical = 4.dp))
       // B2 稳定性徽标行（QualityStore 聚合；质量只做展示，永不替代死台隐藏判定——契约硬点）
+      val explanation = qExplain(quality, System.currentTimeMillis())
+      Text("质量解释：${qualityReasonText(explanation.reason)} · ${suggestionText(explanation)}",
+        fontSize = 12.sp, color = pal.dim, modifier = Modifier.padding(vertical = 2.dp))
       if (quality != null) {
-        val (badge, kind) = when (quality.stability) {
+        val (badge, kind) = when (explanation.level) {
           "good" -> "● 稳定" to 1
           "fair" -> "● 一般" to 0
           "poor" -> "● 不稳定" to 2
-          else -> "○ 样本不足" to 0
+          else -> "○ 质量未知" to 0
         }
         val rate = if (quality.samples > 0) (quality.rate() * 100).roundToInt() else 0
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
           modifier = Modifier.padding(vertical = 2.dp)) {
           VrBadge(badge, kind)
           Text(
-            "成功率 $rate% · 平均延迟 ${quality.avgLatencyMs}ms · 断流 ${quality.disconnects} 次 · 样本 ${quality.samples}",
+            "累计成功率 $rate% · 平均延迟 ${quality.avgLatencyMs}ms · 断流 ${quality.disconnects} 次 · 样本 ${quality.samples}",
             fontSize = 11.sp, color = pal.dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
+        Text("累计统计；以最近观察时间近似判断是否过期，并非近 30 天滚动统计。",
+          fontSize = 11.sp, color = pal.dim)
       }
       // 逐源列表（顺序 = 人工有效序 mo，含禁用位；序号显示 u 空间原序号+1）
       val order = station.mo ?: station.u.indices.toList()
@@ -225,7 +273,7 @@ fun SourceDetailSheet(
               fontSize = 12.sp, color = if (cur) pal.acc else pal.tx.copy(alpha = if (off) .4f else .85f))
             station.lbl[u]?.let { VrBadge(it) }
             if (cur) VrBadge("正在用", 1)
-            if (off) VrBadge("已禁用", 2) else if (diag != null) { val (t, k) = codeBadge(diag); VrBadge(t, k) }
+            if (off) VrBadge("已禁用", 2) else if (diag != null) { val (t, k) = codeBadge(diag.code, diag.httpStatus); VrBadge(t, k) }
           }
           // 结果行：why + 延迟/字节/模式（HLS 分片验收 or 直流字节验收）；禁用源 = 硬文案 + 取消禁用入口
           if (off) {
@@ -238,34 +286,39 @@ fun SourceDetailSheet(
               fontSize = 11.sp, color = pal.dim, maxLines = 2, overflow = TextOverflow.Ellipsis,
               modifier = Modifier.padding(start = 24.dp),
             )
+            Text("建议：${diagnosticSuggestion(diag.code, diag.httpStatus)}",
+              fontSize = 11.sp, color = pal.dim, modifier = Modifier.padding(start = 24.dp))
           } else {
             Text("未诊断（点下方「诊断全部源」）", fontSize = 11.sp, color = pal.dim, modifier = Modifier.padding(start = 24.dp))
           }
-          // 动作行按 sourceRowActs 拼装（B1 review P1）：禁用行隐藏播放/重播只留管理动作（复制/取消禁用/上下移）
-          Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(start = 24.dp, top = 2.dp)) {
-            for (a in sourceRowActs(cur, off)) when (a) {
+          // 动作行（§5.7 c 动作密度）：主操作位只渲染「播放/重播」，复制/禁用·取消禁用/上下移收进行末
+          // 「更多」菜单；可见性仍由 sourceRowActs 纯函数拼装（JVM 直测件 CfgSourceLifecycleTest 不动），
+          // onEdit 载荷照旧 B1（排序/禁用仍走 vm.srcEdit，不新增 UI 侧草稿模型——§5.7 硬点 e）
+          Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.padding(start = 24.dp, top = 2.dp)) {
+            val acts = sourceRowActs(cur, off)
+            when (acts.firstOrNull { it == SourceRowAct.PLAY || it == SourceRowAct.REPLAY }) {
               SourceRowAct.PLAY -> ActText("播放") { onPlay(i) }
               SourceRowAct.REPLAY -> ActText("重播") { onPlay(i) }
-              SourceRowAct.COPY -> ActText("复制") {
-                (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)
-                  ?.setPrimaryClip(ClipData.newPlainText("vradio", u))
-                Toast.makeText(ctx, "已复制源地址", Toast.LENGTH_SHORT).show()
-              }
-              SourceRowAct.DISABLE -> ActText("禁用", warn = true) { onEdit(SourceAction.ToggleDisable(i)) }
-              SourceRowAct.UNDISABLE -> ActText("取消禁用") { onEdit(SourceAction.ToggleDisable(i)) }
-              SourceRowAct.MOVE_UP -> ActText("↑") { onEdit(SourceAction.Move(i, true)) }
-              SourceRowAct.MOVE_DOWN -> ActText("↓") { onEdit(SourceAction.Move(i, false)) }
+              else -> {}   // 禁用行：主操作位空置（sourceRowActs 已不给 PLAY/REPLAY）
             }
+            SourceMoreMenu(acts.filterNot { it == SourceRowAct.PLAY || it == SourceRowAct.REPLAY }, u, i, onEdit)
           }
         }
       }
-      // 诊断按钮（进行中置灰）
+      // 诊断按钮（§5.7 d）：进行中显示 spinner +「诊断中…」文案且不可点——诊断取消暂不提供，
+      // §5.7 口径 = 取消不可用态（本轮无取消通道，只有本轮跑完/超时自动结束）
       Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
           .clickable(enabled = !checking && station.effOrder().isNotEmpty()) { onCheck() }
           .padding(vertical = 10.dp, horizontal = 4.dp),
-      ) { Text(if (checking) "诊断中…（最长约 5 秒/源）" else "诊断全部源（${station.effOrder().size} 条启用）",
-        fontSize = 13.sp, color = pal.acc, fontWeight = FontWeight.Medium) }
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        if (checking) CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp, color = pal.acc)
+        Text(if (checking) "诊断中…（最长约 5 秒/源）" else "诊断全部源（${station.effOrder().size} 条启用）",
+          fontSize = 13.sp, color = pal.acc, fontWeight = FontWeight.Medium)
+      }
       // 恢复默认两动作（B1 拆分，彼此独立）
       Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
@@ -288,7 +341,43 @@ fun SourceDetailSheet(
   }
 }
 
-/** 小动作字（详情浮层动作行；命中区靠 padding 撑到接近 32dp，比 TextButton 紧凑） */
+/** 行末「更多」菜单（§5.7 c）：管理动作收编——复制/禁用·取消禁用/上移下移；动作文案与 onEdit 载荷照旧 B1。
+ *  菜单项走 material3 DropdownMenuItem（默认 48dp 命中区），触发钮 heightIn 撑到 48dp。 */
+@Composable
+private fun SourceMoreMenu(acts: List<SourceRowAct>, u: String, i: Int, onEdit: (SourceAction) -> Unit) {
+  val pal = LocalVrPalette.current
+  val ctx = LocalContext.current
+  var open by remember { mutableStateOf(false) }
+  Box {
+    Row(
+      Modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(6.dp)).clickable { open = true }
+        .semantics { role = Role.Button; contentDescription = "源管理动作：更多" }   // P4 a11y（§8.2.9）
+        .padding(horizontal = 10.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) { Text("更多 ▾", fontSize = 12.sp, color = pal.acc) }
+    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+      for (a in acts) when (a) {
+        SourceRowAct.COPY -> DropdownMenuItem(text = { Text("复制") }, onClick = {
+          open = false
+          (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)
+            ?.setPrimaryClip(ClipData.newPlainText("vradio", u))
+          Toast.makeText(ctx, "已复制源地址", Toast.LENGTH_SHORT).show()
+        })
+        SourceRowAct.DISABLE -> DropdownMenuItem(text = { Text("禁用", color = pal.warn) },
+          onClick = { open = false; onEdit(SourceAction.ToggleDisable(i)) })
+        SourceRowAct.UNDISABLE -> DropdownMenuItem(text = { Text("取消禁用") },
+          onClick = { open = false; onEdit(SourceAction.ToggleDisable(i)) })
+        SourceRowAct.MOVE_UP -> DropdownMenuItem(text = { Text("↑") },
+          onClick = { open = false; onEdit(SourceAction.Move(i, true)) })
+        SourceRowAct.MOVE_DOWN -> DropdownMenuItem(text = { Text("↓") },
+          onClick = { open = false; onEdit(SourceAction.Move(i, false)) })
+        else -> {}
+      }
+    }
+  }
+}
+
+/** 小动作字（详情浮层主操作位「播放/重播」；命中区靠 padding 撑到接近 32dp，比 TextButton 紧凑） */
 @Composable
 private fun ActText(t: String, warn: Boolean = false, onClick: () -> Unit) {
   val pal = LocalVrPalette.current

@@ -34,3 +34,9 @@ node docs/ui-redesign-assets/verify-handoff.cjs
 ```
 
 正式项目回归仍运行 `npm test`；原型通过不能替代真实播放、Store对账、B4恢复和跨浏览器验收。
+
+## 代理 MIME 离线播放矩阵
+
+可选运行 `node ui-demo/proxy-mime-matrix.cjs`：需已有 ffmpeg（支持 libmp3lame、AAC、HLS）、Playwright 及其 Chromium；通过 `VRADIO_PLAYWRIGHT` 指向现有 Playwright 模块，`FFMPEG` 可指定可执行文件。缺少依赖或夹具生成失败会明确报错并以非零退出，不能算通过，不加入根依赖或 `npm test`。
+
+脚本只用环回 fixture 和隔离应用根，Playwright 路由拦截页面对非本地代理的请求，但并非操作系统级断网。分别测试 MP3、ADTS AAC、HLS/AAC 在正确、缺失、未知、错标 HTML、octet-stream 五种上游类型下经真实代理播放，并校验响应安全头。测试页直接使用 audio 与项目自带 hls.js，复现片段代理重写，**不是正式播放器的端到端测试**。夹具及服务逐项限时尽力清理；短时 Chromium 合成音频测试不能代表 Safari、其他编码、真实电台或长时播放。

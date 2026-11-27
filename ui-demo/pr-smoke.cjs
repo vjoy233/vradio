@@ -156,6 +156,7 @@ async function run(chromium) {
     const promptAt = await rp.evaluate(() => JSON.parse(Store.get('radio.syncFreshness')).lastPromptAt);
     await rp.reload(); await waitBoot(rp);
     await rp.waitForFunction(() => typeof Sync !== 'undefined' && JSON.parse(Store.get('radio.syncFreshness') || '{}').lastPromptAt > 0);
+    // 此处显式调度只验证冷却，不证明启动路径会重新调度。
     await rp.evaluate(() => Sync.scheduleFreshness());
     check('R1 刷新后冷却期不重复提醒', await rp.evaluate(p => document.getElementById('toast').hidden && JSON.parse(Store.get('radio.syncFreshness')).lastPromptAt === p, promptAt));
     // 仅清除提示冷却，模拟下一次到期；不修改成功事实。
@@ -241,7 +242,7 @@ async function run(chromium) {
       Player.play = function (...args) { window.__discCalls++; return original.apply(this, args); };
       return {k, u0:s.u[0]};
     });
-    check('D1 发现展示来源与质量摘要', await page.locator('#discBody .discrow .badge').count() > 0 && await page.locator('#discBody .discrow .srcs').count() > 0);
+    check('D1 发现展示来源与质量摘要', await page.locator('#discBody .discrow .badge').filter({ hasText: /国内上游|欧美上游|来源未知|个人来源|个人追加/ }).count() > 0 && await page.locator('#discBody .discrow .srcs').filter({ hasText: /暂无可信质量样本|稳定|一般|不稳定/ }).count() > 0);
     await page.locator('#discBody .discrow').first().click();
     check('D2 卡片仅调用既有播放入口一次且指向选中台', await page.evaluate(d => window.__discCalls === 1 && !!Player.connecting && Player.connecting.u[0] === d.u0, disc));
     check('D3 返回后筛选不变', await page.evaluate(p => App.state.cat === p.cat && App.state.scope === p.scope && App.state.keyword === p.keyword && document.getElementById('discovery').hidden, prior));
@@ -265,9 +266,10 @@ async function run(chromium) {
     await page.locator('#detailBody [data-act="dAll"]').first().click();
     await page.waitForFunction(() => !App.detail.loading);
     check('A3 全部诊断动作重新请求启用源', diagRequests.length > beforeAll);
-    await page.evaluate(() => { window.__copied = ''; App.copyText = async text => { window.__copied = text; return true; }; });
+    await page.evaluate(() => { window.__copied = ''; App.copyText = async text => { window.__copied = text; return true; }; window.__sourceBeforePrivacy = App.detailStation().u[0]; App.detailStation().u[0] = 'https://privacy-user:privacy-pass@example.test/private-path?token=privacy-token#privacy-fragment'; });
     await page.locator('#detailBody [data-act="dCopyDiagnostic"]').click();
-    check('A4 点击复制诊断摘要产生脱敏内容', await page.evaluate(() => window.__copied.includes('诊断摘要') && !/https?:\/\/[^\s]*\?/.test(window.__copied)));
+    check('A4 点击复制诊断摘要隐藏路径、凭据、参数与片段', await page.evaluate(() => window.__copied.includes('https://example.test/（路径已隐藏）') && !['privacy-user', 'privacy-pass', 'private-path', 'privacy-token', 'privacy-fragment'].some(x => window.__copied.includes(x))));
+    await page.evaluate(() => { App.detailStation().u[0] = window.__sourceBeforePrivacy; });
     await page.click('#dClose');
     const multi = await page.evaluate(() => { const s = App.state.stations.find(x => !x.hidden && x.u.length > 1 && !(x.dis || []).includes(1)); return { key: s.c + '|' + s.n, name: s.n, identity: s.u[0], source: s.u[1] }; });
     await page.fill('#q', multi.name);

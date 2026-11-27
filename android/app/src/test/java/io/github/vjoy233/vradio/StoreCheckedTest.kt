@@ -11,6 +11,17 @@ import java.util.concurrent.TimeUnit
 import kotlin.io.path.createTempDirectory
 
 class StoreCheckedTest {
+  @Test fun applyAllCheckedFailureRestoresFullMemorySnapshot() {
+    val d = createTempDirectory("checked-all").toFile()
+    try {
+      Store.init(d); Store.set(C.K_VOL, "30"); Store.set(C.K_THEME, "dark")
+      val oldDisk = File(d, "store.json").readBytes()
+      AtomicWriteTestHook.rename = { _, _ -> false }
+      assertFalse(Store.applyAllChecked(mapOf(C.K_VOL to "90")))
+      assertEquals("30", Store.get(C.K_VOL)); assertEquals("dark", Store.get(C.K_THEME))
+      assertArrayEquals(oldDisk, File(d, "store.json").readBytes())
+    } finally { AtomicWriteTestHook.rename = null; d.deleteRecursively() }
+  }
   @Test fun setCheckedFailureRestoresOldMemory() {
     val d=createTempDirectory("checked").toFile(); try {
       Store.init(d); Store.set(C.K_VOL,"30")
@@ -23,6 +34,29 @@ class StoreCheckedTest {
       Store.init(d); Store.set(C.K_VOL,"30")
       val f=File(d,"store.json"); f.delete(); f.mkdir()
       assertFalse(Store.removeChecked(C.K_VOL)); assertEquals("30",Store.get(C.K_VOL))
+    } finally { d.deleteRecursively() }
+  }
+
+  @Test fun applyAllCheckedFailsClosedBeforeInit() {
+    val d = createTempDirectory("checked-all-uninit").toFile()
+    val fileField = Store::class.java.getDeclaredField("file").apply { isAccessible = true }
+    val memField = Store::class.java.getDeclaredField("mem").apply { isAccessible = true }
+    try {
+      synchronized(Store) {
+        val oldFile = fileField.get(Store)
+        @Suppress("UNCHECKED_CAST") val mem = memField.get(Store) as MutableMap<String, String>
+        val oldMem = HashMap(mem)
+        try {
+          Store.init(d); Store.set(C.K_VOL, "old")
+          val oldDisk = File(d, "store.json").readBytes()
+          fileField.set(Store, null)
+          assertFalse(Store.applyAllChecked(mapOf(C.K_VOL to "new")))
+          assertEquals("old", Store.get(C.K_VOL))
+          assertArrayEquals(oldDisk, File(d, "store.json").readBytes())
+        } finally {
+          fileField.set(Store, oldFile); mem.clear(); mem.putAll(oldMem)
+        }
+      }
     } finally { d.deleteRecursively() }
   }
 

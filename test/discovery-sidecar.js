@@ -22,6 +22,10 @@ assert.deepStrictEqual(S.normalize({...raw,items:[{name:'x',url:'https://x',comm
   const routes = {'snap/current.json':JSON.stringify({v:1,current:broken,previous:id}), ['snap/'+broken+'/manifest.json']:JSON.stringify({v:1,sha256:broken,bytes:1}), ['snap/'+broken+'/radio-discovery.json']:'x', ['snap/'+id+'/manifest.json']:JSON.stringify({v:1,sha256:id,bytes:payload.length}), ['snap/'+id+'/radio-discovery.json']:payload};
   const fetcher = async url => { if (!(url in routes)) throw Error('missing'); return response([{value:Buffer.from(routes[url]),done:false}]); };
   assert.equal((await S.loadSnapshot(fetcher,'snap')).length,1, 'corrupt current falls back');
+  let successfulAbort = false;
+  const observeSuccess = (u,o) => { o.signal.addEventListener('abort', () => { successfulAbort = true; }); return fetcher(u,o); };
+  assert.equal((await S.loadSnapshot(observeSuccess,'snap')).length,1);
+  assert.equal(successfulAbort, false, 'completed stages do not abort');
   const stalled = async (url, opts) => url.includes(broken) ? new Promise(() => {}) : fetcher(url, opts);
   assert.equal((await S.loadSnapshot(stalled,'snap',10)).length,1, 'stalled current falls back within independent deadline');
   let readCancelled = false, readAborted = false;

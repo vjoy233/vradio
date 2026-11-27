@@ -82,7 +82,9 @@
         if (reader === active) reader = null;
       }
     }
-      try { return await Promise.race([task(bytes), timeout]); } finally { clearTimeout(timer); ctl.abort(); if (reader) cancel(reader); }
+      let success = false;
+      try { const result = await Promise.race([task(bytes), timeout]); success = true; return result; }
+      finally { clearTimeout(timer); if (!success) { ctl.abort(); if (reader) cancel(reader); } }
     }
     const parse = b => JSON.parse(new TextDecoder('utf-8', {fatal:true}).decode(b));
     try {

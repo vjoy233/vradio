@@ -27,6 +27,25 @@ function stableStr(v) { // 键序无关的稳定序列化（rebind 前后快照�
   return JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x)) ? // 输出——语义相同仅键序不同 = 等价，不触发落盘
     Object.keys(x).sort().reduce((o, key) => { o[key] = x[key]; return o; }, {}) : x);
 }
+// SHA-256：供 HTTP 局域网（无 secure context / crypto.subtle）核对静态资产；仅纯字节运算。
+function discoverySha256(text) {
+  const bytes = new TextEncoder().encode(text), bitLength = bytes.length * 8;
+  const size = Math.ceil((bytes.length + 9) / 64) * 64, buf = new Uint8Array(size);
+  buf.set(bytes); buf[bytes.length] = 128;
+  const view = new DataView(buf.buffer);
+  view.setUint32(size - 8, Math.floor(bitLength / 4294967296)); view.setUint32(size - 4, bitLength >>> 0);
+  const k = [0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+  const h = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19], w = new Uint32Array(64);
+  const r = (x,n) => (x >>> n) | (x << (32-n));
+  for (let off = 0; off < size; off += 64) {
+    for (let i=0;i<16;i++) w[i] = view.getUint32(off+i*4);
+    for (let i=16;i<64;i++) { const a=w[i-15], b=w[i-2]; w[i] = (w[i-16]+(r(a,7)^r(a,18)^(a>>>3))+w[i-7]+(r(b,17)^r(b,19)^(b>>>10))) >>> 0; }
+    let [a,b,c,d,e,f,g,z] = h;
+    for (let i=0;i<64;i++) { const t1=(z+(r(e,6)^r(e,11)^r(e,25))+((e&f)^(~e&g))+k[i]+w[i])>>>0; const t2=((r(a,2)^r(a,13)^r(a,22))+((a&b)^(a&c)^(b&c)))>>>0; z=g; g=f; f=e; e=(d+t1)>>>0; d=c; c=b; b=a; a=(t1+t2)>>>0; }
+    [a,b,c,d,e,f,g,z].forEach((x,i) => { h[i]=(h[i]+x)>>>0; });
+  }
+  return h.map(x => x.toString(16).padStart(8,'0')).join('');
+}
 const SRC_CAP = 6; // 每台最终源集合统一封顶（plan §5.4「每台最多 6 条」，review P1：装配 applyCfg 收口、
                    // 详情/批量诊断同口径；Android 侧 C.SRC_TOTAL_CAP 镜像，双端不漂移）
 
@@ -53,7 +72,8 @@ function buildDiscovery(input) {
   const heard = new Set();
   for (const r of input.recents || []) { if (r.k) heard.add(r.k); for (const u of r.u || []) heard.add(u); }
   const pk = input.playingKey || '', ck = input.connectingKey || '';
-  const g = { starter: [], stable: [], fresh: [], revived: [], icy: [], unheard: [] };
+  const g = { starter: [], stable: [], fresh: [], revived: [], icy: [], unheard: [], recentlyVerified: [], needsAttention: [] };
+  const now = input.now;
   let unknown = 0;
   for (const r of input.rows || []) {
     if (!r || !r.u0) continue;
@@ -61,7 +81,14 @@ function buildDiscovery(input) {
     if (r.dead && r.k !== pk && r.k !== ck) continue;         // ② dead 默认过滤（正在播/连接中例外口径沿用）
     const qa = q(r.u0, r.u);
     if (!qa) unknown++;                                       // ③ 无质量记录：不进质量分组、不误判
-    const row = { k: r.k, n: r.n, c: r.c, u0: r.u0, obs: qa ? (qa.lastObservedAt || 0) : 0 };
+    const m = metaSt && metaSt[r.u0];
+    const sources = m && Array.isArray(m.sources) ? m.sources.filter(x => x && (r.u || []).includes(x.url)) : [];
+    const origins = [...new Set((sources.length ? sources.map(x => ['gao', 'eu'].includes(x.upstream) ? x.upstream : 'unknown') : (r.origins && r.origins.length ? [] : ['unknown'])).concat(r.origins || []))].sort();
+    const explain = input.explain ? input.explain(qa, now) : { level: 'unknown', action: 'retest', reason: 'no_samples' };
+    const verified = sources.reduce((v, x) => x.verification === 'sync' && Number.isFinite(x.lastVerifiedAt) && x.lastVerifiedAt > 0 && x.lastVerifiedAt <= now && now - x.lastVerifiedAt < 30 * DAY ? Math.max(v, x.lastVerifiedAt) : v, 0);
+    const row = { k: r.k, n: r.n, c: r.c, u0: r.u0, obs: qa ? (qa.lastObservedAt || 0) : 0, origins, explain };
+    if (verified) g.recentlyVerified.push(Object.assign({ at: verified }, row));
+    if (qa && explain.level !== 'unknown' && explain.action === 'retest') g.needsAttention.push(row);
     if (r.om) g.starter.push(row);                            // ④ 精选 = originMask（同名但 URL 由主列表提供的精选台也命中）
     if (qa && qa.stability === 'good' && qa.directCount > 0) g.stable.push(row); // 稳定直连：good 且有直流源（B2 directCount 口径）
     const at = metaSt ? firstSeen(metaSt[r.u0]) : 0;
@@ -74,6 +101,8 @@ function buildDiscovery(input) {
   const byAt = (a, b) => ((b.at || 0) - (a.at || 0)) || (a.u0 < b.u0 ? -1 : a.u0 > b.u0 ? 1 : 0);
   for (const key of ['starter', 'stable', 'revived', 'icy', 'unheard']) g[key] = g[key].sort(byObs).slice(0, 20);
   g.fresh = g.fresh.sort(byAt).slice(0, 20);
+  g.recentlyVerified = g.recentlyVerified.sort(byAt).slice(0, 20);
+  g.needsAttention = g.needsAttention.sort(byObs).slice(0, 20);
   return { groups: g, unknown };
 }
 
@@ -551,7 +580,8 @@ const App = {
   metaPipe: null,  // 曲讯事件管线（B3-A）：boot 创建（Metadata.mpCreate）——世代校验/清洗/同曲去重/入史决策的唯一所在
   metaV2: false,   // sink 选择（boot 按 FEATURES.metadataV2 定格）：false=Legacy（现状行为）/true=V2（归一化字段消费），绝不双写
   metaLast: null,  // V2 sink 记的最近一次归一化事件（artist/track/program 供统计/发现派生；Legacy 不写）
-  metaCache: null, // radio-meta.json 懒加载缓存（B3-C 发现页「最近新增」；file:// 无 script 包装 → null 该组为空）
+  metaCache: null, // 仅绑定当前主列表且经 manifest 双哈希验证的元数据
+  metaMain: null, metaEpoch: 0,
   revives: new Map(), // dead→可用 状态转移记录（B3-C「最近恢复」唯一依据）：身份 URL → 时间戳，7 天过期，无记录不猜测
 
   /* ---------- 持久化（localStorage 全部容错读取 + 旧格式迁移） ---------- */
@@ -673,17 +703,18 @@ const App = {
 
   /* ---------- 数据装配（决策 B/C）：主列表 replace + STARTER 精选层（按精确名去重）+ 个人层常驻 ---------- */
   applySources(mainList, myList) {
+    this.metaCache = null; this.metaMain = null; this.metaEpoch++;
     const byKey = new Map(), byName = new Set();
     const starterNames = new Set(STARTER.map(x => x.n)), starterUrls = new Set(); // B3 originMask：精选身份 URL/精确名集合
     for (const st of STARTER) for (const u of st.u) starterUrls.add(u);
-    for (const s of mainList) { byKey.set(keyOf(s), s); byName.add(s.n); }
+    for (const s of mainList) { s.personalUrls = []; byKey.set(keyOf(s), s); byName.add(s.n); }
     for (const st of STARTER) if (!byName.has(st.n)) { // 决策 C：与主列表精确重名的精选台不再并入（http 模式下常听=纯重复）
       byKey.set(keyOf(st), { c: st.c, n: st.n, u: st.u.slice(), l: st.l }); byName.add(st.n);
     }
     for (const s of myList || []) {
       const cur = byKey.get(keyOf(s));
-      if (cur) s.u.forEach(u => !cur.u.includes(u) && cur.u.push(u));
-      else { byKey.set(keyOf(s), s); byName.add(s.n); }
+      if (cur) { cur.personalUrls = [...new Set((cur.personalUrls || []).concat(s.u))]; s.u.forEach(u => !cur.u.includes(u) && cur.u.push(u)); }
+      else { s.personalUrls = s.u.slice(); byKey.set(keyOf(s), s); byName.add(s.n); }
     }
     this.state.stations = [...byKey.values()];
     for (const s of this.state.stations) {
@@ -714,6 +745,7 @@ const App = {
       // 动了四处回绑全断）；先收集后 push，避免遍历中修改 s.u。variants()/srcmem 天然吃新序列，无需另行接线
       const add = [];
       for (const u of s.u) { const a = srcs[u]; if (a) for (const x of a) if (!s.u.includes(x) && !add.includes(x)) add.push(x); }
+      s.adjustedUrls = add.slice();
       if (add.length) s.u.push(...add);
       // 每台最多 6 条（plan §5.4，review P1）：对合并追加后的最终源集合统一封顶——保主源 s.u[0] 首位、
       // 只裁台尾（原生超编同理裁尾）；详情中心/批量诊断（diagIdx）同口径，双端与 Android SRC_TOTAL_CAP 不漂移
@@ -753,6 +785,7 @@ const App = {
     if (my === null) { myL = this._myKeep || []; this.toast('个人电台列表刷新失败，已保留当前显示'); }
     else { myL = this.parse(my); this._myKeep = myL; }
     this.applySources(this.parse(main), myL);
+    this.metaMain = main; // 绑定实际装配的字节文本；非 HTTP/备用数据不使用公共 meta
     return true;
   },
 
@@ -2169,26 +2202,46 @@ const App = {
      关时隐藏）。纯本地派生——buildDiscovery 数据注入（质量摘要/健康/最近/radio-meta/revives 全本地），不联网、
      不改主列表排序；点击行统一 startPlay→Player.play（不复制播放决策）。 ---------- */
   dscOpener: null,
+  discoveryGeneration: 0,
   discoverySidecar: null,
   async openDiscovery() {
     this.dscOpener = document.activeElement;
     $('discovery').hidden = false;
     $('discBody').innerHTML = '<div class="empty">正在生成推荐…</div>';
     $('discClose').focus();
-    if (!this.metaCache) this.metaCache = await this.loadMeta(); // 懒加载一次（radio-meta.json 静态文件，非 dotfile/data 段天然可 GET）
-    if (FEATURES.discoverySidecar && !this.discoverySidecar && window.DiscoverySidecar) {
-      const rows = await DiscoverySidecar.loadSnapshot((u, opts) => fetch(u, opts), 'discovery-snapshots');
-      if (rows === null) $('status').textContent = '当前页面缺少安全校验能力，精选候选不可用；请使用 localhost 或 HTTPS';
-      else if (rows.length) this.discoverySidecar = rows;
+    const generation = ++this.discoveryGeneration, epoch = this.metaEpoch, main = this.metaMain;
+    const current = () => generation === this.discoveryGeneration && !$('discovery').hidden && epoch === this.metaEpoch && main === this.metaMain;
+    if (!this.metaCache) {
+      let meta = null;
+      try { meta = await this.loadMeta(main); } catch (_) {}
+      if (!current()) return;
+      this.metaCache = meta;
     }
+    // 本地推荐先展示，第三方候选失败或慢响应不阻塞它。
     this.renderDiscovery();
-    if (FEATURES.discoverySidecar && this.discoverySidecar && this.discoverySidecar.length) this.renderDiscoverySidecar();
+    if (FEATURES.discoverySidecar && !this.discoverySidecar && window.DiscoverySidecar) {
+      let rows;
+      try { rows = await window.DiscoverySidecar.loadSnapshot((u, opts) => fetch(u, opts), 'discovery-snapshots'); } catch (_) { return; }
+      if (!current() || !FEATURES.discoverySidecar) return;
+      if (rows === null) $('status').textContent = '当前页面缺少安全校验能力，精选候选不可用；请使用 localhost 或 HTTPS';
+      else if (rows && rows.length) { this.discoverySidecar = rows; this.renderDiscovery(); }
+    }
   },
-  async loadMeta() { // file://：meta 无经典 script 包装不可读 → null（「最近新增」为空，其余组不受影响）
-    if (!location.protocol.startsWith('http')) return null;
-    try { return await fetch('radio-meta.json').then(r => r.ok ? r.json() : null); } catch (_) { return null; }
+  async loadMeta(main) { // 缺 crypto/manifest、批次混态或时序竞争均保守不展示公共来源
+    if (!location.protocol.startsWith('http') || typeof main !== 'string') return null;
+    try {
+      const get = async p => { const r = await fetch(p + '?t=' + Date.now(), { cache:'no-store' }); if (!r.ok) throw Error('fetch'); return r.text(); };
+      const manifest = JSON.parse(await get('sync-manifest.json'));
+      const raw = await get('radio-meta.json');
+      const files = Array.isArray(manifest.files) ? manifest.files : [];
+      const radio = files.find(x => x.path === 'radio.txt'), meta = files.find(x => x.path === 'radio-meta.json');
+      if (!radio || !meta || discoverySha256(main) !== radio.sha256 || discoverySha256(raw) !== meta.sha256) return null;
+      const parsed = JSON.parse(raw);
+      return parsed && parsed.v === 1 && parsed.stations && typeof parsed.stations === 'object' ? parsed : null;
+    } catch (_) { return null; }
   },
   closeDiscovery() {
+    ++this.discoveryGeneration;
     if ($('discovery').hidden) return;
     $('discovery').hidden = true;
     const b = this.dscOpener && this.dscOpener.isConnected ? this.dscOpener : null;
@@ -2229,8 +2282,9 @@ const App = {
   renderDiscovery() {
     const d = buildDiscovery({
       rows: this.state.stations.map(s => ({ k: keyOf(s), n: s.n, c: s.c, u0: s.u[0] || '', u: s.u,
-        hidden: !!(s.hidden || this.cfg.hideC[s.c]), dead: s.health === 'dead', om: s.om ? 1 : 0 })),
-      quality: (u0, u) => QualityStore.summary(u0, u),
+        hidden: !!(s.hidden || this.cfg.hideC[s.c]), dead: s.health === 'dead', om: s.om ? 1 : 0,
+        origins: [s.personalUrls && s.personalUrls.some(u => s.u.includes(u)) ? 'personal' : '', s.adjustedUrls && s.adjustedUrls.some(u => s.u.includes(u)) ? 'adjusted' : ''].filter(Boolean) })),
+      quality: (u0, u) => QualityStore.summary(u0, u), explain: qExplain, now: Date.now(),
       meta: this.metaCache, recents: this.recents, revives: this.revives,
       playingKey: Player.station && keyOf(Player.station), connectingKey: Player.connecting && keyOf(Player.connecting),
     });
@@ -2240,7 +2294,9 @@ const App = {
       ['fresh', '最近新增', '同步新进电台'],
       ['revived', '最近恢复', '从失效标记复活的电台'],
       ['icy', '有曲讯', '直流 ICY——播放时可显示歌名'],
-      ['unheard', '未听过', '还从未播放过'],
+      ['unheard', '未听过', '最近记录中未出现'],
+      ['recentlyVerified', '最近验证', '近期同步验证通过'],
+      ['needsAttention', '需要关注', '建议重测，不代表停运'],
     ];
     let html = '';
     for (const [id, t, desc] of GROUPS) {
@@ -2250,10 +2306,13 @@ const App = {
       if (!list.length) { html += `<div class="srcs" style="padding:2px 0 8px">暂无质量数据（播放与体检后自动累计）</div>`; continue; }
       html += list.map(r => `<button type="button" class="btn mbtn discrow" data-k="${this.esc(r.k)}" title="播放：${this.esc(r.n)}">
         <span class="dn">${this.esc(r.n)}</span><span class="badge">${this.esc(r.c)}</span>
-        ${id === 'fresh' ? `<span class="srcs">${this.fmtAgo(r.at)}</span>` : r.obs ? `<span class="srcs">${this.fmtAgo(r.obs)}</span>` : ''}
+        ${FEATURES.sourceExplain ? r.origins.map(o => `<span class="badge">${this.esc(({gao:'国内上游',eu:'欧美上游',unknown:'来源未知',personal:'个人来源',adjusted:'个人追加'})[o] || '来源未知')}</span>`).join('') : ''}
+        ${FEATURES.sourceExplain ? `<span class="srcs">${({good:'稳定',fair:'一般 · 建议重测',poor:'不稳定 · 建议重测',unknown:'暂无可信质量样本'})[r.explain.level] || '暂无可信质量样本'}</span>` : ''}
+        ${id === 'fresh' || id === 'recentlyVerified' ? `<span class="srcs">${this.fmtAgo(r.at)}</span>` : r.obs ? `<span class="srcs">${this.fmtAgo(r.obs)}</span>` : ''}
       </button>`).join('');
     }
     $('discBody').innerHTML = html || '<div class="empty">暂无推荐——收藏/播放/体检后这里会越来越准</div>';
+    if (FEATURES.discoverySidecar && this.discoverySidecar && this.discoverySidecar.length) this.renderDiscoverySidecar();
   },
 
   /* ---------- B3-B 收听统计接线：Player 派生态 → ListenStats 状态机（只读快照推导，不复制播放决策）。
@@ -3207,4 +3266,4 @@ const App = {
 /* B3 双兼容出口：浏览器经典 script 照常 boot（document 恒在）；Node 侧（test/discovery.js require 纯函数）
    不 boot 只导出——app.js 顶层无 DOM 访问，方法体内的 DOM/Player/Store 引用只在调用时触达 */
 if (typeof document !== 'undefined') App.boot();
-if (typeof module !== 'undefined') module.exports = { App, STARTER, buildDiscovery };
+if (typeof module !== 'undefined') module.exports = { App, STARTER, buildDiscovery, discoverySha256 };

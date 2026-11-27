@@ -1,0 +1,30 @@
+// 发现浮层异步换代、开关及重复渲染回归，离线 deferred 控制完成顺序。
+const assert = require('assert');
+const { App } = require('../app');
+const deferred = () => { let resolve, reject; const promise = new Promise((a,b) => { resolve=a; reject=b; }); return {promise,resolve,reject}; };
+const body = {innerHTML:'', insertAdjacentHTML(_, s) { this.innerHTML += s; }, querySelectorAll() { return []; }};
+const els = {discovery:{hidden:true}, discBody:body, discClose:{focus(){}}, status:{textContent:''}};
+global.document = {activeElement:null,getElementById:id => els[id]};
+global.window = {}; global.FEATURES = {discoverySidecar:false,sourceExplain:true};
+global.Player = {station:null,connecting:null}; global.QualityStore = {summary:() => null}; global.qExplain = () => ({level:'unknown'});
+App.state.stations = []; App.cfg = {hideC:{}}; App.recents = []; App.revives = new Map();
+(async () => {
+  App.metaMain = 'a'; App.metaCache = null; let m = deferred(); App.loadMeta = () => m.promise;
+  let p = App.openDiscovery(); App.metaEpoch++; App.metaMain = 'b'; m.resolve({old:true}); await p;
+  assert.strictEqual(App.metaCache, null); assert.ok(!body.innerHTML.includes('暂无推荐'));
+  let a = deferred(), b = deferred(), calls = 0; App.loadMeta = () => (++calls === 1 ? a.promise : b.promise);
+  p = App.openDiscovery(); App.closeDiscovery(); const newer = App.openDiscovery();
+  b.resolve({newer:true}); await newer; a.resolve({old:true}); await p; assert.deepStrictEqual(App.metaCache, {newer:true});
+  let requests = 0; window.DiscoverySidecar = {loadSnapshot:() => { requests++; return Promise.resolve([]); }};
+  await App.openDiscovery(); assert.strictEqual(requests, 0);
+  FEATURES.discoverySidecar = true; let s1 = deferred(), s2 = deferred(); calls = 0;
+  window.DiscoverySidecar.loadSnapshot = () => (++calls === 1 ? s1.promise : s2.promise);
+  p = App.openDiscovery(); App.closeDiscovery(); const q = App.openDiscovery();
+  const fresh = [{name:'新候选',genre:'精选',url:'https://example.org/'}];
+  s2.resolve(fresh); await q; s1.resolve([{name:'旧候选'}]); await p;
+  assert.strictEqual(App.discoverySidecar, fresh); assert.ok(body.innerHTML.includes('新候选')); assert.ok(!body.innerHTML.includes('旧候选'));
+  App.renderDiscovery(); App.renderDiscovery(); assert.strictEqual((body.innerHTML.match(/精选候选（需手动加入）/g) || []).length, 1);
+  App.discoverySidecar = null; window.DiscoverySidecar.loadSnapshot = () => Promise.reject(Error('offline'));
+  await App.openDiscovery(); assert.ok(body.innerHTML.includes('暂无推荐'));
+  console.log('发现页异步换代、开关、重渲染与降级通过');
+})().catch(e => { console.error(e); process.exitCode = 1; });

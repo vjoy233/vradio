@@ -22,7 +22,7 @@ const Store = {
                   // 镜像「看起来已一致」，但 App 内存还是旧态——apply 的重载判定必须比对实例基线而非共享镜像（review#37 P1-2）
   inflight: false, trailing: false, // flush 单飞串行 + 尾随重推（review#37 P1-4，见 flush 注释）
   KEYS: ['radio.favs', 'radio.recents', 'radio.health', 'radio.cfg', 'radio.songs', 'radio.volperst', 'radio.srcmem2',
-    'radio.vol', 'radio.view', 'radio.showdead', 'radio.theme', 'radio.baseline', 'radio.baselineProg'],
+    'radio.vol', 'radio.view', 'radio.showdead', 'radio.theme', 'radio.baseline', 'radio.baselineProg', 'radio.syncFreshness'],
 
   get dirty() { return localStorage.getItem('radio.storeDirty') === '1'; }, // 持久化标记（非白名单元键，原生读写防自触发推送）
   set dirty(v) { try { v ? localStorage.setItem('radio.storeDirty', '1') : localStorage.removeItem('radio.storeDirty'); } catch (_) {} },

@@ -53,6 +53,8 @@ class NetGateTest {
     val light = FakeLight()
     val (msg, pending) = entry(cell, Rules(cellSync = CellularRule.DENY), light)
     assertTrue(msg!!.contains("未开始")); assertNull(pending)
+    val d = cell.enter(Op.SYNC, NetGate.Act.SYNC, Rules(cellSync = CellularRule.DENY)) as NetGate.Next.Deny
+    assertTrue(d.cellularPolicy)
     assertEquals(0, light.checks); assertEquals(0, light.applies)   // ← P1 断言：deny 不调 light.check/apply
   }
 
@@ -67,6 +69,8 @@ class NetGateTest {
     val light = FakeLight()
     val (msg, _) = entry(offline, Rules(), light)
     assertTrue(msg!!.contains("未开始"))
+    val d = offline.enter(Op.SYNC, NetGate.Act.SYNC, Rules()) as NetGate.Next.Deny
+    assertTrue(!d.cellularPolicy)
     assertEquals(0, light.checks); assertEquals(0, light.applies)
   }
 

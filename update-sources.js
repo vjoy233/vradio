@@ -502,6 +502,7 @@ function publishSync(root, arts, opt = {}) {
     return { path: name, bytes: buf.length, sha256: sha256Buf(buf) };
   });
   const manifest = { version: opt.version || String(ts), generatedAt: ts, files };
+  if (opt.freshness) manifest.freshness = { refreshedAt: ts, provenance: 'pipeline-full' };
   fs.writeFileSync(path.join(tmpDir, 'sync-manifest.json'), JSON.stringify(manifest, null, 2));
   // 上一批回滚副本：先写临时代并整体验证（不碰现行 prev）。副本 manifest：root manifest 有效则原样携带
   //（描述的就是这批资产）；否则（首发布/存量仓库无 manifest）按副本资产现算一份，保证副本自描述可恢复
@@ -532,6 +533,7 @@ function readManifestOf(dir) {
   try {
     const m = JSON.parse(fs.readFileSync(path.join(dir, 'sync-manifest.json'), 'utf8'));
     if (m && Array.isArray(m.files) && m.files.length === SYNC_ASSETS.length &&
+      new Set(m.files.map(f => f && f.path)).size === SYNC_ASSETS.length &&
       m.files.every(f => f && SYNC_ASSETS.includes(f.path) && Number.isFinite(f.bytes) && typeof f.sha256 === 'string')) return m;
   } catch (_) {}
   return null;
@@ -544,6 +546,12 @@ function manifestCheckDir(dir, m) { // manifest 覆盖的四资产在 dir 下齐
     }
     return true;
   } catch (_) { return false; }
+}
+function freshnessFact(root) {
+  const m = readManifestOf(root), f = m && m.freshness;
+  if (!m || !manifestCheckDir(root, m) || !f || f.provenance !== 'pipeline-full' ||
+      !Number.isSafeInteger(f.refreshedAt) || f.refreshedAt <= 0) return null;
+  return { version: m.version, refreshedAt: f.refreshedAt, provenance: f.provenance };
 }
 function writeBootstrapManifest(root) { // 冷启动：四资产齐全可解析 → 按当前文件算哈希写 version:"bootstrap"
   const files = SYNC_ASSETS.map(name => { const buf = fs.readFileSync(path.join(root, name)); return { path: name, bytes: buf.length, sha256: sha256Buf(buf) }; });
@@ -776,7 +784,8 @@ async function runPipeline(log = () => {}, opt = {}) {
 /* 落盘发布（runPipeline 通过后）：发布协议事务 + 统一输出（§6.4：ok/total/added/removed/deduped/invalid/
    replacement/quality/addedCheck/removedNames/sourceMeta——既有消费方键名全兼容）+ 运行时报告（可丢失不入 manifest） */
 function publishResult(root, res, opt = {}) {
-  const manifest = publishSync(root, res.arts, { version: opt.version || 'sync-' + res.report.generatedAt });
+  const manifest = publishSync(root, res.arts, { version: opt.version || 'sync-' + res.report.generatedAt,
+    freshness: !!(res.report.cn && !res.report.cn.keptLocal && res.report.eu && !res.report.eu.kept) });
   const s = res.summary;
   s.ok = true;
   s.replacement = opt.forced ? 'forced' : (res.euKeptDecision ? 'kept' : 'accepted');
@@ -871,4 +880,4 @@ if (require.main === module) {
       .catch(e => { console.error('同步失败:', e); process.exit(1); });
   }
 }
-module.exports = { syncSources, runPipeline, publishResult, publishSync, bootManifest, assetsComplete, readManifestOf, manifestCheckDir, writeBootstrapManifest, writeSyncReport, initMeta, buildRadioMeta, buildCandidates, parseUpstream, dedupeCandidates, normalizeCandidateUrl, forceTokenIssue, forceTokenConsume, reportHashOf, SYNC_ASSETS, checkStream, checkDetail, safeTarget, guardLookup, tryUrl, buildLogoFile, classifyCn, splitSections, countEntries }; // splitSections/countEntries 供 test/smoke.js 复用（R1）；tryUrl 供 server.js/测试复用（audit-r2 P2-1）；checkDetail 结构化探活（B1）；B2 管线/门/发布/manifest/强制协议（test/sources.js 复用）
+module.exports = { freshnessFact, syncSources, runPipeline, publishResult, publishSync, bootManifest, assetsComplete, readManifestOf, manifestCheckDir, writeBootstrapManifest, writeSyncReport, initMeta, buildRadioMeta, buildCandidates, parseUpstream, dedupeCandidates, normalizeCandidateUrl, forceTokenIssue, forceTokenConsume, reportHashOf, SYNC_ASSETS, checkStream, checkDetail, safeTarget, guardLookup, tryUrl, buildLogoFile, classifyCn, splitSections, countEntries }; // splitSections/countEntries 供 test/smoke.js 复用（R1）；tryUrl 供 server.js/测试复用（audit-r2 P2-1）；checkDetail 结构化探活（B1）；B2 管线/门/发布/manifest/强制协议（test/sources.js 复用）

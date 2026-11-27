@@ -1,0 +1,14 @@
+{
+  "now": 1800000000000,
+  "cases": [
+    {"name":"unknown", "pref":{}, "fact":null, "age":"unknown", "prompt":true},
+    {"name":"future", "pref":{}, "fact":{"refreshedAt":1800000000001,"provenance":"verified"}, "age":"unknown", "prompt":true},
+    {"name":"7 days due", "pref":{"reminderDays":7}, "fact":{"refreshedAt":1799395200000,"provenance":"verified"}, "age":"due", "prompt":true},
+    {"name":"14 days fresh", "pref":{}, "fact":{"refreshedAt":1798790400001,"provenance":"verified"}, "age":"fresh", "prompt":false},
+    {"name":"30 days due", "pref":{"reminderDays":30}, "fact":{"refreshedAt":1797408000000,"provenance":"verified"}, "age":"due", "prompt":true},
+    {"name":"disabled", "pref":{"disabled":true}, "fact":null, "age":"unknown", "prompt":false},
+    {"name":"dismissed", "pref":{"dismissedUntil":1800086400000}, "fact":null, "age":"unknown", "prompt":false},
+    {"name":"clock rollback", "pref":{"dismissedUntil":1800086400001,"lastPromptAt":1800000000001}, "fact":null, "age":"unknown", "prompt":true},
+    {"name":"cooldown", "pref":{"lastPromptAt":1799999940001}, "fact":null, "age":"unknown", "prompt":false}
+  ]
+}

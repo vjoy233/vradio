@@ -61,6 +61,7 @@ import io.github.vjoy233.vradio.stats.ListenStatsCodec
 import io.github.vjoy233.vradio.stats.ListenTracker
 import io.github.vjoy233.vradio.sync.Gh
 import io.github.vjoy233.vradio.sync.LightUpdate
+import io.github.vjoy233.vradio.sync.Freshness
 import io.github.vjoy233.vradio.sync.RadioMeta
 import io.github.vjoy233.vradio.sync.SyncEngine
 import io.github.vjoy233.vradio.widget.WidgetCommands
@@ -186,7 +187,13 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   fun navigate(to: Destination) { destination.value = navigateGuard(to); secondary.value = null }
 
   /** 次级页开合：先记来源目的地再设 secondary（返回时回跳来源页，Q11/Q15） */
-  fun openSettings() { secondary.value = SecondaryRoute.SETTINGS }
+  private val settingsFocusNetwork = MutableStateFlow(false)
+  val focusNetworkSettings: StateFlow<Boolean> = settingsFocusNetwork
+  fun openSettings(focusNetwork: Boolean = false) {
+    settingsFocusNetwork.value = focusNetwork
+    secondary.value = SecondaryRoute.SETTINGS
+  }
+  fun consumeNetworkSettingsFocus() { settingsFocusNetwork.value = false }
   fun openAddStation() { secondary.value = SecondaryRoute.ADD_STATION }
   fun closeSecondary() { secondary.value = null }
 
@@ -213,6 +220,26 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   val healthBusy = MutableStateFlow(false); val healthProg = MutableStateFlow(""); val healthResult = MutableStateFlow("")
   val updateBusy = MutableStateFlow(false); val updateMsg = MutableStateFlow("")
   val syncBusy = MutableStateFlow(false); val syncMsg = MutableStateFlow("")
+  val logoRetryPending = MutableStateFlow(false)
+  private fun refreshLogoRetry() { logoRetryPending.value = io.github.vjoy233.vradio.sync.SyncBarrier.logoRetryPending(ctx.filesDir) }
+  val freshnessPref = MutableStateFlow(Freshness.parse(Store.get(C.K_SYNC_FRESHNESS)))
+  val freshnessPrompt = MutableStateFlow(false)
+  val freshnessAge = MutableStateFlow("unknown")
+  private fun saveFreshness(p: Freshness.Pref) { freshnessPref.value = p; Store.set(C.K_SYNC_FRESHNESS, p.json()) }
+  fun setFreshnessDays(days: Int) { saveFreshness(Freshness.parse(Store.get(C.K_SYNC_FRESHNESS)).copy(reminderDays = if (days in listOf(7, 14, 30)) days else 14, disabled = false)) }
+  fun disableFreshness() { freshnessPrompt.value = false; saveFreshness(Freshness.parse(Store.get(C.K_SYNC_FRESHNESS)).copy(disabled = true)) }
+  fun dismissFreshness() { freshnessPrompt.value = false; saveFreshness(Freshness.parse(Store.get(C.K_SYNC_FRESHNESS)).copy(dismissedUntil = System.currentTimeMillis() + Freshness.DAY)) }
+  fun syncFromFreshness() { freshnessPrompt.value = false; fullSyncNow(onDenied = { openSettings(focusNetwork = true) }) }
+  private suspend fun checkFreshness() {
+    while (healthBusy.value || syncBusy.value || updateBusy.value || PlayerHolder.ui.value.st == PState.PLAYING || PlayerHolder.ui.value.st == PState.CONNECTING) delay(5000)
+    val p = Freshness.parse(Store.get(C.K_SYNC_FRESHNESS)); freshnessPref.value = p
+    val now = System.currentTimeMillis()
+    val fact = Freshness.fact(ctx.filesDir)
+    val state = Freshness.state(p, fact?.refreshedAt, fact?.provenance, now)
+    if (state.prompt) {
+      freshnessAge.value = state.age; saveFreshness(p.copy(lastPromptAt = now)); freshnessPrompt.value = true
+    }
+  }
   val addBusy = MutableStateFlow(false); val addMsg = MutableStateFlow("")
   val confirmReq = MutableStateFlow<String?>(null)           // 导入覆盖确认门槛
   val impHasQuality = MutableStateFlow(false)                // 待确认备份含质量 sidecar（确认框显隐复选，AIbot 三轮 P1-3）
@@ -324,6 +351,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   /** radio-meta 与当前 radio 资产同批绑定（AIbot P1-4 + 三轮 P1）：false/混态时发现页「最近新增」置空（不猜）。
    *  判据见 RadioMeta.bound（filesDir/assets 来源配对 + stamp.meta 见证 + radio/meta 内容哈希核对）。 */
   var metaBound = false; private set
+  val metadataUnbound = MutableStateFlow(false)
 
   /** 渲染快照（唯一渲染入口精神：列表 + 分类角标 + 死台开关可见性 + 空态文案）；
    *  ver = stamp 哨兵进值域（审计 P2）：StateFlow 按相等合并，内容未变的 stamp++ 会被判等丢弃——
@@ -440,11 +468,13 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     val logosTxt = light.logosText() ?: aLogos
     val fMeta = light.metaText()
     runCatching { quality.load() }                            // B2 质量侧车（坏文件按空库恢复）
-    radioMeta.value = RadioMeta.parse(fMeta ?: readAsset("radio-meta.json")) ?: RadioMeta.EMPTY   // 缺件/坏件空对象兜底
+    val parsedMeta = RadioMeta.parse(fMeta ?: readAsset("radio-meta.json"))
+    radioMeta.value = parsedMeta ?: RadioMeta.EMPTY   // 缺件/坏件空对象兜底
     // AIbot P1-4 混态拦截：meta 与当前 radio 资产须同批（filesDir/assets 来源配对 + stamp.meta 见证 +
     // 三轮 P1 内容哈希核对——新 radio 配残留旧 stamp 时哈希对不上）→ 不绑定则发现页「最近新增」置空（不猜）
     val hashW = light.stampHashOk()
     metaBound = RadioMeta.bound(fRadio != null, fMeta != null, light.stampMetaOk(), hashW.first, hashW.second)
+    metadataUnbound.value = metadataUnavailable(parsedMeta != null, metaBound)
     withContext(Dispatchers.Main) {                           // Library 装配收敛主线程（审计 P2：非线程安全集合与渲染读侧单线程化）
       lib.mainText = mainTxt
       lib.myText = myTxt
@@ -456,10 +486,12 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     stamp.value++
     primeAll()
     withContext(Dispatchers.Main) {
+      refreshLogoRetry()
       booted = true
       consumePending()   // batch1 启动末梢：E3 快捷方式点播 > E4 接流预填 > N4 自动续播（默认关）
       updateShortcuts()  // E3 动态快捷方式初装（收藏变更/导入时增量刷新）
     }
+    viewModelScope.launch { delay(5000); checkFreshness() }
     delay(4000)                                                          // 首屏后 4s 静默复查（B-10）
     if (unmetered()) silentCheck()                                       // 仅 WiFi（D10）；移动数据静默跳过
   }
@@ -1219,7 +1251,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         updateMsg.value = "发现新数据（${newer.take(10)}），下载中…"
         val before = lib.favs.mapNotNull { f -> runCatching { lib.resolve(f.k) }.getOrNull()?.let { f to it } }
         val res = withContext(Dispatchers.IO) { runCatching { light.apply(lib.mainText) }.getOrNull() }
-        if (res == null) { updateMsg.value = "更新失败：下载未完成（已保留原数据）"; return@launch }
+        if (res == null) { updateMsg.value = "更新未完成：${light.lastFailWhy.ifEmpty { "发生异常，请检查本地数据" }}"; return@launch }
         val texts = withContext(Dispatchers.IO) { light.radioText() to light.logosText() }
         texts.first?.let { lib.mainText = it }
         texts.second?.let { runCatching { logos.loadBuiltins(it) } }
@@ -1227,11 +1259,11 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         radioMeta.value = withContext(Dispatchers.IO) { RadioMeta.parse(nfMeta) ?: RadioMeta.EMPTY }   // B2 meta 随更新收口（缺件空对象；混态已被 apply 删件拦截）
         val hW = light.stampHashOk()   // AIbot 三轮 P1：apply 后即时核对（radio/meta 内容哈希 vs stamp 见证）
         metaBound = RadioMeta.bound(true, nfMeta != null, light.stampMetaOk(), hW.first, hW.second)   // AIbot P1-4：更新后重算绑定（apply 已写 stamp 见证）
+        metadataUnbound.value = metadataUnavailable(RadioMeta.parse(nfMeta) != null, metaBound)
         lib.reload(); stamp.value++
         primeAll()
-        updateMsg.value = "已更新到 ${res.commitIso.take(10)} · 台数 +${res.added}/-${res.removed}"
+        updateMsg.value = lightUpdateMessage(res, metaBound)
         toast(updateMsg.value)
-        if (res.metaInvalid) toast("质量元数据（radio-meta.json）校验失败，已保留旧数据（不影响播放）")   // B2：仅「下载到但非法」明示；仓库未提供时静默
         pointGone(before)                                                 // 收藏台消失点名（removed ∩ 收藏）
         if (res.addedCheck.isNotEmpty()) { delay(800); incCheck(res.addedCheck.take(C.ADDED_CHECK_CAP)) }   // D4 增量体检（审计 P2）：D7 是主更新通道且安卓无首启基线——缺此调用 D7 新增国内台永远零体检（Web 唯一同步路径必跑 incHealth）
       } catch (e: Exception) { updateMsg.value = "检查更新失败：${e.message ?: "网络错误"}" }
@@ -1241,9 +1273,12 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   /* ---------- M4 端内同步（B5：移动数据按策略门默认需确认；完成后 diff 摘要 + 收藏点名 + 增量体检） ---------- */
 
-  fun fullSyncNow() {                                                    // 入口：先过网络策略门，再过电量门（与 checkUpdate 同构）
+  fun fullSyncNow(onDenied: (() -> Unit)? = null) {                         // 入口：先过网络策略门，再过电量门（与 checkUpdate 同构）
     when (val n = gate.enter(NetworkPolicy.Op.SYNC, NetGate.Act.SYNC, netRules())) {
-      is NetGate.Next.Deny -> { syncMsg.value = "未开始：${n.why}"; toast(syncMsg.value) }
+      is NetGate.Next.Deny -> {
+        syncMsg.value = "未开始：${n.why}"; toast(syncMsg.value)
+        if (n.cellularPolicy) onDenied?.invoke()
+      }
       is NetGate.Next.Confirm -> netGate.value = n.act to n.why
       NetGate.Next.Run -> runFullSync()
     }
@@ -1272,14 +1307,24 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         val texts = withContext(Dispatchers.IO) { light.radioText() to light.logosText() }
         texts.first?.let { lib.mainText = it }
         texts.second?.let { runCatching { logos.loadBuiltins(it) } }
+        val nfMeta = light.metaText()
+        radioMeta.value = RadioMeta.parse(nfMeta) ?: RadioMeta.EMPTY
+        val h = light.stampHashOk()
+        metaBound = RadioMeta.bound(true, nfMeta != null, light.stampMetaOk(), h.first, h.second)
+        metadataUnbound.value = metadataUnavailable(RadioMeta.parse(nfMeta) != null, metaBound)
         lib.reload(); stamp.value++
         primeAll()
-        syncMsg.value = "同步完成：新增 ${d.added} 台、消失 ${d.removed} 台"
+        syncMsg.value = "同步完成：新增 ${d.added} 台、消失 ${d.removed} 台；" +
+          (if (d.cnUpdated) "国内已更新" else "国内未更新，保留旧数据") + "；" +
+          (if (d.euKept != null) "欧美已更新" else "欧美未更新，保留旧数据")
         toast(syncMsg.value)
         pointGone(before)
         if (d.addedCheck.isNotEmpty()) { delay(800); incCheck(d.addedCheck.take(C.ADDED_CHECK_CAP)) }   // D4
-      } catch (e: Exception) { syncMsg.value = "同步失败：${e.message ?: "网络错误"}"; toast(syncMsg.value) }
-      finally { syncBusy.value = false }
+      } catch (e: Exception) {
+        syncMsg.value = syncFailureMessage(e.message ?: "网络错误", java.io.File(ctx.filesDir, "full-sync.pending").exists())
+        toast(syncMsg.value)
+      }
+      finally { refreshLogoRetry(); syncBusy.value = false }
     }
   }
 
@@ -1487,6 +1532,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
             if (err != null) { toast("导入失败：$err，已回滚到导入前状态"); return@launch }
             // AIbot P1-2：Store 已被整体替换，三层内存态必须显式刷新——缺一层 = 重启才生效，
             // 且播放层旧 volperst/srcmem 内存会在下次调音量/换源时整体回写冲掉刚导入的值（数据损坏向）
+            freshnessPref.value = Freshness.parse(Store.get(C.K_SYNC_FRESHNESS))
+            freshnessPrompt.value = false
             lib.reloadStore()                                             // 收藏/最近/健康标记/cfg 内存重载
             lib.reload()                                                  // 主列表/my 层重装配 + 回绑
             quality.keepHint = runCatching { qualityKeepSnapshot() }.getOrDefault(quality.keepHint)   // B2：收藏整体替换后保护集重算

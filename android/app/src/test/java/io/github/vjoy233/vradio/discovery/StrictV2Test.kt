@@ -1,0 +1,68 @@
+package io.github.vjoy233.vradio.discovery
+
+import java.util.Base64
+import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.Assert.*
+import org.junit.Test
+
+class StrictV2Test {
+  private val fixture = JSONObject(javaClass.classLoader!!.getResourceAsStream("fixtures/c3-strict-v2-generated.json")!!.bufferedReader(Charsets.UTF_8).use { it.readText() })
+  private fun bytes(o: JSONObject, key: String) = Base64.getDecoder().decode(o.getString(key))
+  private fun each(a: JSONArray, f: (JSONObject) -> Unit) { for (i in 0 until a.length()) f(a.getJSONObject(i)) }
+  private fun comparable(x: Any?): Any? = when (x) {
+    JSONObject.NULL -> null
+    is JSONObject -> x.keys().asSequence().associateWith { comparable(x.get(it)) }
+    is JSONArray -> (0 until x.length()).map { comparable(x.get(it)) }
+    is Number -> x.toLong()
+    else -> x
+  }
+  @Test fun sharedSidecars() = each(fixture.getJSONArray("sidecar")) { c ->
+    val result = runCatching { StrictV2.sidecar(bytes(c, "rawBase64")) }
+    assertEquals(c.getString("id"), c.getBoolean("accept"), result.isSuccess)
+    if (result.isSuccess) assertEquals(c.getString("id"), comparable(c.getJSONObject("output")), result.getOrThrow())
+  }
+  @Test fun controlsAndUrls() {
+    each(fixture.getJSONArray("controls")) { c ->
+      val raw = bytes(c, "rawBase64")
+      val ok = if (c.getString("id").startsWith("pointer")) runCatching { StrictV2.pointer(raw) }.isSuccess
+        else runCatching { StrictV2.manifest(raw) }.isSuccess
+      assertEquals(c.getString("id"), c.getBoolean("accept"), ok)
+    }
+    val concepts = JSONObject(javaClass.classLoader!!.getResourceAsStream("fixtures/c3-strict-v2-cases.json")!!.bufferedReader().use { it.readText() })
+    each(concepts.getJSONArray("urlAdversarial")) { c -> assertEquals(c.getString("url"), c.getBoolean("formatAccept"), StrictV2.url(c.getString("url"))) }
+  }
+  @Test fun generationsAndSelection() = each(fixture.getJSONArray("pointer")) { c ->
+    val expected = c.getJSONObject("expected"); val gs = c.getJSONObject("generations")
+    val binding = "a".repeat(40)
+    fun get(id: String): Map<String, Any?>? = runCatching {
+      val g = gs.getJSONObject(id); StrictV2.generation(id, bytes(g, "manifestBase64"), bytes(g, "sidecarBase64"), binding)
+    }.getOrNull()
+    val p = runCatching { StrictV2.pointer(bytes(c, "pointerBase64")) }.getOrNull()
+    val current = p?.let { get(it.first) }; val previous = p?.second?.let { get(it) }
+    val selection = when { current != null -> "current"; previous != null -> "previous"; else -> "unavailable" }
+    assertEquals(c.getString("id"), expected.getString("selection"), selection)
+    if (expected.has("degraded")) assertEquals(c.getString("id"), expected.getBoolean("degraded"), p?.second != null && previous == null)
+    if (expected.has("output")) assertEquals(c.getString("id"), comparable(expected.getJSONObject("output")), current ?: previous)
+  }
+  @Test fun rawHashAndBindingAreMandatory() {
+    val g = fixture.getJSONArray("pointer").getJSONObject(0).getJSONObject("generations")
+    val id = g.keys().next(); val entry = g.getJSONObject(id)
+    val raw = bytes(entry, "sidecarBase64"); val manifest = bytes(entry, "manifestBase64")
+    assertTrue(runCatching { StrictV2.generation(id, manifest, raw, "a".repeat(40)) }.isSuccess)
+    val mutated = raw.clone(); mutated[mutated.lastIndex] = ' '.code.toByte()
+    assertTrue(runCatching { StrictV2.generation(id, manifest, mutated, "a".repeat(40)) }.isFailure)
+    assertTrue(runCatching { StrictV2.generation("0".repeat(64), manifest, raw, "a".repeat(40)) }.isFailure)
+    assertTrue(runCatching { StrictV2.generation(id, manifest, raw, "b".repeat(40)) }.isFailure)
+  }
+  @Test fun localFallbackIsSeparate() = each(fixture.getJSONArray("localFallback")) { c ->
+    assertTrue(runCatching { StrictV2.pointer(bytes(c, "pointerBase64")) }.isFailure)
+    val g = c.getJSONObject("local")
+    val local = if (c.getString("localRevocationPolicyResult") == "allow") runCatching {
+      StrictV2.generation(g.getString("id"), bytes(g, "manifestBase64"), bytes(g, "sidecarBase64"), g.getString("commit"))
+    }.getOrNull() else null
+    val expected = c.getJSONObject("expected")
+    assertEquals(c.getString("id"), expected.getString("selection"), if (local == null) "unavailable" else "local")
+    if (local != null) assertEquals(comparable(expected.getJSONObject("output")), local)
+  }
+}

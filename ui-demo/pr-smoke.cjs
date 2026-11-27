@@ -271,12 +271,11 @@ async function run(chromium) {
     await page.click('#dClose');
     const multi = await page.evaluate(() => { const s = App.state.stations.find(x => !x.hidden && x.u.length > 1 && !(x.dis || []).includes(1)); return { key: s.c + '|' + s.n, name: s.n, identity: s.u[0], source: s.u[1] }; });
     await page.fill('#q', multi.name);
-    await page.locator('[data-more]').filter({ has: page.locator('svg') }).first().waitFor();
-    const detailButton = page.locator('[data-more]').filter({ has: page.locator('svg') });
-    let match = null;
-    for (let i = 0; i < await detailButton.count(); i++) if (await detailButton.nth(i).getAttribute('data-more') === multi.key) { match = detailButton.nth(i); break; }
-    assert(match, '多源电台详情入口可见'); await match.click();
-    await page.waitForFunction(() => !App.detail.loading && App.detail.results.some(Boolean));
+    // 搜索 120ms 防抖后重建列表；等待真实筛选完成并以身份键定位，不能缓存旧列表序号。
+    await page.waitForFunction(m => App.state.keyword === m.name && [...document.querySelectorAll('[data-more]')].some(b => b.dataset.more === m.key), multi);
+    const match = page.locator('[data-more]').filter({ has: page.locator('svg') }).and(page.locator(`[data-more=${JSON.stringify(multi.key)}]`));
+    assert.strictEqual(await match.count(), 1, '多源电台详情入口唯一'); await match.click();
+    await page.waitForFunction(m => !App.detail.loading && App.detail.results.some(Boolean) && App.detailStation()?.u[0] === m.identity, multi);
     await page.evaluate(m => {
       Player.srcMem[m.identity] = { i: 1, t: Date.now() }; Store.set('radio.srcmem2', JSON.stringify(Player.srcMem));
       const s = App.detailStation(); QualityStore.stations[m.identity] = { sources: { [m.source]: { lastOkAt: Date.now() } } };

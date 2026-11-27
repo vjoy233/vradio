@@ -16,5 +16,15 @@ assert.deepStrictEqual(S.normalize({...raw,items:[{name:'x',url:'https://x',comm
   const bytes = new TextEncoder().encode(JSON.stringify(raw));
   assert.equal((await S.load(async()=>response([{value:bytes,done:false}]),'x')).length,1);
   assert.deepStrictEqual(await S.load(async()=>({ok:true,headers:{get:()=>null}}), 'x'), []);
+  const crypto = require('crypto'); globalThis.crypto = crypto.webcrypto;
+  const valid = {...raw,generatedAt:'2026-11-26T00:00:00.000Z'};
+  const payload = Buffer.from(JSON.stringify(valid)), id = crypto.createHash('sha256').update(payload).digest('hex'), broken = 'b'.repeat(64);
+  const routes = {'snap/current.json':JSON.stringify({v:1,current:broken,previous:id}), ['snap/'+broken+'/manifest.json']:JSON.stringify({v:1,sha256:broken,bytes:1}), ['snap/'+broken+'/radio-discovery.json']:'x', ['snap/'+id+'/manifest.json']:JSON.stringify({v:1,sha256:id,bytes:payload.length}), ['snap/'+id+'/radio-discovery.json']:payload};
+  const fetcher = async url => { if (!(url in routes)) throw Error('missing'); return response([{value:Buffer.from(routes[url]),done:false}]); };
+  assert.equal((await S.loadSnapshot(fetcher,'snap')).length,1, 'corrupt current falls back');
+  routes['snap/'+id+'/radio-discovery.json'] = 'changed';
+  assert.deepStrictEqual(await S.loadSnapshot(fetcher,'snap'), [], 'hash mismatch fails closed');
+  routes['snap/current.json'] = JSON.stringify({v:1,current:'../../attack'});
+  assert.deepStrictEqual(await S.loadSnapshot(fetcher,'snap'), [], 'pointer traversal rejected');
   console.log('discovery-sidecar: safety tests passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});

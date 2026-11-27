@@ -2,6 +2,9 @@
    播放一律经 Player 接口；同步/体检由 sync.js 编排本文件暴露的方法；台标数据经 Logos 模块获取（本文件只拼渲染片段）。
    身份公理（债务 1）：URL = 持久身份（收藏/最近记录源 URL，名字漂移后按 URL 回绑），名字 = 显示层。 */
 
+// C3 可信发布链未完成安全验收，只有源码发布才能开放。
+const trustedC3Release = false;
+
 /* ---------- 内置精选（地址已实测直连可用；含同一电台的多个备选源。l = 台标，蜻蜓频道页封面实测可直连） ---------- */
 const STARTER = [
   { c:'常听', n:'Love Radio FM103.7 经典金曲', u:['http://lhttp.qingting.fm/live/273/64k.mp3','http://ls.qingting.fm/live/273.m3u8'], l:'http://pic.qtfm.cn/2014/0909/20140909125130474.jpg!200' },
@@ -2169,13 +2172,20 @@ const App = {
      关时隐藏）。纯本地派生——buildDiscovery 数据注入（质量摘要/健康/最近/radio-meta/revives 全本地），不联网、
      不改主列表排序；点击行统一 startPlay→Player.play（不复制播放决策）。 ---------- */
   dscOpener: null,
+  discoverySidecar: null,
   async openDiscovery() {
     this.dscOpener = document.activeElement;
     $('discovery').hidden = false;
     $('discBody').innerHTML = '<div class="empty">正在生成推荐…</div>';
     $('discClose').focus();
     if (!this.metaCache) this.metaCache = await this.loadMeta(); // 懒加载一次（radio-meta.json 静态文件，非 dotfile/data 段天然可 GET）
+    if (trustedC3Release && FEATURES.discoverySidecar && !this.discoverySidecar && window.DiscoverySidecar) {
+      const rows = await DiscoverySidecar.loadSnapshot((u, opts) => fetch(u, opts), 'discovery-snapshots');
+      if (rows === null) $('status').textContent = '当前页面缺少安全校验能力，精选候选不可用；请使用 localhost 或 HTTPS';
+      else if (rows.length) this.discoverySidecar = rows;
+    }
     this.renderDiscovery();
+    if (trustedC3Release && FEATURES.discoverySidecar && this.discoverySidecar && this.discoverySidecar.length) this.renderDiscoverySidecar();
   },
   async loadMeta() { // file://：meta 无经典 script 包装不可读 → null（「最近新增」为空，其余组不受影响）
     if (!location.protocol.startsWith('http')) return null;
@@ -2186,6 +2196,38 @@ const App = {
     $('discovery').hidden = true;
     const b = this.dscOpener && this.dscOpener.isConnected ? this.dscOpener : null;
     if (b && b.focus) b.focus();
+  },
+  renderDiscoverySidecar() {
+    const host = $('discBody'); if (!host) return;
+    const rows = this.discoverySidecar || [];
+    const html = '<div class="dsec"><b>精选候选（需手动加入）</b><span class="srcs">独立来源，来源信息仅格式校验，未验证真实性</span></div>' + rows.slice(0, 300).map((r, i) => `<button type="button" class="btn mbtn discrow" data-sidecar="${i}"><span class="dn">${this.esc(r.name)}</span><span class="badge">${this.esc(r.genre || '精选')}</span><span class="srcs">探活并加入个人电台</span></button>`).join('');
+    host.insertAdjacentHTML('beforeend', html);
+    host.querySelectorAll('[data-sidecar]').forEach(b => b.onclick = () => this.addDiscoveryStation(rows[+b.dataset.sidecar]));
+  },
+  async addDiscoveryStation(r) {
+    let u;
+    try { u = new URL(r && r.url); } catch (_) { return; }
+    // 仅作前端纵深校验；后端 safeTarget + guardLookup 仍是 SSRF/DNS rebinding 的安全边界。
+    if (!r || !/^https?:$/.test(u.protocol) || !u.hostname || /^(localhost|.*\.local)$/i.test(u.hostname) || /^(127\.|10\.|192\.168\.|169\.254\.)/.test(u.hostname) || !confirm(`将「${r.name}」加入个人电台并先探活？`)) return;
+    if (!location.protocol.startsWith('http')) { $('status').textContent = 'file:// 无法写入个人电台，请使用 npm start'; return; }
+    const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = setTimeout(() => { if (ctl) ctl.abort(); }, 8000);
+    try {
+      const q = await fetch('/api/mystation', {method:'POST', headers:{'Content-Type':'application/json'}, signal: ctl && ctl.signal, body:JSON.stringify({n:r.name,u:r.url,c:'精选'})});
+      const ct = String(q.headers && q.headers.get ? q.headers.get('content-type') || '' : '').toLowerCase();
+      const len = Number(q.headers && q.headers.get ? q.headers.get('content-length') || 0 : 0);
+      if (len > 8192 || (ct && !ct.includes('application/json'))) throw Error('bad response');
+      let text = '', reader = q.body && q.body.getReader ? q.body.getReader() : null;
+      if (!reader) throw Error('stream unavailable');
+      let total = 0; const decoder = new TextDecoder('utf-8', {fatal:true});
+      for (;;) { const part = await reader.read(); if (part.done) break; total += part.value.byteLength; if (total > 8192) { try { await reader.cancel(); } catch (_) {} throw Error('large response'); } text += decoder.decode(part.value, {stream:true}); }
+      text += decoder.decode();
+      const res = JSON.parse(text);
+      if (!res || typeof res.ok !== 'boolean') throw Error('invalid response');
+      $('status').textContent = res && res.ok ? `已加入个人电台：${r.name}` : '加入失败：探活未通过或服务不可用';
+      if (res && res.ok) this.reloadMain();
+    } catch (_) { $('status').textContent = '请求结果未知，服务端可能已加入；请稍后刷新个人电台确认后再重试'; try { await this.reloadMain(); } catch (_) {} }
+    finally { clearTimeout(timer); }
   },
   renderDiscovery() {
     const d = buildDiscovery({

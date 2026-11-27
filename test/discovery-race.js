@@ -1,6 +1,14 @@
 // 发现浮层真实单飞时序：deferred + 虚拟时钟，不让未完成 Promise 掩盖断言。
 const assert = require('assert');
-const { App } = require('../app');
+require('./harness/web-api').install(); // Node 14 测试环境补齐 Web API
+// 仅测试沙箱翻转源码门，以覆盖未来启用后的单飞语义；生产文件保持硬关。
+const fs = require('fs'), Module = require('module'), path = require('path');
+const filename = require.resolve('../app');
+const source = fs.readFileSync(filename, 'utf8');
+assert(source.includes('const trustedC3Release = false;'));
+const fixture = new Module(filename, module); fixture.filename = filename; fixture.paths = Module._nodeModulePaths(path.dirname(filename));
+fixture._compile(source.replace('const trustedC3Release = false;', 'const trustedC3Release = true;'), filename);
+const { App } = fixture.exports;
 const { FakeClock, install, restore } = require('./harness/fake-clock');
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return {promise, resolve}; };
 const flush = async () => { for (let i=0; i<30; i++) await Promise.resolve(); };

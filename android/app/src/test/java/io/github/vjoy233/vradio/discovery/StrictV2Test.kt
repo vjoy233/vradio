@@ -78,7 +78,9 @@ class StrictV2Test {
     val mutated = raw.clone(); mutated[mutated.lastIndex] = ' '.code.toByte()
     assertTrue(runCatching { StrictV2.generation(id, manifest, mutated, "a".repeat(40)) }.isFailure)
     assertTrue(runCatching { StrictV2.generation("0".repeat(64), manifest, raw, "a".repeat(40)) }.isFailure)
-    assertTrue(runCatching { StrictV2.generation(id, manifest, raw, "b".repeat(40)) }.isFailure)
+    for (bad in listOf("b".repeat(40), "", "A".repeat(40), "a".repeat(39), "a".repeat(41))) {
+      assertTrue("binding=$bad", runCatching { StrictV2.generation(id, manifest, raw, bad) }.isFailure)
+    }
   }
   @Test fun localFallbackIsSeparate() = each(fixture.getJSONArray("localFallback")) { c ->
     assertTrue(runCatching { StrictV2.pointer(bytes(c, "pointerBase64")) }.isFailure)

@@ -1,6 +1,7 @@
 'use strict';
 // 真临时目录中的发布结果经真实 Web 快照加载器校验，覆盖指针版本损坏修复。
 const assert=require('assert'),fs=require('fs'),os=require('os'),path=require('path'),crypto=require('crypto');
+require('./harness/web-api').install(); // 仅测试环境补齐 Node 14 Web API
 const P=require('../discovery-publish'),S=require('../discovery-sidecar');
 Object.defineProperty(globalThis,'crypto',{configurable:true,value:crypto.webcrypto});
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'vradio-publish-client-'));

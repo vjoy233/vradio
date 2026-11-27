@@ -1,7 +1,9 @@
-// 发现浮层异步换代、开关及重复渲染回归，离线 deferred 控制完成顺序。
+// 发现浮层真实单飞时序：deferred + 虚拟时钟，不让未完成 Promise 掩盖断言。
 const assert = require('assert');
 const { App } = require('../app');
-const deferred = () => { let resolve, reject; const promise = new Promise((a,b) => { resolve=a; reject=b; }); return {promise,resolve,reject}; };
+const { FakeClock, install, restore } = require('./harness/fake-clock');
+const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return {promise, resolve}; };
+const flush = async () => { for (let i=0; i<30; i++) await Promise.resolve(); };
 const body = {innerHTML:'', insertAdjacentHTML(_, s) { this.innerHTML += s; }, querySelectorAll() { return []; }};
 const els = {discovery:{hidden:true}, discBody:body, discClose:{focus(){}}, status:{textContent:''}};
 global.document = {activeElement:null,getElementById:id => els[id]};
@@ -9,38 +11,46 @@ global.window = {}; global.FEATURES = {discoverySidecar:false,sourceExplain:true
 global.Player = {station:null,connecting:null}; global.QualityStore = {summary:() => null}; global.qExplain = () => ({level:'unknown'});
 App.state.stations = []; App.cfg = {hideC:{}}; App.recents = []; App.revives = new Map();
 (async () => {
-  App.metaMain = 'a'; App.metaCache = null; let m = deferred(); App.loadMeta = () => m.promise;
-  let p = App.openDiscovery(); App.metaEpoch++; App.metaMain = 'b'; m.resolve({old:true}); await p;
-  assert.strictEqual(App.metaCache, null); assert.ok(body.innerHTML.includes('暂无推荐'));
-  let a = deferred(), b = deferred(), calls = 0; App.loadMeta = () => (++calls === 1 ? a.promise : b.promise);
-  p = App.openDiscovery(); App.closeDiscovery(); const newer = App.openDiscovery();
-  b.resolve({newer:true}); await newer; a.resolve({old:true}); await p; assert.deepStrictEqual(App.metaCache, {newer:true});
-  let requests = 0; window.DiscoverySidecar = {loadSnapshot:() => { requests++; return Promise.resolve([]); }};
-  await App.openDiscovery(); assert.strictEqual(requests, 0);
-  FEATURES.discoverySidecar = true; let s1 = deferred(), s2 = deferred(); calls = 0;
-  window.DiscoverySidecar.loadSnapshot = () => (++calls === 1 ? s1.promise : s2.promise);
-  p = App.openDiscovery(); App.closeDiscovery(); const q = App.openDiscovery();
-  const fresh = [{name:'新候选',genre:'精选',url:'https://example.org/'}];
-  s2.resolve(fresh); await q; s1.resolve([{name:'旧候选'}]); await p;
-  assert.strictEqual(App.discoverySidecar, fresh); assert.ok(body.innerHTML.includes('新候选')); assert.ok(!body.innerHTML.includes('旧候选'));
-  App.renderDiscovery(); App.renderDiscovery(); assert.strictEqual((body.innerHTML.match(/精选候选（需手动加入）/g) || []).length, 1);
-  App.discoverySidecar = null; window.DiscoverySidecar.loadSnapshot = () => Promise.reject(Error('offline'));
-  await App.openDiscovery(); assert.ok(body.innerHTML.includes('暂无推荐'));
-  // 装配换代触发安全刷新，不重新聚焦；分别覆盖 meta 和 sidecar 在飞期间。
-  App.closeDiscovery(); App.applyCfg = () => {}; App.rebind = () => {}; App.render = () => {}; App.showLast = () => {};
-  let focuses = 0; els.discClose.focus = () => { focuses++; };
-  const station = name => ({c:'测试',n:name,u:['https://example.org/'+name]});
-  let oldMeta = deferred(), newMeta = deferred(); calls = 0;
-  App.metaCache = null; App.metaMain = 'old'; App.loadMeta = () => (++calls === 1 ? oldMeta.promise : newMeta.promise);
-  FEATURES.discoverySidecar = false; p = App.openDiscovery();
-  App.applySources([station('新台')], []); App.metaMain = 'new'; await Promise.resolve();
-  newMeta.resolve({stations:{}}); await Promise.resolve(); await Promise.resolve();
-  oldMeta.resolve({old:true}); await p; assert.ok(body.innerHTML.includes('新台')); assert.deepStrictEqual(App.metaCache, {stations:{}}); assert.strictEqual(focuses, 1);
-  App.closeDiscovery(); App.discoverySidecar = null; FEATURES.discoverySidecar = true; App.metaCache = {stations:{}};
-  let oldSide = deferred(), newSide = deferred(); calls = 0; window.DiscoverySidecar.loadSnapshot = () => (++calls === 1 ? oldSide.promise : newSide.promise);
-  p = App.openDiscovery(); App.loadMeta = async () => ({stations:{}}); App.applySources([station('更新台')], []); App.metaMain = 'latest';
-  await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
-  newSide.resolve(fresh); await Promise.resolve(); await Promise.resolve(); oldSide.resolve([{name:'旧候选'}]); await p;
-  assert.ok(body.innerHTML.includes('更新台')); assert.ok(body.innerHTML.includes('新候选')); assert.ok(!body.innerHTML.includes('旧候选')); assert.strictEqual(focuses, 2);
-  console.log('发现页异步换代、开关、重渲染与降级通过');
+  const clock = new FakeClock(), orig = install(clock);
+  try {
+    App.metaMain = 'a'; App.metaCache = null;
+    let first = deferred(), calls = 0, signal;
+    App.loadMeta = (main, s) => { calls++; signal = s; return first.promise; };
+    const p = App.openDiscovery(); await flush();
+    App.closeDiscovery(); const q = App.openDiscovery(); await flush();
+    assert.strictEqual(calls, 1, '关闭重开共享在飞请求');
+    first.resolve({stations:{}}); await Promise.all([p,q]);
+    assert.deepStrictEqual(App.metaCache, {stations:{}}); assert.strictEqual(signal.aborted, false);
+
+    // 换代的尾随请求必须等旧请求完成，且旧结果不得写入。
+    App.closeDiscovery(); App.metaCache = null; App.metaMain = 'old';
+    let old = deferred(), fresh = deferred(); calls = 0;
+    App.loadMeta = main => { calls++; return main === 'old' ? old.promise : fresh.promise; };
+    const a = App.openDiscovery(); await flush();
+    App.metaEpoch++; App.metaMain = 'new'; const b = App.refreshDiscovery(); await flush();
+    assert.strictEqual(calls, 1); old.resolve({old:true}); await flush();
+    assert.strictEqual(calls, 2); assert.strictEqual(App.metaCache, null);
+    fresh.resolve({stations:{}}); await Promise.all([a,b]); assert.deepStrictEqual(App.metaCache, {stations:{}});
+
+    // 底层忽略 abort 时 5 秒仍释放逻辑单飞；迟到结果不得覆盖新代。
+    App.closeDiscovery(); App.metaCache = null; App.metaMain = 'stuck';
+    let stuck = deferred(), next = deferred(); calls = 0;
+    App.loadMeta = (main, s) => { calls++; if (main === 'stuck') { signal = s; return stuck.promise; } return next.promise; };
+    const c = App.openDiscovery(); await flush(); App.metaEpoch++; App.metaMain = 'next'; const d = App.refreshDiscovery(); await flush();
+    clock.tick(4999); await flush(); assert.strictEqual(calls, 1); assert.strictEqual(signal.aborted, false);
+    clock.tick(1); await flush(); assert.strictEqual(signal.aborted, true);
+    // 超时的等待者仍需为新 main 启动尾随。
+    assert.strictEqual(calls, 2); next.resolve({stations:{new:true}}); await Promise.all([c,d]);
+    stuck.resolve({old:true}); await flush(); assert.deepStrictEqual(App.metaCache, {stations:{new:true}});
+
+    App.closeDiscovery(); App.discoverySidecar = null; App.metaCache = {stations:{}}; FEATURES.discoverySidecar = true;
+    let side = deferred(); calls = 0;
+    window.DiscoverySidecar = {loadSnapshot:() => { calls++; return side.promise; }};
+    const e = App.openDiscovery(); await flush(); App.closeDiscovery(); const f = App.openDiscovery(); await flush();
+    assert.strictEqual(calls, 1); const rows = [{name:'新候选',genre:'精选',url:'https://example.org/'}];
+    side.resolve(rows); await Promise.all([e,f]); assert.strictEqual(App.discoverySidecar, rows);
+    App.renderDiscovery(); App.renderDiscovery(); assert.strictEqual((body.innerHTML.match(/精选候选（需手动加入）/g) || []).length, 1);
+    assert.strictEqual(clock.pending(), 0);
+    console.log('发现页单飞、尾随、超时及换代通过');
+  } finally { restore(orig); }
 })().catch(e => { console.error(e); process.exitCode = 1; });

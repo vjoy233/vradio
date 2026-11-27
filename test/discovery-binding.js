@@ -23,7 +23,9 @@ global.fetch = async p => ({ok:true,text:async () => p.startsWith('sync-manifest
   global.document = {activeElement:null,getElementById:id => els[id]}; global.Player = {station:null};
   App.metaMain = radio; App.metaCache = null; App.state.stations = [];
   const pending = App.openDiscovery();
+  await Promise.resolve(); // 等待单飞任务实际启动后再换代
   App.applySources([], []);
+  App.closeDiscovery(); // 本例只验证旧请求，阻止自动刷新产生额外请求
   assert.strictEqual(App.metaCache, null); assert.strictEqual(App.metaMain, null);
   resolve({v:1,stations:{old:{}}}); await pending;
   assert.strictEqual(App.metaCache, null);

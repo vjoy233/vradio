@@ -63,13 +63,17 @@
     try { return await Promise.race([run(), timeout]); } catch (_) { return []; } finally { clearTimeout(timer); }
   }
   // 指针和内容均不可信：逐代限制字节、校验清单与 SHA-256；损坏时尝试上一代。
-  async function loadSnapshot(fetcher, base, timeoutMs = 5000) {
+  async function loadSnapshot(fetcher, base, timeoutMs = 5000, signal) {
     if (typeof AbortController === 'undefined' || typeof TextDecoder === 'undefined') return [];
     async function stage(task) {
       const ctl = new AbortController(); let reader, timer;
       function cancel(r) { try { Promise.resolve(r.cancel()).catch(() => {}); } catch (_) {} }
-      const timeout = new Promise((_, reject) => { timer = setTimeout(() => { ctl.abort(); if (reader) cancel(reader); reject(Error('timeout')); }, timeoutMs); });
+      let rejectAbort;
+      const abort = () => { ctl.abort(); if (reader) cancel(reader); rejectAbort(Error('aborted')); };
+      const timeout = new Promise((_, reject) => { rejectAbort = reject; timer = setTimeout(abort, timeoutMs); });
+      if (signal) { if (signal.aborted) abort(); else signal.addEventListener('abort', abort, {once:true}); }
       async function bytes(url, max) {
+      if (ctl.signal.aborted) throw Error('aborted');
       const r = await fetcher(url, {signal:ctl.signal, cache:'no-store'});
       if (!r || !r.ok || !r.headers || !/^application\/(?:[\w.+-]*\+)?json(?:\s*;|$)/i.test(r.headers.get('content-type') || '') || Number(r.headers.get('content-length')) > max || !r.body || !r.body.getReader) { if (r && r.body && r.body.cancel) cancel(r.body); throw Error('invalid response'); }
       const active = r.body.getReader(); reader = active; const chunks = []; let size = 0, complete = false;
@@ -84,7 +88,7 @@
     }
       let success = false;
       try { const result = await Promise.race([task(bytes), timeout]); success = true; return result; }
-      finally { clearTimeout(timer); if (!success) { ctl.abort(); if (reader) cancel(reader); } }
+      finally { clearTimeout(timer); if (signal) signal.removeEventListener('abort', abort); if (!success) { ctl.abort(); if (reader) cancel(reader); } }
     }
     const parse = b => JSON.parse(new TextDecoder('utf-8', {fatal:true}).decode(b));
     try {

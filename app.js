@@ -730,8 +730,8 @@ const App = {
     if (this.mEditor) this.mEditor.externalChanged(); // 同步重建 = 外部变更：复核当前草稿 conflict 态（§5.2 草稿不因对账丢失）
     // 下一微任务等 reloadMain 完成 metaMain 绑定；不移动浮层焦点，每次换代仅启动一轮。
     if (typeof document !== 'undefined' && $('discovery') && !$('discovery').hidden) {
-      const epoch = this.metaEpoch;
-      Promise.resolve().then(() => { if (epoch === this.metaEpoch && !$('discovery').hidden) this.refreshDiscovery(); });
+      const epoch = this.metaEpoch, generation = this.discoveryGeneration;
+      Promise.resolve().then(() => { if (epoch === this.metaEpoch && generation === this.discoveryGeneration && !$('discovery').hidden) this.refreshDiscovery(); });
     }
   },
   /* 维护层套用：电台移动/重命名/手动隐藏/追加源按「任一源 URL 命中」（变体换序免疫）；
@@ -2209,6 +2209,15 @@ const App = {
   dscOpener: null,
   discoveryGeneration: 0,
   discoverySidecar: null,
+  discoveryMetaFlight: null, discoverySideFlight: null,
+  discoveryFlight(key, task, tag) { // 逻辑单飞；超时尽力 abort。忽略信号的底层操作可能仍占资源。
+    if (this[key]) return this[key];
+    let timer; const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    const p = Promise.race([Promise.resolve().then(() => task(ctl && ctl.signal)), new Promise(resolve => { timer = setTimeout(() => { if (ctl) ctl.abort(); resolve(null); }, 5000); })])
+      .catch(() => null).then(value => { clearTimeout(timer); if (this[key] === p) this[key] = null; return {tag, value}; });
+    this[key] = p;
+    return p;
+  },
   async openDiscovery() {
     this.dscOpener = document.activeElement;
     $('discovery').hidden = false;
@@ -2221,25 +2230,27 @@ const App = {
     const current = () => generation === this.discoveryGeneration && !$('discovery').hidden && epoch === this.metaEpoch && main === this.metaMain;
     this.renderDiscovery(); // 新台先可用，元数据慢或失败也不留旧屏/加载态
     if (!this.metaCache) {
-      let meta = null;
-      try { meta = await this.loadMeta(main); } catch (_) {}
+      let result = await this.discoveryFlight('discoveryMetaFlight', signal => this.loadMeta(main, signal), epoch);
       if (!current()) return;
-      this.metaCache = meta;
+      if (result.tag !== epoch) {
+        result = await this.discoveryFlight('discoveryMetaFlight', signal => this.loadMeta(main, signal), epoch);
+        if (!current()) return;
+      }
+      this.metaCache = result.tag === epoch ? result.value : null;
     }
     // 本地推荐先展示，第三方候选失败或慢响应不阻塞它。
     this.renderDiscovery();
     if (FEATURES.discoverySidecar && !this.discoverySidecar && window.DiscoverySidecar) {
-      let rows;
-      try { rows = await window.DiscoverySidecar.loadSnapshot((u, opts) => fetch(u, opts), 'discovery-snapshots'); } catch (_) { return; }
+      const result = await this.discoveryFlight('discoverySideFlight', signal => window.DiscoverySidecar.loadSnapshot((u, opts) => fetch(u, opts), 'discovery-snapshots', 5000, signal));
+      const rows = result.value;
       if (!current() || !FEATURES.discoverySidecar) return;
-      if (rows === null) $('status').textContent = '当前页面缺少安全校验能力，精选候选不可用；请使用 localhost 或 HTTPS';
-      else if (rows && rows.length) { this.discoverySidecar = rows; this.renderDiscovery(); }
+      if (rows && rows.length) { this.discoverySidecar = rows; this.renderDiscovery(); }
     }
   },
-  async loadMeta(main) { // 缺 crypto/manifest、批次混态或时序竞争均保守不展示公共来源
+  async loadMeta(main, signal) { // 缺 crypto/manifest、批次混态或时序竞争均保守不展示公共来源
     if (!location.protocol.startsWith('http') || typeof main !== 'string') return null;
     try {
-      const get = async p => { const r = await fetch(p + '?t=' + Date.now(), { cache:'no-store' }); if (!r.ok) throw Error('fetch'); return r.text(); };
+      const get = async p => { if (signal && signal.aborted) throw Error('aborted'); const r = await fetch(p + '?t=' + Date.now(), { cache:'no-store', signal }); if (!r.ok) throw Error('fetch'); return r.text(); };
       const manifest = JSON.parse(await get('sync-manifest.json'));
       const raw = await get('radio-meta.json');
       const files = Array.isArray(manifest.files) ? manifest.files : [];

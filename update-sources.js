@@ -10,7 +10,7 @@
 //      随行产出 radio-data.js（radio.txt 全文包成 window.RADIO_DATA 经典 script，file:// 降级直读全库，N1/r2 ③）
 // 用法：node update-sources.js  或 页面上点「同步源」(POST /api/sync)
 const http = require('http'), https = require('https'), fs = require('fs'), path = require('path');
-const dns = require('dns'), crypto = require('crypto');
+const dns = require('dns'), crypto = require('crypto'), net = require('net');
 const { execFile } = require('child_process');
 
 const ROOT = __dirname;
@@ -68,12 +68,18 @@ const EU_TAG_RE = new RegExp(' \\[(' + Object.values(EU_COUNTRIES).join('|') + '
 /* ---------- 网络安全护栏（server.js 与本文件共用，导出供 require） ---------- */
 // 私网/环回/链路本地判定：IPv4 段 + IPv6（::1、fc00::/7、fe80::/10、IPv4-mapped、未指定地址）
 function isPrivateIp(a) {
-  const s = String(a);
-  const m = s.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
-  if (m) return isPrivateIp(m[1]);
-  if (s.includes(':')) {
-    const v6 = s.toLowerCase();
-    return v6 === '::1' || v6 === '::' || v6.startsWith('fc') || v6.startsWith('fd') || /^(fe8|fe9|fea|feb)/.test(v6);
+  let s = String(a);
+  if (net.isIP(s) === 6) {
+    // zone ID（如 fe80::1%eth0）不是 WHATWG URL 合法字面量，直接按内网拒绝，避免异常逃出 lookup 回调。
+    if (s.includes('%')) return true;
+    // WHATWG 规范化展开形式与 dotted mapped，统一识别整个 ::ffff:0:0/96。
+    try { s = new URL('http://[' + s + ']/').hostname.slice(1, -1); } catch (_) { return true; }
+    const m = s.match(/^::ffff:([\da-f]{1,4}):([\da-f]{1,4})$/);
+    if (m) {
+      const hi = parseInt(m[1], 16), lo = parseInt(m[2], 16);
+      return isPrivateIp([hi >> 8, hi & 255, lo >> 8, lo & 255].join('.'));
+    }
+    return s === '::1' || s === '::' || s.startsWith('fc') || s.startsWith('fd') || /^(fe8|fe9|fea|feb)/.test(s);
   }
   const o = s.split('.').map(Number);
   return o[0] === 0 || o[0] === 10 || o[0] === 127 || (o[0] === 169 && o[1] === 254)
@@ -87,7 +93,7 @@ function safeTarget(raw) {
   const h = u.hostname.toLowerCase();
   if (h === 'localhost' || h === '::1' || h === '[::1]' || h.endsWith('.local')) return null;
   if (h.startsWith('[') && h.endsWith(']') && isPrivateIp(h.slice(1, -1))) return null; // IPv6 字面量 fail-fast（audit A5）：[fc/fd/fe8~b::…] 字符串层直拒——连接级 guardLookup 本就兜底，这里省一次建连、让两层校验名实相符
-  if (/^(10\.|127\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h)) return null;
+  if (net.isIP(h) === 4 && isPrivateIp(h)) return null;
   return u.href;
 }
 // 重定向头安全解析（audit-r2 P2-1）：畸形 Location（未闭合 IPv6 括号/非法端口/含空格 host）会让

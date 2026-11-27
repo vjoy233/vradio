@@ -9,6 +9,7 @@ window.FEATURES = (function () {
     metadataV2: true,   // B3-A 元数据 v2 管线（关 = LegacyMetadataSink，曲讯/icy-br/MediaSession/radio.songs 走旧链）
     listenStats: true,  // B3-B 本地收听统计（关 = 不消费统计事件、不 flush sidecar；不清已有数据）
     discovery: true,    // B3-C 本地发现页（关 = 隐藏入口与派生计算；不影响主列表排序）
+    sourceExplain: true, // 来源与质量解释展示
     uiRefresh: true,    // 桌面新版壳总开关（ui-redesign §6.6/P2）：≥1024px 生效为桌面壳，窄窗口与旧紧凑布局不变
   };
   try {

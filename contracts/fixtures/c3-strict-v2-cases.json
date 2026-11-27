@@ -8,6 +8,20 @@
     {"id":"bad-date", "accept":false, "raw":"{\"v\":2,\"source\":\"recommended-radio-streams\",\"license\":\"CC0-1.0\",\"commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"generatedAt\":\"2026-02-30T01:02:03.123Z\",\"items\":[]}"},
     {"id":"unknown-field", "accept":false, "raw":"{\"v\":2,\"source\":\"recommended-radio-streams\",\"license\":\"CC0-1.0\",\"commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"generatedAt\":\"2026-11-26T01:02:03.123Z\",\"items\":[],\"extra\":true}"}
   ],
+  "urlAdversarial": [
+    {"url":"http://127.0.0.1/live", "formatAccept":true, "note":"仅格式通过，联网须另行防护"},
+    {"url":"http://127.1/live", "formatAccept":false},
+    {"url":"http://0177.0.0.1/live", "formatAccept":false},
+    {"url":"http://0x7f000001/live", "formatAccept":false},
+    {"url":"http://2130706433/live", "formatAccept":false},
+    {"url":"http://example.0x7f/live", "formatAccept":false},
+    {"url":"http://user@example.invalid/live", "formatAccept":false}
+  ],
+  "binding": [
+    {"id":"all-match", "pointerId":"a", "manifestHash":"a", "bytesHash":"a", "accept":true},
+    {"id":"pointer-mismatch", "pointerId":"b", "manifestHash":"a", "bytesHash":"a", "accept":false},
+    {"id":"manifest-mismatch", "pointerId":"a", "manifestHash":"b", "bytesHash":"a", "accept":false}
+  ],
   "pointer": [
     {"id":"first-generation", "current":"valid", "previous":"null", "result":"current"},
     {"id":"good-both", "current":"valid", "previous":"valid", "result":"current"},

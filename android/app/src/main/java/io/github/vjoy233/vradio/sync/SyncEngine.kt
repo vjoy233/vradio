@@ -108,8 +108,6 @@ class SyncEngine(private val gh: Gh, private val check: CheckStream, private val
       return SyncResult(false, before, 0, 0, 0, emptyList(), emptyList(), emptyList(), emptyList(), null, null, cnUpdated, -1)
     }
     val mergedText = merged.joinToString("\r\n") + "\r\n"
-    // 全量候选先落盘；任何失败均在主库写入前中止。
-    HealthCandidateQueue.record(filesDir, "device", curText, mergedText)
     // 写主库前立持久屏障；中断后轻更新不得用旧 pending 或旧 stamp 覆盖端内数据。
     HealthScopeWarning.markLocked(filesDir)
     SyncBarrier.begin(filesDir)

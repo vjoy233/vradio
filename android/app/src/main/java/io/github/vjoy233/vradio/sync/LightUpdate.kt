@@ -84,14 +84,6 @@ class LightUpdate(private val gh: Gh, private val filesDir: File,
     val radio = gh.file(GhRepos.SELF, "radio.txt")
     if (radio == null) { lastFailWhy = "radio.txt 下载失败（网络/限流）"; return null }
     val logos = gh.file(GhRepos.SELF, "logos.txt")
-    // 审查队列先于任何资产写入；旧快照过期时拒绝，避免记录错误批次。
-    val diskRadio = File(filesDir, "radio.txt")
-    if (diskRadio.isFile && runCatching { diskRadio.readText() }.getOrNull() != oldRadioText) {
-      lastFailWhy = "数据基线已变化，请重新加载后更新"; return null
-    }
-    if (runCatching { HealthCandidateQueue.record(filesDir, "light", oldRadioText, radio) }.isFailure) {
-      lastFailWhy = "候选队列写入失败，未开始发布主库"; return null
-    }
     // diff：keyOf 台名集合（分类|台名）
     val oldKeys = keySet(oldRadioText); val newKeys = keySet(radio)
     val addedKeys = newKeys - oldKeys; val removedKeys = oldKeys - newKeys

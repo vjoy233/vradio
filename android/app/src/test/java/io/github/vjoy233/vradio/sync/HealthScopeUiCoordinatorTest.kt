@@ -71,7 +71,7 @@ class HealthScopeUiCoordinatorTest {
     var shown = false; val messages = mutableListOf<String>()
     val ui = HealthScopeUiCoordinator({ disk }, { disk }, { shown = it }, { it?.let(messages::add) })
     ui.refresh(); assertTrue(shown); ui.acknowledge(); assertFalse(shown)
-    assertTrue(messages.single().contains("无法确认状态"))
+    assertTrue(messages.single().contains("无法确认提示状态"))
     ui.refresh(); assertTrue(shown)
   }
   @Test fun newLegacyBarrierGenerationIsNotDismissed() = runBlocking {

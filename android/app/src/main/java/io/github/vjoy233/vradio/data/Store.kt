@@ -36,6 +36,25 @@ object Store {
   @Synchronized
   fun remove(k: String) { mem.remove(k); persist() }
 
+  /** 单键 copy-on-write：不改变 set/remove 旧语义，调用方可观察真实落盘结果。 */
+  @Synchronized
+  fun setChecked(k: String, v: String): Boolean {
+    val had = mem.containsKey(k); val old = mem[k]
+    mem[k] = v
+    if (persist()) return true
+    if (had) mem[k] = old!! else mem.remove(k)
+    return false
+  }
+
+  @Synchronized
+  fun removeChecked(k: String): Boolean {
+    val had = mem.containsKey(k); val old = mem[k]
+    mem.remove(k)
+    if (persist()) return true
+    if (had) mem[k] = old!!
+    return false
+  }
+
   @Synchronized
   fun snapshot(): Map<String, String> { // 白名单内且存在的键（exportAll / 备份导出用）
     val o = LinkedHashMap<String, String>()

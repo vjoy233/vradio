@@ -151,6 +151,9 @@ class StoreCheckedTest {
         try {
           field.setLong(Store, Long.MAX_VALUE)
           val snap = Store.snapshotVersioned()
+          val other = File(d, "other")
+          Store.init(other)
+          assertFalse(other.exists()); assertEquals("old", Store.get(C.K_VOL))
           Store.set(C.K_VOL, "new"); Store.remove(C.K_VOL)
           assertFalse(Store.setChecked(C.K_VOL, "new")); assertFalse(Store.removeChecked(C.K_VOL))
           Store.applyAll(mapOf(C.K_VOL to "new")); assertFalse(Store.applyAllChecked(mapOf(C.K_VOL to "new")))

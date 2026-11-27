@@ -25,6 +25,7 @@ object Store {
 
   @Synchronized
   fun init(dir: File) { // VRadioApp.onCreate 调一次（重复 init = 换目录重载，测试用）
+    if (!canBump()) return
     dir.mkdirs()
     file = File(dir, "store.json")
     mem.clear()

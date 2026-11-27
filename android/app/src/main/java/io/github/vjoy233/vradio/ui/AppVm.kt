@@ -638,6 +638,18 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   data class DiscoveryUi(val groups: Groups, val ver: Int = 0)
 
+  fun discoveryLabels(s: Station): Pair<List<String>, String> {
+    val origins = mutableSetOf<String>()
+    if (s.personalUrls.any { it in s.u }) origins.add("个人来源")
+    if (s.adjustedUrls.any { it in s.u }) origins.add("个人追加")
+    if (metaBound) radioMeta.value.stations[s.u0]?.sources?.filter { it.url in s.u }?.forEach {
+      origins.add(when (it.upstream) { "gao" -> "国内上游"; "eu" -> "欧美上游"; else -> "来源未知" })
+    }
+    if (origins.isEmpty()) origins.add("来源未知")
+    val e = io.github.vjoy233.vradio.data.qExplain(runCatching { quality.summary(s.u0, s.u) }.getOrNull(), System.currentTimeMillis())
+    return origins.sorted() to when (e.level) { "good" -> "稳定"; "fair" -> "一般 · 建议重测"; "poor" -> "不稳定 · 建议重测"; else -> "暂无可信质量样本" }
+  }
+
   /** 派生视图（stamp 哨兵驱动：体检/同步/收藏/数据更新后自动重算；开关关 UI 不入口，计算也跳过）。 */
   val discovery: StateFlow<DiscoveryUi> = combine(stamp, showDead, playKeys) { _, _, _ ->
     DiscoveryUi(if (FeatureFlags.DISCOVERY) runCatching { buildDiscovery() }.getOrDefault(Groups.EMPTY)
@@ -647,14 +659,22 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   private fun buildDiscovery(): Groups {
     val sts = runCatching { lib.stations.toList() }.getOrDefault(emptyList())
     val q = HashMap<String, QInfo>()
+    val attention = HashMap<String, Long>()
+    val now = System.currentTimeMillis()
     for (s in sts) runCatching { quality.summary(s.u0, s.u) }.getOrNull()?.let {
       q[s.u0] = QInfo(it.stability, it.directCount, it.metadata, it.lastObservedAt)
+      val e = io.github.vjoy233.vradio.data.qExplain(it, now)
+      if (e.level != "unknown" && e.action == "retest") attention[s.u0] = it.lastObservedAt
     }
     val meta = radioMeta.value
     val firstSeen = HashMap<String, Long>()
+    val verified = HashMap<String, Long>()
     if (metaBound) for ((id, m) in meta.stations) {   // firstSeenAt 挂 sources[] 为主、台级直挂容错——取最早（B3-C 双端口径）；
       val fs = (listOf(m.firstSeenAt) + m.sources.map { it.firstSeenAt }).filter { it > 0L }.minOrNull() ?: 0L   // AIbot P1-4：混态（不绑定）整组置空
       if (fs > 0L) firstSeen[id] = fs
+      val station = sts.find { it.u0 == id }
+      val v = m.sources.filter { it.verification == "sync" && station?.u?.contains(it.url) == true && it.lastVerifiedAt > 0 && it.lastVerifiedAt <= now && now - it.lastVerifiedAt < 30L * 86400000L }.maxOfOrNull { it.lastVerifiedAt } ?: 0L
+      if (v > 0L) verified[id] = v
     }
     return Discovery.build(DiscoveryInput(
       stations = sts,
@@ -663,6 +683,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       quality = q, firstSeenAt = firstSeen,
       recoveredAt = RecoveryLog.prune(recovered, System.currentTimeMillis()),
       recentKeys = runCatching { lib.recents.map { it.k }.toSet() }.getOrDefault(emptySet()),
+      recentUrls = runCatching { lib.recents.flatMap { it.u }.toSet() }.getOrDefault(emptySet()),
+      verifiedAt = verified, attentionAt = attention, now = now,
     ))
   }
 

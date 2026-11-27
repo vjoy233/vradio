@@ -106,5 +106,36 @@ ok('纯函数：Node 直跑无 DOM/网络依赖（不产生网络请求）', () 
   assert.ok(d && d.groups);
 });
 
+ok('验证仅接受关联源的近期同步事实，排除过期、未来和未知证明', () => {
+  const now = 40 * 86400000, mk = (url, t, verification = 'sync') => ({url, lastVerifiedAt:t, verification});
+  const rows = [row(1), row(2), row(3), row(4), row(5)];
+  const meta = {stations:{}};
+  rows.forEach((r, i) => { meta.stations[r.u0] = {sources:[mk(r.u0, [now-1, now-30*86400000, now+1, now-2, now-3][i], i === 3 ? 'unknown' : 'sync')]}; });
+  meta.stations[rows[4].u0].sources[0].url = 'https://unrelated';
+  assert.deepStrictEqual(names(run(rows, {meta, input:{now}}).groups.recentlyVerified), ['台1']);
+});
+ok('质量关注仅取可信差异样本，来源混合且不推断分类', () => {
+  const { qExplain } = require('../quality-store');
+  const now = 10000, rows = [row(1, { origins:['personal','adjusted'] }), row(2)];
+  const meta = {stations:{'https://s1/live':{sources:[{url:'https://s1/live',upstream:'gao'}]}}};
+  const d = run(rows, {meta, q:{'https://s1/live':qa({okCount:2,failCount:1,lastObservedAt:9000,stability:'fair'})}, input:{now,explain:qExplain}});
+  assert.deepStrictEqual(names(d.groups.needsAttention), ['台1']);
+  assert.deepStrictEqual(d.groups.needsAttention[0].origins, ['adjusted','gao','personal']);
+  assert.strictEqual(d.groups.unheard.find(x => x.n === '台2').explain.level, 'unknown');
+});
+ok('跨端共享 fixture：全部分组及排序、可见性和 URL 回绑', () => {
+  const f = require('../contracts/fixtures/discovery.json');
+  const rows = f.stations.map(s => ({ k:'X|'+s.name, n:s.name, c:'X', u0:s.id, u:[s.id], om:s.starter, hidden:s.hidden, dead:s.dead }));
+  const q = {}, stations = {}, revives = new Map();
+  f.stations.forEach(s => {
+    if (s.quality) q[s.id] = s.quality;
+    stations[s.id] = {firstSeenAt:s.firstSeenAt, sources:[{url:s.id, verification:'sync', lastVerifiedAt:s.verifiedAt}]};
+    if (s.recoveredAt) revives.set(s.id, s.recoveredAt);
+  });
+  const d = buildDiscovery({rows, quality:u => q[u] || null, meta:{stations}, revives,
+    recents:[{u:f.recentUrls}], playingKey:'X|'+f.playing, connectingKey:'X|'+f.connecting, now:f.now,
+    explain:q => ({level:q && q.stability || 'unknown', action:q && q.stability === 'fair' ? 'retest' : 'none'})});
+  for (const key of Object.keys(f.expected)) assert.deepStrictEqual(names(d.groups[key]), f.expected[key], key);
+});
 console.log(`\n${pass} 通过，${fail} 失败`);
 process.exit(fail ? 1 : 0);

@@ -15,6 +15,16 @@ for(const c of fixture.controls) {
  assert.strictEqual(b.length,c.bytes,c.id); assert.strictEqual(digest(b),c.sha256,c.id);
  if(c.accept) assert.deepStrictEqual(plain(fn(b)),c.output,c.id); else assert.throws(()=>fn(b),c.id);
 }
+// 概念草案 URL 案例经真实 sidecar 入口验证，不调用私有 URL helper。
+const draft=JSON.parse(fs.readFileSync(path.join(__dirname,'../contracts/fixtures/c3-strict-v2-cases.json'),'utf8'));
+const template=JSON.parse(draft.sidecar.find(c=>c.id==='valid-item').raw);
+for(const c of draft.urlAdversarial) {
+ const specimen=JSON.parse(JSON.stringify(template)); specimen.items[0].url=c.url;
+ const b=Buffer.from(JSON.stringify(specimen),'utf8');
+ if(c.formatAccept) assert.deepStrictEqual(plain(parser.sidecar(b)),specimen,c.url);
+ else assert.throws(()=>parser.sidecar(b),c.url);
+}
+// 状态选择仅为 fixture 驱动模拟，不是生产实现或可信绑定。
 function selection(c) {
  let p; try {p=parser.pointer(bytes(c.pointerBase64));} catch (_) {return {selection:'unavailable'};}
  function get(id) {try {const g=c.generations[id]; if(!g) return null; return parser.generation(id,bytes(g.manifestBase64),bytes(g.sidecarBase64),digest);} catch (_) {return null;}}

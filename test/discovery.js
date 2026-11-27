@@ -3,7 +3,7 @@
 // （good 且 directCount>0）、最近新增（firstSeenAt 排序/无 meta 为空）、最近恢复（只认转移记录）、有曲讯
 // （metadata==icy）、未听过（键/URL 双口径）、手动隐藏彻底过滤、dead 默认过滤（正在播例外）、每组 20 上限、
 // 排序稳定（时间降序 + identityUrl 字典序）、同一台跨组不重复。
-const assert = require('assert'), path = require('path');
+const assert = require('assert'), fs = require('fs'), path = require('path');
 const { buildDiscovery } = require(path.join(__dirname, '..', 'app.js'));
 
 let pass = 0, fail = 0;
@@ -104,6 +104,30 @@ ok('同一台可跨组：精选 + 未听过 + 稳定直连同时命中', () => {
 ok('纯函数：Node 直跑无 DOM/网络依赖（不产生网络请求）', () => {
   const d = run([row(1)]); // 在无 fetch/document 的 Node 侧同步完成即证明本地派生
   assert.ok(d && d.groups);
+});
+
+ok('稳定直连文案保守，不虚称滚动时间窗口', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+  assert(source.includes("['stable', '稳定直连', '质量评估良好且有直流源']"));
+  assert(!source.includes('近 30 天稳定性 good 且有直流源'));
+});
+
+ok('稳定直连行为：由 qSummary/qStability 生成累计质量，近期可进、超窗不进', () => {
+  const { qSummary } = require('../quality-store');
+  const now = 40 * 86400000;
+  const source = 'https://s1/live';
+  const station = { cf: 0, sources: { [source]: {
+    okCount: 4, failCount: 0, lastOkAt: now - 86400000, lastFailAt: 0, lastPlaybackAt: 0,
+    latSum: 400, latN: 4, disconnects: 0, modes: ['direct'], lastDiag: null, lastPlayFail: null,
+  } } };
+  const fresh = qSummary({ [source]: station }, source, [source], now);
+  const staleStation = JSON.parse(JSON.stringify(station));
+  staleStation.sources[source].lastOkAt = now - 31 * 86400000;
+  const stale = qSummary({ [source]: staleStation }, source, [source], now);
+  assert.strictEqual(fresh.stability, 'good');
+  assert.deepStrictEqual(names(run([row(1)], { q: { [source]: fresh }, input: { now } }).groups.stable), ['台1']);
+  assert.strictEqual(stale.stability, 'unknown');
+  assert.deepStrictEqual(names(run([row(1)], { q: { [source]: stale }, input: { now } }).groups.stable), []);
 });
 
 ok('验证仅接受关联源的近期同步事实，排除过期、未来和未知证明', () => {

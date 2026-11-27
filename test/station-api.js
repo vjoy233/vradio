@@ -123,13 +123,13 @@ const HTML_BIG = Buffer.from('<html>' + 'x'.repeat(9000) + '</html>');
       assert.ok(ls.indexOf('N'.repeat(40) + ',' + FIX + '/ok.mp3?c=cap') >= 0, '台名 40 封顶：' + ls.join(' / '));
     });
 
-    await ok('URL 512 封顶：超长 URL 截断后探活与落盘（截断串仍命中 fixture 路由）', async () => {
+    await ok('URL 超过 512 字符 → 400 拒绝且不探活/不写盘', async () => {
+      const before = myRaw();
       const u = FIX + '/ok.mp3?pad=' + 'z'.repeat(600);
       const r = await postMy(req, { n: '台八', u: u, c: '容量' });
-      assert.deepStrictEqual(jbody(r), { ok: true });
-      const line = '台八,' + u.slice(0, 512);
-      assert.ok(myLines().indexOf(line) >= 0, '落盘为 512 截断串');
-      assert.strictEqual(u.slice(0, 512).length, 512);
+      assert.strictEqual(r.status, 400);
+      assert.deepStrictEqual(jbody(r), { error: '流地址超过 512 字符上限' });
+      assert.ok(sameBuf(before, myRaw()), '超长 URL 不得写文件');
     });
 
     await ok('假流 336B（SHORT_BODY）→ HTTP 200 但 {ok:false,detail:探活失败…}，文件零写入', async () => {

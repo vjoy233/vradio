@@ -3064,6 +3064,7 @@ const App = {
       const u = $('mAUrl').value.trim();
       if (!n) { $('status').textContent = '请填写电台名'; return; }
       if (!/^https?:\/\//.test(u)) { $('status').textContent = '流地址需以 http(s):// 开头'; return; }
+      if (u.length > 512) { $('status').textContent = '流地址超过 512 字符上限'; return; }
       const c = $('mACat').value;
       $('mAddBtn').disabled = true; $('mAddBtn').querySelector('span').textContent = '探活中…';
       try {

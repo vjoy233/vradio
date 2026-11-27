@@ -591,8 +591,9 @@ http.createServer((req, res) => {
       // 内容护栏：台名/分类去 csv 分隔符与换行（radio.txt 格式硬约束），长度封顶；地址须公网 http(s)
       const n = String(j.n || '').replace(/[,\r\n|]/g, ' ').trim().slice(0, 40);
       const c = String(j.c || '').replace(/[,\r\n|#]/g, ' ').trim().slice(0, 24);
-      const u0 = String(j.u || '').trim().slice(0, 512);
+      const u0 = String(j.u || '').trim();
       if (!n || !c) return json(400, { error: '电台名/分类不能为空' });
+      if (u0.length > 512) return json(400, { error: '流地址超过 512 字符上限' });
       const target = (TEST_HOOK ? TEST_HOOK.safe : safeTarget)(u0);
       if (!target) return json(403, { error: '流地址不合法（仅公网 http(s)）' });
       const probe = { timeout: 12000 }; if (TEST_HOOK) probe.testHook = TEST_HOOK;

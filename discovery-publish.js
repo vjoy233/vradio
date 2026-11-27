@@ -58,6 +58,8 @@ function publish(dir, raw) {
   }
   // 历史半代无法证明从未被引用，因此绝不修补或替换。
   if (!readSnapshot(dir,sha)) throw Error('同名快照不完整或损坏');
+  // 已提交同代时保留原 previous；回退命中同代时仍须修复 current 指针。
+  try { if (JSON.parse(fs.readFileSync(path.join(dir,'current.json'),'utf8')).current === sha) return sha; } catch (_) {}
   const tmp = path.join(dir,'current.'+process.pid+'.'+crypto.randomBytes(8).toString('hex')+'.tmp');
   try { fs.writeFileSync(tmp,JSON.stringify({v:1,current:sha,previous:previous ? previous.manifest.sha256 : null})+'\n'); fs.renameSync(tmp,path.join(dir,'current.json')); }
   finally { try { fs.unlinkSync(tmp); } catch (_) {} }

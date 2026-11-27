@@ -19,6 +19,11 @@ try {
   assert.strictEqual(child.status,71,point+': '+child.stderr);
   assert.strictEqual(P.load(dir).manifest.sha256,point==='pointer-rename'?sha:oldSha);
   assert.strictEqual(P.publish(dir,raw),sha); assert.strictEqual(P.load(dir).manifest.sha256,sha);
+  // 指针提交后退出并重试也不得把 previous 从旧代改成自身。
+  const pointer=JSON.parse(fs.readFileSync(path.join(dir,'current.json'),'utf8'));
+  assert.strictEqual(pointer.previous,oldSha,point);
+  fs.writeFileSync(path.join(dir,sha,'manifest.json'),'broken');
+  assert.strictEqual(P.load(dir).manifest.sha256,oldSha,point+' fallback');
  }
  // 重入模拟并发写者：任何写阶段的另一发布必须被拒，且不影响首写。
  const dir=path.join(root,'reentrant'); fs.mkdirSync(dir); const write=fs.writeFileSync; let checked=false;

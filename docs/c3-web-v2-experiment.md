@@ -2,7 +2,7 @@
 
 基于 #89 的共享合成 bytes 与 #86 的待评审 v2 提案；不接现有生产路径、不启用开关、不读取文件或联网。`c3-strict-v2.js` 接收已限长字节；调用者必须在读取流时提前执行上限，不能因本函数检查而无界缓冲。代身份校验的同步 SHA-256 由调用者注入，测试用 Node crypto；仅哈希一致不证明来源、许可或连接安全。
 
-`test/c3-web-strict-v2.js` 直接解码共享 base64，核实真实字节摘要/长度并断言 sidecar、pointer、manifest 及选择结果；本地回退和 commit 绑定仅为测试模拟，不是 Web 运行时流程。独立实验未在浏览器或 Android 真机验证，也不等于生产接线或发布许可。
+`test/c3-web-strict-v2.js` 直接解码共享 base64，核实真实字节摘要/长度并断言 sidecar、pointer、manifest 及选择结果。`generation` 强制外部注入 40 位小写 commit 并与 sidecar commit 精确相等；绑定值的来源及可信性未定义，测试仅模拟。本地回退和状态选择仅为测试模拟，不是 Web 运行时流程。独立实验未在浏览器或 Android 真机验证，也不等于生产接线或发布许可。
 
 ## 待评审缺口
 

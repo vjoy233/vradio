@@ -92,9 +92,9 @@ class B3PlaybackAcceptanceTest {
       SystemClock.sleep(2000)
       inst.runOnMainSync { assertTrue("后台未播放", PlayerHolder.player.isPlaying) }
       assertTrue("熄屏前屏幕状态已改变", power.isInteractive)
+      screenChanged = true // 发送命令后即可能熄屏；异常时 finally 也须检查恢复
       inst.uiAutomation.executeShellCommand("input keyevent KEYCODE_POWER").close()
-      screenChanged = await(5000) { !power.isInteractive }
-      assertTrue("未熄屏", screenChanged)
+      assertTrue("未熄屏", await(5000) { !power.isInteractive })
       val end = SystemClock.elapsedRealtime() + 15000
       while (SystemClock.elapsedRealtime() < end) {
         assertFalse("观察期间屏幕亮起", power.isInteractive)

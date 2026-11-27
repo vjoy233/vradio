@@ -28,16 +28,19 @@ class StoreCheckedTest {
 
   @Test fun checkedFailsClosedBeforeInit() {
     val d = createTempDirectory("checked-uninit").toFile()
+    val fileField = Store::class.java.getDeclaredField("file").apply { isAccessible = true }
+    val memField = Store::class.java.getDeclaredField("mem").apply { isAccessible = true }
     try {
-      Store.init(d); Store.set(C.K_VOL, "old")
-      val field = Store::class.java.getDeclaredField("file").apply { isAccessible = true }
       synchronized(Store) {
-        val oldFile = field.get(Store)
+        val oldFile = fileField.get(Store)
+        @Suppress("UNCHECKED_CAST") val mem = memField.get(Store) as MutableMap<String, String>
+        val oldMem = HashMap(mem)
         try {
-          field.set(Store, null)
+          Store.init(d); Store.set(C.K_VOL, "old")
+          fileField.set(Store, null)
           assertFalse(Store.setChecked(C.K_VOL, "new")); assertFalse(Store.removeChecked(C.K_VOL))
           assertEquals("old", Store.get(C.K_VOL))
-        } finally { field.set(Store, oldFile) }
+        } finally { fileField.set(Store, oldFile); mem.clear(); mem.putAll(oldMem) }
       }
     } finally { d.deleteRecursively() }
   }

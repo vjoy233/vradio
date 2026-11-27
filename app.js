@@ -2092,13 +2092,13 @@ const App = {
   qualityHtml(s) {
     const qa = QualityStore.summary(s.u[0], s.u);
     if (!qa) return '<div class="srcs" style="padding:2px 0 6px">暂无质量样本（播放与体检后自动累计）</div>';
-    const Q_TXT = { good: '稳定', fair: '一般', poor: '不稳定', unknown: '样本不足' };
+    const Q_TXT = { good: '稳定', fair: '一般', poor: '不稳定', unknown: '暂无稳定性评估' };
     const cls = qa.stability === 'good' ? 'okb' : qa.stability === 'poor' ? 'badb' : '';
     const total = qa.okCount + qa.failCount;
     const rate = total ? Math.round(100 * qa.okCount / total) : 0;
     const icy = { icy: '有曲讯（直流）', none: '无曲讯', mixed: '混合源' }[qa.metadata] || qa.metadata;
     return `<div class="srcs" style="padding:2px 0 6px">
-      <span class="badge ${cls}" title="stability: ${this.esc(qa.stability)}（近 30 天成功率/延迟/连续失败综合）">● ${Q_TXT[qa.stability] || qa.stability}</span>
+      <span class="badge ${cls}" title="stability: ${this.esc(qa.stability)}（累计成功率/延迟/连续失败综合；最近观测用于新鲜度判断）">● ${Q_TXT[qa.stability] || qa.stability}</span>
       成功率 ${rate}%（${qa.okCount}/${total}）· 平均延迟 ${qa.avgLatencyMs}ms · 断流 ${qa.disconnects} 次 · ${icy}
       · 最近播放 ${qa.lastPlaybackAt ? this.fmtAgo(qa.lastPlaybackAt) : '—'}
     </div>`;
@@ -2169,16 +2169,12 @@ const App = {
      关时隐藏）。纯本地派生——buildDiscovery 数据注入（质量摘要/健康/最近/radio-meta/revives 全本地），不联网、
      不改主列表排序；点击行统一 startPlay→Player.play（不复制播放决策）。 ---------- */
   dscOpener: null,
-  discoverySidecar: null,
   async openDiscovery() {
     this.dscOpener = document.activeElement;
     $('discovery').hidden = false;
     $('discBody').innerHTML = '<div class="empty">正在生成推荐…</div>';
     $('discClose').focus();
     if (!this.metaCache) this.metaCache = await this.loadMeta(); // 懒加载一次（radio-meta.json 静态文件，非 dotfile/data 段天然可 GET）
-    if (FEATURES.discoverySidecar && !this.discoverySidecar && window.DiscoverySidecar) {
-      this.discoverySidecar = await DiscoverySidecar.load(u => fetch(u), 'radio-discovery.json');
-    }
     this.renderDiscovery();
   },
   async loadMeta() { // file://：meta 无经典 script 包装不可读 → null（「最近新增」为空，其余组不受影响）
@@ -2201,7 +2197,7 @@ const App = {
     });
     const GROUPS = [ // 固定六组（§7.3）；只渲染非空组——发现是「给灵感」，空组不出占位噪音
       ['starter', '精选电台', '内置实测精选层'],
-      ['stable', '稳定直连', '近 30 天稳定性 good 且有直流源'],
+      ['stable', '稳定直连', '累计稳定性 good 且有直流源（最近观测仍有效）'],
       ['fresh', '最近新增', '同步新进电台'],
       ['revived', '最近恢复', '从失效标记复活的电台'],
       ['icy', '有曲讯', '直流 ICY——播放时可显示歌名'],

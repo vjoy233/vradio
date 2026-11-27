@@ -40,9 +40,12 @@ class StoreCheckedTest {
   @Test fun applyAllCheckedFailsClosedBeforeInit() {
     val d = createTempDirectory("checked-all-uninit").toFile()
     val fileField = Store::class.java.getDeclaredField("file").apply { isAccessible = true }
+    val memField = Store::class.java.getDeclaredField("mem").apply { isAccessible = true }
     try {
       synchronized(Store) {
         val oldFile = fileField.get(Store)
+        @Suppress("UNCHECKED_CAST") val mem = memField.get(Store) as MutableMap<String, String>
+        val oldMem = HashMap(mem)
         try {
           Store.init(d); Store.set(C.K_VOL, "old")
           val oldDisk = File(d, "store.json").readBytes()
@@ -50,7 +53,9 @@ class StoreCheckedTest {
           assertFalse(Store.applyAllChecked(mapOf(C.K_VOL to "new")))
           assertEquals("old", Store.get(C.K_VOL))
           assertArrayEquals(oldDisk, File(d, "store.json").readBytes())
-        } finally { fileField.set(Store, oldFile) }
+        } finally {
+          fileField.set(Store, oldFile); mem.clear(); mem.putAll(oldMem)
+        }
       }
     } finally { d.deleteRecursively() }
   }

@@ -7,7 +7,7 @@
 const fs = require('fs'), path = require('path'), { spawnSync } = require('child_process');
 
 const PROFILES = { // contract = L0 契约/资产门；unit = L1 纯函数/状态机/fake browser（不起长驻服务）；
-  contract: ['contracts.js', 'assets.js', 'c3-v2-fixtures.js', 'c3-v2-adversarial.js'],
+  contract: ['contracts.js', 'assets.js', 'c3-v2-fixtures.js', 'c3-v2-adversarial.js', 'c3-web-strict-v2.js'],
   unit: ['c3-release-gate.js', 'backup-v3.js', 'contracts.js', 'assets.js', 'diagnostic.js', 'discovery.js', 'discovery-sidecar.js', 'discovery-publish.js', 'listen-stats.js', 'logos.js', 'metadata.js',
     'player.js', 'playlist-import.js', 'quality-store.js', 'source-lifecycle.js', 'sources.js', 'store.js', 'sync.js',
     'ui-data.js', 'ui-hero.js', 'ui-maintenance.js', 'ui-phase.js', 'ui-scope.js'],

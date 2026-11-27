@@ -1,6 +1,10 @@
 // Chromium 离线真实浏览器：代理媒体类型伪装脚本阻断 + PCM WAV 实际播放。
 // VRADIO_PLAYWRIGHT 指向 Playwright 模块；服务与上游均为临时隔离 fixture。
-const assert = require('assert'), http = require('http');
+const assert = require('assert'), http = require('http'), fs = require('fs');
+function bounded(p, label, ms = 5000) {
+  let timer;
+  return Promise.race([p, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(label + ' 清理超时')), ms); })]).finally(() => clearTimeout(timer));
+}
 const { boot } = require('../test/harness/api-client');
 const { chromium } = require(process.env.VRADIO_PLAYWRIGHT || 'playwright');
 function wav() {
@@ -16,6 +20,8 @@ function wav() {
     res.writeHead(200, { 'Content-Type': req.url === '/js' ? 'application/javascript' : 'audio/mpeg' });
     res.end('window.proxyPwned = (window.proxyPwned || 0) + 1;');
   });
+  const sockets = new Set();
+  upstream.on('connection', socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
   await new Promise((resolve, reject) => upstream.listen(0, '127.0.0.1', resolve).on('error', reject));
   let app, browser;
   try {
@@ -40,8 +46,19 @@ function wav() {
     assert(played.ended && played.time >= 0.9, 'WAV 必须真实播至末尾');
     console.log('proxy browser: JS + 媒体伪装脚本被拒；PCM WAV 播放完成');
   } finally {
-    if (browser) await browser.close();
-    if (app) await app.close();
-    await new Promise(resolve => upstream.close(resolve));
+    const failures = [];
+    if (browser) try { await bounded(browser.close(), 'browser'); } catch (e) { failures.push(e.message); }
+    if (app) try {
+      await bounded(app.close(), 'app');
+      assert(app.srv.exitCode !== null || app.srv.signalCode !== null, '服务进程未退出');
+      assert(!fs.existsSync(app.root), '临时应用根未删除');
+    } catch (e) { failures.push(e.message); }
+    try {
+      const closed = new Promise((resolve, reject) => upstream.close(e => e ? reject(e) : resolve()));
+      for (const socket of sockets) socket.destroy(); // 只关闭本 fixture 接受的连接
+      await bounded(closed, 'upstream');
+      assert.strictEqual(sockets.size, 0, 'fixture socket 未清理');
+    } catch (e) { failures.push(e.message); }
+    if (failures.length) throw new Error('清理失败: ' + failures.join('; '));
   }
 })().catch(e => { console.error(e); process.exitCode = 1; });

@@ -25,14 +25,33 @@ class DiscoverySourceTest {
 
   @Test fun rejectsOversizeAndTooManyItems() {
     assertNull(DiscoverySourceParser.parse(body, 8))
-    val many = body.replace("\"items\":[{", "\"items\":[{" + ",{}".repeat(300))
-    assertNull(DiscoverySourceParser.parse(many))
+    val item = body.substringAfter("\"items\":[").substringBeforeLast("]}")
+    fun withItems(n: Int) = body.substringBefore("\"items\":[") + "\"items\":[" + List(n) { item }.joinToString(",") + "]}"
+    assertEquals(300, DiscoverySourceParser.parse(withItems(300))!!.items.size)
+    assertNull(DiscoverySourceParser.parse(withItems(301)))
   }
 
   @Test fun rejectsMalformedUrls() {
     assertNull(DiscoverySourceParser.parse(body.replace("http://example.com/a", "http://")))
     assertNull(DiscoverySourceParser.parse(body.replace("http://example.com/a", "http://example.com/a\\nX")))
     assertNull(DiscoverySourceParser.parse(body.replace("http://example.com/a", "file:///tmp/a")))
+  }
+
+  @Test fun inputAndManifestBoundaries() {
+    val m = DiscoveryManifest(1, hash(body), body.toByteArray().size)
+    assertTrue(DiscoverySourceParser.verify(body, m))
+    assertFalse(DiscoverySourceParser.verify(body, m.copy(v = 2)))
+    assertFalse(DiscoverySourceParser.verify("a".repeat(DiscoverySourceParser.MAX_BYTES + 1), m))
+    assertNull(DiscoverySourceParser.parse("a".repeat(DiscoverySourceParser.MAX_BYTES + 1)))
+    assertNull(DiscoverySourceParser.parseManifest("a".repeat(DiscoverySourceParser.MAX_MANIFEST_BYTES + 1)))
+    assertNull(DiscoverySourceParser.parseManifest("中".repeat(1500)))
+    assertNotNull(DiscoverySourceParser.parseManifest("""{"v":1,"sha256":"${m.sha256}","bytes":${m.bytes}}"""))
+  }
+
+  @Test fun timestampValidation() {
+    for (bad in listOf("2026-11-26T00:00:00Z", "2026-02-30T00:00:00.000Z", "2026-11-26T00:00:00.123+00:00", "2026-11-26T24:00:00.000Z", "2026-11-26T00:00:00.12Z"))
+      assertNull(bad, DiscoverySourceParser.parse(body.replace("2026-11-26T00:00:00.000Z", bad)))
+    assertNotNull(DiscoverySourceParser.parse(body.replace(".000Z", ".123Z")))
   }
 
   @Test fun manifestMismatchFailsClosed() {

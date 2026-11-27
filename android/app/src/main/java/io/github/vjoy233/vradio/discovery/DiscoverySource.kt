@@ -29,17 +29,18 @@ data class DiscoveryManifest(val v: Int, val sha256: String, val bytes: Int)
 object DiscoverySourceParser {
   const val MAX_BYTES = 512 * 1024
   const val MAX_ITEMS = 300
+  const val MAX_MANIFEST_BYTES = 4096
   private const val SOURCE = "recommended-radio-streams"
   private val SHA = Regex("[0-9a-f]{40}")
   private val HASH = Regex("[0-9a-f]{64}")
-  private val HTTP = Regex("https?://[^\\s]+", RegexOption.IGNORE_CASE)
   private val ISO = Regex("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z")
 
   private fun urlOk(s: String): Boolean = runCatching { val u = URI(s); (u.scheme == "http" || u.scheme == "https") && !u.host.isNullOrBlank() && !s.any { it <= ' ' || it == '"' || it == '<' || it == '>' } }.getOrDefault(false)
 
   fun parse(text: String, maxBytes: Int = MAX_BYTES): DiscoverySource? {
+    if (maxBytes < 1 || text.isEmpty() || text.length > maxBytes || text.length > MAX_BYTES) return null
     val bytes = text.toByteArray(Charsets.UTF_8)
-    if (bytes.isEmpty() || bytes.size > maxBytes || bytes.size > MAX_BYTES) return null
+    if (bytes.size > maxBytes || bytes.size > MAX_BYTES) return null
     return runCatching {
       val o = JSONObject(text)
       if (o.optInt("v", -1) != 1 || o.optString("source") != SOURCE ||
@@ -65,16 +66,21 @@ object DiscoverySourceParser {
     }.getOrNull()
   }
 
-  fun parseManifest(text: String): DiscoveryManifest? = runCatching {
+  fun parseManifest(text: String): DiscoveryManifest? {
+    if (text.isEmpty() || text.length > MAX_MANIFEST_BYTES || text.toByteArray(Charsets.UTF_8).size > MAX_MANIFEST_BYTES) return null
+    return runCatching {
     val o = JSONObject(text)
     val h = o.optString("sha256")
     val n = o.optInt("bytes", -1)
     if (o.optInt("v", -1) != 1 || !HASH.matches(h) || n < 1 || n > MAX_BYTES) null
     else DiscoveryManifest(1, h, n)
-  }.getOrNull()
+    }.getOrNull()
+  }
 
   /** 校验 sidecar UTF-8 字节数与独立 manifest；通过后再交给 parse。 */
   fun verify(text: String, manifest: DiscoveryManifest): Boolean {
+    if (manifest.v != 1 || !HASH.matches(manifest.sha256) || manifest.bytes !in 1..MAX_BYTES ||
+      text.isEmpty() || text.length > MAX_BYTES || text.length > manifest.bytes) return false
     val b = text.toByteArray(Charsets.UTF_8)
     if (b.size != manifest.bytes || b.size > MAX_BYTES) return false
     val got = MessageDigest.getInstance("SHA-256").digest(b).joinToString("") { "%02x".format(it) }

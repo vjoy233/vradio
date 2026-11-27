@@ -179,6 +179,21 @@ class LibraryTest {
     assertEquals(l.recents, reloaded.recents)
   }
 
+  @Test fun recentRebindUsesAnySavedUrlNotOnlyFirst() {
+    Store.set("radio.recents", """[{"k":"旧分类|旧名","n":"旧名","u":["http://gone/1","http://a/2"]}]""")
+    val l = lib("华语音乐,#genre#\n新名,http://a/2")
+    l.reload()
+    assertEquals("新名", l.resolveRecent(l.recents.first())?.n)
+  }
+
+  @Test fun recentWithReusedNameNeverBindsDifferentUrl() {
+    Store.set("radio.recents", """[{"k":"华语音乐|同名","n":"同名","u":["http://gone/1"]}]""")
+    val l = lib("华语音乐,#genre#\n同名,http://new/1")
+    l.reload()
+    assertEquals("http://gone/1", l.recents.first().u.first())
+    assertNull(l.resolveByUrl(l.recents.first().u.first()))
+  }
+
   @Test fun missingRecentRemainsDormantButCannotResolveToGhostStation() {
     Store.set("radio.recents", """[{"k":"旧分类|消失台","n":"消失台","u":["http://gone/1"]}]""")
     val l = lib("华语音乐,#genre#\n新台,http://a/1")

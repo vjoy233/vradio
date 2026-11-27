@@ -403,6 +403,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       buildFavoriteListUi(favs, q, c, st, runCatching { lib.cats() }.getOrDefault(emptyList()))
     }.stateIn(viewModelScope, SharingStarted.Eagerly, FavoriteListUi())
 
+  private val bootSelectionToken = PlayerHolder.selectionToken()
+
   init {
     wirePlayer()
     resumeOnStart.value = Prefs.get(ctx, Prefs.RESUME, false)   // N4
@@ -524,22 +526,24 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   /** 启动末梢的消费序（有意固定）：快捷方式点播 > 链接接流预填 > 自动续播——显式意图不抢。 */
   private fun consumePending() {
     val sc = pendingSc; pendingSc = null
-    when {
-      sc == "last" -> resumeLast()
-      sc != null -> {
+    when (BootArbitration.decide(sc, addPreset.value != null)) {
+      BootArbitration.Action.RESUME -> if (sc == "last") resumeLast() else resumeLastIfWanted()
+      BootArbitration.Action.SHORTCUT -> {
         val s = runCatching { lib.stations.firstOrNull { it.key == sc } }.getOrNull()
         if (s != null) startPlay(s)
         else { resumeLastIfWanted(); setStatus("快捷方式指向的电台已不在列表中") }
       }
-      addPreset.value != null -> { openAddStation(); toast("已填入流地址，探活通过后点「添加」") }   // AIbot P3：冷启动接流与热路径反馈一致
-      else -> resumeLastIfWanted()
+      BootArbitration.Action.PRESET -> { openAddStation(); toast("已填入流地址，探活通过后点「添加」") }
     }
   }
 
   /** N4 启动自动续播（默认关，2026-10-18 拍板）：冷启动且无台在播时接续上次收听 */
   private fun resumeLastIfWanted() {
-    if (!resumeOnStart.value || PlayerHolder.ui.value.station != null || lib.recents.isEmpty()) return
-    resumeLast()
+    if (PlayerHolder.ui.value.station != null || PlayerHolder.selectionToken() != bootSelectionToken) return
+    val r = lib.recents.firstOrNull() ?: return
+    val s = lib.resolveRecent(r)
+    if (s == null) { setStatus("最近台已不在当前库"); return }
+    if (resumeOnStart.value) startPlay(s) else PlayerHolder.selectIfEmpty(s, bootSelectionToken)
   }
 
   /** E3 动态桌面快捷方式：「继续收听」+ 收藏前 N 台（maxShortcutCountPerActivity 封顶）。
@@ -821,7 +825,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   private fun recentList(vis: List<Station>): List<Station> {
     val keys = vis.mapTo(HashSet()) { it.key }
-    return lib.recents.mapNotNull { r -> runCatching { lib.resolve(r.k) }.getOrNull() }
+    return lib.recents.mapNotNull { r -> runCatching { lib.resolveRecent(r) }.getOrNull() }
       .filter { keys.contains(it.key) }.distinctBy { it.key }
   }
 
@@ -949,7 +953,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   fun resumeLast() {                                                      // ▶ 空台 = 续播上次收听
     val r = lib.recents.firstOrNull()
-    val s = r?.let { runCatching { lib.resolve(it.k) }.getOrNull() }
+    val s = r?.let { runCatching { lib.resolveRecent(it) }.getOrNull() }
     if (s == null) { setStatus(if (r == null) "还没有播放记录" else "上次收听的电台已不在列表中，请直接点播"); return }
     startPlay(s)
   }
@@ -1063,7 +1067,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   fun permOf(s: Station): Boolean = runCatching { lib.healthMarks[s.key]?.perm == 1 }.getOrDefault(false)
   fun lastLine(): String {
     val r = lib.recents.firstOrNull() ?: return "未在播放"
-    val s = runCatching { lib.resolve(r.k) }.getOrNull() ?: return "未在播放"
+    val s = runCatching { lib.resolveRecent(r) }.getOrNull() ?: return "未在播放"
     return "上次收听：${s.n}"
   }
 

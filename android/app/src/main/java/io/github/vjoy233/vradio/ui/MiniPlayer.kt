@@ -76,7 +76,7 @@ fun MiniPlayer(vm: AppVm, ui: PlayerUiState) {
           )
           .then(
             if (st != null) Modifier.semantics(mergeDescendants = true) {
-              contentDescription = "正在播放：$dn，点按展开播放器"; role = Role.Button
+              contentDescription = "${if (ui.st == PState.IDLE) "已选中" else "正在播放"}：$dn，点按展开播放器"; role = Role.Button
             } else Modifier
           ),
         verticalArrangement = Arrangement.Center,

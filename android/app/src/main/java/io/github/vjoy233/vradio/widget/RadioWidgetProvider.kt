@@ -124,7 +124,7 @@ object WidgetCommands {
   private fun resumeLastFallback(app: Context) = scope.launch(Dispatchers.IO) {
     val l = lib(app) ?: return@launch
     val r = l.recents.firstOrNull() ?: return@launch
-    val s = runCatching { l.resolve(r.k) }.getOrNull() ?: return@launch
+    val s = runCatching { l.resolveRecent(r) }.getOrNull() ?: return@launch
     playOnMain(s)
   }
 

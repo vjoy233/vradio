@@ -177,13 +177,14 @@ private fun StationCard(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?
   val k = s.key
   val playing = ui.station?.key == k && ui.st != PState.IDLE && ui.st != PState.CONNECTING
   val connecting = ui.station?.key == k && ui.st == PState.CONNECTING
+  val selected = ui.station?.key == k && ui.st == PState.IDLE
   val (dn, _) = displayParts(s.n)
   val dead = s.health == "dead"
   val shape = RoundedCornerShape(10.dp)
   Column(
     Modifier.fillMaxWidth().clip(shape)
       .background(if (playing) pal.panel else Color.Transparent)
-      .border(1.dp, when { flash == k || playing -> pal.acc; else -> pal.line }, shape)
+      .border(1.dp, when { flash == k || playing || selected -> pal.acc; else -> pal.line }, shape)
       .combinedClickable(
         onClick = { vm.togglePlay(k) },
         onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onFavToggle(s) },
@@ -224,11 +225,12 @@ private fun StationRow(vm: AppVm, s: Station, ui: PlayerUiState, flash: String?,
   val k = s.key
   val playing = ui.station?.key == k && ui.st != PState.IDLE && ui.st != PState.CONNECTING
   val connecting = ui.station?.key == k && ui.st == PState.CONNECTING
+  val selected = ui.station?.key == k && ui.st == PState.IDLE
   val (dn, _) = displayParts(s.n)
   val dead = s.health == "dead"
   Row(
     Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
-      .background(when { flash == k -> pal.acc.copy(alpha = .12f); playing -> pal.panel; else -> Color.Transparent })
+      .background(when { flash == k || selected -> pal.acc.copy(alpha = .12f); playing -> pal.panel; else -> Color.Transparent })
       .combinedClickable(
         onClick = { vm.togglePlay(k) },
         onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onFavToggle(s) },

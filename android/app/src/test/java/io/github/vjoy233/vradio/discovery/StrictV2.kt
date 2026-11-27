@@ -77,11 +77,14 @@ internal object StrictV2 {
     val h = str(o, "sha256"); val n = o["bytes"] as? Long ?: error("bytes")
     checkIt(hash.matches(h) && n in 1..524288); return h to n
   }
-  fun generation(id: String, manifest: ByteArray, raw: ByteArray, binding: String?): Map<String, Any?> {
-    checkIt(binding != null && commit.matches(binding)); checkIt(hash.matches(id)); val (h, n) = manifest(manifest)
+  data class Generation(val sidecar: Map<String, Any?>, val provenance: String = "unverified")
+  fun generation(id: String, manifest: ByteArray, raw: ByteArray, expectedUpstreamCommit: String? = null): Generation {
+    checkIt(expectedUpstreamCommit == null || commit.matches(expectedUpstreamCommit)); checkIt(hash.matches(id)); val (h, n) = manifest(manifest)
     checkIt(h == id && n == raw.size.toLong() && raw.size in 1..524288)
     val actual = MessageDigest.getInstance("SHA-256").digest(raw).joinToString("") { "%02x".format(it.toInt() and 255) }
-    checkIt(actual == h); return sidecar(raw).also { checkIt(it["commit"] == binding) }
+    checkIt(actual == h); val value = sidecar(raw)
+    checkIt(expectedUpstreamCommit == null || value["commit"] == expectedUpstreamCommit)
+    return Generation(value)
   }
 
   // 仅用于检验容器深度护栏；不是协议入口。

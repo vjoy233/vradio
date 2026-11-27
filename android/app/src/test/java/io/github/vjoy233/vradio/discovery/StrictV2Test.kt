@@ -37,9 +37,10 @@ class StrictV2Test {
   }
   @Test fun generationsAndSelection() = each(fixture.getJSONArray("pointer")) { c ->
     val expected = c.getJSONObject("expected"); val gs = c.getJSONObject("generations")
-    val binding = "a".repeat(40)
+    // 旧 cross-commit 期望仅是模拟显式 upstream pin，不是 delivery 绑定。
+    val expectedUpstreamCommit = "a".repeat(40)
     fun get(id: String): Map<String, Any?>? = runCatching {
-      val g = gs.getJSONObject(id); StrictV2.generation(id, bytes(g, "manifestBase64"), bytes(g, "sidecarBase64"), binding)
+      val g = gs.getJSONObject(id); StrictV2.generation(id, bytes(g, "manifestBase64"), bytes(g, "sidecarBase64"), expectedUpstreamCommit).sidecar
     }.getOrNull()
     val p = runCatching { StrictV2.pointer(bytes(c, "pointerBase64")) }.getOrNull()
     val current = p?.let { get(it.first) }; val previous = p?.second?.let { get(it) }
@@ -66,12 +67,16 @@ class StrictV2Test {
   @Test fun sharedBindingCases() {
     val data = JSONObject(javaClass.classLoader!!.getResourceAsStream("fixtures/c3-strict-v2-adversarial.json")!!.bufferedReader(Charsets.UTF_8).use { it.readText() })
     each(data.getJSONArray("bindingCases")) { e ->
-      val binding = if (e.isNull("controlledCommit")) null else e.getString("controlledCommit")
+      val binding = if (e.isNull("expectedUpstreamCommit")) null else e.getString("expectedUpstreamCommit")
       val result = runCatching {
         val p = StrictV2.pointer(bytes(e, "pointerBase64"))
         StrictV2.generation(p.first, bytes(e, "manifestBase64"), bytes(e, "sidecarBase64"), binding)
       }
       assertEquals(e.getString("id"), e.getString("proposed") == "accept", result.isSuccess)
+      if (result.isSuccess) {
+        assertEquals("unverified", result.getOrThrow().provenance)
+        assertEquals(e.getString("upstreamStatus"), if (binding == null) "unverified" else "pinned")
+      }
     }
   }
   @Test fun nestedInputIsBounded() {
@@ -85,7 +90,8 @@ class StrictV2Test {
     val g = fixture.getJSONArray("pointer").getJSONObject(0).getJSONObject("generations")
     val id = g.keys().next(); val entry = g.getJSONObject(id)
     val raw = bytes(entry, "sidecarBase64"); val manifest = bytes(entry, "manifestBase64")
-    assertTrue(runCatching { StrictV2.generation(id, manifest, raw, "a".repeat(40)) }.isSuccess)
+    assertEquals("unverified", StrictV2.generation(id, manifest, raw).provenance)
+    assertEquals("unverified", StrictV2.generation(id, manifest, raw, "a".repeat(40)).provenance)
     val mutated = raw.clone(); mutated[mutated.lastIndex] = ' '.code.toByte()
     assertTrue(runCatching { StrictV2.generation(id, manifest, mutated, "a".repeat(40)) }.isFailure)
     assertTrue(runCatching { StrictV2.generation("0".repeat(64), manifest, raw, "a".repeat(40)) }.isFailure)
@@ -97,7 +103,7 @@ class StrictV2Test {
     assertTrue(runCatching { StrictV2.pointer(bytes(c, "pointerBase64")) }.isFailure)
     val g = c.getJSONObject("local")
     val local = if (c.getString("localRevocationPolicyResult") == "allow") runCatching {
-      StrictV2.generation(g.getString("id"), bytes(g, "manifestBase64"), bytes(g, "sidecarBase64"), g.getString("commit"))
+      StrictV2.generation(g.getString("id"), bytes(g, "manifestBase64"), bytes(g, "sidecarBase64"), g.getString("commit")).sidecar
     }.getOrNull() else null
     val expected = c.getJSONObject("expected")
     assertEquals(c.getString("id"), expected.getString("selection"), if (local == null) "unavailable" else "local")

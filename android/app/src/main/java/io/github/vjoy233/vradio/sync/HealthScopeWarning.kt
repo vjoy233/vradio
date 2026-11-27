@@ -28,9 +28,16 @@ internal object HealthScopeWarning {
   fun markLocked(dir: File) { markerGeneration++; writeTextAtomic(marker(dir), UUID.randomUUID().toString()) }
   suspend fun snapshot(dir: File): Snapshot = SyncBarrier.mutex.withLock { snapshotLocked(dir) }
   /** 只清用户实际看到的同一代提示；不得清理同步屏障或后来产生的提示。 */
-  suspend fun acknowledge(dir: File, seen: Snapshot): Snapshot = SyncBarrier.mutex.withLock {
+  suspend fun acknowledge(
+    dir: File,
+    seen: Snapshot,
+    delete: (File) -> Boolean = { it.delete() }
+  ): Snapshot = SyncBarrier.mutex.withLock {
     val now = snapshotLocked(dir)
-    if (seen.token != null && seen.token != "?" && seen.token == now.token && seen.markerGeneration == now.markerGeneration) marker(dir).delete()
+    if (seen.token != null && seen.token != "?" && seen.token == now.token && seen.markerGeneration == now.markerGeneration) {
+      // 删除失败不改变事实：返回的 snapshot 仍带 token，UI 只能本次明确关闭，后续 refresh 必须重报。
+      runCatching { delete(marker(dir)) } // SecurityException/IO 异常均按未持久保存处理
+    }
     snapshotLocked(dir)
   }
 }

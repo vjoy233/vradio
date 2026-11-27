@@ -224,7 +224,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   private val healthScopeUi = io.github.vjoy233.vradio.sync.HealthScopeUiCoordinator(
     read = { withContext(Dispatchers.IO) { io.github.vjoy233.vradio.sync.HealthScopeWarning.snapshot(ctx.filesDir) } },
     ack = { seen -> withContext(Dispatchers.IO) { io.github.vjoy233.vradio.sync.HealthScopeWarning.acknowledge(ctx.filesDir, seen) } },
-    publish = { healthScopeWarning.value = it })
+    publish = { healthScopeWarning.value = it },
+    publishMessage = { it?.let(::toast) })
   private fun refreshHealthScopeWarning() { viewModelScope.launch { healthScopeUi.refresh() } }
   fun acknowledgeHealthScopeWarning() { viewModelScope.launch { healthScopeUi.acknowledge() } }
   val logoRetryPending = MutableStateFlow(false)

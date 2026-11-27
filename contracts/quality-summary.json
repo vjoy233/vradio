@@ -24,8 +24,8 @@
     "stability": "good|fair|poor|unknown——见 stabilityRules"
   },
   "stabilityRules": {
-    "good": "近 30 天成功率 >= 0.8 且平均延迟 < 2500ms 且连续失败 < 3",
-    "fair": "近 30 天成功率 >= 0.5（不满足 good）",
+    "good": "累计成功率 >= 0.8 且平均延迟 < 2500ms 且连续失败 < 3（仅在 lastObservedAt > 0 且距当前 < 30 天时采用）",
+    "fair": "累计成功率 >= 0.5（不满足 good；仅在 lastObservedAt > 0 且距当前 < 30 天时采用）",
     "poor": "成功率 < 0.5 或连续失败 >= 3",
     "unknown": "样本少于 3 次"
   },

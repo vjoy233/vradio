@@ -71,15 +71,22 @@ const checkBinding=binding=>parser.generation(firstPointer.current,bytes(firstGe
 for(const expected of ['a'.repeat(40),null,undefined]) {const result=checkBinding(expected); assert.strictEqual(result.provenance,'unverified'); assert.deepStrictEqual(plain(result.sidecar),first.expected.output);}
 for(const expected of ['b'.repeat(40),'','A'.repeat(40),'a'.repeat(39)]) expectControlledFailure(()=>checkBinding(expected),null,'expectedUpstreamCommit '+expected);
 // 状态选择仅为 fixture 驱动模拟，不是生产实现或可信绑定。
-function selection(c) {
+function selection(c, delivery) {
  let p; try {p=parser.pointer(bytes(c.pointerBase64));} catch (_) {return {selection:'unavailable'};}
- function get(id) {try {const g=c.generations[id]; if(!g) return null; return parser.generation(id,bytes(g.manifestBase64),bytes(g.sidecarBase64),'a'.repeat(40),digest).sidecar;} catch (_) {return null;}}
+ function get(id) {try {const g=c.generations[id]; if(!g) return null; return parser.generation(id,bytes(g.manifestBase64),bytes(g.sidecarBase64),null,digest).sidecar;} catch (_) {return null;}}
  const cur=get(p.current), prev=p.previous && get(p.previous);
  if(cur) return {selection:'current',degraded:!!p.previous && !prev,output:plain(cur)};
- if(prev && (!c.binding || c.binding.currentCommit===c.binding.previousCommit)) return {selection:'previous',output:plain(prev)};
+ if(prev && delivery.current===delivery.previous) return {selection:'previous',output:plain(prev)};
  return {selection:'unavailable'};
 }
-for(const c of fixture.pointer) assert.deepStrictEqual(selection(c),c.expected,c.id);
+for(const c of fixture.pointer) assert.deepStrictEqual(selection(c,{current:'D1',previous:c.id==='cross-commit'?'D2':'D1'}),c.expected,c.id);
+// 旧 cross-commit 的 binding 字段不表示 delivery，必须先证明 previous 自身有效。
+const cross=fixture.pointer.find(c=>c.id==='cross-commit'), crossPointer=parser.pointer(bytes(cross.pointerBase64));
+const crossPrevious=cross.generations[crossPointer.previous];
+const previousResult=parser.generation(crossPointer.previous,bytes(crossPrevious.manifestBase64),bytes(crossPrevious.sidecarBase64),null,digest);
+assert.strictEqual(previousResult.sidecar.commit,'b'.repeat(40)); assert.strictEqual(previousResult.provenance,'unverified');
+assert.deepStrictEqual(selection(cross,{current:'D1',previous:'D2'}),{selection:'unavailable'});
+assert.deepStrictEqual(selection(cross,{current:'D1',previous:'D1'}),{selection:'previous',output:plain(previousResult.sidecar)});
 // 测试本地回退独立于远端；策略结果仅为注入的测试材料。
 for(const c of fixture.localFallback) {
  assert.throws(()=>parser.pointer(bytes(c.pointerBase64)),c.id);

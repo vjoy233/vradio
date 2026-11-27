@@ -2331,7 +2331,7 @@ const App = {
       html += list.map(r => `<button type="button" class="btn mbtn discrow" data-k="${this.esc(r.k)}" title="播放：${this.esc(r.n)}">
         <span class="dn">${this.esc(r.n)}</span><span class="badge">${this.esc(r.c)}</span>
         ${FEATURES.sourceExplain ? r.origins.map(o => `<span class="badge">${this.esc(({gao:'国内上游',eu:'欧美上游',unknown:'来源未知',personal:'个人来源',adjusted:'个人追加'})[o] || '来源未知')}</span>`).join('') : ''}
-        ${FEATURES.sourceExplain ? `<span class="srcs">${({good:'稳定',fair:'一般 · 建议重测',poor:'不稳定 · 建议重测',unknown:'暂无可信质量样本'})[r.explain.level] || '暂无可信质量样本'}</span>` : ''}
+        ${FEATURES.sourceExplain ? `<span class="srcs">${({good:'稳定',fair:'一般 · 建议重测',poor:'不稳定 · 建议重测',unknown:'暂无稳定性评估'})[r.explain.level] || '暂无稳定性评估'}</span>` : ''}
         ${id === 'fresh' || id === 'recentlyVerified' ? `<span class="srcs">${this.fmtAgo(r.at)}</span>` : r.obs ? `<span class="srcs">${this.fmtAgo(r.obs)}</span>` : ''}
       </button>`).join('');
     }

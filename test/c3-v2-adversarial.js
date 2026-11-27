@@ -18,6 +18,13 @@ for (const e of data.entries) {
   assert.strictEqual(ptr.current,e.sidecarId); assert.strictEqual(manifest.sha256,e.sidecarId); assert.strictEqual(manifest.bytes,side.length);
  }
 }
+for (const c of data.bindingCases) {
+ assert(!ids.has(c.id)); ids.add(c.id);
+ const side=decode(c.sidecarBase64), manifest=JSON.parse(decode(c.manifestBase64)), pointer=JSON.parse(decode(c.pointerBase64));
+ assert.strictEqual(hash(side),c.sidecarId); assert.strictEqual(manifest.sha256,c.sidecarId);
+ assert.strictEqual(pointer.current,c.sidecarId); assert.strictEqual(manifest.bytes,side.length);
+ const value=JSON.parse(side); assert.strictEqual(value.commit,'a'.repeat(40));
+}
 const get = id => decode(data.entries.find(e=>e.id===id).rawBase64).toString();
 assert(get('version-decimal').includes('"v":2.0,'));
 assert(get('version-exponent').includes('"v":2e0,'));

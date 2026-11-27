@@ -191,6 +191,7 @@ object Backup {
     val rollbackQuality: () -> Boolean,  // QualityStore.restore(旧快照)（同上给 { true }）
     val applyListenStats: () -> Boolean = { true },   // ListenSidecar.save(导入态)（listenStats==null 时不调用）
     val rollbackListenStats: () -> Boolean = { true }, // ListenSidecar.save(旧快照)（同上）
+    val storeConflict: () -> Boolean = { false }, // 快照后并发写导致 apply 被保守拒绝
   )
 
   fun commitImport(data: Map<String, String>, my: List<String>?, qualityData: JSONObject?, io: ImportIO,
@@ -207,7 +208,10 @@ object Backup {
       return reason + if (bad.isEmpty()) "；已尝试回滚，但并发操作可能影响结果，请核对数据"
         else "；回滚失败或结果未知：${bad.joinToString("、")}，请核对数据并考虑重新导入"
     }
-    if (!attempt(io.applyStore)) return failed("主数据持久化失败（store.json 写入失败或异常）")
+    if (!attempt(io.applyStore)) {
+      if (attempt(io.storeConflict)) return "导入未开始：检测到快照期间并发写入，已保留并发数据，请重试导入"
+      return failed("主数据持久化失败（store.json 写入失败或异常）")
+    }
     if (my != null) {
       myAttempted = true // 失败或异常也可能部分写入，必须补偿
       if (!attempt(io.applyMy)) return failed("个人电台恢复失败（可能超限或写入异常）")

@@ -1516,26 +1516,30 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
             // 未勾选 = 保留本机 sidecar（快照也不必留）；applyStore/rollbackStore 升级为可感知落盘失败（三轮 P1-2）
             val restoreQ = pay.quality != null && sidecarChoice
             val restoreL = pay.listenStats != null && sidecarChoice
-            val snap = Store.snapshot()
+            val storeSnap = Store.snapshotVersioned()
+            val snap = storeSnap.data
             val myOld = myRadio.readText()
             val qSnap = if (restoreQ) quality.capture() else null
             val qData = if (restoreQ) pay.quality!!.optJSONObject("data") else null
             val lsSnap = if (restoreL) listenSidecar.load() else null   // 旧收听统计快照（磁盘态；回滚经同通道回写）
             val lsData = if (restoreL) pay.listenStats!!.optJSONObject("data") else null
+            var importStoreVersion = storeSnap.version
+            var importStoreConflict = false
             val err = withContext(Dispatchers.IO) {
               fun lsApply(): Boolean {                                   // days → 白名单解码 + trim → 快照覆盖落盘（save 回执可判定）
                 val st = ListenStatsCodec.parse(JSONObject().put("v", 1).put("days", lsData).toString())
                 return listenSidecar.save(ListenStats.trim(st))
               }
               val e = Backup.commitImport(pay.data, pay.my, qData, Backup.ImportIO(
-                { Store.applyAllChecked(pay.data) },                     // 白名单键写入/缺键 remove；落盘失败可感知（三轮 P1-2）
-                { Store.applyAllChecked(snap) },
-                { pay.my == null || runCatching { myRadio.replace(pay.my!!.joinToString("\n")) }.getOrDefault(false) },   // v1 无 my 不动；v2 读 my；v3 读 myRadio
-                { runCatching { myRadio.replace(myOld) }.getOrDefault(false) },
-                { qData == null || quality.replaceImport(qData) },        // sidecar 最后提交（覆盖语义，§13.2-6）
-                { qSnap == null || quality.restore(qSnap) },             // 失败恢复旧 quality 快照（replaceImport 内部已自恢复，此处兜底盘面）
-                { lsData == null || lsApply() },                         // 收听统计四件事务收官（B4）
-                { lsSnap == null || listenSidecar.save(lsSnap) },        // 失败恢复旧统计快照（save 回执失败仅内存不留）
+                applyStore = { Store.applyAllCheckedIfVersion(pay.data, storeSnap.version).let { r -> if (r.ok) { importStoreVersion = r.version; true } else { importStoreConflict = r.outcome == Store.ApplyOutcome.CONFLICT; false } } },
+                rollbackStore = { Store.restoreIfVersion(snap, importStoreVersion) },
+                applyMy = { pay.my == null || runCatching { myRadio.replace(pay.my!!.joinToString("\n")) }.getOrDefault(false) },
+                rollbackMy = { runCatching { myRadio.replace(myOld) }.getOrDefault(false) },
+                applyQuality = { qData == null || quality.replaceImport(qData) },
+                rollbackQuality = { qSnap == null || quality.restore(qSnap) },
+                applyListenStats = { lsData == null || lsApply() },
+                rollbackListenStats = { lsSnap == null || listenSidecar.save(lsSnap) },
+                storeConflict = { importStoreConflict },
               ), lsData)
               lib.myText = myRadio.readText()
               e

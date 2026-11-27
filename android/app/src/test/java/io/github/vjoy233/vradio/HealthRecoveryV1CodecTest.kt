@@ -18,6 +18,8 @@ class HealthRecoveryV1CodecTest {
   }
   @Test fun rejectsDepthAndStationLimit() {
     val x=HealthRecoveryV1Codec.encode(sample()); assertTrue(x.isNotEmpty())
+    var deep = "0"; repeat(33) { deep = "[$deep]" }
+    assertTrue(runCatching { HealthRecoveryV1Codec.decode("{\"v\":1,\"batchId\":\"123e4567-e89b-12d3-a456-426614174000\",\"oldHash\":\"$h\",\"targetHash\":\"$t\",\"phase\":\"PREPARED\",\"stations\":$deep,\"completed\":[]}") }.isFailure)
     val many=(1..501).map { HealthRecoveryV1Codec.Station("http://e/$it", listOf("http://e/$it")) }
     assertTrue(runCatching{HealthRecoveryV1Codec.encode(sample().copy(stations=many))}.isFailure)
   }

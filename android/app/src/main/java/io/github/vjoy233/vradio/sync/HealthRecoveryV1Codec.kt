@@ -53,7 +53,7 @@ internal object HealthRecoveryV1Codec {
   }
 
   private fun validate(j: Journal) {
-    require(j.batchId.matches(Regex("[0-9a-fA-F-]{36}"))); require(j.oldHash.matches(Regex("[0-9a-f]{64}"))); require(j.targetHash.matches(Regex("[0-9a-f]{64}")))
+    require(j.batchId.matches(Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))); require(j.oldHash.matches(Regex("[0-9a-f]{64}"))); require(j.targetHash.matches(Regex("[0-9a-f]{64}")))
     require(j.oldHash != j.targetHash); require(j.phase == "PREPARED" || j.phase == "PUBLISHED")
     require(j.stations.isNotEmpty() && j.stations.size <= MAX_STATIONS); require(j.completed.distinct().size == j.completed.size && j.completed.size <= MAX_STATIONS)
     val ids = HashSet<String>(); j.stations.forEach { s -> require(s.id.isNotBlank() && s.id.length <= MAX_STRING && ids.add(s.id)); require(s.sources.isNotEmpty() && s.sources.size <= MAX_SOURCES); require(s.sources.first() == s.id); s.sources.forEach { require(it.isNotBlank() && it.length <= MAX_STRING) } }

@@ -106,10 +106,18 @@ ok('纯函数：Node 直跑无 DOM/网络依赖（不产生网络请求）', () 
   assert.ok(d && d.groups);
 });
 
-ok('稳定直连文案与累计质量契约一致，不宣称近30天窗口', () => {
+ok('稳定直连文案保守，不虚称滚动时间窗口', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
-  assert(source.includes("['stable', '稳定直连', '累计质量达标且有直流源']"));
+  assert(source.includes("['stable', '稳定直连', '质量评估良好且有直流源']"));
   assert(!source.includes('近 30 天稳定性 good 且有直流源'));
+});
+
+ok('稳定直连行为：累计数据良好且近期观察可进，超 30 天不进', () => {
+  const now = 40 * 86400000;
+  const fresh = qa({ stability: 'good', directCount: 1, lastObservedAt: now - 86400000 });
+  const stale = qa({ stability: 'unknown', directCount: 1, lastObservedAt: now - 31 * 86400000 });
+  assert.deepStrictEqual(names(run([row(1)], { q: { 'https://s1/live': fresh }, input: { now } }).groups.stable), ['台1']);
+  assert.deepStrictEqual(names(run([row(1)], { q: { 'https://s1/live': stale }, input: { now } }).groups.stable), []);
 });
 
 ok('验证仅接受关联源的近期同步事实，排除过期、未来和未知证明', () => {

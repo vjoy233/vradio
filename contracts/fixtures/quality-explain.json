@@ -14,6 +14,7 @@
   ],
   "diagnostic": [
     {"code":"OK","httpStatus":200,"expected":{"level":"good","action":"none","reason":"ok"}},
+    {"code":"OK","httpStatus":403,"expected":{"level":"unknown","action":"configure","reason":"service_refused"}},
     {"code":"NETWORK","httpStatus":0,"expected":{"level":"unknown","action":"retry","reason":"network"}},
     {"code":"HTML","httpStatus":200,"expected":{"level":"unknown","action":"check_source","reason":"html"}},
     {"code":"HTTP","httpStatus":500,"expected":{"level":"unknown","action":"retry","reason":"http"}},

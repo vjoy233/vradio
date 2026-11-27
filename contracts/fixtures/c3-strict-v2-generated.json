@@ -2374,10 +2374,33 @@
     },
     {
       "id": "invalid-utf8",
-      "rawBase64": "e8CvInYiOjIsInNvdXJjZSI6InJlY29tbWVuZGVkLXJhZGlvLXN0cmVhbXMiLCJsaWNlbnNlIjoiQ0MwLTEuMCIsImNvbW1pdCI6ImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEiLCJnZW5lcmF0ZWRBdCI6IjIwMjYtMTEtMjZUMDE6MDI6MDMuMTIzWiIsIml0ZW1zIjpbeyJuYW1lIjoi56S65L6LIiwidXJsIjoiaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvbGl2ZSIsImdlbnJlIjoiIiwidXBzdHJlYW0iOiJyZWNvbW1lbmRlZC1yYWRpby1zdHJlYW1zIiwiY29tbWl0IjoiYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSJ9XX0=",
-      "bytes": 326,
-      "sha256": "41df362f0b081c264dcfbad715223b3c080e0b266996bfea938c6e33d0935b59",
+      "rawBase64": "eyJ2IjoyLCJzb3VyY2UiOiJyZWNvbW1lbmRlZC1yYWRpby1zdHJlYW1zIiwibGljZW5zZSI6IkNDMC0xLjAiLCJjb21taXQiOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZ2VuZXJhdGVkQXQiOiIyMDI2LTExLTI2VDAxOjAyOjAzLjEyM1oiLCJpdGVtcyI6W3sibmFtZSI6IsCvIiwidXJsIjoiaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvbGl2ZSIsImdlbnJlIjoiIiwidXBzdHJlYW0iOiJyZWNvbW1lbmRlZC1yYWRpby1zdHJlYW1zIiwiY29tbWl0IjoiYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSJ9XX0=",
+      "bytes": 320,
+      "sha256": "d5731fcfa53ba29ddd8a4d5780f67d6b58fffc95e8dd491308e631ee229dde47",
       "accept": false
+    },
+    {
+      "id": "replacement-character-valid",
+      "rawBase64": "eyJ2IjoyLCJzb3VyY2UiOiJyZWNvbW1lbmRlZC1yYWRpby1zdHJlYW1zIiwibGljZW5zZSI6IkNDMC0xLjAiLCJjb21taXQiOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZ2VuZXJhdGVkQXQiOiIyMDI2LTExLTI2VDAxOjAyOjAzLjEyM1oiLCJpdGVtcyI6W3sibmFtZSI6Iu+/vSIsInVybCI6Imh0dHBzOi8vZXhhbXBsZS5pbnZhbGlkL2xpdmUiLCJnZW5yZSI6IiIsInVwc3RyZWFtIjoicmVjb21tZW5kZWQtcmFkaW8tc3RyZWFtcyIsImNvbW1pdCI6ImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEifV19",
+      "bytes": 321,
+      "sha256": "b2b8f6c6d4e8c47ba5ddd5c3404d3e1056a76f05e0a239115de660a160714208",
+      "accept": true,
+      "output": {
+        "v": 2,
+        "source": "recommended-radio-streams",
+        "license": "CC0-1.0",
+        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "generatedAt": "2026-11-26T01:02:03.123Z",
+        "items": [
+          {
+            "name": "�",
+            "url": "https://example.invalid/live",
+            "genre": "",
+            "upstream": "recommended-radio-streams",
+            "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      }
     },
     {
       "id": "bom",

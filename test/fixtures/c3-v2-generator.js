@@ -26,7 +26,9 @@ add('invalid-date', {...good,generatedAt:'2026-02-30T01:02:03.123Z'}, false);
 add('unpaired-surrogate', side([item('http://example.invalid','\ud800')]), false);
 const goodBytes = enc(good);
 add('duplicate-key', Buffer.from(goodBytes.toString().replace('{"v":2,','{"v":2,"v":2,')), false);
-add('invalid-utf8', Buffer.concat([goodBytes.subarray(0,1),Buffer.from([0xc0,0xaf]),goodBytes.subarray(1)]), false);
+const nameAt = goodBytes.indexOf(Buffer.from('示例'));
+add('invalid-utf8', Buffer.concat([goodBytes.subarray(0,nameAt),Buffer.from([0xc0,0xaf]),goodBytes.subarray(nameAt+Buffer.byteLength('示例'))]), false);
+add('replacement-character-valid', side([item('https://example.invalid/live','\ufffd')]), true);
 add('bom', Buffer.concat([Buffer.from([0xef,0xbb,0xbf]),goodBytes]), false);
 add('trailing', Buffer.concat([goodBytes,Buffer.from(' true')]), false);
 const urlCases = [

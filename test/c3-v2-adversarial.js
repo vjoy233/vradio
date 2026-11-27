@@ -24,6 +24,9 @@ for (const c of data.bindingCases) {
  assert.strictEqual(hash(side),c.sidecarId); assert.strictEqual(manifest.sha256,c.sidecarId);
  assert.strictEqual(pointer.current,c.sidecarId); assert.strictEqual(manifest.bytes,side.length);
  const value=JSON.parse(side); assert.strictEqual(value.commit,'a'.repeat(40));
+ assert.notStrictEqual(c.deliveryRevision,value.commit);
+ if (c.proposed === 'accept' && c.upstreamStatus === 'pinned') assert.strictEqual(c.expectedUpstreamCommit,value.commit);
+ if (c.proposed === 'accept' && c.upstreamStatus === 'unverified') assert(c.expectedUpstreamCommit == null);
 }
 const get = id => decode(data.entries.find(e=>e.id===id).rawBase64).toString();
 assert(get('version-decimal').includes('"v":2.0,'));

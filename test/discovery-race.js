@@ -11,7 +11,7 @@ App.state.stations = []; App.cfg = {hideC:{}}; App.recents = []; App.revives = n
 (async () => {
   App.metaMain = 'a'; App.metaCache = null; let m = deferred(); App.loadMeta = () => m.promise;
   let p = App.openDiscovery(); App.metaEpoch++; App.metaMain = 'b'; m.resolve({old:true}); await p;
-  assert.strictEqual(App.metaCache, null); assert.ok(!body.innerHTML.includes('暂无推荐'));
+  assert.strictEqual(App.metaCache, null); assert.ok(body.innerHTML.includes('暂无推荐'));
   let a = deferred(), b = deferred(), calls = 0; App.loadMeta = () => (++calls === 1 ? a.promise : b.promise);
   p = App.openDiscovery(); App.closeDiscovery(); const newer = App.openDiscovery();
   b.resolve({newer:true}); await newer; a.resolve({old:true}); await p; assert.deepStrictEqual(App.metaCache, {newer:true});
@@ -26,5 +26,21 @@ App.state.stations = []; App.cfg = {hideC:{}}; App.recents = []; App.revives = n
   App.renderDiscovery(); App.renderDiscovery(); assert.strictEqual((body.innerHTML.match(/精选候选（需手动加入）/g) || []).length, 1);
   App.discoverySidecar = null; window.DiscoverySidecar.loadSnapshot = () => Promise.reject(Error('offline'));
   await App.openDiscovery(); assert.ok(body.innerHTML.includes('暂无推荐'));
+  // 装配换代触发安全刷新，不重新聚焦；分别覆盖 meta 和 sidecar 在飞期间。
+  App.closeDiscovery(); App.applyCfg = () => {}; App.rebind = () => {}; App.render = () => {}; App.showLast = () => {};
+  let focuses = 0; els.discClose.focus = () => { focuses++; };
+  const station = name => ({c:'测试',n:name,u:['https://example.org/'+name]});
+  let oldMeta = deferred(), newMeta = deferred(); calls = 0;
+  App.metaCache = null; App.metaMain = 'old'; App.loadMeta = () => (++calls === 1 ? oldMeta.promise : newMeta.promise);
+  FEATURES.discoverySidecar = false; p = App.openDiscovery();
+  App.applySources([station('新台')], []); App.metaMain = 'new'; await Promise.resolve();
+  newMeta.resolve({stations:{}}); await Promise.resolve(); await Promise.resolve();
+  oldMeta.resolve({old:true}); await p; assert.ok(body.innerHTML.includes('新台')); assert.deepStrictEqual(App.metaCache, {stations:{}}); assert.strictEqual(focuses, 1);
+  App.closeDiscovery(); App.discoverySidecar = null; FEATURES.discoverySidecar = true; App.metaCache = {stations:{}};
+  let oldSide = deferred(), newSide = deferred(); calls = 0; window.DiscoverySidecar.loadSnapshot = () => (++calls === 1 ? oldSide.promise : newSide.promise);
+  p = App.openDiscovery(); App.loadMeta = async () => ({stations:{}}); App.applySources([station('更新台')], []); App.metaMain = 'latest';
+  await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+  newSide.resolve(fresh); await Promise.resolve(); await Promise.resolve(); oldSide.resolve([{name:'旧候选'}]); await p;
+  assert.ok(body.innerHTML.includes('更新台')); assert.ok(body.innerHTML.includes('新候选')); assert.ok(!body.innerHTML.includes('旧候选')); assert.strictEqual(focuses, 2);
   console.log('发现页异步换代、开关、重渲染与降级通过');
 })().catch(e => { console.error(e); process.exitCode = 1; });

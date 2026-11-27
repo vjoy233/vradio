@@ -1,6 +1,6 @@
 /* VRadio 发布开关（B3 独立发布单元，plan-expansion-r4 §7）——发布配置不是用户数据：
    默认值随版本发布翻转（核心版本全关、B3 门槛通过后开对应项），不入 radio.*、不进备份。
-   开发/验收时可经 localStorage['feat.<名>']='1'|'0' 临时覆盖（内存态，清缓存即回默认）。
+   开发/验收时可经 localStorage['feat.<名>']='1'|'0' 临时覆盖（重载页面生效；运行中修改 FEATURES 不受支持）。
    装载顺序硬约束：store → player → logos → radio-data → features → srcorder → quality-store → metadata → listen-stats → app → sync（app 读开关装配 sink/统计/发现入口）。 */
 window.FEATURES = (function () {
   const def = {

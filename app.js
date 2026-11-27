@@ -728,6 +728,11 @@ const App = {
     this.render();
     if (!Player.station) this.showLast();
     if (this.mEditor) this.mEditor.externalChanged(); // 同步重建 = 外部变更：复核当前草稿 conflict 态（§5.2 草稿不因对账丢失）
+    // 下一微任务等 reloadMain 完成 metaMain 绑定；不移动浮层焦点，每次换代仅启动一轮。
+    if (typeof document !== 'undefined' && $('discovery') && !$('discovery').hidden) {
+      const epoch = this.metaEpoch;
+      Promise.resolve().then(() => { if (epoch === this.metaEpoch && !$('discovery').hidden) this.refreshDiscovery(); });
+    }
   },
   /* 维护层套用：电台移动/重命名/手动隐藏/追加源按「任一源 URL 命中」（变体换序免疫）；
      手动隐藏 = 彻底消失（全部/收藏/搜索/体检一律不可见，owner 拍板无正在播例外——手动是明确意图，
@@ -2209,8 +2214,12 @@ const App = {
     $('discovery').hidden = false;
     $('discBody').innerHTML = '<div class="empty">正在生成推荐…</div>';
     $('discClose').focus();
+    return this.refreshDiscovery();
+  },
+  async refreshDiscovery() {
     const generation = ++this.discoveryGeneration, epoch = this.metaEpoch, main = this.metaMain;
     const current = () => generation === this.discoveryGeneration && !$('discovery').hidden && epoch === this.metaEpoch && main === this.metaMain;
+    this.renderDiscovery(); // 新台先可用，元数据慢或失败也不留旧屏/加载态
     if (!this.metaCache) {
       let meta = null;
       try { meta = await this.loadMeta(main); } catch (_) {}

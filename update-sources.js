@@ -70,8 +70,10 @@ const EU_TAG_RE = new RegExp(' \\[(' + Object.values(EU_COUNTRIES).join('|') + '
 function isPrivateIp(a) {
   let s = String(a);
   if (net.isIP(s) === 6) {
+    // zone ID（如 fe80::1%eth0）不是 WHATWG URL 合法字面量，直接按内网拒绝，避免异常逃出 lookup 回调。
+    if (s.includes('%')) return true;
     // WHATWG 规范化展开形式与 dotted mapped，统一识别整个 ::ffff:0:0/96。
-    s = new URL('http://[' + s + ']/').hostname.slice(1, -1);
+    try { s = new URL('http://[' + s + ']/').hostname.slice(1, -1); } catch (_) { return true; }
     const m = s.match(/^::ffff:([\da-f]{1,4}):([\da-f]{1,4})$/);
     if (m) {
       const hi = parseInt(m[1], 16), lo = parseInt(m[2], 16);

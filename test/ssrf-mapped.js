@@ -4,7 +4,7 @@ const { safeTarget, guardLookup, tryUrl } = require('../update-sources');
 const { boot } = require('./harness/api-client');
 
 async function main() {
-  const denied = ['::ffff:7f00:1', '0:0:0:0:0:ffff:127.0.0.1', '::ffff:a00:1', '::ffff:6440:1', '::ffff:a9fe:1', '::ffff:c0a8:1', '::ffff:ac10:1', '::ffff:0:1', '::1', '::', 'fc00::1', 'fdff::1', 'fe80::1', 'febf::1'];
+  const denied = ['::ffff:7f00:1', '0:0:0:0:0:ffff:127.0.0.1', 'fe80::1%lo0', '::ffff:127.0.0.1%eth0', '::ffff:a00:1', '::ffff:6440:1', '::ffff:a9fe:1', '::ffff:c0a8:1', '::ffff:ac10:1', '::ffff:0:1', '::1', '::', 'fc00::1', 'fdff::1', 'fe80::1', 'febf::1'];
   const allowed = ['::ffff:808:808', '::ffff:6440:0'.replace('6440', '643f'), '::ffff:ac20:1', '2001:4860:4860::8888', 'fec0::1'];
   for (const ip of denied) assert.strictEqual(safeTarget('http://[' + ip + ']/'), null, ip);
   for (const ip of allowed) assert.ok(safeTarget('http://[' + ip + ']/'), ip);

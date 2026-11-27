@@ -73,6 +73,33 @@ class B3PlaybackAcceptanceTest {
       }
     } finally { inst.runOnMainSync { MediaController.releaseFuture(future) } }
   }
+  // 熄屏不等于 keyguard；这里只观察交互关闭与后台播放，不声明锁屏验收。
+  @Test fun backgroundAndScreenOffPlayback() {
+    val base = AndroidSmokeTest.assumeFixture()
+    AndroidSmokeTest.assumeFixtureReachable(base)
+    val inst = InstrumentationRegistry.getInstrumentation()
+    val ctx = inst.targetContext
+    val power = ctx.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+    val scenario = ActivityScenario.launch(MainActivity::class.java)
+    try {
+      inst.runOnMainSync { PlayerHolder.play(Station("smoke", "B3后台", mutableListOf(base + "/direct.mp3"))) }
+      assertTrue("本地流未播放", await(12000) { PlayerHolder.ui.value.st == PState.PLAYING })
+      inst.uiAutomation.executeShellCommand("input keyevent KEYCODE_HOME").close()
+      SystemClock.sleep(2000)
+      inst.runOnMainSync { assertTrue("后台未播放", PlayerHolder.player.isPlaying) }
+      if (power.isInteractive) inst.uiAutomation.executeShellCommand("input keyevent KEYCODE_POWER").close()
+      assertTrue("未熄屏", await(5000) { !power.isInteractive })
+      val end = SystemClock.elapsedRealtime() + 15000
+      while (SystemClock.elapsedRealtime() < end) {
+        assertFalse("观察期间屏幕亮起", power.isInteractive)
+        inst.runOnMainSync { assertTrue("熄屏时未播放", PlayerHolder.player.isPlaying) }
+        SystemClock.sleep(250)
+      }
+    } finally {
+      if (!power.isInteractive) inst.uiAutomation.executeShellCommand("input keyevent KEYCODE_WAKEUP").close()
+      scenario.close()
+    }
+  }
   @Test fun taskRemovalObservesPlayback() {
     val base = AndroidSmokeTest.assumeFixture()
     AndroidSmokeTest.assumeFixtureReachable(base)

@@ -1,0 +1,9 @@
+{
+  "note": "预发布交集样本：仅验证列举场景，不代表双方完整语义一致。",
+  "cases": [
+    {"id":"valid-utc-millis","accept":true,"sidecar":{"v":1,"source":"recommended-radio-streams","license":"CC0-1.0","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","generatedAt":"2026-11-26T01:02:03.123Z","items":[{"name":"示例","url":"http://example.com/live","genre":"ambient","upstream":"recommended-radio-streams","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}},
+    {"id":"wrong-source","accept":false,"sidecar":{"v":1,"source":"unknown","license":"CC0-1.0","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","generatedAt":"2026-11-26T01:02:03.123Z","items":[{"name":"Test","url":"https://example.com/live","genre":"ambient","upstream":"unknown","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}},
+    {"id":"invalid-date","accept":false,"sidecar":{"v":1,"source":"recommended-radio-streams","license":"CC0-1.0","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","generatedAt":"2026-02-30T01:02:03.123Z","items":[{"name":"Test","url":"https://example.com/live","genre":"ambient","upstream":"recommended-radio-streams","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}},
+    {"id":"missing-millis","accept":false,"sidecar":{"v":1,"source":"recommended-radio-streams","license":"CC0-1.0","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","generatedAt":"2026-11-26T01:02:03Z","items":[{"name":"Test","url":"https://example.com/live","genre":"ambient","upstream":"recommended-radio-streams","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}}
+  ]
+}

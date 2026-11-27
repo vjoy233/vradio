@@ -50,7 +50,7 @@ class BackupV3Test {
     val p = Backup.parseImport(res("fixtures/backup-v3.json"))
     assertNotNull(p)
     assertEquals(3, p!!.ver)
-    assertEquals(13, p.data.size)
+    assertEquals(14, p.data.size)
     for (k in p.data.keys) assertTrue("非白名单键 $k", C.KEYS.contains(k))
     assertEquals(listOf("自建,#genre#", "我的电台,https://example.test/live"), p.my)
     assertNotNull(p.quality)                                        // 质量 sidecar：嵌套聚合形态

@@ -30,7 +30,8 @@ ok('v3 黄金样本：ver=3、myRadio→my、双 sidecar（quality+listenStats�
   const r = B.read(FIX('backup-v3.json'), KEYS);
   assert.strictEqual(r.ver, 3);
   assert.strictEqual(r.app, 'web');
-  assert.strictEqual(r.n, 13);
+  assert.strictEqual(r.n, 14);
+  assert.strictEqual(JSON.parse(r.data['radio.syncFreshness']).reminderDays, 14);
   assert.deepStrictEqual(r.my, ['自建,#genre#', '我的电台,https://example.test/live']);
   assert.ok(r.quality && r.quality.data['https://main.example/live']); // 质量 sidecar：嵌套聚合形态
   assert.strictEqual(r.quality.data['https://main.example/live'].cf, 2);

@@ -5,6 +5,8 @@
 
 const Sync = {
   busy: '',       // '' | 'manual' | 'silent'：体检互斥（B-10）——手动优先，手动启动时静默版让位退出（收尾由手动接管）
+  syncInFlight: false,
+  freshnessShown: false,
   abort: false,   // 手动体检取消标志
   silentAbort: false, // 静默版让位/退出标志（与 abort 分开，避免「取消静默」误伤随后启动的手动体检）
 
@@ -39,9 +41,34 @@ const Sync = {
     return cnt;
   },
 
+  async scheduleFreshness() {
+    if (!location.protocol.startsWith('http') || this.freshnessShown) return;
+    if (this.busy || this.syncInFlight || Player.connecting || (Player.audio && !Player.audio.paused) || !$('toast').hidden) {
+      setTimeout(() => this.scheduleFreshness(), 5000); return;
+    }
+    let fact = null;
+    try { fact = (await fetch('/api/freshness', { cache: 'no-store' }).then(r => r.json())).fact; } catch (_) {}
+    if (this.freshnessShown) return;
+    if (this.busy || this.syncInFlight || Player.connecting || (Player.audio && !Player.audio.paused) || !$('toast').hidden) {
+      setTimeout(() => this.scheduleFreshness(), 5000); return;
+    }
+    const now = Date.now(), pref = Freshness.normalize(Store.get('radio.syncFreshness'));
+    const state = Freshness.state(pref, fact, now);
+    if (!state.prompt) return;
+    this.freshnessShown = true;
+    Store.set('radio.syncFreshness', JSON.stringify(Freshness.markPrompted(pref, now)));
+    App.toast(state.age === 'unknown' ? '电台数据更新时间未知，请手动检查' : '电台数据已有一段时间未同步', {
+      ms: 0, action: { label: '立即同步', fn: () => this.doSync() }, dismiss: '稍后',
+      onDismiss: () => Store.set('radio.syncFreshness', JSON.stringify(Freshness.markDismissed(Store.get('radio.syncFreshness'), Date.now()))),
+      onReplace: () => { this.freshnessShown = false; setTimeout(() => this.scheduleFreshness(), Freshness.COOLDOWN); },
+    });
+  },
+
   /* ---------- 一键同步最新源（国内上游 + 欧美台逐个实测重建，约1分钟）。
      B2 强制两步协议：被决策门拦截 → #status 报告摘要 + toast 确认 → force-token → 带 token 强制发布 ---------- */
   async doSync() {
+    if (this.syncInFlight) return;
+    this.syncInFlight = true;
     const b = $('syncBtn'), lab = b.querySelector('span'); b.disabled = true; lab.textContent = '同步中…'; $('prog').hidden = false;
     $('status').textContent = '同步中：国内上游 + 欧美台逐个实测，约 1 分钟…';
     try {
@@ -53,7 +80,7 @@ const Sync = {
       const msg = String(e.message || e);
       $('status').textContent = msg.includes('同步已在进行中') ? msg : '同步失败（file:// 或无后端时请在项目目录跑 node update-sources.js）：' + msg;
     }
-    b.disabled = false; lab.textContent = '同步源'; $('prog').hidden = true;
+    b.disabled = false; lab.textContent = '同步源'; $('prog').hidden = true; this.syncInFlight = false;
   },
   async gateConfirm(g) { // 质量门拦截（B2 §6.4）：展示旧/新数量、触发原因、将绕过的规则 → 确认后两步强制
     const rep = g.report || {};
@@ -68,6 +95,8 @@ const Sync = {
     });
   },
   async forceSync(reportHash) { // 两步协议：申请一次性 token（绑定报告指纹）→ 带 token 的 /api/sync 复用 stash 原料强制发布
+    if (this.syncInFlight) return;
+    this.syncInFlight = true;
     $('status').textContent = '强制同步中…';
     try {
       const t = await fetch('/api/sync/force-token', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reportHash }) }).then(x => x.json());
@@ -77,6 +106,7 @@ const Sync = {
       if (r.error) throw new Error(r.error);
       await this.syncDone(r);
     } catch (e) { $('status').textContent = '强制同步失败：' + (e && e.message || e); }
+    finally { this.syncInFlight = false; }
   },
   async syncDone(r) { // 同步完成态（普通/强制共用）：reloadMain + diff 摘要 + 消失收藏点名 + 同步后增量体检
     if (r.aborted) {
@@ -86,7 +116,8 @@ const Sync = {
     await App.reloadMain(); // 决策 B：主列表 replace + 个人层常驻（radio.txt 与 my-radio.txt 重拉重并）
     const eu = r.euKept != null ? `欧美音乐 ${r.euKept} 个实测可用` : '欧美音乐未更新（已保留旧列表）';
     const dd = (r.added || r.removed) ? `；新增 ${r.added} 台、消失 ${r.removed} 台` : ''; // 同步 diff 摘要（N4/r2 ⑥）
-    let msg = `同步完成：共 ${r.total} 台（${r.delta >= 0 ? '+' : ''}${r.delta}${dd}；${eu}${r.replacement === 'forced' ? '；已强制替换' : r.replacement === 'kept' ? '；欧美层保留旧数据' : ''}）`;
+    const cn = r.cn && r.cn.indexOf('保留') >= 0 ? '国内未更新（已保留旧列表）' : r.cn ? '国内已更新' : '国内更新状态未知';
+    let msg = `同步完成：共 ${r.total} 台（${r.delta >= 0 ? '+' : ''}${r.delta}${dd}；${cn}；${eu}${r.replacement === 'forced' ? '；已强制替换' : r.replacement === 'kept' ? '；欧美层保留旧数据' : ''}）`;
     const gone = r.removedNames && App.favsGone(r.removedNames, r.removedUrls); // 消失台含收藏台单独点名（收藏在 localStorage，比对必须在前端；名+URL 双通道，AIbot P3-1）
     if (gone && gone.length) {
       const show = gone.length > 5 ? gone.slice(0, 5).join('、') + ` 等 ${gone.length} 个` : gone.join('、');

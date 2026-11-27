@@ -618,6 +618,7 @@
     <div id="mData" hidden>
       <div class="mnote">备份、导入、重置各自一次提交、互不隶属电台编辑草稿；执行前会先处理未保存的草稿，预览确认后生效。</div>
       <div id="mDataEnv"></div>
+      <label>数据新鲜度提醒 <select id="freshnessSetting"><option value="7">7 天</option><option value="14">14 天</option><option value="30">30 天</option><option value="off">关闭</option></select></label>
       <div class="dsec2">
         <div class="dcard">
           <b>完整备份</b>
@@ -695,7 +696,7 @@
 <script src="quality-store.js"></script>
 <script src="metadata.js"></script>
 <script src="listen-stats.js"></script><script src="playlist-import.js"></script>
-<script src="backup.js"></script><script src="app.js"></script>
+<script src="backup.js"></script><script src="freshness.js"></script><script src="app.js"></script>
 <script src="sync.js"></script>
 </body>
 </html>

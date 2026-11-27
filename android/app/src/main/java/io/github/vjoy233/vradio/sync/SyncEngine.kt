@@ -8,6 +8,7 @@ import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.io.File
 import java.time.Instant
+import kotlinx.coroutines.sync.withLock
 
 /* M4 端内同步引擎（update-sources.js syncSources 全量移植，无降级）：
    1) 国内源：gaotianliuyun/gao radio.txt 拉取（内容可疑时保留本地）→ classifyCn 重分类整编进 CAT_ORDER；
@@ -63,7 +64,13 @@ class SyncEngine(private val gh: Gh, private val check: CheckStream, private val
                              val kept: Int, val total: Int)
 
   /** 主流程。curText = 当前生效 radio.txt 全文（assets 或 filesDir 副本，AppVm 装配后传入）。 */
-  suspend fun run(curText: String, log: (String) -> Unit = {}): SyncResult {
+  suspend fun run(curText: String, log: (String) -> Unit = {}): SyncResult = SyncBarrier.mutex.withLock {
+    // 调用方可能在等待锁前取得旧快照；锁内优先读取当前 filesDir 主库。
+    val current = File(filesDir, "radio.txt").let { if (it.isFile) it.readText() else curText }
+    runLocked(current, log)
+  }
+
+  private suspend fun runLocked(curText: String, log: (String) -> Unit): SyncResult {
     // 1) 欧美音乐（实测重建；失败时保留旧分类不清空）
     var eu: EuBuild? = null
     try { eu = buildEuLines(log) } catch (_: Exception) { }
@@ -101,20 +108,23 @@ class SyncEngine(private val gh: Gh, private val check: CheckStream, private val
       return SyncResult(false, before, 0, 0, 0, emptyList(), emptyList(), emptyList(), emptyList(), null, null, cnUpdated, -1)
     }
     val mergedText = merged.joinToString("\r\n") + "\r\n"
+    // 写主库前立持久屏障；中断后轻更新不得用旧 pending 或旧 stamp 覆盖端内数据。
+    SyncBarrier.begin(filesDir)
     writeTextAtomic(File(filesDir, "radio.txt"), mergedText)
     // stamp 随写（G P2-3）：不写的话 D7 check 会拿仓库既有提交判「有新版」，apply 用仓库数据覆盖刚同步出的
     // 列表来回跳；commitIso=当前时刻 = 本地内容不旧于仓库任何既有提交，repo 出更新提交前 D7 保持安静。
     // 已知边界留档（审计 P3）：设备时钟前跳（手动调未来时间）后 stamp 会掩蔽 D7 直到真实时间追上
     // （判新只错在「无更新」方向，无数据损坏）；radio 与 stamp 两步原子写之间被杀 → stamp 留旧值 →
-    // 下次 D7 判仓库更新、apply 用仓库数据覆盖（仍是合法数据，自愈方向安全）
+    // 中断后持久屏障会阻止 D7 覆盖，须重新执行端内同步
     // AIbot P1-4 混态拦截：端内同步产出的 radio.txt 不带 radio-meta（Android 不生成 meta）——旧 meta 若
     // 留存即「新库配旧 meta」，发现页「最近新增」会指错台；删旧件 + stamp.meta=false（RadioMeta.bound
     // 据此把该分组置空，不猜）。AIbot 三轮 P1：radioHash 同随写入（与 LightUpdate.apply 同一 stamp 形态；
     // meta=false 本就不绑定，哈希只是形态一致——两写之间被杀残留旧 stamp 时哈希核对同样拦下）
     runCatching { File(filesDir, "radio-meta.json").delete() }
-    writeTextAtomic(File(filesDir, "stamp.json"),
-      JSONObject().put("commitIso", Instant.now().toString()).put("meta", false)
-        .put("radioHash", hashText(mergedText)).toString())
+    val stamp = JSONObject().put("commitIso", Instant.now().toString()).put("meta", false)
+      .put("radioHash", hashText(mergedText))
+    if (cnUpdated && eu != null) stamp.put("freshnessProvenance", "device-full-sync").put("freshnessAt", System.currentTimeMillis())
+    writeTextAtomic(File(filesDir, "stamp.json"), stamp.toString())
     // 4.5) diff 摘要（N4/r2 ⑥）：按台名集合对比——分类变化不算（重分类是常规操作），改名 = 消失+新增如实呈现
     val oldNames = entryNamesOf(oldSecs.flatMap { it.lines })
     val neuNames = entryNamesOf(merged)
@@ -151,6 +161,9 @@ class SyncEngine(private val gh: Gh, private val check: CheckStream, private val
         logosCount = lg.size - 1
       } catch (_: Exception) { log("logos.txt 写入失败（不影响电台列表）") }
     }
+    // 全部资产写入结束后废弃旧轻更新重试意图，最后移除屏障。
+    SyncBarrier.prepareLogoRetry(filesDir, logosCount >= 0)
+    SyncBarrier.finish(filesDir)
     val delta = after - before
     val diffTxt = if (addedNames.isNotEmpty() || removedNames.isNotEmpty()) "；新增 ${addedNames.size}、消失 ${removedNames.size}" else ""
     log("完成：共 $after 台（${if (delta >= 0) "+" else ""}$delta$diffTxt）")

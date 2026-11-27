@@ -22,14 +22,16 @@ const server = http.createServer((req,res) => {
   if (p.startsWith('/api/')) { res.setHeader('Content-Type','application/json'); return res.end(p === '/api/store' ? JSON.stringify({rev:0,data:{}}) : '{}'); }
   // 用户数据和受保护路径一律不读；模拟首次启动的空个人层。
   if (p.toLowerCase() === '/my-radio.txt' || p.toLowerCase().startsWith('/data/')) { res.writeHead(404); return res.end(); }
-  const allowed = /^\/(?:[\w.-]+)$/.test(p) || p === '/';
-  if (!allowed) { res.writeHead(404); return res.end(); }
-  const file = path.join(root,p === '/' ? 'index.html' : p.slice(1));
+  const allowed = new Set(['index.html','store.js','player.js','logos.js','radio-data.js','features.js','srcorder.js','quality-store.js','metadata.js','listen-stats.js','app.js','sync.js','discovery-sidecar.js','hls.min.js','radio.txt','logos.txt','sync-manifest.json','radio-meta.json']);
+  const name = p === '/' ? 'index.html' : p.slice(1);
+  if (!allowed.has(name)) { res.writeHead(404); return res.end(); }
+  const file = path.join(root,name);
   fs.readFile(file,(e,b)=>{ if(e){res.writeHead(404);return res.end();} const ext=path.extname(file); res.setHeader('Content-Type',({'.html':'text/html','.js':'text/javascript','.json':'application/json','.txt':'text/plain','.css':'text/css'})[ext] || 'application/octet-stream'); res.end(b); });
 });
 server.on('connection',s=>{sockets.add(s);s.on('close',()=>sockets.delete(s));});
-const watchdog=setTimeout(()=>{console.error('测试总超时'); for(const s of sockets)s.destroy(); if(browser) browser.close().catch(()=>{}); process.exit(1);},30000);
+const limit = (promise, ms, label) => { let t; return Promise.race([promise, new Promise((_,reject)=>{t=setTimeout(()=>reject(Error(label)),ms);})]).finally(()=>clearTimeout(t)); };
 (async()=>{ try {
+ await limit((async()=>{
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
   const base=`http://127.0.0.1:${server.address().port}`;
   browser=await chromium.launch({headless:true});
@@ -39,6 +41,8 @@ const watchdog=setTimeout(()=>{console.error('测试总超时'); for(const s of 
   const page=await context.newPage(); const errors=[]; page.on('pageerror',e=>errors.push(e.message));
   await page.goto(base,{waitUntil:'domcontentloaded',timeout:10000}); await page.locator('#discBtn').click({timeout:10000});
   await page.waitForSelector('#discBody .discrow',{timeout:10000});
+  // 等待真实打开处理完成，而非仅等待其同步绘制的首行。
+  await page.evaluate(async()=>{ await App.openDiscovery(); });
   assert(!requests.some(x=>x.startsWith('/discovery-snapshots/')), '关闭时不得请求 sidecar');
   assert(!await page.getByText('回退测试候选').count(), '关闭时不渲染候选');
   await page.locator('#discClose').click();
@@ -50,4 +54,13 @@ const watchdog=setTimeout(()=>{console.error('测试总超时'); for(const s of 
   await page.waitForFunction(()=>document.querySelectorAll('[data-sidecar]').length===1);
   await new Promise((resolve,reject)=>{ const deadline=Date.now()+2000; function check(){if(stalledClosed)return resolve();if(Date.now()>deadline)return reject(Error('慢流连接未关闭'));setTimeout(check,20);} check(); });
   assert.deepStrictEqual(errors,[]); await context.close(); console.log('c3-http-browser: 真实页面慢流取消与上一代回退通过');
-} finally { clearTimeout(watchdog); if(browser) await browser.close(); for(const s of sockets)s.destroy(); if(server.listening) await new Promise(r=>server.close(r)); } })().catch(e=>{console.error(e);process.exitCode=1;});
+ })(), 30000, '测试总超时');
+} finally {
+  // 清理互不依赖：浏览器关闭失败或挂起不得跳过 socket 和服务关闭。
+  for(const s of sockets) s.destroy();
+  const closing = [];
+  if(server.listening) closing.push(limit(new Promise(r=>server.close(r)),3000,'服务关闭超时'));
+  if(browser) closing.push(limit(browser.close(),5000,'浏览器关闭超时'));
+  const results = await Promise.allSettled(closing);
+  for(const r of results) if(r.status==='rejected') { console.error(r.reason); process.exitCode=1; }
+} })().catch(e=>{console.error(e);process.exitCode=1;});

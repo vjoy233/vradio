@@ -139,4 +139,38 @@ class StoreCheckedTest {
       d.deleteRecursively()
     }
   }
+
+  @Test fun exhaustedVersionDoesNotMutateMemoryOrDisk() {
+    val d = createTempDirectory("store-exhausted").toFile()
+    val field = Store::class.java.getDeclaredField("version").apply { isAccessible = true }
+    try {
+      Store.init(d); Store.set(C.K_VOL, "old")
+      val disk = File(d, "store.json").readBytes()
+      synchronized(Store) {
+        val previous = field.getLong(Store)
+        try {
+          field.setLong(Store, Long.MAX_VALUE)
+          val snap = Store.snapshotVersioned()
+          Store.set(C.K_VOL, "new"); Store.remove(C.K_VOL)
+          assertFalse(Store.setChecked(C.K_VOL, "new")); assertFalse(Store.removeChecked(C.K_VOL))
+          Store.applyAll(mapOf(C.K_VOL to "new")); assertFalse(Store.applyAllChecked(mapOf(C.K_VOL to "new")))
+          assertEquals(Store.ApplyOutcome.WRITE_FAILED, Store.applyAllCheckedIfVersion(mapOf(C.K_VOL to "new"), snap.version).outcome)
+          assertFalse(Store.restoreIfVersion(mapOf(C.K_VOL to "new"), snap.version))
+          assertEquals("old", Store.get(C.K_VOL)); assertArrayEquals(disk, File(d, "store.json").readBytes())
+        } finally { field.setLong(Store, previous) }
+      }
+    } finally { d.deleteRecursively() }
+  }
+
+  @Test fun casRestoreRejectsConcurrentWrite() {
+    val d = createTempDirectory("cas-race").toFile()
+    try {
+      Store.init(d); Store.set(C.K_VOL, "old")
+      val snap = Store.snapshotVersioned()
+      assertTrue(Store.applyAllChecked(mapOf(C.K_VOL to "imported")))
+      Store.set(C.K_THEME, "light")
+      assertFalse(Store.restoreIfVersion(snap.data, snap.version + 1))
+      assertEquals("imported", Store.get(C.K_VOL)); assertEquals("light", Store.get(C.K_THEME))
+    } finally { d.deleteRecursively() }
+  }
 }

@@ -187,6 +187,57 @@ class BackupV3Test {
     assertNull(qs.summary("https://new.example/live"))    // 导入数据不残留
   }
 
+  @Test fun commitImportConcurrentSnapshotConflictIsReportedWithoutRollback() {
+    val calls = mutableListOf<String>()
+    val err = Backup.commitImport(mapOf(C.K_VOL to "90"), listOf("台"), null,
+      Backup.ImportIO(
+        { calls.add("apply"); false }, { calls.add("rollback"); true },
+        { calls.add("my"); true }, { calls.add("my-rb"); true },
+        { true }, { true }, storeConflict = { calls.add("conflict"); true }))
+    assertEquals("导入未开始：检测到快照期间并发写入，已保留并发数据，请重试导入", err)
+    assertEquals(listOf("apply", "conflict"), calls)
+  }
+
+  @Test fun commitImportFailureWithoutConflictStillRollsBack() {
+    val calls = mutableListOf<String>()
+    val err = Backup.commitImport(mapOf(C.K_VOL to "90"), listOf("台"), null,
+      Backup.ImportIO(
+        { calls.add("apply"); false }, { calls.add("rollback"); true },
+        { calls.add("my"); true }, { calls.add("my-rb"); true },
+        { true }, { true }))
+    assertTrue(err!!.contains("主数据持久化失败"))
+    assertEquals(listOf("apply", "rollback"), calls)
+  }
+
+  @Test fun realStoreCommitImportConcurrentWritePreserved() {
+    val d = createTempDirectory("backup-store-race").toFile()
+    try {
+      Store.init(d); Store.set(C.K_VOL, "old")
+      val before = Store.snapshotVersioned(); var appliedVersion = before.version
+      val err = Backup.commitImport(mapOf(C.K_VOL to "imported"), listOf("台"), null,
+        Backup.ImportIO(
+          { Store.applyAllCheckedIfVersion(mapOf(C.K_VOL to "imported"), before.version).let { if (it.ok) { appliedVersion = it.version; true } else false } },
+          { Store.restoreIfVersion(before.data, appliedVersion) },
+          { Store.set(C.K_THEME, "light"); false }, { true }, { true }, { true }))
+      assertTrue(err!!.contains("回滚失败或结果未知") || err.contains("并发操作可能影响结果"))
+      assertEquals("light", Store.get(C.K_THEME)); assertEquals("imported", Store.get(C.K_VOL))
+    } finally { d.deleteRecursively() }
+  }
+
+  @Test fun realStoreCommitImportNoConcurrentWriteRollsBack() {
+    val d = createTempDirectory("backup-store-rollback").toFile()
+    try {
+      Store.init(d); Store.set(C.K_VOL, "old")
+      val before = Store.snapshotVersioned(); var appliedVersion = before.version
+      val err = Backup.commitImport(mapOf(C.K_VOL to "imported"), listOf("台"), null,
+        Backup.ImportIO(
+          { Store.applyAllCheckedIfVersion(mapOf(C.K_VOL to "imported"), before.version).let { if (it.ok) { appliedVersion = it.version; true } else false } },
+          { Store.restoreIfVersion(before.data, appliedVersion) },
+          { false }, { true }, { true }, { true }))
+      assertTrue(err!!.contains("已尝试回滚")); assertEquals("old", Store.get(C.K_VOL))
+    } finally { d.deleteRecursively() }
+  }
+
   @Test fun commitImportTxOrderAndRollback() { // applyConfirmed 提交段（协作方 fake）：成功序 / my 失败双回滚 / quality 失败三件回滚 / LS 失败四件回滚
     fun io(calls: MutableList<String>, myOk: Boolean, qOk: Boolean, lsOk: Boolean = true) = Backup.ImportIO(
       { calls.add("store") }, { calls.add("store-rb") },

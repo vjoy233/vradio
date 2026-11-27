@@ -1,0 +1,50 @@
+'use strict';
+const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const cp = require('child_process');
+const { createMembership } = require('./git-membership');
+const root = fs.mkdtempSync(path.join(os.tmpdir(), 'git-membership-'));
+function git(...args) {
+  return cp.execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', env: { PATH: process.env.PATH, SYSTEMROOT: process.env.SYSTEMROOT, HOME: root, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: path.join(root, 'no-config'), GIT_TERMINAL_PROMPT: '0' } }).trim();
+}
+try {
+  git('init', '-q');
+  fs.mkdirSync(path.join(root, 'v2'));
+  fs.writeFileSync(path.join(root, 'v2', 'data.json'), 'one');
+  git('add', '--', 'v2/data.json');
+  git('-c', 'user.name=test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'first');
+  const first = git('rev-parse', 'HEAD');
+  const anchor = { repository: 'trusted/repo', objectsDir: path.join(root, '.git', 'objects'), commit: first, paths: ['v2/data.json', 'v2/missing', 'v2'] };
+  const session = createMembership(anchor);
+  assert.strictEqual(session.read('v2/data.json').toString(), 'one');
+  anchor.paths.push('other'); anchor.commit = 'a'.repeat(40);
+  assert.throws(() => session.read('other'));
+  assert.throws(() => session.read('v2/missing'));
+  assert.throws(() => session.read('v2'));
+  assert.throws(() => session.read('../v2/data.json'));
+  assert.throws(() => createMembership({ ...anchor, commit: 'HEAD' }));
+  assert.throws(() => createMembership({ ...anchor, commit: 'a'.repeat(40) }));
+  assert.throws(() => createMembership({ ...anchor, commit: first, paths: ['v2/../x'] }));
+  fs.writeFileSync(path.join(root, 'v2', 'data.json'), 'two');
+  git('add', '--', 'v2/data.json');
+  git('-c', 'user.name=test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'second');
+  assert.strictEqual(session.read('v2/data.json').toString(), 'one');
+  const second = createMembership({ ...anchor, commit: git('rev-parse', 'HEAD') });
+  assert.strictEqual(second.read('v2/data.json').toString(), 'two');
+  const blob = git('rev-parse', first + ':v2/data.json');
+  git('update-index', '--add', '--cacheinfo', '120000,' + blob + ',link');
+  git('update-index', '--add', '--cacheinfo', '160000,' + first + ',submodule');
+  git('-c', 'user.name=test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'special modes');
+  const special = createMembership({ ...anchor, commit: git('rev-parse', 'HEAD'), paths: ['link', 'submodule', 'link/x'] });
+  assert.throws(() => special.read('link'));
+  assert.throws(() => special.read('submodule'));
+  assert.throws(() => special.read('link/x'));
+  assert.throws(() => createMembership({ ...anchor, commit: blob }));
+  const blobFile = path.join(root, '.git', 'objects', blob.slice(0, 2), blob.slice(2));
+  fs.chmodSync(blobFile, 0o600);
+  fs.writeFileSync(blobFile, 'corrupt');
+  assert.throws(() => session.read('v2/data.json'));
+  console.log('git membership: offline checks passed');
+} finally { fs.rmSync(root, { recursive: true, force: true }); }

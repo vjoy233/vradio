@@ -132,6 +132,7 @@ const euOf = (lines, metas) => ({
     for (const f of [...U.SYNC_ASSETS, 'sync-manifest.json']) assert.ok(fs.existsSync(path.join(root, f)), f + ' 未生成');
     const m = JSON.parse(fs.readFileSync(path.join(root, 'sync-manifest.json'), 'utf8'));
     assert.strictEqual(m.files.length, 4);
+    assert.strictEqual(U.freshnessFact(root).provenance, 'pipeline-full');
     for (const f of m.files) {
       const buf = fs.readFileSync(path.join(root, f.path));
       assert.strictEqual(buf.length, f.bytes, f.path + ' bytes');
@@ -229,6 +230,7 @@ const euOf = (lines, metas) => ({
     assert.ok(r.report.reasons.some(x => x.key === 'eu-collapse' && x.bypassable));
     const s = U.publishResult(root, r, { entry: 'web' });
     assert.strictEqual(s.replacement, 'kept');
+    assert.strictEqual(U.freshnessFact(root), null, '保留旧层不能标记全量新鲜');
     const txt = fs.readFileSync(path.join(root, 'radio.txt'), 'utf8');
     assert.ok(txt.includes('Old EU 1 [英国]') && !txt.includes('http://eu.new/1.mp3'), '旧欧美层保留');
     assert.strictEqual(bytesOf(root, 'logos.txt'), oldLogos, '保留旧层时 logos 不重写');

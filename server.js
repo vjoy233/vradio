@@ -26,7 +26,7 @@
 //       先归一大小写与尾部点空格（Windows 大小写不敏感 + Win32 剥尾点曾实测绕过字面量比较，audit A1；
 //       store.json 是全量个人数据，HOST=0.0.0.0 局域网模式下不可被直接 GET）。
 const http = require('http'), https = require('https'), fs = require('fs'), path = require('path'), crypto = require('crypto');
-const { runPipeline, publishResult, bootManifest, forceTokenIssue, forceTokenConsume, checkStream, checkDetail, safeTarget, guardLookup, tryUrl } = require('./update-sources');
+const { freshnessFact, runPipeline, publishResult, bootManifest, forceTokenIssue, forceTokenConsume, checkStream, checkDetail, safeTarget, guardLookup, tryUrl } = require('./update-sources');
 const { qApplyOp, qTrim } = require('./quality-store'); // B2：质量聚合应用/裁剪纯函数（与客户端逐字节同语义）
 const { lsDayKeyOk, lsApplyOp } = require('./listen-stats'); // B3：收听统计 op 应用/日期键历法校验（与客户端同语义）
 const ROOT = __dirname, PORT = process.env.PORT || 8137, HOST = process.env.HOST || '127.0.0.1';
@@ -140,7 +140,7 @@ function myRadioReplace(lines) {
 // 写入复用 my-radio 口径：tmp+rename 原子替换 + 串行队列；结构白名单只收已知键（值形状前端自管，键集合即边界） ----------
 const DATA_DIR = path.join(ROOT, 'data'), STORE_FILE = path.join(DATA_DIR, 'store.json');
 const STORE_KEYS = new Set(['radio.favs', 'radio.recents', 'radio.health', 'radio.cfg', 'radio.songs', 'radio.volperst', 'radio.srcmem2',
-  'radio.vol', 'radio.view', 'radio.showdead', 'radio.theme', 'radio.baseline', 'radio.baselineProg']); // ⚠ 与 store.js KEYS 同步扩
+  'radio.vol', 'radio.view', 'radio.showdead', 'radio.theme', 'radio.baseline', 'radio.baselineProg', 'radio.syncFreshness']); // ⚠ 与 store.js KEYS 同步扩
 const STORE_MAX = 2 * 1024 * 1024, KEY_MAX = 512 * 1024;
 const KEY_MAXS = { 'radio.health': 1536 * 1024 }; // 分键上限（AIbot P2-3）：健康标记 FIFO 2000 条 × 多源 URL 快照最坏 ~0.9MB，512KB 会静默丢键——对账再把镜像一起抹掉，僵尸台问题换个形式回归
 let storeRev = 0, storeCache = null, storeQ = Promise.resolve();
@@ -550,6 +550,11 @@ http.createServer((req, res) => {
         .catch(e => json(500, { error: String(e.message || e) }))
         .finally(() => { syncInFlight = null; });
     });
+  }
+  if (req.url.split('?')[0] === '/api/freshness') {
+    if (req.method !== 'GET') return json(405, { error: 'method not allowed' });
+    if (crossOrigin(req)) return json(403, { error: '跨源请求被拒绝' });
+    return json(200, { fact: freshnessFact(ROOT) });
   }
   if (req.url.split('?')[0] === '/api/boot') { // B2 启动资产状态（§13.3）：manifest 校验/bootstrap/恢复结果（前端 toast 用）
     if (req.method !== 'GET') return json(405, { ok: false, error: 'method not allowed' });

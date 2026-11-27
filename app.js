@@ -910,6 +910,9 @@ const App = {
     // 用户主动操作走 #status——两通道不双写，读屏器不念两遍（R4 分工规则）。action = {label, fn} 确认门槛用；
     // dismiss = 「暂不」类纯关闭按钮的文案（常驻 toast 的显式出口，AIbot P3-5）
     const t = $('toast');
+    const replaced = !t.hidden && this._toastReplaced; this._toastReplaced = null;
+    if (replaced) replaced();
+    this._toastReplaced = opt.onReplace || null;
     t.innerHTML = '';
     const sp = document.createElement('span'); sp.textContent = msg; t.appendChild(sp);
     if (opt.action) {
@@ -919,7 +922,7 @@ const App = {
     }
     if (opt.dismiss) {
       const b = document.createElement('button'); b.type = 'button'; b.className = 'btn mbtn';
-      b.textContent = opt.dismiss; b.onclick = () => { t.hidden = true; };
+      b.textContent = opt.dismiss; b.onclick = () => { t.hidden = true; if (opt.onDismiss) opt.onDismiss(); };
       t.appendChild(b);
     }
     t.hidden = false;
@@ -3151,7 +3154,11 @@ const App = {
 
     // 初始数据：radio.txt + my-radio.txt（http 下）；file:// 降级链（N1/r2 ③）：radio-data.js 全库直读
     // （同步产出的经典 script 全局，fetch 被拦但 script 加载不会）→ 再退内置精选；hint 只在两者皆无时提示
-    Store.boot(); // 主源对账（异步，镜像先行渲染不阻塞首屏）：后端较新应用之/首次迁移回填/dirty 重推
+    const fs = $('freshnessSetting');
+    const showFreshnessSetting = () => { const p = Freshness.normalize(Store.get('radio.syncFreshness')); fs.value = p.disabled ? 'off' : String(p.reminderDays); };
+    fs.onchange = () => { const p = Freshness.normalize(Store.get('radio.syncFreshness')); p.disabled = fs.value === 'off'; if (!p.disabled) p.reminderDays = Number(fs.value); Store.set('radio.syncFreshness', JSON.stringify(p)); };
+    showFreshnessSetting();
+    const storeReady = Store.boot(); // 主源对账（异步，镜像先行渲染不阻塞首屏）：后端较新应用之/首次迁移回填/dirty 重推
     this.reloadMain().then(ok => {
       if (!ok) {
         if (window.RADIO_DATA) this.applySources(this.parse(window.RADIO_DATA), []); // 代理级 m3u8 台播不了，直流台照常
@@ -3160,6 +3167,7 @@ const App = {
       this.logosEnsure();
       // 开机后台编排（B-10 + R3/R4 拍板）：基线优先——未建基线（含确认过的中断续跑）不跑常规复测（基线是超集）
       if (ok) setTimeout(() => Sync.bootQuiet(), 4000);
+      Promise.resolve(storeReady).then(() => { showFreshnessSetting(); Sync.scheduleFreshness(); });
     });
     this.render(); this.showLast(); // file:// 降级模式下也补齐「上次收听」提示
   },

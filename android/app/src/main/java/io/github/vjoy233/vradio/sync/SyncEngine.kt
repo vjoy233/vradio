@@ -112,9 +112,10 @@ class SyncEngine(private val gh: Gh, private val check: CheckStream, private val
     // 据此把该分组置空，不猜）。AIbot 三轮 P1：radioHash 同随写入（与 LightUpdate.apply 同一 stamp 形态；
     // meta=false 本就不绑定，哈希只是形态一致——两写之间被杀残留旧 stamp 时哈希核对同样拦下）
     runCatching { File(filesDir, "radio-meta.json").delete() }
-    writeTextAtomic(File(filesDir, "stamp.json"),
-      JSONObject().put("commitIso", Instant.now().toString()).put("meta", false)
-        .put("radioHash", hashText(mergedText)).toString())
+    val stamp = JSONObject().put("commitIso", Instant.now().toString()).put("meta", false)
+      .put("radioHash", hashText(mergedText))
+    if (cnUpdated && eu != null) stamp.put("freshnessProvenance", "device-full-sync").put("freshnessAt", System.currentTimeMillis())
+    writeTextAtomic(File(filesDir, "stamp.json"), stamp.toString())
     // 4.5) diff 摘要（N4/r2 ⑥）：按台名集合对比——分类变化不算（重分类是常规操作），改名 = 消失+新增如实呈现
     val oldNames = entryNamesOf(oldSecs.flatMap { it.lines })
     val neuNames = entryNamesOf(merged)

@@ -63,6 +63,17 @@ class StrictV2Test {
       if (e.getString("id") == "depth-4099") assertTrue(result.exceptionOrNull() is IllegalArgumentException)
     }
   }
+  @Test fun sharedBindingCases() {
+    val data = JSONObject(javaClass.classLoader!!.getResourceAsStream("fixtures/c3-strict-v2-adversarial.json")!!.bufferedReader(Charsets.UTF_8).use { it.readText() })
+    each(data.getJSONArray("bindingCases")) { e ->
+      val binding = if (e.isNull("controlledCommit")) null else e.getString("controlledCommit")
+      val result = runCatching {
+        val p = StrictV2.pointer(bytes(e, "pointerBase64"))
+        StrictV2.generation(p.first, bytes(e, "manifestBase64"), bytes(e, "sidecarBase64"), binding)
+      }
+      assertEquals(e.getString("id"), e.getString("proposed") == "accept", result.isSuccess)
+    }
+  }
   @Test fun nestedInputIsBounded() {
     fun nested(n: Int) = ("{\"x\":" + "[".repeat(n - 1) + "0" + "]".repeat(n - 1) + "}").toByteArray()
     assertTrue(runCatching { StrictV2.depthProbe(nested(3)) }.isSuccess)

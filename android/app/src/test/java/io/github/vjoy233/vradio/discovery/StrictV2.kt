@@ -77,8 +77,8 @@ internal object StrictV2 {
     val h = str(o, "sha256"); val n = o["bytes"] as? Long ?: error("bytes")
     checkIt(hash.matches(h) && n in 1..524288); return h to n
   }
-  fun generation(id: String, manifest: ByteArray, raw: ByteArray, binding: String): Map<String, Any?> {
-    checkIt(hash.matches(id)); val (h, n) = manifest(manifest)
+  fun generation(id: String, manifest: ByteArray, raw: ByteArray, binding: String?): Map<String, Any?> {
+    checkIt(binding != null && commit.matches(binding)); checkIt(hash.matches(id)); val (h, n) = manifest(manifest)
     checkIt(h == id && n == raw.size.toLong() && raw.size in 1..524288)
     val actual = MessageDigest.getInstance("SHA-256").digest(raw).joinToString("") { "%02x".format(it.toInt() and 255) }
     checkIt(actual == h); return sidecar(raw).also { checkIt(it["commit"] == binding) }

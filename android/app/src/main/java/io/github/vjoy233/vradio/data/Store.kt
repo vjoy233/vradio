@@ -51,6 +51,7 @@ object Store {
 
   @Synchronized
   fun removeChecked(k: String): Boolean {
+    if (file == null) return false
     val had = mem.containsKey(k); val old = mem[k]
     mem.remove(k)
     if (persist()) return true

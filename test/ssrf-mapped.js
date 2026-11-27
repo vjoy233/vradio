@@ -6,6 +6,9 @@ const { boot } = require('./harness/api-client');
 async function main() {
   const denied = ['::ffff:7f00:1', '0:0:0:0:0:ffff:127.0.0.1', '::ffff:a00:1', '::ffff:6440:1', '::ffff:a9fe:1', '::ffff:c0a8:1', '::ffff:ac10:1', '::ffff:0:1', '::1', '::', 'fc00::1', 'fdff::1', 'fe80::1', 'febf::1'];
   const allowed = ['::ffff:808:808', '::ffff:6440:0'.replace('6440', '643f'), '::ffff:ac20:1', '2001:4860:4860::8888', 'fec0::1'];
+  // 非 ::ffff:0:0/96 的过渡地址：仅记录现行策略，不证明可达或安全。
+  const policyUnchanged = ['::ffff:0:7f00:1', '::7f00:1', '64:ff9b::7f00:1'];
+  allowed.push(...policyUnchanged);
   for (const ip of denied) assert.strictEqual(safeTarget('http://[' + ip + ']/'), null, ip);
   for (const ip of allowed) assert.ok(safeTarget('http://[' + ip + ']/'), ip);
   for (const ip of ['100.64.0.1', '127.0.0.1', '10.0.0.1']) assert.strictEqual(safeTarget('http://' + ip), null, ip);

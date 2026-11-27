@@ -31,6 +31,17 @@ e=larger(); e.rounds.forEach(a=>a.results.forEach((x,i)=>{if(i<30)x.code='SHORT_
 e.rounds.forEach(a=>a.results[30].code='SHORT_BODY'); r=E.evaluate(e); assert.deepStrictEqual(r.failures,['SHORT_BODY > 10%']);
 e=fixture(); e.rounds[0].results=e.rounds[0].results.slice(0,225); assert.equal(E.evaluate(e).arithmetic,'PASS');
 e=fixture(); e.rounds.forEach(a=>a.results[0].code='NETWORK'); r=E.evaluate(e); assert.deepStrictEqual(r.failures,['真正新增 OK < 250']);
+// 单轮 65%（195/300）与合并 70%（420/600）精确边界。
+e=larger(); e.rounds[0].results.forEach((x,i)=>{if(i>=195)x.code='NETWORK';}); assert.equal(E.evaluate(e).arithmetic,'PASS');
+e.rounds[0].results[194].code='NETWORK'; r=E.evaluate(e); assert.deepStrictEqual(r.failures,['第 1 轮存活率 < 65%']);
+e=larger(); e.rounds[0].results.forEach((x,i)=>{if(i>=195)x.code='NETWORK';}); e.rounds[1].results.forEach((x,i)=>{if(i<75)x.code='NETWORK';}); assert.equal(E.evaluate(e).arithmetic,'PASS');
+e.rounds[1].results[75].code='NETWORK'; r=E.evaluate(e); assert.deepStrictEqual(r.failures,['合并存活率 < 70%']);
+// 仅分类 60% 跌破，整体存活及新增数保持达标。
+e=larger(); e.candidates.slice(0,20).forEach(x=>x.category='新闻'); e.releaseCategories.push('新闻'); e.rounds.forEach(a=>a.results.forEach((x,i)=>{if(i<8)x.code='NETWORK';})); assert.equal(E.evaluate(e).arithmetic,'PASS');
+e.rounds[0].results[8].code='NETWORK'; r=E.evaluate(e); assert.deepStrictEqual(r.failures,['新闻: 存活率 < 60%']);
+// 600 个样本 nearest-rank 第 570 位：30 个超限仍通过，31 个超限失败。
+e=larger(); e.rounds[1].results.slice(0,30).forEach(x=>x.latencyMs=6001); assert.equal(E.evaluate(e).metrics.merged.p95,6000); assert.equal(E.evaluate(e).arithmetic,'PASS');
+e.rounds[1].results[30].latencyMs=6001; r=E.evaluate(e); assert.equal(r.metrics.merged.p95,6001); assert.deepStrictEqual(r.failures,['p95 > 6000ms 或无样本']);
 // 隔离断言具体失败门，防止其他门失败掩盖回归。
 e=fixture(); e.rounds[0].results=e.rounds[0].results.slice(0,224); assert(E.evaluate(e).failures.some(x=>x.includes('覆盖率')));
 e=fixture(); e.rounds[0].results.forEach(x=>x.latencyMs=6001); assert(E.evaluate(e).failures.some(x=>x.includes('p95')));

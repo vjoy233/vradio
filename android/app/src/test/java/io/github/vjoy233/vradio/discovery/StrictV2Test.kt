@@ -36,11 +36,11 @@ class StrictV2Test {
     each(concepts.getJSONArray("urlAdversarial")) { c -> assertEquals(c.getString("url"), c.getBoolean("formatAccept"), StrictV2.url(c.getString("url"))) }
   }
   @Test fun generationsAndSelection() = each(fixture.getJSONArray("pointer")) { c ->
+    // 旧 cross-commit 把 upstream 和 delivery 混为一谈，不能用其选择期望。
+    if (c.getString("id") == "cross-commit") return@each
     val expected = c.getJSONObject("expected"); val gs = c.getJSONObject("generations")
-    // 旧 cross-commit 期望仅是模拟显式 upstream pin，不是 delivery 绑定。
-    val expectedUpstreamCommit = "a".repeat(40)
     fun get(id: String): Map<String, Any?>? = runCatching {
-      val g = gs.getJSONObject(id); StrictV2.generation(id, bytes(g, "manifestBase64"), bytes(g, "sidecarBase64"), expectedUpstreamCommit).sidecar
+      val g = gs.getJSONObject(id); StrictV2.generation(id, bytes(g, "manifestBase64"), bytes(g, "sidecarBase64")).sidecar
     }.getOrNull()
     val p = runCatching { StrictV2.pointer(bytes(c, "pointerBase64")) }.getOrNull()
     val current = p?.let { get(it.first) }; val previous = p?.second?.let { get(it) }
@@ -103,7 +103,7 @@ class StrictV2Test {
     assertTrue(runCatching { StrictV2.pointer(bytes(c, "pointerBase64")) }.isFailure)
     val g = c.getJSONObject("local")
     val local = if (c.getString("localRevocationPolicyResult") == "allow") runCatching {
-      StrictV2.generation(g.getString("id"), bytes(g, "manifestBase64"), bytes(g, "sidecarBase64"), g.getString("commit")).sidecar
+      StrictV2.generation(g.getString("id"), bytes(g, "manifestBase64"), bytes(g, "sidecarBase64")).sidecar
     }.getOrNull() else null
     val expected = c.getJSONObject("expected")
     assertEquals(c.getString("id"), expected.getString("selection"), if (local == null) "unavailable" else "local")

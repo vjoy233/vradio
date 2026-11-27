@@ -24,6 +24,11 @@ assert.deepStrictEqual(S.normalize({...raw,items:[{name:'x',url:'https://x',comm
   assert.equal((await S.loadSnapshot(fetcher,'snap')).length,1, 'corrupt current falls back');
   const stalled = async (url, opts) => url.includes(broken) ? new Promise(() => {}) : fetcher(url, opts);
   assert.equal((await S.loadSnapshot(stalled,'snap',10)).length,1, 'stalled current falls back within independent deadline');
+  let readCancelled = false, readAborted = false;
+  const stalledRead = async (u,o) => u.includes(broken) ? {ok:true,headers:{get:k=>k==='content-type'?'application/json':null},body:{getReader:()=>({read:()=>new Promise(()=>{}),cancel:async()=>{readCancelled=true;}})}} : fetcher(u,o);
+  const observed = (u,o) => { if (u.includes(broken)) o.signal.addEventListener('abort',()=>{readAborted=true;}); return stalledRead(u,o); };
+  assert.equal((await S.loadSnapshot(observed,'snap',10)).length,1);
+  assert(readCancelled && readAborted, 'stalled reader is cancelled and aborted');
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
   Object.defineProperty(globalThis, 'crypto', {configurable:true, value:undefined});
   assert.equal((await S.loadSnapshot(fetcher,'snap',10)).length, 1, 'insecure context verifies hash without Web Crypto');

@@ -15,6 +15,7 @@ window.FEATURES = (function () {
   try {
     const o = {};
     for (const k of Object.keys(def)) {
+      if (k === 'discoverySidecar') { o[k] = false; continue; } // C3 不接受本地覆盖
       const v = localStorage.getItem('feat.' + k);
       o[k] = v === '1' ? true : v === '0' ? false : def[k];
     }

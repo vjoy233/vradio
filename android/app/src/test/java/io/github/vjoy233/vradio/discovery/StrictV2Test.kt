@@ -67,6 +67,28 @@ class StrictV2Test {
     assertEquals(1, calls); assertEquals("b".repeat(40), selected.sidecar["commit"])
     assertEquals("unverified", selected.provenance)
   }
+  @Test fun simulatedMismatchedCurrentDelivery() {
+    val cases = fixture.getJSONArray("pointer")
+    val both = (0 until cases.length()).map { cases.getJSONObject(it) }.first { it.getString("id") == "both" }
+    val p = StrictV2.pointer(bytes(both, "pointerBase64")); val gs = both.getJSONObject("generations")
+    fun valid(id: String): StrictV2.Generation {
+      val g = gs.getJSONObject(id)
+      return StrictV2.generation(id, bytes(g, "manifestBase64"), bytes(g, "sidecarBase64"))
+    }
+    // 两代原始字节先各自真实验证，确保拒绝不是坏字节造成。
+    assertEquals("unverified", valid(p.first).provenance)
+    assertEquals("unverified", valid(p.second!!).provenance)
+    var currentCalls = 0; var previousCalls = 0
+    fun choose(currentDelivery: String, previousDelivery: String): String {
+      if (currentDelivery == "delivery-A") { currentCalls++; valid(p.first); return "current" }
+      if (previousDelivery == "delivery-A") { previousCalls++; valid(p.second!!); return "previous" }
+      return "unavailable"
+    }
+    assertEquals("previous", choose("delivery-B", "delivery-A"))
+    assertEquals(0, currentCalls); assertEquals(1, previousCalls)
+    assertEquals("unavailable", choose("delivery-B", "delivery-B"))
+    assertEquals(0, currentCalls); assertEquals(1, previousCalls)
+  }
   @Test fun sharedAdversarialBytes() {
     val data = JSONObject(javaClass.classLoader!!.getResourceAsStream("fixtures/c3-strict-v2-adversarial.json")!!.bufferedReader(Charsets.UTF_8).use { it.readText() })
     each(data.getJSONArray("entries")) { e ->

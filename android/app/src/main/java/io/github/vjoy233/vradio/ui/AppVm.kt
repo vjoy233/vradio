@@ -526,15 +526,14 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   /** 启动末梢的消费序（有意固定）：快捷方式点播 > 链接接流预填 > 自动续播——显式意图不抢。 */
   private fun consumePending() {
     val sc = pendingSc; pendingSc = null
-    when {
-      sc == "last" -> resumeLast()
-      sc != null -> {
+    when (BootArbitration.decide(sc, addPreset.value != null)) {
+      BootArbitration.Action.RESUME -> if (sc == "last") resumeLast() else resumeLastIfWanted()
+      BootArbitration.Action.SHORTCUT -> {
         val s = runCatching { lib.stations.firstOrNull { it.key == sc } }.getOrNull()
         if (s != null) startPlay(s)
         else { resumeLastIfWanted(); setStatus("快捷方式指向的电台已不在列表中") }
       }
-      addPreset.value != null -> { openAddStation(); toast("已填入流地址，探活通过后点「添加」") }   // AIbot P3：冷启动接流与热路径反馈一致
-      else -> resumeLastIfWanted()
+      BootArbitration.Action.PRESET -> { openAddStation(); toast("已填入流地址，探活通过后点「添加」") }
     }
   }
 

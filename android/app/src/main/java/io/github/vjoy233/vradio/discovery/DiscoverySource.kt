@@ -3,6 +3,7 @@ package io.github.vjoy233.vradio.discovery
 import org.json.JSONObject
 import java.security.MessageDigest
 import java.time.Instant
+import java.time.format.DateTimeFormatterBuilder
 import java.net.URI
 
 /** C3 预发布只读精选 sidecar 解析面；不联网、不写文件、不接主库/UI。 */
@@ -45,7 +46,7 @@ object DiscoverySourceParser {
         o.optString("license") != "CC0-1.0") return@runCatching null
       val commit = o.optString("commit")
       val generated = o.optString("generatedAt")
-      if (!SHA.matches(commit) || !ISO.matches(generated) || runCatching { Instant.parse(generated) }.isFailure || Instant.parse(generated).toString() != generated) return@runCatching null
+      if (!SHA.matches(commit) || !ISO.matches(generated) || runCatching { Instant.parse(generated) }.isFailure || DateTimeFormatterBuilder().appendInstant(3).toFormatter().format(Instant.parse(generated)) != generated) return@runCatching null
       val a = o.optJSONArray("items") ?: return@runCatching null
       if (a.length() > MAX_ITEMS) return@runCatching null
       val items = ArrayList<DiscoveryItem>(a.length())

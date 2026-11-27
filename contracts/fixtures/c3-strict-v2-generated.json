@@ -97,7 +97,7 @@
   "format": "c3-v2-shared-fixtures-1",
   "note": "离线合成；原始字节仅 base64 解码，sha256 为真实字节哈希；不是解析器、许可或联网证明。output 是完整解析结果。",
   "undefinedBehavior": [
-    "受控 commit 绑定及其传递方式未定义；跨 commit 用显式外部 binding 标识。",
+    "受控投递 revision 的认证及其传递方式未定义；deliveryBinding 仅为外部测试假设，不是已验证获取过程；sidecar commit 是独立上游 S。",
     "previous 回退时的降级标记和错误分类未定义，故不予断言。",
     "规范未定义解析 API 返回值形状；output 是协议 JSON 值，不规定实现接口。"
   ],
@@ -2716,7 +2716,41 @@
       }
     },
     {
-      "id": "cross-commit",
+      "id": "same-delivery-different-upstream",
+      "pointerBase64": "eyJ2IjoyLCJjdXJyZW50IjoiYzU5OTg1NTQ3OThiNTQ5NDI1NzVjZjAxNjNmODdjOTM3ODBmMjU5NmMxNTU1ZWMyOTJiNzFiNDRlNjg5NTI5MiIsInByZXZpb3VzIjoiODc4NDlhNTg2ZjM0ZGJkNmE5NGQxNTIyMTMxNTE2OTA0YjIxYjZmNDQ0YjNkNmRlZmM5YjUwNWQzNWZmYzJmZiJ9",
+      "generations": {
+        "c5998554798b54942575cf0163f87c93780f2596c1555ec292b71b44e6895292": {
+          "sidecarBase64": "eyJ2IjoyLCJzb3VyY2UiOiJyZWNvbW1lbmRlZC1yYWRpby1zdHJlYW1zIiwibGljZW5zZSI6IkNDMC0xLjAiLCJjb21taXQiOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwiZ2VuZXJhdGVkQXQiOiIyMDI2LTExLTI2VDAxOjAyOjAzLjEyM1oiLCJpdGVtcyI6W3sibmFtZSI6IuekuuS+iyIsInVybCI6Imh0dHBzOi8vZXhhbXBsZS5pbnZhbGlkL2xpdmUiLCJnZW5yZSI6IiIsInVwc3RyZWFtIjoicmVjb21tZW5kZWQtcmFkaW8tc3RyZWFtcyIsImNvbW1pdCI6ImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEifV19",
+          "manifestBase64": "eyJ2IjoyLCJzaGEyNTYiOiJjNTk5ODU1NDc5OGI1NDk0MjU3NWNmMDE2M2Y4N2M5Mzc4MGYyNTk2YzE1NTVlYzI5MmI3MWI0NGU2ODk1MjkyIiwiYnl0ZXMiOjF9",
+          "id": "c5998554798b54942575cf0163f87c93780f2596c1555ec292b71b44e6895292",
+          "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "87849a586f34dbd6a94d1522131516904b21b6f444b3d6defc9b505d35ffc2ff": {
+          "sidecarBase64": "eyJ2IjoyLCJzb3VyY2UiOiJyZWNvbW1lbmRlZC1yYWRpby1zdHJlYW1zIiwibGljZW5zZSI6IkNDMC0xLjAiLCJjb21taXQiOiJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiIiwiZ2VuZXJhdGVkQXQiOiIyMDI2LTExLTI2VDAxOjAyOjAzLjEyM1oiLCJpdGVtcyI6W119",
+          "manifestBase64": "eyJ2IjoyLCJzaGEyNTYiOiI4Nzg0OWE1ODZmMzRkYmQ2YTk0ZDE1MjIxMzE1MTY5MDRiMjFiNmY0NDRiM2Q2ZGVmYzliNTA1ZDM1ZmZjMmZmIiwiYnl0ZXMiOjE2OH0=",
+          "id": "87849a586f34dbd6a94d1522131516904b21b6f444b3d6defc9b505d35ffc2ff",
+          "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "expected": {
+        "selection": "previous",
+        "output": {
+          "v": 2,
+          "source": "recommended-radio-streams",
+          "license": "CC0-1.0",
+          "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "generatedAt": "2026-11-26T01:02:03.123Z",
+          "items": []
+        }
+      },
+      "deliveryBinding": {
+        "pointerRevision": "dddddddddddddddddddddddddddddddddddddddd",
+        "currentRevision": "dddddddddddddddddddddddddddddddddddddddd",
+        "previousRevision": "dddddddddddddddddddddddddddddddddddddddd"
+      }
+    },
+    {
+      "id": "cross-delivery",
       "pointerBase64": "eyJ2IjoyLCJjdXJyZW50IjoiYzU5OTg1NTQ3OThiNTQ5NDI1NzVjZjAxNjNmODdjOTM3ODBmMjU5NmMxNTU1ZWMyOTJiNzFiNDRlNjg5NTI5MiIsInByZXZpb3VzIjoiODc4NDlhNTg2ZjM0ZGJkNmE5NGQxNTIyMTMxNTE2OTA0YjIxYjZmNDQ0YjNkNmRlZmM5YjUwNWQzNWZmYzJmZiJ9",
       "generations": {
         "c5998554798b54942575cf0163f87c93780f2596c1555ec292b71b44e6895292": {
@@ -2735,9 +2769,10 @@
       "expected": {
         "selection": "unavailable"
       },
-      "binding": {
-        "currentCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "previousCommit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      "deliveryBinding": {
+        "pointerRevision": "dddddddddddddddddddddddddddddddddddddddd",
+        "currentRevision": "dddddddddddddddddddddddddddddddddddddddd",
+        "previousRevision": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
       }
     },
     {

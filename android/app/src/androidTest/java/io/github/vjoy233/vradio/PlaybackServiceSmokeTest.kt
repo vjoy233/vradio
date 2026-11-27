@@ -1,5 +1,6 @@
 package io.github.vjoy233.vradio
 
+import android.os.SystemClock
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -9,6 +10,7 @@ import io.github.vjoy233.vradio.player.PlayerHolder
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -17,6 +19,18 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class PlaybackServiceSmokeTest {
   @get:Rule val guard = TestUtil.dataGuard()
+
+  @Test
+  fun productSelfControllerConnects() {
+    val instr = InstrumentationRegistry.getInstrumentation()
+    val deadline = SystemClock.elapsedRealtime() + 10_000
+    var connected = false
+    while (!connected && SystemClock.elapsedRealtime() < deadline) {
+      instr.runOnMainSync { connected = PlayerHolder.isSelfControllerConnected() }
+      if (!connected) SystemClock.sleep(100)
+    }
+    assertTrue("产品自连未在 10 秒内连接", connected)
+  }
 
   @Test
   fun serviceSessionConnectsWithoutAutoplay() {

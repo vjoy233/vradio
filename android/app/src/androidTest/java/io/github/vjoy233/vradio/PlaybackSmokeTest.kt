@@ -1,12 +1,17 @@
 package io.github.vjoy233.vradio
 
+import android.content.ComponentName
 import android.os.SystemClock
 import android.util.Log
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.vjoy233.vradio.model.PState
 import io.github.vjoy233.vradio.model.Station
 import io.github.vjoy233.vradio.player.PlayerHolder
+import io.github.vjoy233.vradio.player.PlaybackService
+import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -67,6 +72,32 @@ class PlaybackSmokeTest {
     instr.runOnMainSync { PlayerHolder.stop() }
     assertTrue("stop 后未回到 IDLE", awaitSt(PState.IDLE, 5_000))
     Log.i(TAG, "播放链全程通过 fixture=$base")
+  }
+
+  @Test
+  fun mediaControllerPauseKeepsRealStreamPaused() {
+    val instr = InstrumentationRegistry.getInstrumentation()
+    val ctx = instr.targetContext
+    val station = Station("smoke", "暂停意图", mutableListOf(base + "/direct.mp3"))
+    instr.runOnMainSync { PlayerHolder.play(station) }
+    assertTrue("fixture 未进入 PLAYING", awaitSt(PState.PLAYING, 12_000))
+    val future = MediaController.Builder(ctx, SessionToken(ctx, ComponentName(ctx, PlaybackService::class.java))).buildAsync()
+    val controller = future.get(10, TimeUnit.SECONDS)
+    try {
+      instr.runOnMainSync { controller.pause() }
+      assertTrue("媒体控制器暂停未到达产品播放器", awaitSt(PState.PAUSED, 5_000))
+      // 跨过 12 秒看门狗窗口；每次同时检查产品 UI 与真实播放器意图。
+      val until = SystemClock.elapsedRealtime() + 15_000
+      while (SystemClock.elapsedRealtime() < until) {
+        instr.runOnMainSync {
+          assertEquals("暂停被后台恢复", PState.PAUSED, PlayerHolder.ui.value.st)
+          assertTrue("暂停期间不应请求播放", !PlayerHolder.player.playWhenReady)
+        }
+        SystemClock.sleep(200)
+      }
+    } finally {
+      instr.runOnMainSync { controller.release() }
+    }
   }
 
   /** 轮询播放状态到目标（PlayerHolder.ui StateFlow 跨线程读安全；100ms 步进，超时按最后一次判定） */

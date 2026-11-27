@@ -86,6 +86,8 @@ object PlayerHolder {
   val ui: StateFlow<PlayerUiState> get() = uiMut   // UI 唯一读口
   val player: ExoPlayer get() = exo
   val session: MediaSession get() = sess
+  // 只读诊断：仅在主线程查询产品自身的 controller；不触发连接或改变播放。
+  internal fun isSelfControllerConnected(): Boolean = selfCtl?.isConnected == true
 
   var onStepFav: ((Int) -> Unit)? = null                     // ⏮⏭ 收藏间切台（player.js:71-72）
   var onPlayLast: (() -> Unit)? = null                       // 媒体键 play 无台 → 续播上次（player.js:66）

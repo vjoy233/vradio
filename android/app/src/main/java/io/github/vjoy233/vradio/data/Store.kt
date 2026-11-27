@@ -30,8 +30,6 @@ object Store {
   @Synchronized
   fun get(k: String): String? = mem[k]
 
-  internal fun resetForTest() { synchronized(this) { file = null; mem.clear() } }
-
   @Synchronized
   fun set(k: String, v: String) { mem[k] = v; persist() }
 

@@ -27,9 +27,19 @@ class StoreCheckedTest {
   }
 
   @Test fun checkedFailsClosedBeforeInit() {
-    Store.resetForTest()
-    try { assertFalse(Store.setChecked(C.K_VOL, "pre-init")); assertFalse(Store.removeChecked(C.K_VOL)) }
-    finally { Store.resetForTest() }
+    val d = createTempDirectory("checked-uninit").toFile()
+    try {
+      Store.init(d); Store.set(C.K_VOL, "old")
+      val field = Store::class.java.getDeclaredField("file").apply { isAccessible = true }
+      synchronized(Store) {
+        val oldFile = field.get(Store)
+        try {
+          field.set(Store, null)
+          assertFalse(Store.setChecked(C.K_VOL, "new")); assertFalse(Store.removeChecked(C.K_VOL))
+          assertEquals("old", Store.get(C.K_VOL))
+        } finally { field.set(Store, oldFile) }
+      }
+    } finally { d.deleteRecursively() }
   }
 
   @Test fun checkedFailurePreservesOldDiskAtEveryAtomicStage() {

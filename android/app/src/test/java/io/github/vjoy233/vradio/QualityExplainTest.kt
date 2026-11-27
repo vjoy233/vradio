@@ -34,6 +34,6 @@ class QualityExplainTest {
   @Test fun 未知稳定性与状态优先级() {
     val base = JSONObject("""{"okCount":3,"failCount":0,"lastObservedAt":1,"stability":"future"}""")
     assertEquals(QualityExplanation("unknown", "retest", "unknown_stability"), qExplain(aggregate(base), 2))
-    assertEquals(QualityExplanation("good", "none", "ok"), diagnosticAction("OK", 403))
+    assertEquals(QualityExplanation("unknown", "configure", "service_refused"), diagnosticAction("OK", 403))
   }
 }

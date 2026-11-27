@@ -1,6 +1,8 @@
 /* VRadio 播放引擎 —— audio/hls/播放态的唯一所有者（模块契约见 docs/review.md 十一节债务 2）。
    本文件不碰列表与渲染，UI 反馈经 onstate/onstatus/onfail 回调由 app.js 注入；
    经典 script（非 ES modules）是硬约束：file:// 下 module 加载受 CORS 限制必挂。 */
+// 最近一次播放失败事实：仅模块内写入，不持久化、不含诊断推测。
+let lastPlaybackFailure = null;
 const Player = {
   audio: null, hls: null, token: 0,
   station: null,    // 当前台（引用 app 数据里的 station 对象）
@@ -17,6 +19,7 @@ const Player = {
   halt: false,    // 有意暂停标志（AIbot P2-1）：用户/让位/睡眠定时走 pause() 置位。不能拿 isPaused() 判——
                   // 媒体元素加载失败会自动置 paused=true，正常 error 级联会被误当暂停挡死
   heldNext: false, // 暂停期间 error 级联被守卫挡住的标记：resume 时接回（error 事件只发一次，等 play() 再触发是等不到的）
+  curSourceUrl: '', // 当前尝试对应的原始源身份（启动时冻结，避免台对象随后变更）
   curSi: -1,      // 正在试的源序号（variants 展开前的 s.u 下标；playing 时记忆）
   curPlay: '',    // 当前装载的 variant URL（stall/ended 重连当前源用）
   curUrl: '',     // 正在播的远端原始 URL（app 曲讯轮询用；/proxy 形态已还原回远端）
@@ -32,6 +35,7 @@ const Player = {
   onqos: null,      // (ev) 播放质量原始转换回调（B2）：{phase:'playing'|'disconnect'|'exhaust', station, si, mode,
                     // trig?, reason?, lat}。本引擎只发状态机转换（CONNECTING→PLAYING / PLAYING→CONNECTING / 级联耗尽），
                     // 不感知 QualityStore——trigger 映射（play/switch/watchdog/error）由 app.js 完成（模块契约）
+  attemptCount: 0,  // 本轮实际 load 次数（含同源重连）
   loadT0: 0,        // 当前 load() 的建流锚（playing 事件的延迟 = now - loadT0）
   sessionPlayed: false, // 本次 play() 会话内是否已到达过 playing（区分 play 首达/换源到达）
   qLastSi: -1,      // 上次到达 playing 的源序号（同台换源到达 = switch、同源重连到达 = play）
@@ -61,6 +65,7 @@ const Player = {
     el.addEventListener('ended', () => { // halt 守卫（三审 B3，audit-r2 P2-2 证实未落地）：暂停/让位页不得被 ended 自愈复活——retryOrNext 重连分支 audio.play() 会广播 'on' 反杀对方标签（AIbot P2-1 的 ping-pong）
       if (!this.station || this.connecting) return;
       if (this.halt) { this.heldNext = true; return; } // 暂停期上游断流：置搁浅标记，resume 走 retryOrNext 立即重连（review P3-1）——否则对已 ended 元素 play() 无效，最坏要等看门狗 12s
+      this.recordFailure('watchdog'); // 直播意外 ended 同样触发自愈，记录事实而非推测诊断
       this.qosDown('watchdog'); // B2：直播被服务端断连（不该 ended），先同源重连——断流样本（在播态才计）
       this.emitPhase('idle'); // 直播不该 ended：真实播放标记立即清（重连经 load 再发 connecting，切台清标记语义达成）
       this.retryOrNext();
@@ -159,6 +164,7 @@ const Player = {
 
   play(s, prefer) {
     this.stopWatchdog();
+    this.attemptCount = 0;
     this.halt = this.heldNext = false; // 清上一轮的有意暂停/级联搁浅标记（AIbot P2-1）
     this.sessionPlayed = false; this.qDown = false; this.qEmittedT0 = 0; this.qLastSi = -1; // B2 质量会话复位
     const order = this.srcOrder(s); // 有效序基座（禁用源已剔除，序号对齐原始 s.u）
@@ -177,8 +183,8 @@ const Player = {
     if (mem && Number.isInteger(mem.i) && mem.i >= 0 && mem.i < s.u.length && order.includes(mem.i)) { order.splice(order.indexOf(mem.i), 1); order.unshift(mem.i); } // 上次试通的源先行（流地址天然漂移，省一轮必败等待）；记忆指向禁用源则忽略顺延
     if (Number.isInteger(prefer) && prefer >= 0 && prefer < s.u.length && order.includes(prefer)) { order.splice(order.indexOf(prefer), 1); order.unshift(prefer); } // 手动选源（②）：当次点播最高优先；禁用源不可 prefer
     const urls = [];
-    for (const si of order) for (const v of this.variants(s.u[si])) urls.push({ u: v, si });
-    this.pctx = { urls, i: 0, my: ++this.token }; // 世代令牌：快速连续点播时旧链路回调全部失效，防串台
+    for (const si of order) for (const v of this.variants(s.u[si])) urls.push({ u: v, si, sourceUrl: s.u[si] });
+    this.pctx = { urls, i: 0, my: ++this.token, stationUrl: s.u[0] }; // 世代令牌：快速连续点播时旧链路回调全部失效，防串台
     this.station = this.connecting = s; this.emit(true);
     // 每台音量记忆（A3/r2 ②）：有记忆用记忆、无记忆用全局默认；静音态切台保持静音（恢复值由 restoreVol 按新台取）。
     // setVolume 同步 this.vol 基准——睡眠渐弱/中途取消的恢复都锚在它上
@@ -197,6 +203,7 @@ const Player = {
     if (my !== this.token) return;
     this.qosDown('error'); // B2：级联换源 = 断流样本（在播态失败才计；watchdog 同一次断流已被 qDown 挡）
     if (this.pctx.i >= urls.length) { // 全部源失败：状态栏给出结论与下一步指引，footer 由 onfail 复位
+      this.recordFailure('exhaust');
       if (this.onqos && this.station) this.onqos({ phase: 'exhaust', station: this.station, si: this.curSi, mode: this.qosMode() }); // B2：级联耗尽 = error 样本
       this.station = this.connecting = null; this.stopWatchdog(); this.emit(true);
       this.emitPhase('idle'); // 级联耗尽：无连接，真实播放标记清零（P3/§6.10）
@@ -210,15 +217,16 @@ const Player = {
     // 元素已停在错误态（且会自动置 paused），恢复时靠 play() 再触发 error 是等不到的
     if (this.halt && this.pctx.i > 0) { this.heldNext = true; return; }
     const cur = urls[this.pctx.i++];
-    this.curSi = cur.si; this.curPlay = cur.u; this.retried = false;
+    this.curSi = cur.si; this.curSourceUrl = cur.sourceUrl; this.curPlay = cur.u; this.retried = false;
     this.qLastMode = cur.u.startsWith('/proxy') ? 'proxy' : (/\.m3u8(\?|$)/i.test(cur.u) ? 'hls' : 'direct'); // B2：记最近尝试 variant 的 mode（耗尽事件兜底）
     this.connecting = this.station; this.emit(true); // 换源重试期间保持连接中指示
     this.say('连接中… 源' + this.pctx.i + '/' + urls.length);
-    this.load(cur.u, () => { if (my === this.token) this.next(); });
+    this.load(cur.u, () => { if (my === this.token) { this.recordFailure('error'); this.next(); } });
   },
 
   load(u, onFail) {
     this.stopHls();
+    this.attemptCount++;
     const audio = this.audio;
     this.loadT0 = Date.now(); // B2 建流锚：playing 事件的延迟 = now - loadT0
     this.emitPhase('connecting'); // P3/§6.10：装载即连接中——play 请求/切台/级联顺延/重连统一入口，切台立即清真实播放标记
@@ -286,6 +294,7 @@ const Player = {
       this.wd = 0;
       if (my !== this.token || !this.station) return; // 级联已终结（全部源失败/切台）：残留看门狗不说话不动作
       if (this.isPaused()) return; // 武装后用户按了暂停：不强制起播（pause() 亦会撤表，此处双保险——AIbot P2-3）
+      this.recordFailure('watchdog');
       this.say('流卡住，自动恢复…'); this.qosDown('watchdog'); this.retryOrNext(); // B2：静默挂起断流（在播态才计）
     }, 12000);
   },
@@ -296,7 +305,7 @@ const Player = {
     if (!this.retried) {
       this.retried = true; this.stopWatchdog();
       this.connecting = this.station; this.emit(true); this.say('重连当前源…');
-      this.load(this.curPlay, () => { if (my === this.token) this.next(); });
+      this.load(this.curPlay, () => { if (my === this.token) { this.recordFailure('error'); this.next(); } });
     } else this.next();
   },
   onAir() { // 建流成功（playing）：记忆「该台哪个源通了」（仅多源台；台主 URL 为键、FIFO 300 封顶）
@@ -317,6 +326,13 @@ const Player = {
     return true;
   },
   srcToken() { return this.token; }, // 世代令牌只读口（B3 曲讯管线校验旧世代事件用；play/stop 递增，本方法不新增写路径）
+  recordFailure(reason) { // 捕获当时的原始源身份和实际 variant；只保存标量，不暴露可变 station 引用
+    const s = this.station;
+    if (!s || this.curSi < 0 || !this.curPlay) return;
+    lastPlaybackFailure = Object.freeze({ stationUrl: this.pctx.stationUrl, sourceUrl: this.curSourceUrl, sourceIndex: this.curSi,
+      variantUrl: this.curPlay, mode: this.qosMode(), at: Date.now(), reason, attempts: this.attemptCount });
+  },
+  getFailureSnapshot() { return lastPlaybackFailure; },
   getSourceState() { // 只读快照（B1 详情中心）：app 不直接读 audio/HLS/token；mode 按 variant URL 形态判（/proxy 包裹的 m3u8 亦判 hls）
     const s = this.station, m = s ? this.srcMem[s.u[0]] : null;
     return {

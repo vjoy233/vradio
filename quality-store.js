@@ -167,6 +167,7 @@ function qExplain(summary, now) {
   return unknown('unknown_stability');
 }
 function diagnosticAction(code, httpStatus) {
+  // 字节门可能在 401/403 下仍判 OK；保留真实 code，同时优先提示检查服务配置。
   if (httpStatus === 401 || httpStatus === 403) return { level: 'unknown', action: 'configure', reason: 'service_refused' };
   if (code === 'OK') return { level: 'good', action: 'none', reason: 'ok' };
   const map = {

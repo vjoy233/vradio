@@ -88,6 +88,8 @@ class StrictV2Test {
     assertEquals(0, currentCalls); assertEquals(1, previousCalls)
     assertEquals("unavailable", choose("delivery-B", "delivery-B"))
     assertEquals(0, currentCalls); assertEquals(1, previousCalls)
+    assertEquals("current", choose("delivery-A", "delivery-A"))
+    assertEquals(1, currentCalls); assertEquals(1, previousCalls)
   }
   @Test fun sharedAdversarialBytes() {
     val data = JSONObject(javaClass.classLoader!!.getResourceAsStream("fixtures/c3-strict-v2-adversarial.json")!!.bufferedReader(Charsets.UTF_8).use { it.readText() })

@@ -25,6 +25,11 @@ class StoreCheckedTest {
     } finally { d.deleteRecursively() }
   }
 
+  @Test fun checkedFailsClosedBeforeInit() {
+    Store.init(File.createTempFile("blocker", ".tmp"))
+    assertFalse(Store.setChecked(C.K_VOL, "pre-init"))
+  }
+
   @Test fun checkedAndOrdinaryWritesSerializeDeterministically() {
     val d=createTempDirectory("checked-gate").toFile(); try {
       Store.init(d); Store.set(C.K_VOL,"0")

@@ -81,7 +81,7 @@ object Store {
   }
 
   private fun persist(): Boolean { // 全量落盘：tmp+rename 原子写，进程写一半被杀不丢收藏（A3 纪律）。
-    val f = file ?: return true // 未 init：仅内存（正常流程不会走到；内存即全部，视为成功）
+    val f = file ?: return false // checked 写入未就绪时必须 fail-closed；无磁盘不能报告成功
     return runCatching {        // 单进程低频写，不做 debounce（Web 的 300ms 攒批是音量条连写护栏，安卓侧同场景写入量毫秒级）
       writeTextAtomic(f, JSONObject(mem).toString())          // AIbot P2-6：统一原子写实现（含 rename 拒绝降级）
       true

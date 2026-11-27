@@ -7,17 +7,23 @@ import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -25,10 +31,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -163,13 +176,13 @@ fun SourceDetailSheet(
   onDismiss: () -> Unit = {},
 ) {
   val pal = LocalVrPalette.current
-  val ctx = LocalContext.current
   val playing = player.station?.key == station.key && player.srcIdx >= 0
   ModalBottomSheet(onDismissRequest = onDismiss) {
     Column(
       Modifier.padding(horizontal = 16.dp).navigationBarsPadding().verticalScroll(rememberScrollState()),
     ) {
-      // 头部：台标 + 台名/分类 + 收藏态
+      // 头部（§5.7 a）：台标 + 台名/分类 + 收藏态 + 源数量（仅多源台显示实际 u.size）；ModalBottomSheet
+      // 内容首屏即本行，头部自然首屏可见，无 sticky 实现（§5.7 口径注明）
       Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         StationLogo(logo, station.n, station.key, 36.dp)   // 台标由调用方注入（vm.logoOf 同步窥探口径）
         Column(Modifier.weight(1f)) {
@@ -241,31 +254,34 @@ fun SourceDetailSheet(
           } else {
             Text("未诊断（点下方「诊断全部源」）", fontSize = 11.sp, color = pal.dim, modifier = Modifier.padding(start = 24.dp))
           }
-          // 动作行按 sourceRowActs 拼装（B1 review P1）：禁用行隐藏播放/重播只留管理动作（复制/取消禁用/上下移）
-          Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(start = 24.dp, top = 2.dp)) {
-            for (a in sourceRowActs(cur, off)) when (a) {
+          // 动作行（§5.7 c 动作密度）：主操作位只渲染「播放/重播」，复制/禁用·取消禁用/上下移收进行末
+          // 「更多」菜单；可见性仍由 sourceRowActs 纯函数拼装（JVM 直测件 CfgSourceLifecycleTest 不动），
+          // onEdit 载荷照旧 B1（排序/禁用仍走 vm.srcEdit，不新增 UI 侧草稿模型——§5.7 硬点 e）
+          Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.padding(start = 24.dp, top = 2.dp)) {
+            val acts = sourceRowActs(cur, off)
+            when (acts.firstOrNull { it == SourceRowAct.PLAY || it == SourceRowAct.REPLAY }) {
               SourceRowAct.PLAY -> ActText("播放") { onPlay(i) }
               SourceRowAct.REPLAY -> ActText("重播") { onPlay(i) }
-              SourceRowAct.COPY -> ActText("复制") {
-                (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)
-                  ?.setPrimaryClip(ClipData.newPlainText("vradio", u))
-                Toast.makeText(ctx, "已复制源地址", Toast.LENGTH_SHORT).show()
-              }
-              SourceRowAct.DISABLE -> ActText("禁用", warn = true) { onEdit(SourceAction.ToggleDisable(i)) }
-              SourceRowAct.UNDISABLE -> ActText("取消禁用") { onEdit(SourceAction.ToggleDisable(i)) }
-              SourceRowAct.MOVE_UP -> ActText("↑") { onEdit(SourceAction.Move(i, true)) }
-              SourceRowAct.MOVE_DOWN -> ActText("↓") { onEdit(SourceAction.Move(i, false)) }
+              else -> {}   // 禁用行：主操作位空置（sourceRowActs 已不给 PLAY/REPLAY）
             }
+            SourceMoreMenu(acts.filterNot { it == SourceRowAct.PLAY || it == SourceRowAct.REPLAY }, u, i, onEdit)
           }
         }
       }
-      // 诊断按钮（进行中置灰）
+      // 诊断按钮（§5.7 d）：进行中显示 spinner +「诊断中…」文案且不可点——诊断取消暂不提供，
+      // §5.7 口径 = 取消不可用态（本轮无取消通道，只有本轮跑完/超时自动结束）
       Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
           .clickable(enabled = !checking && station.effOrder().isNotEmpty()) { onCheck() }
           .padding(vertical = 10.dp, horizontal = 4.dp),
-      ) { Text(if (checking) "诊断中…（最长约 5 秒/源）" else "诊断全部源（${station.effOrder().size} 条启用）",
-        fontSize = 13.sp, color = pal.acc, fontWeight = FontWeight.Medium) }
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        if (checking) CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp, color = pal.acc)
+        Text(if (checking) "诊断中…（最长约 5 秒/源）" else "诊断全部源（${station.effOrder().size} 条启用）",
+          fontSize = 13.sp, color = pal.acc, fontWeight = FontWeight.Medium)
+      }
       // 恢复默认两动作（B1 拆分，彼此独立）
       Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
@@ -288,7 +304,43 @@ fun SourceDetailSheet(
   }
 }
 
-/** 小动作字（详情浮层动作行；命中区靠 padding 撑到接近 32dp，比 TextButton 紧凑） */
+/** 行末「更多」菜单（§5.7 c）：管理动作收编——复制/禁用·取消禁用/上移下移；动作文案与 onEdit 载荷照旧 B1。
+ *  菜单项走 material3 DropdownMenuItem（默认 48dp 命中区），触发钮 heightIn 撑到 48dp。 */
+@Composable
+private fun SourceMoreMenu(acts: List<SourceRowAct>, u: String, i: Int, onEdit: (SourceAction) -> Unit) {
+  val pal = LocalVrPalette.current
+  val ctx = LocalContext.current
+  var open by remember { mutableStateOf(false) }
+  Box {
+    Row(
+      Modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(6.dp)).clickable { open = true }
+        .semantics { role = Role.Button; contentDescription = "源管理动作：更多" }   // P4 a11y（§8.2.9）
+        .padding(horizontal = 10.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) { Text("更多 ▾", fontSize = 12.sp, color = pal.acc) }
+    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+      for (a in acts) when (a) {
+        SourceRowAct.COPY -> DropdownMenuItem(text = { Text("复制") }, onClick = {
+          open = false
+          (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)
+            ?.setPrimaryClip(ClipData.newPlainText("vradio", u))
+          Toast.makeText(ctx, "已复制源地址", Toast.LENGTH_SHORT).show()
+        })
+        SourceRowAct.DISABLE -> DropdownMenuItem(text = { Text("禁用", color = pal.warn) },
+          onClick = { open = false; onEdit(SourceAction.ToggleDisable(i)) })
+        SourceRowAct.UNDISABLE -> DropdownMenuItem(text = { Text("取消禁用") },
+          onClick = { open = false; onEdit(SourceAction.ToggleDisable(i)) })
+        SourceRowAct.MOVE_UP -> DropdownMenuItem(text = { Text("↑") },
+          onClick = { open = false; onEdit(SourceAction.Move(i, true)) })
+        SourceRowAct.MOVE_DOWN -> DropdownMenuItem(text = { Text("↓") },
+          onClick = { open = false; onEdit(SourceAction.Move(i, false)) })
+        else -> {}
+      }
+    }
+  }
+}
+
+/** 小动作字（详情浮层主操作位「播放/重播」；命中区靠 padding 撑到接近 32dp，比 TextButton 紧凑） */
 @Composable
 private fun ActText(t: String, warn: Boolean = false, onClick: () -> Unit) {
   val pal = LocalVrPalette.current

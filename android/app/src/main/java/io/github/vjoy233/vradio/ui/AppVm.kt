@@ -66,6 +66,7 @@ import io.github.vjoy233.vradio.sync.SyncEngine
 import io.github.vjoy233.vradio.widget.WidgetCommands
 import io.github.vjoy233.vradio.widget.WidgetPush
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -92,7 +93,53 @@ import java.util.concurrent.atomic.AtomicInteger
    纪律：全部主线程交互，网络/体检在 viewModelScope + Dispatchers.IO；
    toast = 后台任务反馈、status = 用户主动操作反馈（sync.js/App.toast 分工，两通道不双写）。 */
 
-enum class Nav { LIST, SETTINGS, ADD }   // 手写导航态（无导航库，契约）
+/** 各目的地页内 UI 瞬态（P0，方案 §6.1）：搜索词/分类/网格视图/滚动位——纯进程内保留（destinationUi map），
+    不落 radio.*（零新持久键），进程被杀恢复默认 */
+data class DestinationUiState(
+  val query: String = "",
+  val category: String = "全部",
+  val grid: Boolean = false,
+  val firstVisibleItem: Int = 0,
+  val firstVisibleOffset: Int = 0,
+)
+
+/* P1 §5.5 收藏页投影：收藏集合内独立搜索/分类；数据源仍 lib.favs 单一来源，不复制收藏状态 */
+data class FavoriteListUi(
+  val list: List<Station> = emptyList(),
+  val chips: List<Pair<String, Int>> = emptyList(),   // 首项「全部」+ 收藏内实际出现分类与数量（顺序沿用 lib.cats() 顺序过滤）
+  val empty: String? = null,
+  val ver: Int = 0,
+)
+
+/** 收藏页投影纯函数（§5.5，JVM 直测零 Android 依赖；AppVm.favoriteListUi 的 combine 调用）：
+ *  favs 按 favorites 投影序（收藏写入序旧→新）传入，输出 Q16「最新收藏置顶」（新→旧）；
+ *  query 多词空格 AND 大小写不敏感（filteredList keyword 同款）；category 仅在收藏内实际出现的分类生效
+ *  （哨兵/失效分类一律不过滤——收藏页独立状态不写 cat）；chips 计数口径 = 全量收藏集合（同 listUi chips
+ *  基于 vis 全量非过滤后列表），顺序按 cats（lib.cats()）过滤，cats 未覆盖的按收藏数据序兜底；
+ *  empty 两档：收藏全空给引导语、过滤后无命中给换词提示；ver 透传 stamp（哨兵进值域防 StateFlow 判等丢渲染，
+ *  同 ListUi.ver）。 */
+fun buildFavoriteListUi(favs: List<Station>, query: String, category: String, stamp: Int,
+                        cats: List<String> = emptyList()): FavoriteListUi {
+  val byCat = favs.groupingBy { it.c }.eachCount()
+  val ordered = LinkedHashSet<String>()
+  for (c in cats) if (byCat.containsKey(c)) ordered.add(c)              // lib.cats() 顺序优先（与 listUi chips 分类序同口径）
+  for (s in favs) ordered.add(s.c)                                     // cats 未覆盖兜底（无 cats 时 = 收藏数据序）
+  val chips = ArrayList<Pair<String, Int>>(ordered.size + 1)
+  chips.add("全部" to favs.size)
+  for (c in ordered) chips.add(c to (byCat[c] ?: 0))
+  var list = if (category == "全部" || !ordered.contains(category)) favs else favs.filter { it.c == category }
+  val kw = query.trim().lowercase()
+  if (kw.isNotEmpty()) {                                               // 多词空格 AND（audit-r2 口径，与 filteredList 同款）
+    val ws = kw.split(Regex("\\s+"))
+    list = list.filter { s -> val n = s.n.lowercase(); ws.all { n.contains(it) } }
+  }
+  val empty = when {
+    favs.isEmpty() -> "还没有收藏电台，去电台页长按或点星标收藏吧"
+    list.isEmpty() -> "收藏中没有匹配的电台"
+    else -> null
+  }
+  return FavoriteListUi(list.asReversed(), chips, empty, stamp)
+}
 
 class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
@@ -117,12 +164,50 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   val showDead = MutableStateFlow(false)
   val theme = MutableStateFlow("auto")
   private val stamp = MutableStateFlow(0)                    // 渲染哨兵（app.js state.stamp）
-  val nav = MutableStateFlow(Nav.LIST)
+
+  /* ---------- 根导航态（P0，方案 §6.1；契约在 ui/Navigation.kt）：目的地/次级页/全屏播放器/搜索展开
+     + 各目的地页内 UI 瞬态 map——全部纯 UI 瞬态不持久化（零新 radio.* 键），进程死恢复默认 ---------- */
+  val destination = MutableStateFlow(Destination.LIBRARY)
+  val secondary = MutableStateFlow<SecondaryRoute?>(null)
+  val playerExpanded = MutableStateFlow(false)
+  val searchExpanded = MutableStateFlow(false)
+  val destinationUi = MutableStateFlow<Map<Destination, DestinationUiState>>(emptyMap())
+
   val showSrc = MutableStateFlow(false)
   val srcKey = MutableStateFlow<String?>(null)                // 选源浮层打开时的台 key（换台即收起，srcPopK 同款）
   val showSongs = MutableStateFlow(false)
   val locate = MutableStateFlow<String?>(null)               // 回到正在播（web locatePlaying）
   val status = MutableStateFlow("")                          // 用户主动操作反馈（#status 同款）
+
+  /* ---------- 根导航动作（P0，方案 §6.1）：守卫/返回裁决走 ui/Navigation.kt 契约纯函数 ---------- */
+
+  /** 顶层目的地切换：发现关闭时去发现 = 回退电台（navigateGuard 契约同款）；
+      次级页开着时显式切目的地 = 离开次级页（review#45：返回始终回当前目的地，Q11 来源契约在全路径成立） */
+  fun navigate(to: Destination) { destination.value = navigateGuard(to); secondary.value = null }
+
+  /** 次级页开合：先记来源目的地再设 secondary（返回时回跳来源页，Q11/Q15） */
+  fun openSettings() { secondary.value = SecondaryRoute.SETTINGS }
+  fun openAddStation() { secondary.value = SecondaryRoute.ADD_STATION }
+  fun closeSecondary() { secondary.value = null }
+
+  /** status 反馈单一所有者（review#46/#47 P1）：每次写入重启 6s TTL，UI 层不得再自建清理协程（旧三处竞态删除） */
+  private var statusJob: Job? = null
+  fun setStatus(s: String) {
+    status.value = s
+    statusJob?.cancel()
+    statusJob = viewModelScope.launch { delay(6000); status.value = "" }
+  }
+
+  /** 撤销队列排空（review#46 二轮：离开收藏页作废——在飞 Snackbar 由 UI dismiss，未消费事件全部作废） */
+  fun clearFavUndo() { while (favUndoCh.tryReceive().isSuccess) { } }
+
+  /** 各目的地页内 UI 瞬态快照（toMutableMap 拷贝替换触发流更新）：离开页面前/进次级页前调一次，不在滚动帧回调里写 */
+  fun saveDestinationUi(d: Destination, ui: DestinationUiState) {
+    destinationUi.value = destinationUi.value.toMutableMap().apply { put(d, ui) }
+  }
+
+  fun openPlayer() { playerExpanded.value = true }
+  fun closePlayer() { playerExpanded.value = false }
 
   /* ---------- 进行态/结果文案 ---------- */
   val healthBusy = MutableStateFlow(false); val healthProg = MutableStateFlow(""); val healthResult = MutableStateFlow("")
@@ -235,7 +320,6 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     archive = { u0, t -> viewModelScope.launch(Dispatchers.IO) { runCatching { lib.pushSong(u0, t) }; stamp.value++ } })
   private val listenSidecar = ListenSidecar(ctx.filesDir)
   private var listenTracker: ListenTracker? = null
-  val showDiscovery = MutableStateFlow(false)
   private val recovered = LinkedHashMap<String, Long>()   // 台 key → 复活时刻（Prefs 缓存 7 天过期）
   /** radio-meta 与当前 radio 资产同批绑定（AIbot P1-4 + 三轮 P1）：false/混态时发现页「最近新增」置空（不猜）。
    *  判据见 RadioMeta.bound（filesDir/assets 来源配对 + stamp.meta 见证 + radio/meta 内容哈希核对）。 */
@@ -257,11 +341,39 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     .distinctUntilChanged()
     .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
 
+  /* 收藏页投影（P0 最小版，方案 §5.5 子集；P1 升级 FavoriteListUi 全量）：按收藏写入序遍历 lib.favs——
+     键优先 URL 兜底解析（Library.resolveEntry 同款），休眠孤儿/手动隐藏跳过、按键去重（回绑可归并同台）；
+     顺序语义 = 既有实现遍历序（Web scopeFavRecent/logosEnsure 同款，「最新收藏置顶」留 P1 全量版裁决）；
+     combine(stamp) 与 listUi 同款哨兵驱动，收藏/装配/维护配置变更自动重算，composable 不直读 lib */
+  val favorites: StateFlow<List<Station>> = combine(stamp) {
+    runCatching {
+      val seen = HashSet<String>(); val out = ArrayList<Station>()
+      for (f in lib.favs) {
+        val s = runCatching { lib.resolve(f.k) }.getOrNull() ?: (
+          if (f.u.isEmpty()) null else runCatching { lib.stations.firstOrNull { st -> st.u.any { it in f.u } } }.getOrNull())
+        if (s == null || s.hidden || !seen.add(s.key)) continue
+        out.add(s)
+      }
+      out
+    }.getOrDefault(emptyList())
+  }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
   /* 添加电台页的分类候选（审计 P3：catOptions() 直读无订阅，boot 未完成进页则 chips 永远空——从 listUi 派生响应式） */
   val addCats: StateFlow<List<String>> = listUi
-    .map { lu -> lu.chips.drop(3).map { c -> c.first } }                 // 掐头去「全部/★收藏/最近」
+    .map { lu -> lu.chips.drop(2).map { c -> c.first } }                 // 掐头去「全部/最近」（§5.1 chips 已去收藏哨兵；addCats 语义 = 真实分类）
     .distinctUntilChanged()
     .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+  /* 收藏页全量投影（P1 §5.5）：收藏集合内独立搜索/分类——favoriteQuery/favoriteCategory 进程内瞬态，
+     不写电台页 cat/keyword（收藏顶层页是收藏集合唯一主入口，电台页范围 chip 只留 全部/最近）；
+     数据源 = favorites（lib.favs 单一来源投影）+ favKeys 触发；过滤/chips/empty 派生收口在
+     buildFavoriteListUi 纯函数（JVM 直测）；ver = stamp 哨兵进值域（同 ListUi.ver） */
+  val favoriteQuery = MutableStateFlow("")
+  val favoriteCategory = MutableStateFlow("全部")
+  val favoriteListUi: StateFlow<FavoriteListUi> =
+    combine(favorites, favKeys, favoriteQuery, favoriteCategory, stamp) { favs, _, q, c, st ->
+      buildFavoriteListUi(favs, q, c, st, runCatching { lib.cats() }.getOrDefault(emptyList()))
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, FavoriteListUi())
 
   init {
     wirePlayer()
@@ -372,7 +484,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       val u = i.data?.toString()?.trim().orEmpty()
       if (u.startsWith("http://", ignoreCase = true) || u.startsWith("https://", ignoreCase = true)) {   // AIbot P3：浏览器转发可能保留大写 scheme
         addPreset.value = u
-        if (booted) { nav.value = Nav.ADD; toast("已填入流地址，探活通过后点「添加」") }
+        if (booted) { openAddStation(); toast("已填入流地址，探活通过后点「添加」") }
       }
     }
   }
@@ -385,9 +497,9 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       sc != null -> {
         val s = runCatching { lib.stations.firstOrNull { it.key == sc } }.getOrNull()
         if (s != null) startPlay(s)
-        else { resumeLastIfWanted(); status.value = "快捷方式指向的电台已不在列表中" }
+        else { resumeLastIfWanted(); setStatus("快捷方式指向的电台已不在列表中") }
       }
-      addPreset.value != null -> { nav.value = Nav.ADD; toast("已填入流地址，探活通过后点「添加」") }   // AIbot P3：冷启动接流与热路径反馈一致
+      addPreset.value != null -> { openAddStation(); toast("已填入流地址，探活通过后点「添加」") }   // AIbot P3：冷启动接流与热路径反馈一致
       else -> resumeLastIfWanted()
     }
   }
@@ -680,8 +792,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     val byCat = vis.groupingBy { it.c }.eachCount()
     val chips = ArrayList<Pair<String, Int>>(10)
     chips.add("全部" to vis.size)
-    chips.add("★收藏" to vis.count { runCatching { lib.isFav(it) }.getOrDefault(false) })
-    chips.add("最近" to recentList(vis).size)
+    chips.add("最近" to recentList(vis).size)                // §5.1 范围 chip 只留 全部/最近——★收藏 收敛到收藏顶层页（§5.5 唯一主入口）
     val cats = runCatching { lib.cats() }.getOrDefault(emptyList())
     for (c in cats) chips.add(c to (byCat[c] ?: 0))
     if (cat.value != "全部" && cat.value != "★收藏" && cat.value != "最近" && chips.none { it.first == cat.value })
@@ -738,9 +849,45 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     }
   }
 
+  /* 取消收藏撤销（P1 Q13/Q17）：收藏页专用入口——立即取消 + 入撤销队列（AppRoot 顺序 collect 出 Snackbar，
+     每条约 8s 可撤销、离开收藏页 clearFavUndo() 排空作废）；撤销按 URL 身份恢复，不按台名回绑。
+     review#46 二轮 P2：单槽 MutableStateFlow 会被快速连续取消覆盖（前一台撤销窗口丢失）——改带 operationId
+     的 Channel 事件队列，逐操作入队/逐条消费，Snackbar 按 id 归属、互不覆盖 */
+  data class FavUndoEvent(val id: Long, val station: Station)
+  private val favUndoCh = Channel<FavUndoEvent>(Channel.UNLIMITED)
+  val favUndoEvents: Flow<FavUndoEvent> = favUndoCh.receiveAsFlow()       // UI 顺序消费（一条 Snackbar 关闭再出下一条）
+  private var favUndoSeq = 0L
+
+  /** 收藏页取消收藏：toggle 即取消（守卫防误加——非收藏态不翻转）+ 发撤销请求 */
+  fun unfavWithUndo(s: Station) {
+    viewModelScope.launch {                                               // Library 变异归 Main（审计 P2，同 toggleFav）
+      if (!runCatching { lib.isFav(s) }.getOrDefault(false)) return@launch
+      runCatching { lib.toggleFav(s) }
+      quality.keepHint = runCatching { qualityKeepSnapshot() }.getOrDefault(quality.keepHint)   // B2：trim 保护集随收藏增减
+      stamp.value++
+      updateShortcuts()                                                  // E3：快捷方式随收藏增减刷新
+      favUndoSeq += 1
+      favUndoCh.trySend(FavUndoEvent(favUndoSeq, s))
+    }
+  }
+
+  /** 撤销取消收藏：按 URL 身份找回库内同一台（reload/同步重建后显示键可能漂移，任一源 URL 命中即回绑；
+     失联时按原条目写回 = 休眠待回绑，带 URL 的条目永不回收），走 toggleFav 同一条写回路径 + 台标 prime */
+  fun undoUnfav(s: Station) {
+    viewModelScope.launch {
+      val cur = runCatching { lib.stations.firstOrNull { st -> st.u.any { u -> u in s.u } } }.getOrNull() ?: s
+      if (runCatching { lib.isFav(cur) }.getOrDefault(false)) return@launch   // 期间已手动加回 = 幂等不翻转
+      runCatching { lib.toggleFav(cur) }
+      quality.keepHint = runCatching { qualityKeepSnapshot() }.getOrDefault(quality.keepHint)
+      stamp.value++
+      updateShortcuts()
+      if (logoAllowed()) viewModelScope.launch(Dispatchers.IO) { runCatching { logos.prime(cur, true) } }   // 恢复收藏优先补台标（B5 策略门）
+    }
+  }
+
   fun stepFav(d: Int) {                                                   // ←/→ 收藏间切台（A-5）
     val favsIn = filteredList(showDead.value).filter { runCatching { lib.isFav(it) }.getOrDefault(false) }
-    if (favsIn.isEmpty()) { status.value = "还没有收藏电台——点电台旁 ☆ 收藏后可用收藏间切换"; return }
+    if (favsIn.isEmpty()) { setStatus("还没有收藏电台——点电台旁 ☆ 收藏后可用收藏间切换"); return }
     val curIdx = cur.station?.let { c -> favsIn.indexOfFirst { it.key == c.key } } ?: -1
     val nx = if (curIdx < 0) (if (d > 0) 0 else favsIn.size - 1) else (curIdx + d + favsIn.size) % favsIn.size
     togglePlay(favsIn[nx].key)
@@ -749,7 +896,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   fun resumeLast() {                                                      // ▶ 空台 = 续播上次收听
     val r = lib.recents.firstOrNull()
     val s = r?.let { runCatching { lib.resolve(it.k) }.getOrNull() }
-    if (s == null) { status.value = if (r == null) "还没有播放记录" else "上次收听的电台已不在列表中，请直接点播"; return }
+    if (s == null) { setStatus(if (r == null) "还没有播放记录" else "上次收听的电台已不在列表中，请直接点播"); return }
     startPlay(s)
   }
 
@@ -757,7 +904,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     val s = cur.station ?: return
     val invisible = runCatching { filteredList(showDead.value).none { it.key == s.key } }.getOrDefault(true)
     if (invisible) { cat.value = "全部"; keyword.value = "" }
-    nav.value = Nav.LIST
+    secondary.value = null; destination.value = Destination.LIBRARY   // 旧 nav=LIST 平移：回电台页（次级页开着也一并收回）
     locate.value = s.key
   }
 
@@ -772,7 +919,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     val s = cur.station ?: return
     val had = PlayerHolder.forgetSrc()
     startPlay(s)                                                          // 无 prefer 且记忆已清 → 纯启发式序
-    status.value = if (had) "已恢复默认源，从默认源重播" else "本无源记忆，按默认序重播"
+    setStatus(if (had) "已恢复默认源，从默认源重播" else "本无源记忆，按默认序重播")
   }
 
   /* ---------- B1 源详情（SourceDetailSheet 编排）：逐源诊断（禁用源不发请求）+ 源动作 ---------- */
@@ -826,11 +973,11 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
       SourceAction.RestoreDefault -> {                          // 恢复默认播放源（清 srcmem2；正在听则按链重播）
         val had = PlayerHolder.forgetSrcOf(s)
         if (cur.station?.key == s.key) startPlay(s)
-        status.value = if (had) "已恢复默认播放源（人工顺序与禁用保留）" else "本无源记忆，按默认序处理"
+        setStatus(if (had) "已恢复默认播放源（人工顺序与禁用保留）" else "本无源记忆，按默认序处理")
       }
       SourceAction.ResetOrder -> {                              // 撤销人工源排序（恢复同步原始顺序；禁用/追加源保留）
         runCatching { lib.srcOrderReset(s) }
-        status.value = "已撤销人工源排序（禁用与追加源保留）"
+        setStatus("已撤销人工源排序（禁用与追加源保留）")
       }
     }
     stamp.value++
@@ -847,11 +994,11 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   fun setVol(pct: Int) { PlayerHolder.setVolPct(pct) }
 
   fun toggleMute() {
-    if (cur.volPct > 0) { PlayerHolder.setVolPct(0); status.value = "已静音" }
+    if (cur.volPct > 0) { PlayerHolder.setVolPct(0); setStatus("已静音") }
     else {
       // restoreVolPct = 当前台记忆 → 全局 → 默认（player.js restoreVol 同语义）；会话内近似值会把台记忆覆盖坏
       val rv = PlayerHolder.restoreVolPct()
-      PlayerHolder.setVolPct(rv); status.value = "音量 $rv%"
+      PlayerHolder.setVolPct(rv); setStatus("音量 $rv%")
     }
   }
 

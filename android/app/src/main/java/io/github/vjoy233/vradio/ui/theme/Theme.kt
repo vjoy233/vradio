@@ -8,6 +8,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 
 /* 双主题照抄 Web 色板（index.html CSS 变量，契约 §Agent C）。
    radio.theme 三态：auto（默认，跟随系统实时）/light/dark，持久化在 Store；
@@ -38,6 +40,15 @@ val LightPal = VrPalette(
 
 /** 自定义色板（Web 变量一一对应），组件里 LocalVrPalette.current 取用 */
 val LocalVrPalette = staticCompositionLocalOf { DarkPal }
+
+/* 尺寸/动效 token（P0 §4.2）：组件只读 token，不写死尺寸/时长；不改任何现有颜色值 */
+data class VrDimens(
+  val page: Dp = 16.dp, val section: Dp = 12.dp, val card: Dp = 12.dp,
+  val control: Dp = 48.dp, val miniPlayer: Dp = 72.dp, val navBar: Dp = 80.dp,
+)
+data class VrMotion(val enterMs: Int = 220, val exitMs: Int = 150, val listStaggerMs: Int = 0)
+val LocalVrDimens = staticCompositionLocalOf { VrDimens() }
+val LocalVrMotion = staticCompositionLocalOf { VrMotion() }
 
 @Composable
 fun VrTheme(theme: String, content: @Composable () -> Unit) {
@@ -71,5 +82,9 @@ fun VrTheme(theme: String, content: @Composable () -> Unit) {
     surfaceContainerLowest = Color(0xFFE9EDF0), surfaceContainerLow = Color(0xFFEFF2F4),
     surfaceContainer = p.panel, surfaceContainerHigh = Color(0xFFF6F8FA), surfaceContainerHighest = p.bg,
   )
-  CompositionLocalProvider(LocalVrPalette provides p) { MaterialTheme(colorScheme = scheme, content = content) }
+  CompositionLocalProvider(
+    LocalVrPalette provides p,
+    LocalVrDimens provides VrDimens(),
+    LocalVrMotion provides VrMotion(),
+  ) { MaterialTheme(colorScheme = scheme, content = content) }
 }

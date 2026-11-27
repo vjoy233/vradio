@@ -14,7 +14,7 @@ function evaluate(e) {
   const errors = [], failures = [], metrics = {};
   const err = s => errors.push(s), gate = (ok, s) => { if (!ok) failures.push(s); };
   if (!e || typeof e !== 'object' || Array.isArray(e)) return {structure:'INVALID', arithmetic:'NOT_EVALUATED', decision:'NO_GO', errors:['证据必须是对象']};
-  if (e.version !== 1 || !SHA.test(e.commit || '') || !SHA.test(e.scriptCommit || '')) err('version/commit/scriptCommit 无效');
+  if (e.version !== 1 || typeof e.commit !== 'string' || !SHA.test(e.commit) || typeof e.scriptCommit !== 'string' || !SHA.test(e.scriptCommit)) err('version/commit/scriptCommit 无效');
   const candidates = list(e.candidates), mainUrls = list(e.mainUrls), categories = list(e.releaseCategories), rounds = list(e.rounds);
   const urls = new Set(), mains = new Set(), cats = new Set();
   candidates.forEach((c, i) => {

@@ -35,6 +35,7 @@ function readSnapshot(dir, generation) {
 function load(dir) {
   try {
     const pointer = JSON.parse(fs.readFileSync(path.join(dir,'current.json'),'utf8'));
+    if (!pointer || pointer.v !== 1) return null;
     return readSnapshot(dir,pointer.current) || readSnapshot(dir,pointer.previous) || null;
   } catch (_) { return null; }
 }

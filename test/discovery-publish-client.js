@@ -11,10 +11,35 @@ const fetcher=async url=>{ const data=fs.readFileSync(path.join(root,...url.spli
  for (const version of [2,null]) {
   fs.writeFileSync(path.join(root,'current.json'),JSON.stringify({v:version,current,previous:old}));
   assert.deepStrictEqual(await S.loadSnapshot(fetcher,'snap'),[]);
+  assert.strictEqual(P.load(root),null);
   assert.strictEqual(P.publish(root,b),current);
   assert.strictEqual(JSON.parse(fs.readFileSync(path.join(root,'current.json'),'utf8')).previous,old);
   assert.strictEqual((await S.loadSnapshot(fetcher,'snap'))[0].url,'https://example.com/b');
  }
+ // 合法同代不凭空补造历史，缺失、坏值和自指均保持原样。
+ for (const prev of [null,'bad',current]) {
+  const pointer={v:1,current,previous:prev};
+  fs.writeFileSync(path.join(root,'current.json'),JSON.stringify(pointer));
+  assert.strictEqual(P.publish(root,b),current);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(root,'current.json'),'utf8')),pointer);
+  assert.strictEqual((await S.loadSnapshot(fetcher,'snap'))[0].url,'https://example.com/b');
+ }
+ // 缺失或畸形指针不可猜历史。
+ for (const contents of [null,'{bad']) {
+  if (contents === null) fs.unlinkSync(path.join(root,'current.json'));
+  else fs.writeFileSync(path.join(root,'current.json'),contents);
+  assert.strictEqual(P.load(root),null);
+  assert.strictEqual(P.publish(root,b),current);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(root,'current.json'),'utf8')),{v:1,current,previous:null});
+ }
+ // 损坏 current，previous 正是目标：不能把损坏代当回退。
+ const oldManifest=fs.readFileSync(path.join(root,old,'manifest.json'));
+ fs.writeFileSync(path.join(root,old,'manifest.json'),'broken');
+ fs.writeFileSync(path.join(root,'current.json'),JSON.stringify({v:1,current:old,previous:current}));
+ assert.strictEqual(P.publish(root,b),current);
+ assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(root,'current.json'),'utf8')),{v:1,current,previous:null});
+ fs.writeFileSync(path.join(root,old,'manifest.json'),oldManifest);
+ fs.writeFileSync(path.join(root,'current.json'),JSON.stringify({v:1,current,previous:old}));
  fs.writeFileSync(path.join(root,current,'manifest.json'),'broken');
  assert.strictEqual((await S.loadSnapshot(fetcher,'snap'))[0].url,'https://example.com/a');
  console.log('discovery-publish-client: pointer repair and browser fallback passed');

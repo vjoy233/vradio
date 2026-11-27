@@ -30,15 +30,17 @@ for (const [id,bytes,proposed] of [
  ['manifest-bytes-decimal',b(manifest.toString().replace('"bytes":'+normal.length,'"bytes":'+normal.length+'.0')),'reject'],
  ['manifest-bytes-exponent',b(manifest.toString().replace('"bytes":'+normal.length,'"bytes":'+normal.length+'e0')),'reject']
 ]) entries.push({...test(id,'manifest',bytes,proposed,'实验建议整数使用整数词法；原提案未明确定义数字词法'),sidecarId:sid,sidecarBase64:normal.toString('base64'),pointerBase64:enc({v:2,current:sid,previous:null}).toString('base64')});
-// 受控 commit 是外部信任上下文，不是线上 JSON 字段；形态为测试约定。
+// D 仅情景标记而非已认证证据；S 是 sidecar 声明的上游 commit。
 const bindingCases = [
- ['binding-match',commit,'accept'],
- ['binding-missing',null,'reject'],
- ['binding-empty','','reject'],
- ['binding-short','a'.repeat(39),'reject'],
- ['binding-uppercase','A'.repeat(40),'reject'],
- ['binding-non-hex','g'.repeat(40),'reject'],
- ['binding-mismatch','b'.repeat(40),'reject']
-].map(([id,controlledCommit,proposed]) => ({id,controlledCommit,proposed,sidecarBase64:normal.toString('base64'),sidecarId:sid,manifestBase64:manifest.toString('base64'),pointerBase64:enc({v:2,current:sid,previous:null}).toString('base64')}));
+ ['binding-pinned-d1','d'.repeat(40),commit,'accept','pinned'],
+ ['binding-pinned-d2','e'.repeat(40),commit,'accept','pinned'],
+ ['binding-absent-d1','d'.repeat(40),undefined,'accept','unverified'],
+ ['binding-null-d2','e'.repeat(40),null,'accept','unverified'],
+ ['binding-empty','d'.repeat(40),'','reject',null],
+ ['binding-short','d'.repeat(40),'a'.repeat(39),'reject',null],
+ ['binding-uppercase','d'.repeat(40),'A'.repeat(40),'reject',null],
+ ['binding-non-hex','d'.repeat(40),'g'.repeat(40),'reject',null],
+ ['binding-wrong-upstream','d'.repeat(40),'b'.repeat(40),'reject',null]
+].map(([id,deliveryRevision,expectedUpstreamCommit,proposed,upstreamStatus]) => ({id,deliveryRevision,...(expectedUpstreamCommit === undefined ? {} : {expectedUpstreamCommit}),proposed,...(upstreamStatus ? {upstreamStatus} : {}),sidecarBase64:normal.toString('base64'),sidecarId:sid,manifestBase64:manifest.toString('base64'),pointerBase64:enc({v:2,current:sid,previous:null}).toString('base64')}));
 const result={bindingCases,format:'c3-v2-adversarial-1',note:'实验建议而非原 v2 规范既定结论；proposed 不代表解析器已通过；仅解码 rawBase64 消费字节。',entries};
 process.stdout.write(JSON.stringify(result,null,2)+'\n');

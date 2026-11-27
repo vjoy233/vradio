@@ -4,7 +4,7 @@ package io.github.vjoy233.vradio.consts
    每条注 Web 侧出处，改任何一条都要两侧同步评审。 */
 
 object C {
-  // —— radio.* 持久键白名单（= store.js KEYS = server.js STORE_KEYS = 13 键，两侧契约）——
+  // —— radio.* 持久键白名单（= store.js KEYS = server.js STORE_KEYS = 14 键，两侧契约）——
   const val K_FAVS = "radio.favs"
   const val K_RECENTS = "radio.recents"
   const val K_HEALTH = "radio.health"

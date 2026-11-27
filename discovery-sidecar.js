@@ -5,6 +5,25 @@
   root.DiscoverySidecar = api;
 })(typeof window !== 'undefined' ? window : globalThis, function () {
   const MAX = 300;
+  // 复用 C1 已审实现，输入为原始字节而非重编码文本。
+  function sha256Bytes(bytes) {
+  const bitLength = bytes.length * 8;
+  const size = Math.ceil((bytes.length + 9) / 64) * 64, buf = new Uint8Array(size);
+  buf.set(bytes); buf[bytes.length] = 128;
+  const view = new DataView(buf.buffer);
+  view.setUint32(size - 8, Math.floor(bitLength / 4294967296)); view.setUint32(size - 4, bitLength >>> 0);
+  const k = [0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+  const h = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19], w = new Uint32Array(64);
+  const r = (x,n) => (x >>> n) | (x << (32-n));
+  for (let off = 0; off < size; off += 64) {
+    for (let i=0;i<16;i++) w[i] = view.getUint32(off+i*4);
+    for (let i=16;i<64;i++) { const a=w[i-15], b=w[i-2]; w[i] = (w[i-16]+(r(a,7)^r(a,18)^(a>>>3))+w[i-7]+(r(b,17)^r(b,19)^(b>>>10))) >>> 0; }
+    let [a,b,c,d,e,f,g,z] = h;
+    for (let i=0;i<64;i++) { const t1=(z+(r(e,6)^r(e,11)^r(e,25))+((e&f)^(~e&g))+k[i]+w[i])>>>0; const t2=((r(a,2)^r(a,13)^r(a,22))+((a&b)^(a&c)^(b&c)))>>>0; z=g; g=f; f=e; e=(d+t1)>>>0; d=c; c=b; b=a; a=(t1+t2)>>>0; }
+    [a,b,c,d,e,f,g,z].forEach((x,i) => { h[i]=(h[i]+x)>>>0; });
+  }
+  return h.map(x => x.toString(16).padStart(8,'0')).join('');
+}
   function urlOk(u) { try { const x = new URL(String(u)); return (x.protocol === 'http:' || x.protocol === 'https:') && !!x.hostname; } catch (_) { return false; } }
   function normalize(raw) {
     // 只校验标记与格式一致，不证明上游来源或许可真实性。
@@ -46,7 +65,6 @@
   // 指针和内容均不可信：逐代限制字节、校验清单与 SHA-256；损坏时尝试上一代。
   async function loadSnapshot(fetcher, base, timeoutMs = 5000) {
     if (typeof AbortController === 'undefined' || typeof TextDecoder === 'undefined') return [];
-    if (!globalThis.crypto || !globalThis.crypto.subtle) return null; // 调用方明确提示无法校验，绝不跳过哈希
     async function stage(task) {
       const ctl = new AbortController(); let reader, timer;
       const timeout = new Promise((_, reject) => { timer = setTimeout(() => { ctl.abort(); if (reader) reader.cancel().catch(() => {}); reject(Error('timeout')); }, timeoutMs); });
@@ -70,7 +88,7 @@
           const prefix = base + '/' + id, m = parse(await bytes(prefix + '/manifest.json', 4096));
           if (!m || m.v !== 1 || m.sha256 !== id || !Number.isInteger(m.bytes) || m.bytes < 1 || m.bytes > 512 * 1024) return [];
           const data = await bytes(prefix + '/radio-discovery.json', 512 * 1024);
-          const digest = Array.from(new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', data)), x => x.toString(16).padStart(2, '0')).join('');
+          const digest = sha256Bytes(data);
           if (data.length !== m.bytes || digest !== id) return [];
           const raw = parse(data), at = raw.generatedAt;
           if (typeof at !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(at) || !Number.isFinite(Date.parse(at)) || new Date(at).toISOString() !== at) return [];
@@ -82,5 +100,5 @@
       return [];
     } catch (_) { return []; }
   }
-  return { MAX, normalize, load, loadSnapshot };
+  return { MAX, normalize, load, loadSnapshot, sha256Bytes };
 });

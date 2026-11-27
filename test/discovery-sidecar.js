@@ -26,10 +26,18 @@ assert.deepStrictEqual(S.normalize({...raw,items:[{name:'x',url:'https://x',comm
   assert.equal((await S.loadSnapshot(stalled,'snap',10)).length,1, 'stalled current falls back within independent deadline');
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
   Object.defineProperty(globalThis, 'crypto', {configurable:true, value:undefined});
-  assert.strictEqual(await S.loadSnapshot(fetcher,'snap',10), null, 'insecure context is explicit');
+  assert.equal((await S.loadSnapshot(fetcher,'snap',10)).length, 1, 'insecure context verifies hash without Web Crypto');
+  for (const n of [0,1,55,56,63,64,65,1024,524288]) { const b = crypto.randomBytes(n); assert.equal(S.sha256Bytes(b), crypto.createHash('sha256').update(b).digest('hex')); }
   Object.defineProperty(globalThis, 'crypto', descriptor);
   routes['snap/'+id+'/radio-discovery.json'] = 'changed';
   assert.deepStrictEqual(await S.loadSnapshot(fetcher,'snap'), [], 'hash mismatch fails closed');
+  const golden = require('../contracts/fixtures/discovery-c3-golden.json');
+  for (const c of golden.cases) {
+    const body = Buffer.from(JSON.stringify(c.sidecar)), h = crypto.createHash('sha256').update(body).digest('hex');
+    const files = {'g/current.json':JSON.stringify({v:1,current:h}), ['g/'+h+'/manifest.json']:JSON.stringify({v:1,sha256:h,bytes:body.length}), ['g/'+h+'/radio-discovery.json']:body};
+    const got = await S.loadSnapshot(async u => response([{value:Buffer.from(files[u]),done:false}]), 'g');
+    assert.equal(got.length > 0, c.accept, c.id);
+  }
   routes['snap/current.json'] = JSON.stringify({v:1,current:'../../attack'});
   assert.deepStrictEqual(await S.loadSnapshot(fetcher,'snap'), [], 'pointer traversal rejected');
   console.log('discovery-sidecar: safety tests passed');

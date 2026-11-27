@@ -7,8 +7,8 @@
   let s; try { s=new TextDecoder('utf-8',{fatal:true}).decode(bytes); } catch (_) { fail(); }
   let i=0; const ws=()=>{while (/[ \t\r\n]/.test(s[i] || '\0')) i++;};
   function str() { let start=i++; while(i<s.length) { if(s[i]==='"') { i++; try {return JSON.parse(s.slice(start,i));} catch (_) {fail();} } if(s[i]==='\\') i++; i++; } fail(); }
-  function value() { ws(); let c=s[i]; if(c==='"') return str(); if(c==='{') { i++; ws(); const o=Object.create(null), seen=new Set(); if(s[i]==='}') {i++; return o;} for (;;) {ws(); if(s[i]!=='"') fail(); const k=str(); if(seen.has(k)) fail(); seen.add(k); ws(); if(s[i++]!==':') fail(); o[k]=value(); ws(); c=s[i++]; if(c==='}') return o; if(c!==',') fail();} } if(c==='[') { i++; ws(); const a=[]; if(s[i]===']') {i++; return a;} for (;;) {a.push(value()); ws(); c=s[i++]; if(c===']') return a; if(c!==',') fail();} } const m=/^(?:true|false|null|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)/.exec(s.slice(i)); if(!m) fail(); i+=m[0].length; return JSON.parse(m[0]); }
-  const out=value(); ws(); if(i!==s.length) fail(); return out;
+  function value(depth) { ws(); let c=s[i]; if ((c==='{' || c==='[') && depth>=3) fail(); if(c==='"') return str(); if(c==='{') { i++; ws(); const o=Object.create(null), seen=new Set(); if(s[i]==='}') {i++; return o;} for (;;) {ws(); if(s[i]!=='"') fail(); const k=str(); if(seen.has(k)) fail(); seen.add(k); ws(); if(s[i++]!==':') fail(); o[k]=value(depth+1); ws(); c=s[i++]; if(c==='}') return o; if(c!==',') fail();} } if(c==='[') { i++; ws(); const a=[]; if(s[i]===']') {i++; return a;} for (;;) {a.push(value(depth+1)); ws(); c=s[i++]; if(c===']') return a; if(c!==',') fail();} } const m=/^(?:true|false|null|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)/.exec(s.slice(i)); if(!m || /[.eE]/.test(m[0])) fail(); i+=m[0].length; return JSON.parse(m[0]); }
+  const out=value(0); ws(); if(i!==s.length) fail(); return out;
  }
  function fields(o, keys) { if(!o || typeof o!=='object' || Array.isArray(o) || Object.keys(o).length!==keys.length || keys.some(k=>!Object.prototype.hasOwnProperty.call(o,k))) fail(); }
  const hash=s=>typeof s==='string' && /^[0-9a-f]{64}$/.test(s);

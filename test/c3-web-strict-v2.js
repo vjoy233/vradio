@@ -15,6 +15,24 @@ for(const c of fixture.controls) {
  assert.strictEqual(b.length,c.bytes,c.id); assert.strictEqual(digest(b),c.sha256,c.id);
  if(c.accept) assert.deepStrictEqual(plain(fn(b)),c.output,c.id); else assert.throws(()=>fn(b),c.id);
 }
+// 最深合法形态为根对象→items 数组→item 对象；再嵌套即拒绝而非爆栈。
+const validDepth=fixture.sidecar.find(c=>c.id==='item');
+assert.deepStrictEqual(plain(parser.sidecar(bytes(validDepth.rawBase64))),validDepth.output);
+const expectControlledFailure=(fn,b,label)=>assert.throws(()=>fn(b),e=>e.name==='Error' && e.message==='invalid C3 v2',label);
+const nested=JSON.parse(JSON.stringify(validDepth.output)); nested.items[0].name={x:1};
+expectControlledFailure(parser.sidecar,Buffer.from(JSON.stringify(nested)),'depth 4');
+for(const [fn,n] of [[parser.sidecar,100000],[parser.manifest,2000],[parser.pointer,2000]]) {
+ expectControlledFailure(fn,Buffer.from('['.repeat(n)+']'.repeat(n)),'deep arrays '+n);
+ expectControlledFailure(fn,Buffer.from('{"x":'.repeat(n)+'0'+'}'.repeat(n)),'deep objects '+n);
+}
+// 暂以原始 JSON 字节固定跨端建议；待共享对抗 fixture 合入后同步消费。
+const rawItem=bytes(validDepth.rawBase64).toString('utf8');
+for(const literal of ['2.0','2e0','2E+0']) expectControlledFailure(parser.sidecar,Buffer.from(rawItem.replace('"v":2,','"v":'+literal+',')),'version '+literal);
+const goodManifest=Buffer.from(JSON.stringify({v:2,sha256:'a'.repeat(64),bytes:100}));
+for(const literal of ['100.0','1e2','1E+2']) expectControlledFailure(parser.manifest,Buffer.from(goodManifest.toString().replace('"bytes":100','"bytes":'+literal)),'bytes '+literal);
+for(const u of ['http://example.com/[x]','http://example.com/?x=[y]']) {
+ const bad=JSON.parse(rawItem); bad.items[0].url=u; expectControlledFailure(parser.sidecar,Buffer.from(JSON.stringify(bad)),u);
+}
 // 概念草案 URL 案例经真实 sidecar 入口验证，不调用私有 URL helper。
 const draft=JSON.parse(fs.readFileSync(path.join(__dirname,'../contracts/fixtures/c3-strict-v2-cases.json'),'utf8'));
 const template=JSON.parse(draft.sidecar.find(c=>c.id==='valid-item').raw);

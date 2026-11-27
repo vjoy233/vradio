@@ -35,6 +35,7 @@ function readSnapshot(dir, generation) {
 function load(dir) {
   try {
     const pointer = JSON.parse(fs.readFileSync(path.join(dir,'current.json'),'utf8'));
+    if (!pointer || pointer.v !== 1) return null;
     return readSnapshot(dir,pointer.current) || readSnapshot(dir,pointer.previous) || null;
   } catch (_) { return null; }
 }
@@ -45,17 +46,28 @@ function publish(dir, raw) {
   if (!Sidecar.normalize(raw).length) throw Error('sidecar 无效');
   const data = Buffer.from(JSON.stringify(raw)+'\n'); if (data.length > 512*1024) throw Error('sidecar 超限');
   const sha = hash(data), previous = load(dir); fs.mkdirSync(dir,{recursive:true});
-  const base = path.join(dir,sha); fs.mkdirSync(base,{recursive:true});
-  // 已存在的同名代不可改写；损坏时拒绝发布，避免并发读者看到半写。
-  if (fs.existsSync(path.join(base,'radio-discovery.json')) || fs.existsSync(path.join(base,'manifest.json'))) {
-    if (!readSnapshot(dir,sha)) throw Error('同名快照不完整或损坏');
-  } else {
-    fs.writeFileSync(path.join(base,'radio-discovery.json'), data, {flag:'wx'});
-    fs.writeFileSync(path.join(base,'manifest.json'), JSON.stringify({v:1,sha256:sha,bytes:data.length})+'\n', {flag:'wx'});
+  const base = path.join(dir,sha);
+  // 先在同一目录内完成整代，再整体改名；hash 路径一旦出现便永不改写。
+  // 单写者是调用方的跨进程约束，publishBusy 只防本进程重入。
+  if (!fs.existsSync(base)) {
+    const stage = fs.mkdtempSync(path.join(dir,'.publish-'));
+    try {
+      fs.writeFileSync(path.join(stage,'radio-discovery.json'), data, {flag:'wx'});
+      fs.writeFileSync(path.join(stage,'manifest.json'), JSON.stringify({v:1,sha256:sha,bytes:data.length})+'\n', {flag:'wx'});
+      fs.renameSync(stage,base);
+    } finally { fs.rmSync(stage,{recursive:true,force:true}); }
   }
-  if (!readSnapshot(dir,sha)) throw Error('快照校验失败');
+  // 历史半代无法证明从未被引用，因此绝不修补或替换。
+  if (!readSnapshot(dir,sha)) throw Error('同名快照不完整或损坏');
+  // 同代仅对客户端认可的指针 no-op；版本损坏时修复并尽可能保留有效旧代。
+  let fallback = previous && previous.manifest.sha256 !== sha ? previous.manifest.sha256 : null;
+  try {
+    const pointer = JSON.parse(fs.readFileSync(path.join(dir,'current.json'),'utf8'));
+    if (pointer && pointer.v === 1 && pointer.current === sha) return sha;
+    if (!fallback && pointer && pointer.previous !== sha && readSnapshot(dir,pointer.previous)) fallback = pointer.previous;
+  } catch (_) {}
   const tmp = path.join(dir,'current.'+process.pid+'.'+crypto.randomBytes(8).toString('hex')+'.tmp');
-  try { fs.writeFileSync(tmp,JSON.stringify({v:1,current:sha,previous:previous ? previous.manifest.sha256 : null})+'\n'); fs.renameSync(tmp,path.join(dir,'current.json')); }
+  try { fs.writeFileSync(tmp,JSON.stringify({v:1,current:sha,previous:fallback})+'\n'); fs.renameSync(tmp,path.join(dir,'current.json')); }
   finally { try { fs.unlinkSync(tmp); } catch (_) {} }
   return sha;
   } finally { publishBusy = false; }

@@ -547,6 +547,7 @@ class LightUpdateTest {
   @Test fun 同步排队时使用轻更新后的实际主库() = runBlocking {
     val dir = tmp.newFolder()
     val large = "华语音乐,#genre#\r\n" + (1..810).joinToString("\r\n") { "台$it,http://radio/$it.mp3" } + "\r\n"
+    val old = "华语音乐,#genre#\r\n" + (1..310).joinToString("\r\n") { "台$it,http://radio/$it.mp3" } + "\r\n"
     val entered = CompletableDeferred<Unit>(); val resume = CompletableDeferred<Unit>()
     val map = fullMap(radio = large, meta = metaV1)
     val http = object : HttpText {
@@ -557,7 +558,7 @@ class LightUpdateTest {
     }
     val lu = LightUpdate(Gh(http, 0), dir)
     assertNotNull(lu.check("2026-10-01T00:00:00Z"))
-    val update = async { lu.apply(radioV1) }
+    val update = async { lu.apply(old) }
     entered.await()
     val raw = object : RawHttp {
       override suspend fun get(url: String, timeoutMs: Long, maxBytes: Long, headers: Map<String, String>): RawHttp.Resp? = null
@@ -669,7 +670,8 @@ class LightUpdateTest {
     val dir = tmp.newFolder()
     val large = "华语音乐,#genre#\r\n" + (1..810).joinToString("\r\n") { "台$it,http://radio/$it.mp3" } + "\r\n"
     val lu = LightUpdate(Gh(FakeHttp(fullMap(radio = large, meta = null)), 0), dir)
-    assertTrue(lu.applyForTest(radioV1)!!.retryPending)
+    // 同库重试不产生新增名单，保留元数据失败后重试行为。
+    assertTrue(lu.applyForTest(large)!!.retryPending)
     val raw = object : RawHttp {
       override suspend fun get(url: String, timeoutMs: Long, maxBytes: Long, headers: Map<String, String>): RawHttp.Resp? = null
     }
@@ -681,6 +683,49 @@ class LightUpdateTest {
     assertFalse(SyncBarrier.logoRetryPending(dir))
     val h2 = lu.stampHashOk()
     assertFalse(RadioMeta.bound(true, lu.metaText() != null, lu.stampMetaOk(), h2.first, h2.second))
+  }
+
+  @Test fun 新增名单容量限制在真实入口写入前执行() = runBlocking {
+    fun radio(n: Int) = "华语音乐,#genre#\r\n" + (1..n).joinToString("\r\n") { "新台$it,http://radio/$it.mp3" } + "\r\n"
+    val cap = io.github.vjoy233.vradio.consts.C.ADDED_CHECK_CAP
+    val lightDir = tmp.newFolder()
+    File(lightDir, "radio.txt").writeText(radioV1)
+    File(lightDir, "stamp.json").writeText("old-stamp")
+    val lu = LightUpdate(Gh(FakeHttp(fullMap(radio = radio(cap + 1))), 0), lightDir)
+    assertNull(lu.applyForTest(radioV1))
+    assertTrue(lu.lastFailWhy.contains("超过上限"))
+    assertEquals(radioV1, File(lightDir, "radio.txt").readText())
+    assertEquals("old-stamp", File(lightDir, "stamp.json").readText())
+    assertFalse(File(lightDir, "light-update.pending").exists())
+    val within = LightUpdate(Gh(FakeHttp(fullMap(radio = radio(cap))), 0), tmp.newFolder())
+    assertEquals(cap, within.applyForTest(radioV1)!!.addedCheck.size)
+    val retry = LightUpdate(Gh(FakeHttp(fullMap(radio = radio(cap + 1))), 0), tmp.newFolder())
+    assertTrue(retry.applyForTest(radio(cap + 1))!!.addedCheck.isEmpty())
+
+    val old = radio(810)
+    val dir = tmp.newFolder()
+    File(dir, "radio.txt").writeText(old)
+    File(dir, "stamp.json").writeText("old-stamp")
+    val upstream = radio(1311)
+    val cnUrl = "https://api.github.com/repos/gaotianliuyun/gao/contents/radio.txt"
+    val raw = object : RawHttp {
+      override suspend fun get(url: String, timeoutMs: Long, maxBytes: Long, headers: Map<String, String>): RawHttp.Resp? = null
+    }
+    val logs = mutableListOf<String>()
+    val failure = runCatching { SyncEngine(Gh(FakeHttp(mapOf(cnUrl to upstream)), 0), CheckStream(raw), dir).run(old) { logs.add(it) } }.exceptionOrNull()
+    assertTrue(failure is IllegalStateException && failure.message!!.contains("超过上限"))
+    assertTrue(logs.any { it.contains("超过上限") })
+    assertEquals(old, File(dir, "radio.txt").readText())
+    assertEquals("old-stamp", File(dir, "stamp.json").readText())
+    assertFalse(SyncBarrier.active(dir))
+    val withinDir = tmp.newFolder()
+    File(withinDir, "radio.txt").writeText(old)
+    val withinSync = SyncEngine(Gh(FakeHttp(mapOf(cnUrl to radio(1310))), 0), CheckStream(raw), withinDir).run(old)
+    assertTrue(withinSync.ok)
+    assertEquals(cap, withinSync.addedCheck.size)
+    val sameSync = SyncEngine(Gh(FakeHttp(mapOf(cnUrl to old)), 0), CheckStream(raw), dir).run(old)
+    assertTrue(sameSync.ok)
+    assertTrue(sameSync.addedCheck.isEmpty())
   }
 
   @Test fun 元数据可用需解析成功且见证通过() {

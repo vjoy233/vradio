@@ -173,8 +173,19 @@ object PlayerHolder {
 
   /* ---------- 播放决策链 ---------- */
 
+  /** 冷启动仅选择：不建流、不更改播放记忆；已有播放意图优先。 */
+  private var selectionGeneration = 0L
+  fun selectionToken(): Long = selectionGeneration
+  fun selectIfEmpty(s: Station, expected: Long): Boolean {
+    if (!inited || station != null || selectionGeneration != expected) return false
+    station = s
+    uiMut.update { it.copy(st = PState.IDLE, station = s, status = "") }
+    return true
+  }
+
   fun play(s: Station, prefer: Int = -1) { // 总入口（player.js:128-150 的 B1 扩展：基座换人工序+禁用剔除）
     if (!inited) return
+    selectionGeneration++
     markProgress()
     halt = false; heldNext = false // 清上一轮守卫标记（player.js:130）
     val order = srcOrder(s).toMutableList() // ④ 启发式对 mo 序遍历：直流形态优先（player.js:131；禁用已剔除）
@@ -219,6 +230,7 @@ object PlayerHolder {
   fun resume() { // player.js:264-271
     if (!inited) return
     val s = station ?: return // 无台可续：媒体键路径已转 onPlayLast（player.js:265）
+    if (curPlay.isEmpty()) { play(s); return } // 仅选中态首次播放走完整选源链
     if (s.effOrder().isEmpty()) { play(s); return } // B1：全禁台恢复 = 仍 NO_ENABLED_SOURCE（重进提示路径，不复活）
     halt = false
     connecting = s; say("连接中…"); syncState()
@@ -243,6 +255,7 @@ object PlayerHolder {
 
   fun stop() { // player.js:214-220
     if (!inited) return
+    selectionGeneration++
     token++
     halt = false; heldNext = false
     exo.stop(); exo.clearMediaItems()

@@ -2178,7 +2178,8 @@ const App = {
     if (!this.metaCache) this.metaCache = await this.loadMeta(); // 懒加载一次（radio-meta.json 静态文件，非 dotfile/data 段天然可 GET）
     if (FEATURES.discoverySidecar && !this.discoverySidecar && window.DiscoverySidecar) {
       const rows = await DiscoverySidecar.loadSnapshot((u, opts) => fetch(u, opts), 'discovery-snapshots');
-      if (rows.length) this.discoverySidecar = rows;
+      if (rows === null) $('status').textContent = '当前页面缺少安全校验能力，精选候选不可用；请使用 localhost 或 HTTPS';
+      else if (rows.length) this.discoverySidecar = rows;
     }
     this.renderDiscovery();
     if (FEATURES.discoverySidecar && this.discoverySidecar && this.discoverySidecar.length) this.renderDiscoverySidecar();

@@ -50,6 +50,28 @@ App.state.stations = []; App.cfg = {hideC:{}}; App.recents = []; App.revives = n
     assert.strictEqual(calls, 1); const rows = [{name:'新候选',genre:'精选',url:'https://example.org/'}];
     side.resolve(rows); await Promise.all([e,f]); assert.strictEqual(App.discoverySidecar, rows);
     App.renderDiscovery(); App.renderDiscovery(); assert.strictEqual((body.innerHTML.match(/精选候选（需手动加入）/g) || []).length, 1);
+    // 真正经过 App → loadSnapshot：指针慢接近 5 秒，当前代超时，上一代仍有完整预算。
+    App.closeDiscovery(); App.discoverySidecar = null;
+    window.DiscoverySidecar = require('../discovery-sidecar');
+    const crypto = require('crypto'), raw = {v:1,source:'recommended-radio-streams',license:'CC0-1.0',commit:'a'.repeat(40),generatedAt:'2026-11-26T00:00:00.000Z',items:[{name:'回退候选',url:'https://example.org/'}]};
+    const payload = Buffer.from(JSON.stringify(raw)), id = crypto.createHash('sha256').update(payload).digest('hex'), bad = 'b'.repeat(64);
+    const pointer = deferred(), previous = deferred(), requested = [];
+    const response = data => ({ok:true,headers:{get:k => k === 'content-type' ? 'application/json' : null},body:{getReader:() => { let read = false; return {read:async () => read ? {done:true} : (read=true,{done:false,value:Buffer.from(data)}),cancel:async()=>{},releaseLock(){}}; }}});
+    global.fetch = (url, opts) => { requested.push(url); if (url.endsWith('/current.json')) return pointer.promise; if (url.includes(bad)) return new Promise(() => {}); if (url.endsWith('/manifest.json')) return previous.promise; return Promise.resolve(response(payload)); };
+    const cryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+    Object.defineProperty(globalThis, 'crypto', {configurable:true,value:undefined});
+    const integration = App.openDiscovery(); await flush();
+    clock.tick(4900); pointer.resolve(response(JSON.stringify({v:1,current:bad,previous:id}))); await flush();
+    assert(requested.some(x => x.includes(bad)), '当前代已启动');
+    clock.tick(5000); await flush(); assert(requested.some(x => x.includes(id)), '当前代超时后启动上一代');
+    clock.tick(4900); previous.resolve(response(JSON.stringify({v:1,sha256:id,bytes:payload.length}))); await flush();
+    let settled = false; integration.then(() => { settled = true; }); await flush();
+    assert(settled, '上一代成功后调用必须完成'); await integration; assert.strictEqual(App.discoverySidecar[0].name, '回退候选');
+    if (cryptoDescriptor) Object.defineProperty(globalThis, 'crypto', cryptoDescriptor); else delete globalThis.crypto;
+    App.closeDiscovery(); App.discoverySidecar = null; let sideSignal;
+    window.DiscoverySidecar = {loadSnapshot:(fetcher, base, ms, s) => { sideSignal = s; return new Promise(() => {}); }};
+    const hung = App.openDiscovery(); await flush(); clock.tick(15999); await flush(); assert(!sideSignal.aborted);
+    clock.tick(1); await flush(); assert(sideSignal.aborted); await hung;
     assert.strictEqual(clock.pending(), 0);
     console.log('发现页单飞、尾随、超时及换代通过');
   } finally { restore(orig); }

@@ -2210,10 +2210,10 @@ const App = {
   discoveryGeneration: 0,
   discoverySidecar: null,
   discoveryMetaFlight: null, discoverySideFlight: null,
-  discoveryFlight(key, task, tag) { // 逻辑单飞；超时尽力 abort。忽略信号的底层操作可能仍占资源。
+  discoveryFlight(key, task, tag, timeoutMs = 5000) { // 逻辑单飞；超时尽力 abort。忽略信号的底层操作可能仍占资源。
     if (this[key]) return this[key];
     let timer; const ctl = typeof AbortController === 'function' ? new AbortController() : null;
-    const p = Promise.race([Promise.resolve().then(() => task(ctl && ctl.signal)), new Promise(resolve => { timer = setTimeout(() => { if (ctl) ctl.abort(); resolve(null); }, 5000); })])
+    const p = Promise.race([Promise.resolve().then(() => task(ctl && ctl.signal)), new Promise(resolve => { timer = setTimeout(() => { if (ctl) ctl.abort(); resolve(null); }, timeoutMs); })])
       .catch(() => null).then(value => { clearTimeout(timer); if (this[key] === p) this[key] = null; return {tag, value}; });
     this[key] = p;
     return p;
@@ -2241,7 +2241,8 @@ const App = {
     // 本地推荐先展示，第三方候选失败或慢响应不阻塞它。
     this.renderDiscovery();
     if (FEATURES.discoverySidecar && !this.discoverySidecar && window.DiscoverySidecar) {
-      const result = await this.discoveryFlight('discoverySideFlight', signal => window.DiscoverySidecar.loadSnapshot((u, opts) => fetch(u, opts), 'discovery-snapshots', 5000, signal));
+      // 指针、当前代、上一代各 5 秒；正常调度下总预算留 1 秒余量供回退。
+      const result = await this.discoveryFlight('discoverySideFlight', signal => window.DiscoverySidecar.loadSnapshot((u, opts) => fetch(u, opts), 'discovery-snapshots', 5000, signal), null, 16000);
       const rows = result.value;
       if (!current() || !FEATURES.discoverySidecar) return;
       if (rows && rows.length) { this.discoverySidecar = rows; this.renderDiscovery(); }

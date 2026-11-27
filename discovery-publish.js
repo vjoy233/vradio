@@ -58,10 +58,15 @@ function publish(dir, raw) {
   }
   // 历史半代无法证明从未被引用，因此绝不修补或替换。
   if (!readSnapshot(dir,sha)) throw Error('同名快照不完整或损坏');
-  // 已提交同代时保留原 previous；回退命中同代时仍须修复 current 指针。
-  try { if (JSON.parse(fs.readFileSync(path.join(dir,'current.json'),'utf8')).current === sha) return sha; } catch (_) {}
+  // 同代仅对客户端认可的指针 no-op；版本损坏时修复并尽可能保留有效旧代。
+  let fallback = previous && previous.manifest.sha256 !== sha ? previous.manifest.sha256 : null;
+  try {
+    const pointer = JSON.parse(fs.readFileSync(path.join(dir,'current.json'),'utf8'));
+    if (pointer && pointer.v === 1 && pointer.current === sha) return sha;
+    if (!fallback && pointer && pointer.previous !== sha && readSnapshot(dir,pointer.previous)) fallback = pointer.previous;
+  } catch (_) {}
   const tmp = path.join(dir,'current.'+process.pid+'.'+crypto.randomBytes(8).toString('hex')+'.tmp');
-  try { fs.writeFileSync(tmp,JSON.stringify({v:1,current:sha,previous:previous ? previous.manifest.sha256 : null})+'\n'); fs.renameSync(tmp,path.join(dir,'current.json')); }
+  try { fs.writeFileSync(tmp,JSON.stringify({v:1,current:sha,previous:fallback})+'\n'); fs.renameSync(tmp,path.join(dir,'current.json')); }
   finally { try { fs.unlinkSync(tmp); } catch (_) {} }
   return sha;
   } finally { publishBusy = false; }

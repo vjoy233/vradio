@@ -460,8 +460,8 @@ class LightUpdate(private val gh: Gh, private val filesDir: File) {
   lastPlaybackAt,latSum,latN,disconnects,modes[],lastDiag,lastPlayFail}}}}}`——每源聚合值 + 最近一次
   诊断 + 最近一次播放失败，不留完整历史。**与 Web 侧需要对齐的四个拍板（Web quality-store.js 实现
   时逐条对齐，不一致以本节修订为准）**：
-  1. **30 天窗近似**：存储无逐样本时间戳，「近 30 天成功率/样本数」= lastObservedAt 新鲜度门控
-     （行超 30 天无观察 → unknown）+ 全量计数器近似；
+  1. **累计计数 + 最近观察过期近似**：存储无逐样本时间戳，成功率/样本数使用全量累计计数器；
+     lastObservedAt 仅作新鲜度门控（lastObservedAt > 0 且距当前 ≥30 天 → unknown；为 0 时不触发该门），不代表滚动 30 天窗口；
   2. **连续失败** = 台级 `cf` 计数器（任一源 ok 清零、fail +1），`cf≥3` 一票否决进 poor；
   3. **metadata(icy|none|mixed)** 由观测 modes 派生（op 事件无 icy 字段）：纯 direct → icy、纯
      hls → none、混合 → mixed；

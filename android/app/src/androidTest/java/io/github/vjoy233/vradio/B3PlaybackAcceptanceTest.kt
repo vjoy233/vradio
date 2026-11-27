@@ -32,7 +32,8 @@ class B3PlaybackAcceptanceTest {
   private val isolated = TestRule { base, _ -> object : Statement() {
     override fun evaluate() {
       assumeTrue("仅允许专用设备和指定测试类", InstrumentationRegistry.getArguments().getString("b3Isolated") == "true" &&
-        InstrumentationRegistry.getArguments().getString("class") == B3PlaybackAcceptanceTest::class.java.name)
+        InstrumentationRegistry.getArguments().getString("class") == B3PlaybackAcceptanceTest::class.java.name &&
+        android.os.Build.VERSION.SDK_INT == 34 && android.os.Build.HARDWARE == "ranchu" && android.os.Build.FINGERPRINT.contains("sdk_gphone"))
       base.evaluate()
     }
   } }
@@ -80,15 +81,20 @@ class B3PlaybackAcceptanceTest {
     val inst = InstrumentationRegistry.getInstrumentation()
     val ctx = inst.targetContext
     val power = ctx.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+    val wasInteractive = power.isInteractive
+    assumeTrue("须人工确认专用模拟器且初始屏幕亮起", wasInteractive)
     val scenario = ActivityScenario.launch(MainActivity::class.java)
+    var screenChanged = false
     try {
       inst.runOnMainSync { PlayerHolder.play(Station("smoke", "B3后台", mutableListOf(base + "/direct.mp3"))) }
       assertTrue("本地流未播放", await(12000) { PlayerHolder.ui.value.st == PState.PLAYING })
       inst.uiAutomation.executeShellCommand("input keyevent KEYCODE_HOME").close()
       SystemClock.sleep(2000)
       inst.runOnMainSync { assertTrue("后台未播放", PlayerHolder.player.isPlaying) }
-      if (power.isInteractive) inst.uiAutomation.executeShellCommand("input keyevent KEYCODE_POWER").close()
-      assertTrue("未熄屏", await(5000) { !power.isInteractive })
+      assertTrue("熄屏前屏幕状态已改变", power.isInteractive)
+      inst.uiAutomation.executeShellCommand("input keyevent KEYCODE_POWER").close()
+      screenChanged = await(5000) { !power.isInteractive }
+      assertTrue("未熄屏", screenChanged)
       val end = SystemClock.elapsedRealtime() + 15000
       while (SystemClock.elapsedRealtime() < end) {
         assertFalse("观察期间屏幕亮起", power.isInteractive)
@@ -96,8 +102,16 @@ class B3PlaybackAcceptanceTest {
         SystemClock.sleep(250)
       }
     } finally {
-      if (!power.isInteractive) inst.uiAutomation.executeShellCommand("input keyevent KEYCODE_WAKEUP").close()
-      scenario.close()
+      try {
+        inst.runOnMainSync { PlayerHolder.stop() }
+      } finally {
+        try {
+          if (screenChanged && !power.isInteractive) {
+            inst.uiAutomation.executeShellCommand("input keyevent KEYCODE_WAKEUP").close()
+            assertTrue("未恢复初始亮屏状态", await(5000) { power.isInteractive })
+          }
+        } finally { scenario.close() }
+      }
     }
   }
   @Test fun taskRemovalObservesPlayback() {

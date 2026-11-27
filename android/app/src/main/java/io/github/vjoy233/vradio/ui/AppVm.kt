@@ -221,29 +221,12 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   val updateBusy = MutableStateFlow(false); val updateMsg = MutableStateFlow("")
   val syncBusy = MutableStateFlow(false); val syncMsg = MutableStateFlow("")
   val healthScopeWarning = MutableStateFlow(false)
-  private var healthScopeSeen: io.github.vjoy233.vradio.sync.HealthScopeWarning.Snapshot? = null
-  private var healthScopeDismissed: io.github.vjoy233.vradio.sync.HealthScopeWarning.Snapshot? = null
-  private var healthScopeEpoch = 0L
-  private fun refreshHealthScopeWarning() {
-    val epoch = ++healthScopeEpoch
-    viewModelScope.launch {
-      val state = withContext(Dispatchers.IO) { io.github.vjoy233.vradio.sync.HealthScopeWarning.snapshot(ctx.filesDir) }
-      if (epoch != healthScopeEpoch) return@launch
-      healthScopeSeen = state
-      healthScopeWarning.value = (state.token != null || state.legacyBarrier) && state != healthScopeDismissed
-    }
-  }
-  fun acknowledgeHealthScopeWarning() {
-    val seen = healthScopeSeen ?: return
-    val epoch = ++healthScopeEpoch
-    viewModelScope.launch {
-      val state = withContext(Dispatchers.IO) { io.github.vjoy233.vradio.sync.HealthScopeWarning.acknowledge(ctx.filesDir, seen) }
-      if (epoch != healthScopeEpoch) return@launch
-      healthScopeSeen = state
-      healthScopeDismissed = if (state.token == null && state.legacyBarrier) state else null
-      healthScopeWarning.value = (state.token != null || state.legacyBarrier) && state != healthScopeDismissed
-    }
-  }
+  private val healthScopeUi = io.github.vjoy233.vradio.sync.HealthScopeUiCoordinator(
+    read = { withContext(Dispatchers.IO) { io.github.vjoy233.vradio.sync.HealthScopeWarning.snapshot(ctx.filesDir) } },
+    ack = { seen -> withContext(Dispatchers.IO) { io.github.vjoy233.vradio.sync.HealthScopeWarning.acknowledge(ctx.filesDir, seen) } },
+    publish = { healthScopeWarning.value = it })
+  private fun refreshHealthScopeWarning() { viewModelScope.launch { healthScopeUi.refresh() } }
+  fun acknowledgeHealthScopeWarning() { viewModelScope.launch { healthScopeUi.acknowledge() } }
   val logoRetryPending = MutableStateFlow(false)
   private fun refreshLogoRetry() { logoRetryPending.value = io.github.vjoy233.vradio.sync.SyncBarrier.logoRetryPending(ctx.filesDir) }
   val freshnessPref = MutableStateFlow(Freshness.parse(Store.get(C.K_SYNC_FRESHNESS)))
@@ -1258,7 +1241,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   }
 
   private fun runCheckUpdate() {                                          // 门后执行体（直跑或确认后续跑，唯一调 light.check/apply 的路径）
-    healthScopeDismissed = null
+    viewModelScope.launch { healthScopeUi.resetAndRefresh() }
     viewModelScope.launch {
       if (updateBusy.value) return@launch
       if (syncBusy.value) { updateMsg.value = "同步进行中，等同步完成后再检查更新（两通道写同一份 filesDir 数据，并发会互相覆盖）"; return@launch }   // 审计 P2：互锁
@@ -1311,7 +1294,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   }
 
   private fun runFullSync() {
-    healthScopeDismissed = null
+    viewModelScope.launch { healthScopeUi.resetAndRefresh() }
     viewModelScope.launch {
       if (syncBusy.value) return@launch
       if (updateBusy.value) { syncMsg.value = "数据更新进行中，稍后再同步"; return@launch }   // 审计 P2：互锁（与 checkUpdate 对称）

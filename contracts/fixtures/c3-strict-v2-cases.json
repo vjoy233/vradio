@@ -1,0 +1,21 @@
+{
+  "note": "草案样本：纯合成、不联网；各端尚未实现 v2，不表示已通过。raw 是原始 JSON 文本，不能先解析再序列化。",
+  "sidecar": [
+    {"id":"empty-valid", "accept":true, "raw":"{\"v\":2,\"source\":\"recommended-radio-streams\",\"license\":\"CC0-1.0\",\"commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"generatedAt\":\"2026-11-26T01:02:03.123Z\",\"items\":[]}"},
+    {"id":"valid-item", "accept":true, "raw":"{\"v\":2,\"source\":\"recommended-radio-streams\",\"license\":\"CC0-1.0\",\"commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"generatedAt\":\"2026-11-26T01:02:03.123Z\",\"items\":[{\"name\":\"示例\",\"url\":\"https://example.invalid/live\",\"genre\":\"\",\"upstream\":\"recommended-radio-streams\",\"commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}]}"},
+    {"id":"version-string", "accept":false, "raw":"{\"v\":\"2\",\"source\":\"recommended-radio-streams\",\"license\":\"CC0-1.0\",\"commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"generatedAt\":\"2026-11-26T01:02:03.123Z\",\"items\":[]}"},
+    {"id":"duplicate-key", "accept":false, "raw":"{\"v\":2,\"v\":2,\"source\":\"recommended-radio-streams\",\"license\":\"CC0-1.0\",\"commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"generatedAt\":\"2026-11-26T01:02:03.123Z\",\"items\":[]}"},
+    {"id":"bad-date", "accept":false, "raw":"{\"v\":2,\"source\":\"recommended-radio-streams\",\"license\":\"CC0-1.0\",\"commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"generatedAt\":\"2026-02-30T01:02:03.123Z\",\"items\":[]}"},
+    {"id":"unknown-field", "accept":false, "raw":"{\"v\":2,\"source\":\"recommended-radio-streams\",\"license\":\"CC0-1.0\",\"commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"generatedAt\":\"2026-11-26T01:02:03.123Z\",\"items\":[],\"extra\":true}"}
+  ],
+  "pointer": [
+    {"id":"first-generation", "current":"valid", "previous":"null", "result":"current"},
+    {"id":"good-both", "current":"valid", "previous":"valid", "result":"current"},
+    {"id":"bad-previous", "current":"valid", "previous":"invalid", "result":"current-degraded"},
+    {"id":"missing-previous", "current":"valid", "previous":"missing", "result":"current-degraded"},
+    {"id":"fallback", "current":"invalid", "previous":"valid", "result":"previous"},
+    {"id":"both-invalid", "current":"invalid", "previous":"invalid", "result":"unavailable"},
+    {"id":"invalid-pointer", "current":"pointer-invalid", "previous":"valid", "result":"unavailable"},
+    {"id":"empty-current", "current":"valid-empty", "previous":"valid", "result":"current"}
+  ]
+}

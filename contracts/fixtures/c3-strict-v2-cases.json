@@ -29,6 +29,11 @@
     {"id":"pointer-mismatch", "pointerId":"b", "manifestHash":"a", "bytesHash":"a", "accept":false},
     {"id":"manifest-mismatch", "pointerId":"a", "manifestHash":"b", "bytesHash":"a", "accept":false}
   ],
+  "deliveryDesignCases": [
+    {"id":"different-delivery-and-upstream", "deliveryRevision":"dddddddddddddddddddddddddddddddddddddddd", "upstreamCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "expectedUpstreamCommit":null, "expected":"eligible-if-trusted-tree-and-other-checks-pass"},
+    {"id":"expected-upstream-mismatch", "deliveryRevision":"dddddddddddddddddddddddddddddddddddddddd", "upstreamCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "expectedUpstreamCommit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "expected":"reject-generation"},
+    {"id":"mixed-delivery-tree", "pointerTree":"tree-D1", "manifestTree":"tree-D2", "sidecarTree":"tree-D1", "expected":"reject-generation"}
+  ],
   "pointer": [
     {"id":"first-generation", "current":"valid", "previous":"null", "result":"current"},
     {"id":"good-both", "current":"valid", "previous":"valid", "result":"current"},

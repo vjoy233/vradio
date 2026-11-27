@@ -8,10 +8,10 @@ const fs = require('fs'), path = require('path'), { spawnSync } = require('child
 
 const PROFILES = { // contract = L0 契约/资产门；unit = L1 纯函数/状态机/fake browser（不起长驻服务）；
   contract: ['contracts.js', 'assets.js'],
-  unit: ['backup-v3.js', 'contracts.js', 'assets.js', 'diagnostic.js', 'discovery.js', 'listen-stats.js', 'logos.js', 'metadata.js',
-    'player.js', 'playlist-import.js', 'quality-store.js', 'source-lifecycle.js', 'sources.js', 'store.js', 'sync.js',
-    'ui-data.js', 'ui-hero.js', 'ui-maintenance.js', 'ui-phase.js', 'ui-scope.js'],
-  api: ['boot-lifecycle.js', 'listen-stats-api.js', 'myradio-api.js', 'np-proxy.js', 'quality.js', 'smoke.js', 'station-api.js', 'sync-api.js'], // L2 真服务矩阵（smoke 压轴不变）
+  unit: ['backup-v3.js', 'c3-evidence.js', 'c3-fail-closed.js', 'contracts.js', 'assets.js', 'diagnostic.js', 'discovery.js', 'discovery-binding.js', 'discovery-sidecar.js', 'discovery-publish.js', 'discovery-publish-crash.js', 'discovery-publish-client.js', 'freshness.js', 'freshness-wiring.js', 'listen-stats.js', 'logos.js', 'metadata.js',
+    'meta-source.js', 'player.js', 'playlist-import.js', 'quality-explain.js', 'quality-store.js', 'source-lifecycle.js', 'sources.js', 'store.js', 'sync.js',
+    'ui-data.js', 'ui-diagnostic.js', 'ui-hero.js', 'ui-maintenance.js', 'ui-phase.js', 'ui-scope.js'],
+  api: ['boot-lifecycle.js', 'listen-stats-api.js', 'myradio-api.js', 'np-proxy.js', 'quality.js', 'smoke.js', 'station-api.js', 'sync-api.js', 'ui-diagnostic-api.js'], // L2 真服务矩阵（smoke 压轴不变）
 };
 const profile = process.argv[2] && !/^-/.test(process.argv[2]) ? process.argv[2] : '';
 

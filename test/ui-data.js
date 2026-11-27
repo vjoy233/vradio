@@ -84,11 +84,11 @@ const readInfo = (text, keys) => require('../backup.js').read(typeof text === 's
 const KEYS = Object.keys(JSON.parse(fs.readFileSync(path.join(UP, 'contracts', 'radio-keys.json'), 'utf8')).keys);
 const rowOf = (pv, k) => pv.rows.find(r => r.k === k);
 
-ok('v3 黄金样本 + http：13 键/个人电台 1 台/双 sidecar 计数，无不可用项', () => {
+ok('v3 黄金样本 + http：14 键/个人电台 1 台/双 sidecar 计数，无不可用项', () => {
   const info = readInfo(FIX3, KEYS);
   const pv = uiBackupPreview(info, { http: true });
   assert.strictEqual(rowOf(pv, '备份版本').v, 'v3');
-  assert.ok(rowOf(pv, 'Store 数据').v.includes('13'));
+  assert.ok(rowOf(pv, 'Store 数据').v.includes('14'));
   assert.ok(rowOf(pv, '个人电台').v.includes('1 台') && rowOf(pv, '个人电台').v.includes('#genre#') === false);
   assert.ok(rowOf(pv, '质量 sidecar').v.includes('1 台'));
   assert.ok(rowOf(pv, '收听统计 sidecar').v.includes('2 天'));

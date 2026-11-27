@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "kind": "source-meta",
+  "description": "radio-meta.json 公共来源旁车 source 契约；按源 URL 关联，不记录私人诊断或播放。",
+  "source": {
+    "url": "string——源 URL",
+    "upstream": "string——有证据的上游；未知为 unknown，初始化可为 local",
+    "upstreamId": "string——上游稳定 ID，未知为空串",
+    "kind": "string——当前为 main",
+    "firstSeenAt": "number——首次收录 epoch ms",
+    "lastSeenAt": "number——最近收录 epoch ms；旧数据缺失时按 firstSeenAt || 0 读取",
+    "lastVerifiedAt": "number——最近可信同步验证 epoch ms；未知为 0",
+    "verification": "sync|unknown——仅同步显式通过验证可标 sync，不含本地诊断或播放"
+  },
+  "fixture": "fixtures/source-meta.json"
+}

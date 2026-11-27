@@ -116,6 +116,7 @@ function mkSync(over) {
       if (f.checkFail) return Promise.reject(new Error(f.checkFail));
       return Promise.resolve({ json: function () { return Promise.resolve(f.checkBody(url)); } });
     }
+    if (url === '/api/freshness') return Promise.resolve({ json: () => Promise.resolve({ fact: over.fact || null }) });
     if (url === '/api/sync') {
       if (over.holdSync && !opt.body) return new Promise(res => f.syncGates.push(function () { res({ json: function () { return Promise.resolve(f.syncBody(url, opt)); } }) }));
       if (f.syncFail) return Promise.reject(new Error(f.syncFail));
@@ -126,6 +127,7 @@ function mkSync(over) {
   };
   const sb = sandbox({ clock: clock, ls: ls, document: doc, fetch: fetch, location: over.location,
     globals: { $: function (id) { return doc.getElementById(id); }, App: app, Store: store, QualityStore: qs,
+      Freshness: require('../freshness'), Player: { connecting: false, audio: { paused: true } },
       keyOf: function (s) { return s.c + '|' + s.n; } } });
   vm.createContext(sb);
   vm.runInContext(SRC.slice(0, BOOT.index) + '\nthis.Sync = Sync;', sb, { filename: 'sync.js' });
@@ -135,6 +137,45 @@ function mkSync(over) {
 }
 
 (async () => {
+  await ok('新鲜度只提醒，点击才同步；稍后记录 24 小时且不伪造成功', async () => {
+    const t = mkSync(); t.el('toast').hidden = true;
+    await t.Sync.scheduleFreshness();
+    assert.strictEqual(t.calls.toast.length, 1);
+    assert.strictEqual(t.f.calls.filter(x => x.url === '/api/sync').length, 0);
+    t.calls.toast[0].opt.onDismiss();
+    const p = JSON.parse(t.store.get('radio.syncFreshness'));
+    assert.strictEqual(p.dismissedUntil, 1000 + 86400000);
+    assert.strictEqual(p.lastSuccessAt, undefined);
+    await t.Sync.scheduleFreshness(); assert.strictEqual(t.calls.toast.length, 1);
+  });
+  await ok('提醒被替换后重新排队，不记 24 小时关闭', async () => {
+    const t = mkSync(); t.el('toast').hidden = true;
+    await t.Sync.scheduleFreshness(); t.calls.toast[0].opt.onReplace();
+    assert.strictEqual(t.Sync.freshnessShown, false);
+    assert.strictEqual(JSON.parse(t.store.get('radio.syncFreshness')).dismissedUntil, 0);
+    t.clock.tick(60000); await t.Sync.scheduleFreshness();
+    assert.strictEqual(t.calls.toast.length, 2);
+  });
+  await ok('强制同步在途时延后提醒', async () => {
+    const t = mkSync(); t.el('toast').hidden = true;
+    const run = t.Sync.forceSync('hash');
+    assert.strictEqual(t.Sync.syncInFlight, true);
+    await t.Sync.scheduleFreshness(); assert.strictEqual(t.calls.toast.length, 0);
+    await run; assert.strictEqual(t.Sync.syncInFlight, false);
+  });
+  await ok('播放中延迟提醒，不触发同步', async () => {
+    const t = mkSync(); t.el('toast').hidden = true; t.sb.Player.audio.paused = false;
+    await t.Sync.scheduleFreshness();
+    assert.strictEqual(t.calls.toast.length, 0); assert.strictEqual(t.f.calls.length, 0);
+  });
+  await ok('新鲜度点击进入既有质量门，拦截不发布', async () => {
+    const t = mkSync({ syncBody: { gated: true, ok: false, report: { reasons: [], oldTotal: 10, newTotal: 1 } } });
+    t.el('toast').hidden = true; await t.Sync.scheduleFreshness();
+    await t.calls.toast[0].opt.action.fn();
+    assert.strictEqual(t.f.calls.filter(x => x.url === '/api/sync').length, 1);
+    assert.ok(t.el('status').textContent.includes('质量门'));
+    assert.strictEqual(JSON.parse(t.store.get('radio.syncFreshness')).lastSuccessAt, undefined);
+  });
   console.log('[1] runCheck 执行器：逐台探活/前 4 源/分档计数/网络失败不落标/禁用源/诊断/并发/中止');
   await ok('逐台 fetch /api/check?detail=1，6 源台只测前 4 源（不变量：探活批量封顶 4）', async () => {
     const s6 = st('新闻', '六源台', ['http://a/1', 'http://a/2', 'http://a/3', 'http://a/4', 'http://a/5', 'http://a/6']);
@@ -442,7 +483,7 @@ function mkSync(over) {
     const posts = t.f.calls.filter(c => c.url === '/api/sync');
     assert.strictEqual(JSON.parse(posts[1].opt.body).forceToken, 'tk1', '带 token 强制发布');
     assert.strictEqual(posts[1].opt.headers['Content-Type'], 'application/json');
-    assert.strictEqual(t.el('status').textContent, '同步完成：共 90 台（+0；欧美音乐 90 个实测可用）', '强制成功进 syncDone');
+    assert.strictEqual(t.el('status').textContent, '同步完成：共 90 台（+0；国内更新状态未知；欧美音乐 90 个实测可用）', '强制成功进 syncDone');
     assert.strictEqual(t.calls.reload, 1, 'reloadMain 重拉重并');
     assert.strictEqual(t.span('syncBtn').textContent, '同步源', '按钮复位');
   });
@@ -486,7 +527,7 @@ function mkSync(over) {
     assert.strictEqual(t.el('syncBtn').disabled, false, '收尾复位');
     assert.strictEqual(t.span('syncBtn').textContent, '同步源');
     assert.strictEqual(t.el('prog').hidden, true);
-    assert.strictEqual(t.el('status').textContent, '同步完成：共 10 台（+0；欧美音乐 8 个实测可用）');
+    assert.strictEqual(t.el('status').textContent, '同步完成：共 10 台（+0；国内更新状态未知；欧美音乐 8 个实测可用）');
   });
 
   console.log('[8] forceSync');
@@ -511,7 +552,7 @@ function mkSync(over) {
     await t.Sync.forceSync('h9'); await drain();
     assert.strictEqual(JSON.parse(t.f.calls.filter(c => c.url === '/api/sync/force-token')[0].opt.body).reportHash, 'h9', 'token 绑定报告指纹');
     assert.strictEqual(t.calls.reload, 1);
-    assert.strictEqual(t.el('status').textContent, '同步完成：共 50 台（+5；欧美音乐 10 个实测可用；已强制替换）');
+    assert.strictEqual(t.el('status').textContent, '同步完成：共 50 台（+5；国内更新状态未知；欧美音乐 10 个实测可用；已强制替换）');
   });
 
   console.log('[9] syncDone');
@@ -525,9 +566,9 @@ function mkSync(over) {
   await ok('汇总文案分支：delta 正负/euKept 有无/replacement forced·kept', async () => {
     const t = mkSync();
     await t.Sync.syncDone({ total: 100, delta: -3, added: 2, removed: 5, euKept: 40, replacement: 'kept' });
-    assert.strictEqual(t.el('status').textContent, '同步完成：共 100 台（-3；新增 2 台、消失 5 台；欧美音乐 40 个实测可用；欧美层保留旧数据）');
+    assert.strictEqual(t.el('status').textContent, '同步完成：共 100 台（-3；新增 2 台、消失 5 台；国内更新状态未知；欧美音乐 40 个实测可用；欧美层保留旧数据）');
     await t.Sync.syncDone({ total: 90, delta: 5, euKept: null, replacement: 'forced' });
-    assert.strictEqual(t.el('status').textContent, '同步完成：共 90 台（+5；欧美音乐未更新（已保留旧列表）；已强制替换）');
+    assert.strictEqual(t.el('status').textContent, '同步完成：共 90 台（+5；国内更新状态未知；欧美音乐未更新（已保留旧列表）；已强制替换）');
     assert.strictEqual(t.calls.favsGone.length, 0, '无 removedNames 不比对');
   });
   await ok('收藏台消失点名：favsGone(名+URL 双通道)，≤5 全列、>5 截断「等 N 个」', async () => {

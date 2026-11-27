@@ -11,8 +11,8 @@
 //   [3] 写盘故障注入（quality+store 双通道，任务稿明示三选二）：data/*.json 换同名目录（Windows 无强制锁，
 //       openSync r+ 锁不住——rename 目标是目录必 EPERM/EISDIR 稳定复现，本机实测 EPERM）→ POST 200 {ok:false,
 //       error:'写入失败'} 不崩（临时错误通道非 5xx）+ 内存态不推进（rev/数据不回退不脏写）→ 恢复后服务可写且 rev 连续
-//   [4] kill 中断强制发布 + 重启恢复：VR_TEST_SYNC_STASH + STALL=3000，POST /api/sync 进行中 SIGKILL ×2
-//       （STALL 窗内 800ms = 确定性零写盘 / 窗后 3400ms = 算力段可能落 publishSync 中途）→ 重启 /api/boot
+//   [4] 发起同步后 kill + 重启一致性（不保证仍在途或发布中断）：VR_TEST_SYNC_STASH + STALL=3000，POST /api/sync 后 SIGKILL ×2
+//       （STALL 窗内 800ms = 确定性零写盘 / 窗后 3400ms = STALL 后随机落点（不保证命中发布））→ 重启 /api/boot
 //       断言不变量：ok:true + 四资产完整 + manifest 可校验 + 版本 ∈ {基线批, sync-*}（与 test/station-api.js
 //       [B] 区 boot 矩阵语义对齐；恢复路径本体由其确定性覆盖，此处验真实 kill 落点的状态一致性）
 //   [5] 资产同步演练：CLI 级直接 require update-sources.publishSync 三连发造两代 arts → root/prev/prev-old
@@ -28,7 +28,7 @@
 //   - 上游 DNS 变更注入、/proxy 重定向环深度上限（diagnostic.js 已覆盖同型护栏）；np-proxy 已覆盖的 302 跟跳/
 //     Content-Range/中途断流/客户端回收不重复
 const assert = require('assert'), fs = require('fs'), path = require('path');
-const { boot, freePort, snapshotAssets, restoreAssets, addCleanup, ROOT } = require('../harness/api-client');
+const { boot, freePort, makeRoot, ROOT } = require('../harness/api-client');
 const { fixture } = require('../harness/http-fixture');
 const { publishSync, readManifestOf, manifestCheckDir, assetsComplete } = require('../../update-sources');
 const { openRun } = require('./report-dir');
@@ -55,22 +55,25 @@ const makeArts = tag => {
     sources: [{ url: 'http://192.0.2.10/a.mp3', upstream: 'gao', upstreamId: '', kind: 'main', firstSeenAt: 0 }] };
   return { 'radio.txt': txt, 'radio-data.js': 'window.RADIO_DATA=' + JSON.stringify(txt) + ';\r\n', 'logos.txt': '# 演练占位台标表\r\n', 'radio-meta.json': JSON.stringify(meta) };
 };
-const hardKill = srv => new Promise(done => { // SIGKILL：Windows = TerminateProcess（无清理硬杀，kill -9 同语义）
-  try { srv.kill('SIGKILL'); } catch (_) {}
-  const t0 = Date.now(); (function poll() { if (srv.exitCode !== null || Date.now() - t0 > 3000) return done(); setTimeout(poll, 50); })();
+const hardKill = srv => new Promise((resolve, reject) => {
+  if (srv.exitCode !== null || srv.signalCode !== null) return resolve();
+  const timer = setTimeout(() => reject(new Error('服务硬杀后未退出，保留临时根')), 5000);
+  srv.once('exit', () => { clearTimeout(timer); resolve(); });
+  try { srv.kill('SIGKILL'); } catch (e) { clearTimeout(timer); reject(e); }
 });
+let cleanupDrillRoot = () => {};
 const enumCodes = JSON.parse(fs.readFileSync(path.join(ROOT, 'contracts', 'source-diagnostic.json'), 'utf8')).codes;
 
 (async () => {
   const t0 = Date.now();
-  // 外层快照：[4]/[5] 直接操纵仓库根生成资产 + data/last-sync-report.json；SIGINT 兜底 + finally 双保险
-  const pristine = snapshotAssets();
-  addCleanup(() => restoreAssets(pristine));
-  const REPORT_FILE = path.join(ROOT, 'data', 'last-sync-report.json');
-  const reportRaw = fs.existsSync(REPORT_FILE) ? fs.readFileSync(REPORT_FILE) : null;
-  // stash 原料先取真实全库（任何 publishSync 之前）——强制发布复用原料不重拉上游，min-total 硬门槛靠全库规模过
-  const REAL_TXT = fs.readFileSync(path.join(ROOT, 'radio.txt'), 'utf8');
-  const stashF = path.join(ROOT, 'data', '.test-stash.json');
+  // 发布及 kill/重启共用一个自有临时应用根；绝不快照还原宿主（并发写入会被覆盖）。
+  const drillRoot = makeRoot();
+  let safeToRemove = true;
+  const cleanupRoot = () => { if (safeToRemove) fs.rmSync(drillRoot, { recursive: true, force: true }); };
+  cleanupDrillRoot = cleanupRoot;
+  // SIGINT 时不删共享根：harness 会杀服，但同步清理无法等待子进程退出；宁留临时目录。
+  const REAL_TXT = fs.readFileSync(path.join(drillRoot, 'radio.txt'), 'utf8');
+  const stashF = path.join(drillRoot, 'data', '.test-stash.json');
 
   // 回环 fixture（[1][2][6] 共用）：探活真流分块吐 12288B（≥8000B 阈值），假流 336B，HTML 大页 9000B+
   const CHUNK = Buffer.alloc(4096, 7);
@@ -203,49 +206,68 @@ const enumCodes = JSON.parse(fs.readFileSync(path.join(ROOT, 'contracts', 'sourc
     await s.close(); s = null;
 
     console.log('[5] 资产同步演练（CLI 级 publishSync 三连发 → 两代 prev 轮换）');
-    publishSync(ROOT, makeArts('a2'), { version: 'A2', ts: 1000000 });
-    publishSync(ROOT, makeArts('b2'), { version: 'B2', ts: 2000000 });
-    publishSync(ROOT, makeArts('c2'), { version: 'C2', ts: 3000000 });
+    publishSync(drillRoot, makeArts('a2'), { version: 'A2', ts: 1000000 });
+    publishSync(drillRoot, makeArts('b2'), { version: 'B2', ts: 2000000 });
+    publishSync(drillRoot, makeArts('c2'), { version: 'C2', ts: 3000000 });
     await ok('三连发后 root manifest = C2 且四资产逐文件可校验', () => {
-      const m = readManifestOf(ROOT);
+      const m = readManifestOf(drillRoot);
       assert.ok(m && m.version === 'C2', 'root manifest 实得 ' + (m && m.version));
-      assert.ok(manifestCheckDir(ROOT, m)); assert.ok(assetsComplete(ROOT));
+      assert.ok(manifestCheckDir(drillRoot, m)); assert.ok(assetsComplete(drillRoot));
     });
     await ok('两代回滚副本逐代可校验：sync-prev = B2、sync-prev-old = A2（代际轮换：任何时刻至少一代完整上一批）', () => {
-      const mp = readManifestOf(path.join(ROOT, '.tmp', 'sync-prev'));
-      const mo = readManifestOf(path.join(ROOT, '.tmp', 'sync-prev-old'));
-      assert.ok(mp && mp.version === 'B2' && manifestCheckDir(path.join(ROOT, '.tmp', 'sync-prev'), mp), 'prev 实得 ' + (mp && mp.version));
-      assert.ok(mo && mo.version === 'A2' && manifestCheckDir(path.join(ROOT, '.tmp', 'sync-prev-old'), mo), 'prev-old 实得 ' + (mo && mo.version));
+      const mp = readManifestOf(path.join(drillRoot, '.tmp', 'sync-prev'));
+      const mo = readManifestOf(path.join(drillRoot, '.tmp', 'sync-prev-old'));
+      assert.ok(mp && mp.version === 'B2' && manifestCheckDir(path.join(drillRoot, '.tmp', 'sync-prev'), mp), 'prev 实得 ' + (mp && mp.version));
+      assert.ok(mo && mo.version === 'A2' && manifestCheckDir(path.join(drillRoot, '.tmp', 'sync-prev-old'), mo), 'prev-old 实得 ' + (mo && mo.version));
     });
 
-    console.log('[4] kill 中断强制发布 + 重启恢复（STALL=3000，SIGKILL ×2）');
-    // stash 原料 = 开场快照的全库文本（server 启动时读文件；publishSync 改掉的 radio.txt 不影响注入原料）
-    fs.mkdirSync(path.join(ROOT, 'data'), { recursive: true }); // [3] 的隔离还原可能已删空 data/ 目录
+    console.log('[4] 发起同步后 kill + 重启一致性（不保证仍在途或发布中断）（STALL=3000，SIGKILL ×2）');
+    // stash 原料 = 临时根的全库文本（server 启动时读文件；publishSync 改掉的 radio.txt 不影响注入原料）
+    fs.mkdirSync(path.join(drillRoot, 'data'), { recursive: true }); // stash 放在自有临时根
     fs.writeFileSync(stashF, JSON.stringify({ report: { reasons: [{ key: 'count-drop', msg: '测试门槛', bypassable: true }] },
       reportHash: 'a'.repeat(64), inputs: { cn: REAL_TXT + '华语音乐,#genre#\r\n注入测试台,http://s.example/inject.mp3\r\n注入测试台二,http://s.example/inject2.m3u8\r\n', eu: null }, tokens: {} }));
     const restartAssert = async (tag, killAt) => {
-      const srv = await boot({ isolated: true, env: { VR_TEST_SYNC_STASH: stashF, VR_TEST_SYNC_STALL: '3000' } });
+      assert.ok(safeToRemove, '前次服务未确认退出，跳过共享根演练');
+      const before = ['radio.txt', 'radio-data.js', 'logos.txt', 'radio-meta.json', 'sync-manifest.json'].map(f => fs.readFileSync(path.join(drillRoot, f)));
+      let srv;
+      try { srv = await boot({ root: drillRoot, env: { VR_TEST_SYNC_STASH: stashF, VR_TEST_SYNC_STALL: '3000' } }); }
+      catch (e) { safeToRemove = false; throw e; }
       try {
         const t = await postJson(srv.req, '/api/sync/force-token', { reportHash: 'a'.repeat(64) });
         assert.strictEqual(t.status, 200, 'force-token ' + t.status);
         srv.req('POST', '/api/sync', { 'Content-Type': 'application/json' }, JSON.stringify({ forceToken: t.j.token })).catch(() => {}); // 进行中，不等响应
+        // 409 证明首请求已进入 syncInFlight（STALL 窗口），而不只是已发出请求。
+        let busy = false;
+        for (let i = 0; i < 30 && !busy; i++) {
+          const probe = await postJson(srv.req, '/api/sync', { forceToken: t.j.token });
+          busy = probe.status === 409;
+          if (!busy) await sleep(20);
+        }
+        assert.ok(busy, '强制同步未进入 busy 窗口');
         await sleep(killAt);
-      } finally { await hardKill(srv.srv); await srv.close(); } // 杀服 + 还原 data 快照（生成资产不动，留给重启校验）；断言破也不泄漏演练服务
-      const b = await boot({ isolated: true });
+      } finally { try { await hardKill(srv.srv); } catch (e) { safeToRemove = false; throw e; } try { await srv.close(); } catch (e) { safeToRemove = false; throw e; } } // 杀服并等待退出（共享临时根留给重启校验）；断言破也不泄漏演练服务
+      if (tag === 'kill#1') ['radio.txt', 'radio-data.js', 'logos.txt', 'radio-meta.json', 'sync-manifest.json'].forEach((f, i) =>
+        assert.deepStrictEqual(fs.readFileSync(path.join(drillRoot, f)), before[i], tag + ' STALL 期间字节不变: ' + f));
+      let b;
+      try { b = await boot({ root: drillRoot }); }
+      catch (e) { safeToRemove = false; throw e; }
       try {
         const j = (await getJson(b.req, '/api/boot')).j;
         assert.strictEqual(j.ok, true, tag + ' /api/boot ok（实得 ' + JSON.stringify(j) + '）');
         assert.ok(j.version === 'C2' || /^sync-/.test(j.version), tag + ' 版本 ∈ {C2, sync-*}（实得 ' + j.version + '：旧批完整或新批完整，绝不混态）');
-        assert.ok(assetsComplete(ROOT), tag + ' 四资产完整可解析');
-        const m = readManifestOf(ROOT);
-        assert.ok(m && manifestCheckDir(ROOT, m), tag + ' manifest 可校验（哈希逐文件全对）');
-        const mp = readManifestOf(path.join(ROOT, '.tmp', 'sync-prev')) || readManifestOf(path.join(ROOT, '.tmp', 'sync-prev-old'));
-        assert.ok(mp && (manifestCheckDir(path.join(ROOT, '.tmp', 'sync-prev'), mp) || manifestCheckDir(path.join(ROOT, '.tmp', 'sync-prev-old'), mp)),
+        assert.ok(assetsComplete(drillRoot), tag + ' 四资产完整可解析');
+        const m = readManifestOf(drillRoot);
+        assert.ok(m && manifestCheckDir(drillRoot, m), tag + ' manifest 可校验（哈希逐文件全对）');
+        const validPrev = ['sync-prev', 'sync-prev-old'].some(name => {
+          const dir = path.join(drillRoot, '.tmp', name), m = readManifestOf(dir);
+          return m && manifestCheckDir(dir, m);
+        });
+        assert.ok(validPrev,
           tag + ' 至少一代完整回滚副本仍在（重启恢复能力未损）');
-      } finally { await b.close(); }
+      } finally { try { await b.close(); } catch (e) { safeToRemove = false; throw e; } }
     };
     await ok('kill#1（STALL 窗内 800ms，确定性零写盘）→ 重启 /api/boot：ok:true + 四资产完整 + manifest 可校验', () => restartAssert('kill#1', 800));
-    await ok('kill#2（STALL 窗后 3400ms，算力/发布段随机落点）→ 重启同款不变量（旧批完整或新批完整，绝不混态）', () => restartAssert('kill#2', 3400));
+    await ok('kill#2（发起同步后 kill，STALL 窗后 3400ms，不保证请求仍在途或发布中断）→ 重启同款不变量（旧批完整或新批完整，绝不混态）', () => restartAssert('kill#2', 3400));
 
     console.log('[6] 并发压力（8 路 quality ×16ops + 4 路 store 全量 + detail 8 源 ×3 轮同炮齐鸣）');
     s = await boot({ isolated: true, env: { VR_TEST_GUARD: '1' } });
@@ -316,12 +338,7 @@ const enumCodes = JSON.parse(fs.readFileSync(path.join(ROOT, 'contracts', 'sourc
     await s.close(); s = null;
   } finally {
     if (s) { try { await s.close(); } catch (_) {} s = null; } // 异常路径兜底：异常时 try 内的 close 可能被跳过，孤儿服务会把演练态写穿快照链
-    if (reportRaw) fs.writeFileSync(REPORT_FILE, reportRaw); else for (let i = 0; i < 3; i++) { // Windows 索引器/杀毒瞬时锁实测会打在新鲜文件上（server.js renameRetry 同源问题）——短重试再放弃
-      try { fs.unlinkSync(REPORT_FILE); break; } catch (e) { if (e.code === 'ENOENT') break; if (i === 2) console.error('[drills] 提示：', REPORT_FILE, '清理未成（' + e.code + '），请手删'); else await sleep(100); }
-    }
-    try { fs.unlinkSync(stashF); } catch (_) {}
-    ensureNotDir(path.join(ROOT, 'data', 'quality.json')); ensureNotDir(path.join(ROOT, 'data', 'store.json'));
-    try { restoreAssets(pristine); } catch (_) {} // 外层快照兜底还原（幂等）
+    try { cleanupRoot(); } catch (e) { console.error('[drills] 临时根清理失败:', drillRoot, e); fail++; }
     try { await fx.close(); } catch (_) {}
   }
 
@@ -333,6 +350,7 @@ const enumCodes = JSON.parse(fs.readFileSync(path.join(ROOT, 'contracts', 'sourc
   console.log(`\n${pass} 通过，${fail} 失败（报告 docs/test-reports/nightly/${ctx.runId}/drills.json）`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { // 套件级异常 = 未执行：环境类（端口/权限/起服失败）标「环境未执行」，其余按代码回归处置
+  try { cleanupDrillRoot(); } catch (cleanupError) { console.error('[drills] 临时根清理失败:', cleanupError); }
   const env = /EADDRINUSE|EACCES|EPERM|未就绪|启动即退出|listen /.test(String(e && e.message || e));
   console.error('drills 未执行（' + (env ? '环境失败' : '套件异常') + '）：', e && e.message || e);
   try {

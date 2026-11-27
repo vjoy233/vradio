@@ -145,6 +145,40 @@ async function run(chromium) {
     console.log(`自举隔离实例 ${base}（cwd=临时 worktree：data/my-radio 全落临时检出，宿主零接触）`);
     browser = await chromium.launch({ headless: true });
 
+    // 独立上下文走真实 Store/服务端；事实接口只读取，不触发实际联网同步。
+    console.log('[R] 新鲜度提醒与持久化');
+    const rc = await browser.newContext();
+    const rp = await rc.newPage(); wirePage(rp, report, '[R] ');
+    let syncPosts = 0; rp.on('request', r => { if (r.method() === 'POST' && new URL(r.url()).pathname === '/api/sync') syncPosts++; });
+    await rp.goto(base); await waitBoot(rp);
+    const factBefore = await (await rc.request.get(base + 'api/freshness')).json();
+    await rp.waitForFunction(() => !document.getElementById('toast').hidden && document.getElementById('toast').textContent.includes('稍后'));
+    const promptAt = await rp.evaluate(() => JSON.parse(Store.get('radio.syncFreshness')).lastPromptAt);
+    await rp.reload(); await waitBoot(rp);
+    await rp.waitForFunction(() => typeof Sync !== 'undefined' && JSON.parse(Store.get('radio.syncFreshness') || '{}').lastPromptAt > 0);
+    await rp.evaluate(() => Sync.scheduleFreshness());
+    check('R1 刷新后冷却期不重复提醒', await rp.evaluate(p => document.getElementById('toast').hidden && JSON.parse(Store.get('radio.syncFreshness')).lastPromptAt === p, promptAt));
+    // 仅清除提示冷却，模拟下一次到期；不修改成功事实。
+    await rp.evaluate(() => { const p = JSON.parse(Store.get('radio.syncFreshness')); p.lastPromptAt = 0; Store.set('radio.syncFreshness', JSON.stringify(p)); Sync.scheduleFreshness(); });
+    await rp.getByRole('button', { name: '稍后' }).click();
+    const dismissed = await rp.evaluate(() => JSON.parse(Store.get('radio.syncFreshness')).dismissedUntil);
+    const factAfter = await (await rc.request.get(base + 'api/freshness')).json();
+    check('R2 稍后只记录延期，不发同步也不更改服务端成功事实', dismissed > Date.now() && syncPosts === 0 && JSON.stringify(factBefore) === JSON.stringify(factAfter));
+    await rp.click('#sideManage'); await rp.click('#mTabD'); await rp.selectOption('#freshnessSetting', 'off');
+    await rp.waitForFunction(() => JSON.parse(Store.get('radio.syncFreshness')).disabled === true);
+    await rp.evaluate(() => Store.flush());
+    await rp.reload(); await waitBoot(rp);
+    await rp.waitForFunction(() => JSON.parse(Store.get('radio.syncFreshness') || '{}').disabled === true);
+    await rp.evaluate(() => Sync.scheduleFreshness());
+    check('R3 关闭提醒跨刷新持久且不再弹出', await rp.evaluate(() => document.getElementById('freshnessSetting').value === 'off' && document.getElementById('toast').hidden));
+    await rc.close();
+    const rc2 = await browser.newContext(); const rp2 = await rc2.newPage(); wirePage(rp2, report, '[R2] ');
+    await rp2.goto(base); await waitBoot(rp2);
+    await rp2.waitForFunction(() => JSON.parse(Store.get('radio.syncFreshness') || '{}').disabled === true);
+    await rp2.evaluate(() => Sync.scheduleFreshness());
+    check('R4 关闭状态从服务端恢复到全新浏览器上下文', await rp2.evaluate(() => document.getElementById('freshnessSetting').value === 'off' && document.getElementById('toast').hidden));
+    await rc2.close();
+
     // —— [on] uiRefresh 开态（FEATURES.uiRefresh 默认开，1280×800）——
     console.log('[on] uiRefresh 开态（1280×800）');
     const ctx1 = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1, colorScheme: 'dark' });
@@ -188,6 +222,73 @@ async function run(chromium) {
     const rec0 = await page.evaluate(() => App.recents.length);
     await playProbe(page, st1, 'P', () => page.click('#heroPlay'), true, check, note);
     check('P1 点播记最近', await page.evaluate(r0 => App.recents.length === r0 + 1, rec0));
+
+    // —— [D] 发现卡真实点击：沿用 Player、筛选不变；不连接公网 ——
+    console.log('[D] 本地发现播放与筛选');
+    const prior = await page.evaluate(() => { App.state.cat = App.state.stations[0].c; return {cat: App.state.cat, scope: App.state.scope, keyword: App.state.keyword}; });
+    const boundWithoutSubtle = await page.evaluate(async () => {
+      const original = Object.getOwnPropertyDescriptor(window, 'crypto');
+      try { Object.defineProperty(window, 'crypto', { configurable:true, value:undefined }); return !!(await App.loadMeta(App.metaMain)); }
+      finally { if (original) Object.defineProperty(window, 'crypto', original); else delete window.crypto; }
+    });
+    check('D0 无 crypto.subtle 的 HTTP 环境仍验证绑定', boundWithoutSubtle);
+    await page.click('#sideMore'); await page.click('#discBtn');
+    await page.waitForSelector('#discBody .discrow');
+    const disc = await page.evaluate(() => {
+      const k = document.querySelector('#discBody .discrow').dataset.k;
+      const s = App.state.stations.find(x => x.c + '|' + x.n === k);
+      window.__discCalls = 0; const original = Player.play;
+      Player.play = function (...args) { window.__discCalls++; return original.apply(this, args); };
+      return {k, u0:s.u[0]};
+    });
+    check('D1 发现展示来源与质量摘要', await page.locator('#discBody .discrow .badge').count() > 0 && await page.locator('#discBody .discrow .srcs').count() > 0);
+    await page.locator('#discBody .discrow').first().click();
+    check('D2 卡片仅调用既有播放入口一次且指向选中台', await page.evaluate(d => window.__discCalls === 1 && !!Player.connecting && Player.connecting.u[0] === d.u0, disc));
+    check('D3 返回后筛选不变', await page.evaluate(p => App.state.cat === p.cat && App.state.scope === p.scope && App.state.keyword === p.keyword && document.getElementById('discovery').hidden, prior));
+    await page.evaluate(() => Player.stop());
+
+    // 诊断通过路由 fixture，真实点击详情动作；不请求公网或改生成资产。
+    console.log('[A] 详情诊断动作');
+    let diagRequests = [];
+    await page.route('**/api/check?detail=1*', route => {
+      const urls = new URL(route.request().url()).searchParams.getAll('url'); diagRequests.push(urls);
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, results: urls.map(u => ({ url: new URL(u).href, ok: true, code: 'OK', latencyMs: 12, bytes: 1000, mode: 'direct', checkedAt: Date.now() })) }) });
+    });
+    await page.locator('[data-more]').first().click();
+    await page.waitForFunction(() => !App.detail.loading && App.detail.results.some(Boolean));
+    check('A1 打开详情自动诊断并显示结果', diagRequests.length > 0 && await page.locator('#detailBody .dsrc .okb').count() > 0);
+    const beforeSingle = diagRequests.length;
+    await page.locator('#detailBody [data-act="dRecheck"]').first().click();
+    await page.waitForFunction(() => !App.detail.loading);
+    check('A2 单源诊断动作只请求一源', diagRequests.length === beforeSingle + 1 && diagRequests[beforeSingle].length === 1);
+    const beforeAll = diagRequests.length;
+    await page.locator('#detailBody [data-act="dAll"]').first().click();
+    await page.waitForFunction(() => !App.detail.loading);
+    check('A3 全部诊断动作重新请求启用源', diagRequests.length > beforeAll);
+    await page.evaluate(() => { window.__copied = ''; App.copyText = async text => { window.__copied = text; return true; }; });
+    await page.locator('#detailBody [data-act="dCopyDiagnostic"]').click();
+    check('A4 点击复制诊断摘要产生脱敏内容', await page.evaluate(() => window.__copied.includes('诊断摘要') && !/https?:\/\/[^\s]*\?/.test(window.__copied)));
+    await page.click('#dClose');
+    const multi = await page.evaluate(() => { const s = App.state.stations.find(x => !x.hidden && x.u.length > 1 && !(x.dis || []).includes(1)); return { key: s.c + '|' + s.n, name: s.n, identity: s.u[0], source: s.u[1] }; });
+    await page.fill('#q', multi.name);
+    // 搜索 120ms 防抖后重建列表；等待真实筛选完成并以身份键定位，不能缓存旧列表序号。
+    await page.waitForFunction(m => App.state.keyword === m.name && [...document.querySelectorAll('[data-more]')].some(b => b.dataset.more === m.key), multi);
+    const match = page.locator('[data-more]').filter({ has: page.locator('svg') }).and(page.locator(`[data-more=${JSON.stringify(multi.key)}]`));
+    assert.strictEqual(await match.count(), 1, '多源电台详情入口唯一'); await match.click();
+    await page.waitForFunction(m => !App.detail.loading && App.detail.results.some(Boolean) && App.detailStation()?.u[0] === m.identity, multi);
+    await page.evaluate(m => {
+      Player.srcMem[m.identity] = { i: 1, t: Date.now() }; Store.set('radio.srcmem2', JSON.stringify(Player.srcMem));
+      const s = App.detailStation(); QualityStore.stations[m.identity] = { sources: { [m.source]: { lastOkAt: Date.now() } } };
+      window.__playCalls = []; const orig = Player.play; Player.play = function (station, index) { window.__playCalls.push({ identity: station.u[0], index }); return orig.apply(this, arguments); };
+      App.renderDetail();
+    }, multi);
+    await page.locator('#detailBody [data-act="dPlay"][data-i="1"]').click();
+    check('A5 换源按钮调用真实播放链并指定第二源', await page.evaluate(m => window.__playCalls.some(x => x.identity === m.identity && x.index === 1) && Player.station.u[0] === m.identity && Player.curSi === 1, multi));
+    await page.locator('#detailBody [data-act="dResetMem"]').click();
+    check('A6 恢复默认清除源记忆并持久化', await page.evaluate(m => !Player.srcMem[m.identity] && !JSON.parse(Store.get('radio.srcmem2') || '{}')[m.identity], multi));
+    await page.locator('#detailBody [data-act="dSuccessful"]').click();
+    check('A7 播放有成功记录的源指定正确源', await page.evaluate(m => window.__playCalls.length >= 2 && window.__playCalls[window.__playCalls.length - 1].identity === m.identity && window.__playCalls[window.__playCalls.length - 1].index === 1 && Player.curSi === 1, multi));
+    await page.evaluate(() => Player.stop()); await page.click('#dClose'); await page.fill('#q', '');
 
     // —— [M] 维护离开三选（dirty → 保存/放弃/继续）——
     console.log('[M] 维护离开三选');

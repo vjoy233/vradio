@@ -152,6 +152,34 @@ function qSummary(stations, identityUrl, sources, now) {
   };
 }
 
+/* 无状态展示投影：只使用累计摘要与明确传入的时间，不改变 sidecar 或 health。 */
+function qExplain(summary, now) {
+  const unknown = reason => ({ level: 'unknown', action: 'retest', reason });
+  if (!summary || !Number.isFinite(summary.okCount) || !Number.isFinite(summary.failCount) ||
+      summary.okCount < 0 || summary.failCount < 0 || summary.okCount + summary.failCount === 0) return unknown('no_samples');
+  if (!Number.isFinite(summary.lastObservedAt) || summary.lastObservedAt <= 0 || !Number.isFinite(now)) return unknown('missing_observation');
+  if (summary.lastObservedAt > now) return unknown('future_observation');
+  if (now - summary.lastObservedAt >= QCAPS.windowMs) return unknown('stale');
+  if (summary.okCount + summary.failCount < QCAPS.minSamples) return unknown('insufficient_samples');
+  if (summary.stability === 'good') return { level: 'good', action: 'none', reason: 'stable' };
+  if (summary.stability === 'fair') return { level: 'fair', action: 'retest', reason: 'variable' };
+  if (summary.stability === 'poor') return { level: 'poor', action: 'retest', reason: 'unstable' };
+  return unknown('unknown_stability');
+}
+function diagnosticAction(code, httpStatus) {
+  // 字节门可能在 401/403 下仍判 OK；保留真实 code，同时优先提示检查服务配置。
+  if (httpStatus === 401 || httpStatus === 403) return { level: 'unknown', action: 'configure', reason: 'service_refused' };
+  if (code === 'OK') return { level: 'good', action: 'none', reason: 'ok' };
+  const map = {
+    NETWORK: ['retry', 'network'], HTML: ['check_source', 'html'], HTTP: ['retry', 'http'],
+    EMPTY_PLAYLIST: ['check_source', 'empty_playlist'], NO_SEGMENT: ['retry', 'no_segment'],
+    SHORT_BODY: ['check_source', 'short_body'], REDIRECT_REJECTED: ['check_source', 'redirect_rejected'],
+    INVALID_URL: ['check_source', 'invalid_url']
+  };
+  const v = Object.prototype.hasOwnProperty.call(map, code) ? map[code] : null;
+  return v ? { level: 'unknown', action: v[0], reason: v[1] } : { level: 'unknown', action: 'retest', reason: 'unknown_code' };
+}
+
 /* ---------- 客户端单例（HTTP op 合流 / localStorage 降级） ---------- */
 const QualityStore = {
   mode: 'local',        // 'server'（HTTP 主源）| 'local'（file:// 或后端不可用降级）
@@ -267,4 +295,4 @@ const QualityStore = {
   },
 };
 if (typeof window !== 'undefined') window.QualityStore = QualityStore;
-if (typeof module !== 'undefined') module.exports = { QualityStore, QCAPS, qNormMode, qApplyOp, qTrim, qSummary, qStability };
+if (typeof module !== 'undefined') module.exports = { QualityStore, QCAPS, qNormMode, qApplyOp, qTrim, qSummary, qStability, qExplain, diagnosticAction };

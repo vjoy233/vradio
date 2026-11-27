@@ -167,8 +167,8 @@ function qExplain(summary, now) {
   return unknown('unknown_stability');
 }
 function diagnosticAction(code, httpStatus) {
-  if (code === 'OK') return { level: 'good', action: 'none', reason: 'ok' };
   if (httpStatus === 401 || httpStatus === 403) return { level: 'unknown', action: 'configure', reason: 'service_refused' };
+  if (code === 'OK') return { level: 'good', action: 'none', reason: 'ok' };
   const map = {
     NETWORK: ['retry', 'network'], HTML: ['check_source', 'html'], HTTP: ['retry', 'http'],
     EMPTY_PLAYLIST: ['check_source', 'empty_playlist'], NO_SEGMENT: ['retry', 'no_segment'],

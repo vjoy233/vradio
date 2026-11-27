@@ -15,7 +15,8 @@
     "radio.showdead": { "type": "string", "backup": true },
     "radio.theme": { "type": "string", "backup": true },
     "radio.baseline": { "type": "string", "backup": true },
-    "radio.baselineProg": { "type": "string", "backup": true }
+    "radio.baselineProg": { "type": "string", "backup": true },
+    "radio.syncFreshness": { "type": "json", "backup": true }
   },
   "excluded": ["radio.logos", "radio.storeDirty"],
   "storageClasses": {

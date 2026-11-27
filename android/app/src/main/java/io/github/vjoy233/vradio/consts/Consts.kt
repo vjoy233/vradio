@@ -18,8 +18,9 @@ object C {
   const val K_THEME = "radio.theme"
   const val K_BASELINE = "radio.baseline"
   const val K_BASELINE_PROG = "radio.baselineProg"
+  const val K_SYNC_FRESHNESS = "radio.syncFreshness"
   val KEYS = listOf(K_FAVS, K_RECENTS, K_HEALTH, K_CFG, K_SONGS, K_VOLPERST, K_SRCMEM,
-    K_VOL, K_VIEW, K_SHOWDEAD, K_THEME, K_BASELINE, K_BASELINE_PROG)
+    K_VOL, K_VIEW, K_SHOWDEAD, K_THEME, K_BASELINE, K_BASELINE_PROG, K_SYNC_FRESHNESS)
 
   // —— 体检字节验收四常数（update-sources.js:128-145 同口径，A4）——
   const val CHECK_WINDOW_MS = 4500L       // 探活观察窗

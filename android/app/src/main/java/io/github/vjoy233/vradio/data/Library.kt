@@ -195,8 +195,9 @@ class Library(
     for (s in RadioTxt.parse(myText)) { // 个人层常驻并入（只补源不覆盖）；⚠ 大括号必须显式——裸写双 if 的话
       val cur = byKey[s.key]            // else 会悬挂绑到内层 if（新键台永不并入的隐形 bug，测试逮住）
       if (cur != null) {
+        cur.personalUrls = cur.personalUrls + s.u
         for (u in s.u) if (!cur.u.contains(u)) cur.u.add(u)
-      } else { byKey[s.key] = s; byName.add(s.n) }
+      } else { s.personalUrls = s.u.toSet(); byKey[s.key] = s; byName.add(s.n) }
     }
     stations = byKey.values.toList()
     for (s in stations) { s.dCat = s.c; s.dName = s.n; s.dU = s.u.toList() } // 装配默认口径留底（↺恢复/撤回用）
@@ -253,6 +254,7 @@ class Library(
       }
       val add = ArrayList<String>()
       for (u in s.u) for (x in c.srcs[u] ?: emptyList()) if (x !in s.u && x !in add) add.add(x)
+      s.adjustedUrls = add.toSet()
       if (add.isNotEmpty()) s.u.addAll(add)
       if (s.u.size > C.SRC_TOTAL_CAP) s.u = s.u.take(C.SRC_TOTAL_CAP).toMutableList() // 每台最多 6 条（plan §5.4，review P1）：
       // 合并追加后对最终源集合统一封顶——保主源 u[0] 首位只裁台尾（原生超编同理）；详情/诊断同口径不漂移

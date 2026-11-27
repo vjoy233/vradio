@@ -90,6 +90,44 @@ const srcmem2 = ls => { const v = ls.getItem('radio.srcmem2'); return v ? JSON.p
 const srcmemSetCount = p => p.store.calls.filter(function (k) { return k === 'radio.srcmem2'; }).length;
 
 // [1] variants 三级策略 ————————————————————————————————————
+// 失败事实与真实诊断分离；FakeClock 固定时刻。
+ok('失败快照：错误、代理耗尽、不可变与跨台保留', () => {
+  const p = mkPage(), s = st(['http://x/a.mp3']);
+  assert.strictEqual(p.Player.getFailureSnapshot(), null);
+  p.Player.play(s); p.clock.tick(25); p.audio.onerror();
+  const first = p.Player.getFailureSnapshot();
+  assert.strictEqual(first.reason, 'error'); assert.strictEqual(first.mode, 'direct');
+  assert.strictEqual(first.at, 1025); assert.strictEqual(first.attempts, 1);
+  assert.strictEqual(first.sourceUrl, s.u[0]); assert.strictEqual(first.variantUrl, s.u[0]);
+  assert(Object.isFrozen(first));
+  p.clock.tick(5); p.audio.onerror();
+  const last = p.Player.getFailureSnapshot();
+  assert.strictEqual(last.reason, 'exhaust'); assert.strictEqual(last.mode, 'proxy');
+  assert.strictEqual(last.variantUrl, enc(s.u[0])); assert.strictEqual(last.attempts, 2);
+  assert.strictEqual(last.at, 1030); assert.strictEqual(first.reason, 'error');
+  assert.strictEqual('code' in last, false); assert.strictEqual('httpStatus' in last, false);
+  p.Player.play(st(['http://x/b.mp3'])); assert.deepStrictEqual(p.Player.getFailureSnapshot(), last); assert.notStrictEqual(p.Player.getFailureSnapshot(), last);
+});
+ok('失败快照：直播 ended 重连成功仍保留断流事实', () => {
+  const p = mkPage(), s = st(['http://x/a.mp3']);
+  p.Player.play(s); p.audio.fire('playing'); p.clock.tick(50); p.audio.fire('ended');
+  const f = p.Player.getFailureSnapshot();
+  assert.strictEqual(f.reason, 'watchdog'); assert.strictEqual(f.at, 1050);
+  assert.strictEqual(f.sourceUrl, s.u[0]); assert.strictEqual(f.attempts, 1);
+  p.audio.fire('playing'); assert.deepStrictEqual(p.Player.getFailureSnapshot(), f);
+});
+ok('失败快照：看门狗、重连计数及旧世代不覆盖', () => {
+  const p = mkPage(), s = st(['http://x/a.m3u8']);
+  p.Player.play(s); const old = p.audio.onerror;
+  p.audio.fire('waiting'); p.clock.tick(12000);
+  const f = p.Player.getFailureSnapshot();
+  assert.strictEqual(f.reason, 'watchdog'); assert.strictEqual(f.mode, 'hls');
+  assert.strictEqual(f.attempts, 1); assert.strictEqual(f.at, 13000);
+  p.audio.onerror(); assert.strictEqual(p.Player.getFailureSnapshot().attempts, 2);
+  p.Player.play(st(['http://x/b.mp3'])); const saved = p.Player.getFailureSnapshot(); old();
+  assert.deepStrictEqual(p.Player.getFailureSnapshot(), saved);
+});
+
 console.log('[1] variants() 三级策略：直流→m3u8 直连→/proxy 兜底');
 ok('mp3 直流：[原URL, /proxy] 两级（http 页面）', () => {
   const p = mkPage();

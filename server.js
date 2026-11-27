@@ -26,7 +26,7 @@
 //       先归一大小写与尾部点空格（Windows 大小写不敏感 + Win32 剥尾点曾实测绕过字面量比较，audit A1；
 //       store.json 是全量个人数据，HOST=0.0.0.0 局域网模式下不可被直接 GET）。
 const http = require('http'), https = require('https'), fs = require('fs'), path = require('path'), crypto = require('crypto');
-const { runPipeline, publishResult, bootManifest, forceTokenIssue, forceTokenConsume, checkStream, checkDetail, safeTarget, guardLookup, tryUrl } = require('./update-sources');
+const { freshnessFact, runPipeline, publishResult, bootManifest, forceTokenIssue, forceTokenConsume, checkStream, checkDetail, safeTarget, guardLookup, tryUrl } = require('./update-sources');
 const { qApplyOp, qTrim } = require('./quality-store'); // B2：质量聚合应用/裁剪纯函数（与客户端逐字节同语义）
 const { lsDayKeyOk, lsApplyOp } = require('./listen-stats'); // B3：收听统计 op 应用/日期键历法校验（与客户端同语义）
 const ROOT = __dirname, PORT = process.env.PORT || 8137, HOST = process.env.HOST || '127.0.0.1';
@@ -81,6 +81,14 @@ function crossOrigin(req) {
   try { return new URL(o).host !== (req.headers.host || ''); } catch (_) { return true; }
 }
 
+// 上游类型不可信：只保留明确的媒体/HLS 类型，其余一律二进制；绝不按 URL 扩展名猜类型。
+// nosniff 阻止作为 script/style 引用，sandbox + default-src 防直接导航形成同源活动文档。
+const PROXY_TYPES = new Set(['audio/mpeg', 'audio/aac', 'audio/aacp', 'audio/mp4', 'audio/ogg', 'audio/opus', 'audio/wav', 'audio/webm',
+  'video/mp2t', 'video/mp4', 'video/webm', 'application/vnd.apple.mpegurl', 'application/x-mpegurl', 'audio/mpegurl', 'audio/x-mpegurl']);
+function proxyType(value) {
+  const type = String(value || '').split(';', 1)[0].trim().toLowerCase();
+  return PROXY_TYPES.has(type) ? type : 'application/octet-stream';
+}
 function proxy(target, req, res, depth = 0) {
   if (depth > 5) return res.writeHead(508).end('too many redirects');
   const mod = target.startsWith('https') ? https : http;
@@ -94,7 +102,8 @@ function proxy(target, req, res, depth = 0) {
       if (!next) return res.writeHead(403).end('403 redirect target rejected');
       return proxy(next, req, res, depth + 1);
     }
-    const h = { 'Content-Type': r.headers['content-type'] || 'application/octet-stream' }; // 同源代理，无需 ACAO（P2-4）
+    const h = { 'Content-Type': proxyType(r.headers['content-type']), 'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "sandbox; default-src 'none'" }; // 同源代理，无需 ACAO；上游不可信
     if (r.headers['content-range']) h['Content-Range'] = r.headers['content-range'];
     res.writeHead(r.statusCode, h);
     r.on('error', () => res.destroy()); // 上游中途断流：终止响应，error 不逃逸（Node ≥14 防御性守卫）
@@ -140,7 +149,7 @@ function myRadioReplace(lines) {
 // 写入复用 my-radio 口径：tmp+rename 原子替换 + 串行队列；结构白名单只收已知键（值形状前端自管，键集合即边界） ----------
 const DATA_DIR = path.join(ROOT, 'data'), STORE_FILE = path.join(DATA_DIR, 'store.json');
 const STORE_KEYS = new Set(['radio.favs', 'radio.recents', 'radio.health', 'radio.cfg', 'radio.songs', 'radio.volperst', 'radio.srcmem2',
-  'radio.vol', 'radio.view', 'radio.showdead', 'radio.theme', 'radio.baseline', 'radio.baselineProg']); // ⚠ 与 store.js KEYS 同步扩
+  'radio.vol', 'radio.view', 'radio.showdead', 'radio.theme', 'radio.baseline', 'radio.baselineProg', 'radio.syncFreshness']); // ⚠ 与 store.js KEYS 同步扩
 const STORE_MAX = 2 * 1024 * 1024, KEY_MAX = 512 * 1024;
 const KEY_MAXS = { 'radio.health': 1536 * 1024 }; // 分键上限（AIbot P2-3）：健康标记 FIFO 2000 条 × 多源 URL 快照最坏 ~0.9MB，512KB 会静默丢键——对账再把镜像一起抹掉，僵尸台问题换个形式回归
 let storeRev = 0, storeCache = null, storeQ = Promise.resolve();
@@ -551,6 +560,11 @@ http.createServer((req, res) => {
         .finally(() => { syncInFlight = null; });
     });
   }
+  if (req.url.split('?')[0] === '/api/freshness') {
+    if (req.method !== 'GET') return json(405, { error: 'method not allowed' });
+    if (crossOrigin(req)) return json(403, { error: '跨源请求被拒绝' });
+    return json(200, { fact: freshnessFact(ROOT) });
+  }
   if (req.url.split('?')[0] === '/api/boot') { // B2 启动资产状态（§13.3）：manifest 校验/bootstrap/恢复结果（前端 toast 用）
     if (req.method !== 'GET') return json(405, { ok: false, error: 'method not allowed' });
     if (crossOrigin(req)) return json(403, { error: '跨源请求被拒绝' });
@@ -772,7 +786,7 @@ http.createServer((req, res) => {
   if (p !== ROOT && !p.startsWith(ROOT + path.sep)) return res.writeHead(403).end('403');
   fs.readFile(p, (e, buf) => {
     if (e) return res.writeHead(404).end('404');
-    const h = { 'Content-Type': MIME[path.extname(p).toLowerCase()] || 'application/octet-stream', 'X-Content-Type-Options': 'nosniff' }; // audit A6：本地文件类型可信堵嗅探；/proxy 转发上游类型不可信（错标 octet-stream 的流靠嗅探才能播），不加
+    const h = { 'Content-Type': MIME[path.extname(p).toLowerCase()] || 'application/octet-stream', 'X-Content-Type-Options': 'nosniff' }; // audit A6：本地文件禁止嗅探
     // radio-data.js 是同步才变的生成物（~200KB），http 模式每次刷新都会白拉一遍（列表实际走 radio.txt）——
     // 定向给一天缓存（AIbot P3-5）；file:// 读本地文件不经 HTTP 缓存，不受影响。其余文件不缓存：开发改动即刷即生效
     if (p === path.join(ROOT, 'radio-data.js')) h['Cache-Control'] = 'public, max-age=86400';

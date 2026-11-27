@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedButton
@@ -35,6 +36,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -92,6 +94,10 @@ fun SettingsScreen(vm: AppVm, pad: PaddingValues) {
   val updateMsg by vm.updateMsg.collectAsState()
   val syncBusy by vm.syncBusy.collectAsState()
   val syncMsg by vm.syncMsg.collectAsState()
+  val healthScopeWarning by vm.healthScopeWarning.collectAsState()
+  val logoRetryPending by vm.logoRetryPending.collectAsState()
+  val metadataUnbound by vm.metadataUnbound.collectAsState()
+  val freshness by vm.freshnessPref.collectAsState()
   val confirm by vm.confirmReq.collectAsState()
   val impHasQ by vm.impHasQuality.collectAsState()     // 备份含质量 sidecar（确认框复选显隐，B4 三轮 P1-3）
   val impSc by vm.impSidecar.collectAsState()          // 用户勾选「恢复质量 sidecar」
@@ -102,11 +108,19 @@ fun SettingsScreen(vm: AppVm, pad: PaddingValues) {
   val netSync by vm.netSync.collectAsState()
   val netLogo by vm.netLogoWifi.collectAsState()
   val traffic by vm.trafficTxt.collectAsState()
-  val gate by vm.netGate.collectAsState()
   val timeshiftOn by vm.timeshiftOn.collectAsState()   // B7 Spike 时移回听（本地 pref，默认关）
   // 折叠态（Q26/Q18，review#48）：plain remember——进程死亡回默认（Q18 严格口径，不进 SavedStateRegistry）；
   // 旋转重建同样回默认，丢折叠态是拍板取舍（折叠只是纯 UI 展示态，不写 AppVm/Store）
   var openIds by remember { mutableStateOf(defaultExpandedIds()) }
+  val listState = rememberLazyListState()
+  val focusNetwork by vm.focusNetworkSettings.collectAsState()
+  LaunchedEffect(focusNetwork) {
+    if (focusNetwork) {
+      openIds = openIds + "network"
+      val index = settingsGroups.indexOfFirst { it.id == "network" }
+      if (index >= 0) { listState.scrollToItem(index); vm.consumeNetworkSettingsFocus() }
+    }
+  }
 
   // SAF 导出（CreateDocument 预填文件名）与导入（OpenDocument 放宽到 */*——SAF 的 mime 上报不稳定）
   val expBackup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { u -> if (u != null) vm.exportTo(u, AppVm.Exp.BACKUP) }
@@ -122,16 +136,6 @@ fun SettingsScreen(vm: AppVm, pad: PaddingValues) {
       checkLabel = if (impHasQ) "恢复备份内 sidecar（质量/收听统计，将覆盖本机对应数据）" else null,   // 默认不勾 = 保留本机（AIbot 三轮 P1-3；B4 双 sidecar 一勾整体覆盖）
       checked = impSc, onCheckedChange = { vm.impSidecar.value = it })
   }
-  // B5：移动数据大流量操作确认门（全量体检/主库同步/轻更新，拒绝则不发；AIbot P1 后轻更新同入 SYNC 门）
-  gate?.let { (act, msg) ->
-    ConfirmDialog(
-      when (act) {
-        io.github.vjoy233.vradio.network.NetGate.Act.SYNC -> "移动数据同步确认"
-        io.github.vjoy233.vradio.network.NetGate.Act.LIGHT_UPDATE -> "移动数据更新确认"
-        else -> "移动数据体检确认"
-      },
-      msg, onOk = { vm.proceedGate() }, onDismiss = { vm.cancelGate() })
-  }
 
   Column(Modifier.fillMaxSize().background(pal.bg).statusBarsPadding()) {
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -140,6 +144,7 @@ fun SettingsScreen(vm: AppVm, pad: PaddingValues) {
     }
     LazyColumn(
       Modifier.fillMaxSize().padding(horizontal = 16.dp),
+      state = listState,
       // review#49-2：消费 VrScaffold pad（次级页在 content 槽内——pad 含 mini player/底栏实高），32dp 是页脚呼吸位
       contentPadding = PaddingValues(bottom = 32.dp + pad.calculateBottomPadding()),
     ) {
@@ -191,11 +196,22 @@ fun SettingsScreen(vm: AppVm, pad: PaddingValues) {
                   Text(if (updateBusy) "检查中…" else "检查更新")
                 }
                 if (updateMsg.isNotEmpty()) Info(updateMsg)
+                ItemTitle("数据新鲜度提醒", "仅提醒，确认后才同步；时间未知时可手动检查")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                  listOf(7, 14, 30).forEach { days -> FilterChip(selected = !freshness.disabled && freshness.reminderDays == days, onClick = { vm.setFreshnessDays(days) }, label = { Text("${days}天") }) }
+                  FilterChip(selected = freshness.disabled, onClick = vm::disableFreshness, label = { Text("关闭") })
+                }
                 ItemTitle("同步最新源", "国内上游重分类 + 欧美台逐个实测重建，约 1 分钟")
                 Button(onClick = { vm.fullSyncNow() }, enabled = !syncBusy, modifier = Modifier.fillMaxWidth()) {
                   Text(if (syncBusy) "同步中…" else "立即同步")
                 }
                 if (syncMsg.isNotEmpty()) Info(syncMsg)
+                if (healthScopeWarning) {
+                  Info("同步后的新增电台体检范围可能不完整；若同步曾中断，范围未知。建议手动进行全量体检。确认仅关闭提示，不代表已完成体检。")
+                  Button(onClick = vm::acknowledgeHealthScopeWarning, modifier = Modifier.fillMaxWidth()) { Text("知道了") }
+                }
+                if (logoRetryPending) Info(logoRetryNotice(true))
+                if (metadataUnbound) Info("元数据缺失、无效或无法确认与主库同批，最近新增不可用；需等待仓库后续更新并成功应用同批元数据后恢复。")
               }
               "network" -> {   // B5（plan-expansion-r4 §9.2）：播放永不阻断；仅约束大流量后台操作（原样归位）
                 ItemTitle("移动数据 · 全量体检", "逐台探测全部电台，移动数据下流量较大")

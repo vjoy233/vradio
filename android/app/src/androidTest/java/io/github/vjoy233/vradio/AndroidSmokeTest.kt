@@ -128,8 +128,8 @@ class AndroidSmokeTest {
     assertTrue("每台应有至少一个 http(s) 流地址", stations.all { it.u.isNotEmpty() && it.u[0].startsWith("http") })
     // logos.txt 行形态（「分类|台名,图片URL」两段式）：非空且行内含分隔符
     val logos = ctx.assets.open("logos.txt").bufferedReader().use { it.readText() }
-    val logoLines = logos.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
-    assertTrue("logos.txt 应非空", logoLines.isNotEmpty())
+    val logoLines = logos.split('\n').map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith('#') }
+    assertTrue("logos.txt 应含至少一条数据行（允许首行 # 注释）", logoLines.isNotEmpty())
     assertTrue("logos.txt 行应含 '|' 与 ','（行协议形态）", logoLines.all { it.contains('|') && it.contains(',') })
     // radio-meta.json：契约形态（JSON 对象 + v 版本号 + generatedAt 时间戳）
     val meta = JSONObject(ctx.assets.open("radio-meta.json").bufferedReader().use { it.readText() })

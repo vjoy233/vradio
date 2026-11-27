@@ -48,6 +48,14 @@ class SettingsSectionTest {
     assertEquals(cur, toggleExpanded(toggleExpanded(cur, "play"), "play"))                 // 对默认已展开组同理（去了再回）
   }
 
+  /** freshness 拒绝后导航聚焦 network：网络组存在且默认折叠，导航焦点可展开而不改变其它组。 */
+  @Test fun 网络策略组可由导航焦点展开() {
+    assertTrue(settingsGroups.any { it.id == "network" && it.title == "网络与流量" })
+    val opened = defaultExpandedIds() + "network"
+    assertTrue("network" in opened)
+    assertEquals(defaultExpandedIds() + "network", opened)
+  }
+
   /** 一致性：所有 defaultExpanded 的组都在 settingsGroups 内（展开集必为组集子集） */
   @Test fun 默认展开组都在七组之内() {
     val ids = settingsGroups.map { it.id }.toSet()

@@ -59,6 +59,7 @@ fun DiscoveryScreen(vm: AppVm, pad: PaddingValues) {
         val sections = listOf(
           "稳定直连" to g.stableDirect, "最近新增" to g.recentlyAdded, "最近恢复" to g.recentlyRecovered,
           "有曲讯" to g.withMetadata, "未听过" to g.unlistened, "精选" to g.featured,
+          "最近验证" to g.recentlyVerified, "需要关注（建议重测）" to g.needsAttention,
         )
         for ((idx, sec) in sections.withIndex()) {
           val (title, list) = sec
@@ -86,7 +87,8 @@ fun DiscoveryScreen(vm: AppVm, pad: PaddingValues) {
               val cw = minOf(120.dp, maxWidth / 3)
               LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(horizontal = 16.dp)) {
                 items(list, key = { title + "|" + it.key }) { s ->
-                  DiscoveryCard(s, favKeys.contains(s.key), vm.logoOf(s), cw) { vm.startPlay(s) }
+                  val labels = vm.discoveryLabels(s)
+                  DiscoveryCard(s, favKeys.contains(s.key), vm.logoOf(s), cw, labels.first, labels.second) { vm.startPlay(s) }
                 }
               }
             }
@@ -101,7 +103,7 @@ fun DiscoveryScreen(vm: AppVm, pad: PaddingValues) {
    vm.logoOf 注入）：台标 + 台名（displayParts 剥 [国别] 后缀）+ 分类徽标 + 收藏星角标
    （只读 fav 态，卡片不可点星标）；点击走注入 onClick（= vm.startPlay，不再收浮层）。 */
 @Composable
-fun DiscoveryCard(s: Station, fav: Boolean, logo: String, width: Dp, onClick: () -> Unit) {
+fun DiscoveryCard(s: Station, fav: Boolean, logo: String, width: Dp, origins: List<String> = emptyList(), quality: String = "", onClick: () -> Unit) {
   val pal = LocalVrPalette.current
   // P4 a11y：合并语义「<台名>，点按播放」+ role Button（§8.2.9；卡片无独立可点子件可整体合并）
   Box(Modifier.width(width).clip(RoundedCornerShape(10.dp)).background(pal.panel)
@@ -114,6 +116,8 @@ fun DiscoveryCard(s: Station, fav: Boolean, logo: String, width: Dp, onClick: ()
       Text(displayParts(s.n).first, fontSize = 13.sp, color = pal.tx, maxLines = 1, overflow = TextOverflow.Ellipsis,
         modifier = Modifier.padding(top = 6.dp))
       VrBadge(s.c, modifier = Modifier.padding(top = 4.dp))
+      if (origins.isNotEmpty()) Text(origins.joinToString(" · "), fontSize = 10.sp, color = pal.dim)
+      if (quality.isNotEmpty()) Text(quality, fontSize = 10.sp, color = pal.dim)
     }
     if (fav) Text("★", fontSize = 14.sp, color = pal.acc, modifier = Modifier.align(Alignment.TopEnd).padding(6.dp))
   }

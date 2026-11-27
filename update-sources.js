@@ -10,7 +10,7 @@
 //      随行产出 radio-data.js（radio.txt 全文包成 window.RADIO_DATA 经典 script，file:// 降级直读全库，N1/r2 ③）
 // 用法：node update-sources.js  或 页面上点「同步源」(POST /api/sync)
 const http = require('http'), https = require('https'), fs = require('fs'), path = require('path');
-const dns = require('dns'), crypto = require('crypto');
+const dns = require('dns'), crypto = require('crypto'), net = require('net');
 const { execFile } = require('child_process');
 
 const ROOT = __dirname;
@@ -68,12 +68,18 @@ const EU_TAG_RE = new RegExp(' \\[(' + Object.values(EU_COUNTRIES).join('|') + '
 /* ---------- 网络安全护栏（server.js 与本文件共用，导出供 require） ---------- */
 // 私网/环回/链路本地判定：IPv4 段 + IPv6（::1、fc00::/7、fe80::/10、IPv4-mapped、未指定地址）
 function isPrivateIp(a) {
-  const s = String(a);
-  const m = s.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
-  if (m) return isPrivateIp(m[1]);
-  if (s.includes(':')) {
-    const v6 = s.toLowerCase();
-    return v6 === '::1' || v6 === '::' || v6.startsWith('fc') || v6.startsWith('fd') || /^(fe8|fe9|fea|feb)/.test(v6);
+  let s = String(a);
+  if (net.isIP(s) === 6) {
+    // Node 接受带 zone ID 的 IPv6，WHATWG URL 不接受；拒绝而非抛异常。
+    if (s.includes('%')) return true;
+    // WHATWG 规范化展开形式与 dotted mapped，统一识别整个 ::ffff:0:0/96。
+    s = new URL('http://[' + s + ']/').hostname.slice(1, -1);
+    const m = s.match(/^::ffff:([\da-f]{1,4}):([\da-f]{1,4})$/);
+    if (m) {
+      const hi = parseInt(m[1], 16), lo = parseInt(m[2], 16);
+      return isPrivateIp([hi >> 8, hi & 255, lo >> 8, lo & 255].join('.'));
+    }
+    return s === '::1' || s === '::' || s.startsWith('fc') || s.startsWith('fd') || /^(fe8|fe9|fea|feb)/.test(s);
   }
   const o = s.split('.').map(Number);
   return o[0] === 0 || o[0] === 10 || o[0] === 127 || (o[0] === 169 && o[1] === 254)
@@ -87,7 +93,7 @@ function safeTarget(raw) {
   const h = u.hostname.toLowerCase();
   if (h === 'localhost' || h === '::1' || h === '[::1]' || h.endsWith('.local')) return null;
   if (h.startsWith('[') && h.endsWith(']') && isPrivateIp(h.slice(1, -1))) return null; // IPv6 字面量 fail-fast（audit A5）：[fc/fd/fe8~b::…] 字符串层直拒——连接级 guardLookup 本就兜底，这里省一次建连、让两层校验名实相符
-  if (/^(10\.|127\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h)) return null;
+  if (net.isIP(h) === 4 && isPrivateIp(h)) return null;
   return u.href;
 }
 // 重定向头安全解析（audit-r2 P2-1）：畸形 Location（未闭合 IPv6 括号/非法端口/含空格 host）会让
@@ -265,7 +271,7 @@ async function buildEuLines(log) {
   }
   const nTalk = cand.filter(s => s.talk).length;
   log(`欧美候选 ${cand.length} 个（非音乐 ${nTalk} 待拆出），开始实测（约40s）…`);
-  await mapLimit(cand, 18, async s => { const r = await checkStream(s.url); s.ok = r.ok; });
+  await mapLimit(cand, 18, async s => { const r = await checkDetail(s.url); s.ok = r.ok; s.verification = r; });
   const ok = cand.filter(s => s.ok);
   // 按国家分组排序（组大在前、组内按名），名字挂中文国名；台标随行带走（logos.txt 用，按 URL 严格对应）
   const build = list => {
@@ -276,7 +282,7 @@ async function buildEuLines(log) {
         const name = `${s.name.replace(/,/g, ' ')} [${EU_COUNTRIES[s.country]}]`;
         lines.push(`${name},${s.url}`);
         if (s.logo) logos.push(name + ',' + s.logo);
-        meta.push({ name, url: s.url, uuid: s.uuid || '' });
+        meta.push({ name, url: s.url, uuid: s.uuid || '', verification: s.verification });
       });
     });
     return { lines, logos, meta };
@@ -471,8 +477,17 @@ function buildRadioMeta(merged, prevMeta, cnCands, euLines, now, upstreamDefault
   for (const g of groups.values())
     stations[g.urls[0]] = { name: g.name, category: g.category, sources: g.urls.map(url => {
       const c = cnMap.get(url), e = euMap.get(url), p = prevUrl.get(url);
-      return { url, upstream: c ? c.upstream || 'gao' : e ? 'eu' : (p ? p.upstream : upstreamDefault),
-        upstreamId: (e && e.uuid) || (p && p.upstreamId) || '', kind: 'main', firstSeenAt: (p && p.firstSeenAt) || now };
+      const evidence = e && e.verification;
+      const verified = evidence && evidence.ok === true && evidence.url === url && Number.isFinite(evidence.checkedAt) && evidence.checkedAt > 0;
+      const previousVerified = p && p.verification === 'sync' && Number.isFinite(p.lastVerifiedAt) && p.lastVerifiedAt > 0;
+      const upstream = (c && c.upstream) || (e ? 'eu' : '') || (p && p.upstream) || upstreamDefault || 'unknown';
+      // ID 与来源成对选取：只继承同一上游的旧 ID，不能混用另一个候选的 ID。
+      const currentId = c && c.upstream ? c.upstreamId : e ? e.uuid : '';
+      const upstreamId = currentId || (p && p.upstream === upstream && p.upstreamId) || '';
+      return { url, upstream, upstreamId, kind: 'main',
+        firstSeenAt: (p && p.firstSeenAt) || now, lastSeenAt: now,
+        lastVerifiedAt: verified ? Math.max(evidence.checkedAt, previousVerified ? p.lastVerifiedAt : 0) : previousVerified ? p.lastVerifiedAt : 0,
+        verification: verified || previousVerified ? 'sync' : 'unknown' };
     }) };
   return { v: 1, generatedAt: now, stations };
 }
@@ -493,6 +508,7 @@ function publishSync(root, arts, opt = {}) {
     return { path: name, bytes: buf.length, sha256: sha256Buf(buf) };
   });
   const manifest = { version: opt.version || String(ts), generatedAt: ts, files };
+  if (opt.freshness) manifest.freshness = { refreshedAt: ts, provenance: 'pipeline-full' };
   fs.writeFileSync(path.join(tmpDir, 'sync-manifest.json'), JSON.stringify(manifest, null, 2));
   // 上一批回滚副本：先写临时代并整体验证（不碰现行 prev）。副本 manifest：root manifest 有效则原样携带
   //（描述的就是这批资产）；否则（首发布/存量仓库无 manifest）按副本资产现算一份，保证副本自描述可恢复
@@ -523,6 +539,7 @@ function readManifestOf(dir) {
   try {
     const m = JSON.parse(fs.readFileSync(path.join(dir, 'sync-manifest.json'), 'utf8'));
     if (m && Array.isArray(m.files) && m.files.length === SYNC_ASSETS.length &&
+      new Set(m.files.map(f => f && f.path)).size === SYNC_ASSETS.length &&
       m.files.every(f => f && SYNC_ASSETS.includes(f.path) && Number.isFinite(f.bytes) && typeof f.sha256 === 'string')) return m;
   } catch (_) {}
   return null;
@@ -535,6 +552,12 @@ function manifestCheckDir(dir, m) { // manifest 覆盖的四资产在 dir 下齐
     }
     return true;
   } catch (_) { return false; }
+}
+function freshnessFact(root) {
+  const m = readManifestOf(root), f = m && m.freshness;
+  if (!m || !manifestCheckDir(root, m) || !f || f.provenance !== 'pipeline-full' ||
+      !Number.isSafeInteger(f.refreshedAt) || f.refreshedAt <= 0) return null;
+  return { version: m.version, refreshedAt: f.refreshedAt, provenance: f.provenance };
 }
 function writeBootstrapManifest(root) { // 冷启动：四资产齐全可解析 → 按当前文件算哈希写 version:"bootstrap"
   const files = SYNC_ASSETS.map(name => { const buf = fs.readFileSync(path.join(root, name)); return { path: name, bytes: buf.length, sha256: sha256Buf(buf) }; });
@@ -702,7 +725,7 @@ async function runPipeline(log = () => {}, opt = {}) {
     arts['logos.txt'] = lg.join('\r\n') + '\r\n';
     sum.logos = lg.length - 1; sum.logosNews = euSrc.news.logoLines.length;
   } else arts['logos.txt'] = fs.existsSync(P('logos.txt')) ? fs.readFileSync(P('logos.txt'), 'utf8') : LOGOS_HEADER + '\r\n';
-  const meta = buildRadioMeta(merged, readMetaFile(P('radio-meta.json')), cands, euLines, Date.now());
+  const meta = buildRadioMeta(merged, readMetaFile(P('radio-meta.json')), cnText ? cands : [], euLines, Date.now());
   let metaTxt = JSON.stringify(meta);
   report.metaOverTarget = Buffer.byteLength(metaTxt) > META_TARGET;
   if (report.metaOverTarget) { // 超目标：先删 name/category 冗余（可由 radio.txt 反解，不削弱来源追踪字段）
@@ -767,7 +790,8 @@ async function runPipeline(log = () => {}, opt = {}) {
 /* 落盘发布（runPipeline 通过后）：发布协议事务 + 统一输出（§6.4：ok/total/added/removed/deduped/invalid/
    replacement/quality/addedCheck/removedNames/sourceMeta——既有消费方键名全兼容）+ 运行时报告（可丢失不入 manifest） */
 function publishResult(root, res, opt = {}) {
-  const manifest = publishSync(root, res.arts, { version: opt.version || 'sync-' + res.report.generatedAt });
+  const manifest = publishSync(root, res.arts, { version: opt.version || 'sync-' + res.report.generatedAt,
+    freshness: !!(res.report.cn && !res.report.cn.keptLocal && res.report.eu && !res.report.eu.kept) });
   const s = res.summary;
   s.ok = true;
   s.replacement = opt.forced ? 'forced' : (res.euKeptDecision ? 'kept' : 'accepted');
@@ -862,4 +886,4 @@ if (require.main === module) {
       .catch(e => { console.error('同步失败:', e); process.exit(1); });
   }
 }
-module.exports = { syncSources, runPipeline, publishResult, publishSync, bootManifest, assetsComplete, readManifestOf, manifestCheckDir, writeBootstrapManifest, writeSyncReport, initMeta, buildRadioMeta, buildCandidates, parseUpstream, dedupeCandidates, normalizeCandidateUrl, forceTokenIssue, forceTokenConsume, reportHashOf, SYNC_ASSETS, checkStream, checkDetail, safeTarget, guardLookup, tryUrl, buildLogoFile, classifyCn, splitSections, countEntries }; // splitSections/countEntries 供 test/smoke.js 复用（R1）；tryUrl 供 server.js/测试复用（audit-r2 P2-1）；checkDetail 结构化探活（B1）；B2 管线/门/发布/manifest/强制协议（test/sources.js 复用）
+module.exports = { freshnessFact, syncSources, runPipeline, publishResult, publishSync, bootManifest, assetsComplete, readManifestOf, manifestCheckDir, writeBootstrapManifest, writeSyncReport, initMeta, buildRadioMeta, buildCandidates, parseUpstream, dedupeCandidates, normalizeCandidateUrl, forceTokenIssue, forceTokenConsume, reportHashOf, SYNC_ASSETS, checkStream, checkDetail, safeTarget, guardLookup, tryUrl, buildLogoFile, classifyCn, splitSections, countEntries }; // splitSections/countEntries 供 test/smoke.js 复用（R1）；tryUrl 供 server.js/测试复用（audit-r2 P2-1）；checkDetail 结构化探活（B1）；B2 管线/门/发布/manifest/强制协议（test/sources.js 复用）

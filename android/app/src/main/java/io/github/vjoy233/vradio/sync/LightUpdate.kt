@@ -6,6 +6,7 @@ import org.json.JSONObject
 import java.io.File
 import java.time.Instant
 import java.time.OffsetDateTime
+import kotlinx.coroutines.sync.withLock
 
 /* D7 轻更新通道：从本仓库 GitHub（GhRepos.SELF）拉成品 radio.txt/logos.txt 落 filesDir 副本 +
    stamp.json（已应用 commitIso）。判新旧 = Gh.lastCommitIso(SELF, path) vs 本地 stamp
@@ -14,30 +15,72 @@ import java.time.OffsetDateTime
    分类挪动如实呈现 added/removed）；addedCheck = 新增国内台（欧美两节过滤，同步期已实测）封顶 500。
    所有失败返回 null 不抛，UI 层据 lastFailWhy 明示 toast 不静默。 */
 
-class LightUpdate(private val gh: Gh, private val filesDir: File) {
+class LightUpdate(private val gh: Gh, private val filesDir: File,
+                  private val deleteFile: (File) -> Boolean = { it.delete() }) {
+
+  enum class LogosStatus { WRITTEN, DOWNLOAD_FAILED, WRITE_FAILED }
+  enum class FileState { UNCHANGED, ABSENT, CHANGED_OR_UNKNOWN }
+  enum class MetaStatus { WRITTEN, DOWNLOAD_FAILED, INVALID, WRITE_FAILED }
+  enum class CleanupStatus { NOT_NEEDED, ABSENT, DELETED, FAILED }
 
   data class Result(val commitIso: String, val radioChanged: Boolean, val logosChanged: Boolean,
                     val added: Int, val removed: Int, val addedCheck: List<String>,
-                    val metaChanged: Boolean = false, val metaInvalid: Boolean = false)
+                    val metaChanged: Boolean = false, val metaInvalid: Boolean = false,
+                    val logosStatus: LogosStatus, val logosFileState: FileState, val metaStatus: MetaStatus,
+                    val metaCleanup: CleanupStatus, val stampWritten: Boolean, val stampFileState: FileState,
+                    val retryPending: Boolean)
 
   /** check/apply 的失败原因（""=无更新/成功）：契约返回 null 不抛，UI 据此区分「无更新」与「网络失败」。 */
+  private var checkedGeneration: Long? = null
+  private var checkedBase: String? = null
   var lastFailWhy = ""
     private set
 
   /** 有新版返回最新 commitIso（radio/logos 两路径取较新者），null=无更新/网络失败。 */
-  suspend fun check(localStampIso: String): String? {
+  suspend fun check(localStampIso: String): String? = SyncBarrier.mutex.withLock {
+    checkLocked(localStampIso)
+  }
+
+  private suspend fun checkLocked(localStampIso: String): String? {
+    checkedGeneration = null; checkedBase = null
     lastFailWhy = ""
+    if (SyncBarrier.active(filesDir)) { lastFailWhy = "端内同步未完成，请重新执行端内同步后再检查轻更新"; return null }
+    val generation = SyncBarrier.generation.get()
     val latest = latestIso() ?: run { lastFailWhy = "GitHub 不可达（api.github.com，检查网络或稍后再试）"; return null }
-    return if (iso(latest) > iso(localStampIso)) latest else null
+    val eligible = File(filesDir, "light-update.pending").exists() || iso(latest) > iso(localStampIso)
+    checkedGeneration = if (eligible) generation else null
+    checkedBase = if (eligible) localStampIso else null
+    return if (eligible) latest else null
   }
 
   /** 下载两文件 → filesDir/radio.txt+logos.txt（tmp+rename）+ 落 stamp（批次提交标记，末位写：
    *  meta=true + radioHash/metaHash 内容哈希双见证，任一写失败即不记 meta 见证并删旧 meta——详见
-   *  apply 内注释）。radio 拿不到/写失败即整体失败，logos/meta 失败不阻断（保留旧文件）。
+   *  apply 内注释）。radio 拿不到/写失败即整体失败，logos 失败保旧，meta 失败尽力删除旧件；stamp 失败不回滚。
    *  oldRadioText = 当前生效全文（diff 旧侧）。 */
-  suspend fun apply(oldRadioText: String): Result? {
+  suspend fun apply(oldRadioText: String): Result? = SyncBarrier.mutex.withLock {
+    if (checkedGeneration == null) { lastFailWhy = "请先检查更新"; null }
+    else applyLocked(oldRadioText)
+  }
+
+  internal suspend fun applyForTest(oldRadioText: String): Result? = SyncBarrier.mutex.withLock {
+    applyLocked(oldRadioText)
+  }
+
+  private suspend fun applyLocked(oldRadioText: String): Result? {
     lastFailWhy = ""
+    val checked = checkedGeneration
+    val base = checkedBase
+    checkedGeneration = null
+    checkedBase = null
+    if (checked != null && checked != SyncBarrier.generation.get()) {
+      lastFailWhy = "端内同步已改变数据，请重新检查更新"; return null
+    }
+    if (SyncBarrier.active(filesDir)) { lastFailWhy = "端内同步未完成，请重新执行端内同步后再尝试轻更新"; return null }
     val commitIso = latestIso() ?: run { lastFailWhy = "GitHub 不可达（api.github.com，检查网络或稍后再试）"; return null }
+    if (base != null && !File(filesDir, "light-update.pending").exists() &&
+        iso(commitIso) <= iso(stamp() ?: base)) {
+      lastFailWhy = "数据基线已变化，请重新检查更新"; return null
+    }
     val radio = gh.file(GhRepos.SELF, "radio.txt")
     if (radio == null) { lastFailWhy = "radio.txt 下载失败（网络/限流）"; return null }
     val logos = gh.file(GhRepos.SELF, "logos.txt")
@@ -58,40 +101,70 @@ class LightUpdate(private val gh: Gh, private val filesDir: File) {
     }
     if (addedCheck.size > C.ADDED_CHECK_CAP) addedCheck.subList(C.ADDED_CHECK_CAP, addedCheck.size).clear()
     // 落盘（批次提交协议，AIbot 三轮 P1：radio/meta/stamp 三件套须同批，stamp 末位写 = 提交标记）：
-    // radio 必写——落盘失败即整体失败 return null（旧批次三件套原样留存，天然一致不混态）；
-    // logos 非关键件失败不阻断（可重建，留旧）；meta 写失败（磁盘/权限）≠ 整体失败——radio 已新，
+    // radio 必写——落盘失败即返回 null（底层兜底写失败时不保证旧文件原样留存）；
+    // logos 非关键件失败不阻断（可重建，按实际盘面报告）；meta 写失败（磁盘/权限）≠ 整体失败——radio 已新，
     // 旧 meta 留存即混态：删旧件 + 见证 false；stamp 只在全部写成功时记 meta=true + 双内容哈希
     // （radioHash/metaHash），boot 侧 stampHashOk 核对当前两文件内容与 stamp 记录一致才放行绑定——
     // 即便删件/stamp 写失败残留旧值，「新 radio + 旧 stamp」的内容哈希也对不上，RadioMeta.bound 仍判
     // 不绑定（发现页「最近新增」保守置空，不猜），且旧 stamp 使下次 check 重走 apply 自愈。
+    // 在任何资产变更前持久化重试意图；进程中断或末位 stamp 写失败也能在同一 commit 重试。
+    if (runCatching { HealthScopeWarning.markLocked(filesDir) }.isFailure) {
+      lastFailWhy = "体检范围提示写入失败，未开始发布主库"; return null
+    }
+    val pending = File(filesDir, "light-update.pending")
+    if (!pending.isFile && runCatching { writeTextAtomic(pending, "pending") }.isFailure) {
+      lastFailWhy = "更新重试标记写入失败，未开始写入资产"; return null
+    }
     if (runCatching { writeTextAtomic(File(filesDir, "radio.txt"), radio) }.isFailure) {
       lastFailWhy = "radio.txt 落盘失败（磁盘/权限）"; return null
     }
-    if (logos != null) runCatching { writeTextAtomic(File(filesDir, "logos.txt"), logos) }
+    val logoFile = File(filesDir, "logos.txt")
+    val logoBefore = runCatching { if (logoFile.isFile) logoFile.readBytes().toList() else null }
+    val logosStatus = if (logos == null) LogosStatus.DOWNLOAD_FAILED
+      else if (runCatching { writeTextAtomic(File(filesDir, "logos.txt"), logos) }.isSuccess) LogosStatus.WRITTEN
+      else LogosStatus.WRITE_FAILED
+    val logoAfter = runCatching { if (logoFile.isFile) logoFile.readBytes().toList() else null }
+    val logosFileState = when {
+      logoBefore.isFailure || logoAfter.isFailure -> FileState.CHANGED_OR_UNKNOWN
+      logoAfter.getOrNull() == null -> FileState.ABSENT
+      logoBefore.getOrNull() == logoAfter.getOrNull() -> FileState.UNCHANGED
+      else -> FileState.CHANGED_OR_UNKNOWN
+    }
     // B2 radio-meta.json 分开落盘（plan §6.3/§13.3）：主库与 meta 任一份失败不影响另一份。
     // 校验 = 版本门（v==1）+ 可解析性——GitHub contents 通道不带内容 hash（sync-manifest 侧 Web 生成后
     // 再挂，见 CONTRACTS.md B2 留档）。AIbot P1-4 混态拦截：meta 拿不到/非法时删除旧件——旧 meta 配
     // 新 radio 会让发现页「最近新增」指错台（宁缺勿混，删除只影响该分组不影响播放）；下载到但校验失败
     // （metaInvalid）仍由 UI 明示——防仓库尚未生成 meta 时每次更新都误报。
-    var metaChanged = false; var metaInvalid = false
-    var metaHash: String? = null
     val meta = gh.file(GhRepos.SELF, "radio-meta.json")
-    if (meta != null) {
-      if (RadioMeta.parse(meta) != null) {
-        if (runCatching { writeTextAtomic(File(filesDir, "radio-meta.json"), meta) }.isSuccess) {
-          metaChanged = true; metaHash = hashText(meta)
-        } else {   // AIbot 三轮 P1：meta 写失败（注入磁盘/权限故障）——radio 已新，删旧件 + 见证 false
-          println("[vradio] radio-meta.json 落盘失败（删旧件防混态，最近新增置空待下次更新自愈）")
-          runCatching { File(filesDir, "radio-meta.json").delete() }
-        }
-      } else { metaInvalid = true; runCatching { File(filesDir, "radio-meta.json").delete() } }
-    } else runCatching { File(filesDir, "radio-meta.json").delete() }   // 混态拦截：新 radio 不留旧 meta
+    val metaStatus = when {
+      meta == null -> MetaStatus.DOWNLOAD_FAILED
+      RadioMeta.parse(meta) == null -> MetaStatus.INVALID
+      runCatching { writeTextAtomic(File(filesDir, "radio-meta.json"), meta) }.isSuccess -> MetaStatus.WRITTEN
+      else -> MetaStatus.WRITE_FAILED
+    }
+    val metaChanged = metaStatus == MetaStatus.WRITTEN
+    val metaFile = File(filesDir, "radio-meta.json")
+    val cleanup = if (metaChanged) CleanupStatus.NOT_NEEDED else if (!metaFile.exists()) CleanupStatus.ABSENT
+      else if (runCatching { deleteFile(metaFile) }.getOrDefault(false) && !metaFile.exists()) CleanupStatus.DELETED
+      else CleanupStatus.FAILED
     val stampO = JSONObject().put("commitIso", commitIso).put("meta", metaChanged)
-      .put("radioHash", hashText(radio))                            // radio/meta 内容哈希批次见证（AIbot 三轮 P1）
-    if (metaHash != null) stampO.put("metaHash", metaHash)
-    runCatching { writeTextAtomic(File(filesDir, "stamp.json"), stampO.toString()) }
-    return Result(commitIso, radio != oldRadioText, logos != null, addedKeys.size, removedKeys.size,
-      addedCheck, metaChanged, metaInvalid)
+      .put("radioHash", hashText(radio))
+    if (metaChanged) stampO.put("metaHash", hashText(meta!!))
+    val stampFile = File(filesDir, "stamp.json")
+    val stampBefore = runCatching { if (stampFile.isFile) stampFile.readBytes().toList() else null }
+    val stampWritten = runCatching { writeTextAtomic(stampFile, stampO.toString()) }.isSuccess
+    val stampAfter = runCatching { if (stampFile.isFile) stampFile.readBytes().toList() else null }
+    val stampState = when {
+      stampBefore.isFailure || stampAfter.isFailure -> FileState.CHANGED_OR_UNKNOWN
+      stampAfter.getOrNull() == null -> FileState.ABSENT
+      stampBefore.getOrNull() == stampAfter.getOrNull() -> FileState.UNCHANGED
+      else -> FileState.CHANGED_OR_UNKNOWN
+    }
+    // 仅所有资产和 stamp 成功后清标；删除失败保守继续重试。
+    if (logosStatus == LogosStatus.WRITTEN && metaChanged && stampWritten) runCatching { pending.delete() }
+    val retryPending = pending.exists()
+    return Result(commitIso, radio != oldRadioText, logosStatus == LogosStatus.WRITTEN, addedKeys.size, removedKeys.size,
+      addedCheck, metaChanged, metaStatus == MetaStatus.INVALID, logosStatus, logosFileState, metaStatus, cleanup, stampWritten, stampState, retryPending)
   }
 
   /** filesDir 副本读取；null=从未更新（用 assets 打包件）。 */

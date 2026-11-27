@@ -62,7 +62,7 @@ class BackupRestoreSmokeTest {
     val snap = Store.snapshot()
     val err = Backup.commitImport(p.data, null, p.quality, Backup.ImportIO(
       { Store.applyAllChecked(p.data) }, { Store.applyAllChecked(snap) },
-      { true }, {},                                  // my==null 语义 = 不动 my-radio.txt
+      { true }, { true },                            // my==null 语义 = 不动 my-radio.txt
       { true }, { true }, { true }, { true }),        // 质量/收听统计 sidecar no-op（真文件落盘由 JVM 层覆盖）
       p.listenStats)
     assertNull("提交段不应失败：$err", err)

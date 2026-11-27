@@ -180,13 +180,13 @@ object Backup {
      四步覆盖（Store → my-radio → 质量 sidecar → 收听统计 sidecar，与 Web BackupV3.commitImport 同序）+
      任一步失败整体回滚（§13.2-5：不允许 Store 已恢复而 sidecar 半恢复）。协作方函数注入：AppVm 传
      Store/MyRadio/QualityStore/ListenSidecar 真实现；JVM 测试传 fake（断言 sidecar 实际写入 / 失败触发
-     四件回滚 / 回滚顺序）。返回 null = 成功，否则失败原因（调用方 toast 拼前缀「导入失败：…已回滚到导入前
-     状态」）。快照四件由调用方在提交前自持。 */
+     四件回滚 / 回滚顺序）。返回 null = 成功，否则为失败及各项回滚回执；并发时不保证旧快照仍是最新状态。
+     快照四件由调用方在提交前自持。 */
   class ImportIO(
     val applyStore: () -> Boolean,       // Store.applyAllChecked(导入 data)——落盘失败可感知（AIbot 三轮 P1-2）
     val rollbackStore: () -> Boolean,    // Store.applyAllChecked(快照)；false = 回滚仅内存（重启可能残留导入数据，须如实报告）
     val applyMy: () -> Boolean,          // my 全量替换（my==null 时调用方给 { true } 不动文件）
-    val rollbackMy: () -> Unit,          // my-radio 旧文本回写
+    val rollbackMy: () -> Boolean,          // my-radio 旧文本回写
     val applyQuality: () -> Boolean,     // QualityStore.replaceImport（quality==null 时给 { true }）
     val rollbackQuality: () -> Boolean,  // QualityStore.restore(旧快照)（同上给 { true }）
     val applyListenStats: () -> Boolean = { true },   // ListenSidecar.save(导入态)（listenStats==null 时不调用）
@@ -195,25 +195,21 @@ object Backup {
 
   fun commitImport(data: Map<String, String>, my: List<String>?, qualityData: JSONObject?, io: ImportIO,
                    listenData: JSONObject? = null): String? {
-    if (!io.applyStore()) { // Store 落盘失败必须中止（否则 Store 旧值 + my/sidecar 新值 = 跨层半导入）
-      val rb = io.rollbackStore()
-      return "主数据持久化失败（store.json 写入失败）" + if (rb) "" else "；回滚也仅写入内存，重启后请重新导入"
+    // 只报告各回滚调用的回执；跨存储并发及进程中断不在此处得到隔离保证。
+    fun attempt(f: () -> Boolean): Boolean = try { f() } catch (_: Exception) { false }
+    fun failed(reason: String, stage: Int): String {
+      val bad = mutableListOf<String>()
+      if (!attempt(io.rollbackStore)) bad.add("主数据")
+      if (stage >= 2 && !attempt(io.rollbackMy)) bad.add("个人电台")
+      if (stage >= 3 && !attempt(io.rollbackQuality)) bad.add("质量 sidecar")
+      if (stage >= 4 && !attempt(io.rollbackListenStats)) bad.add("收听统计 sidecar")
+      return reason + if (bad.isEmpty()) "；已尝试回滚，但并发操作可能影响结果，请核对数据"
+        else "；回滚失败或结果未知：${bad.joinToString("、")}，请核对数据并考虑重新导入"
     }
-    if (!io.applyMy()) {
-      val rb = io.rollbackStore()
-      io.rollbackMy()
-      return "个人电台恢复超限（500 行/64KB）" + if (rb) "" else "；Store 回滚写失败，重启后请重新导入"
-    }
-    if (!io.applyQuality()) {
-      val rb = io.rollbackStore()
-      io.rollbackMy(); io.rollbackQuality()
-      return "质量 sidecar 恢复失败" + if (rb) "" else "；Store 回滚写失败，重启后请重新导入"
-    }
-    if (listenData != null && !io.applyListenStats()) { // 四件事务收官（B4 补齐 listenStats sidecar）
-      val rb = io.rollbackStore()
-      io.rollbackMy(); io.rollbackQuality(); io.rollbackListenStats()
-      return "收听统计 sidecar 恢复失败" + if (rb) "" else "；Store 回滚写失败，重启后请重新导入"
-    }
+    if (!attempt(io.applyStore)) return failed("主数据持久化失败（store.json 写入失败或异常）", 1)
+    if (!attempt(io.applyMy)) return failed("个人电台恢复失败（可能超限或写入异常）", 2)
+    if (!attempt(io.applyQuality)) return failed("质量 sidecar 恢复失败", 3)
+    if (listenData != null && !attempt(io.applyListenStats)) return failed("收听统计 sidecar 恢复失败", 4)
     return null
   }
 

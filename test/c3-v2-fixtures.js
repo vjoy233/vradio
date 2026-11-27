@@ -25,7 +25,11 @@ for (const c of data.pointer) {
   const b=decode(g.sidecarBase64), m=JSON.parse(decode(g.manifestBase64).toString('utf8'));
   assert.strictEqual(digest(b),g.id); assert.strictEqual(m.sha256,g.id);
   if(c.id !== 'pointer-id-mismatch') assert.strictEqual(key,g.id);
-  if(c.id !== 'fallback' && c.id !== 'cross-commit' && !(c.id === 'invalid-previous' && key !== JSON.parse(decode(c.pointerBase64)).current)) assert.strictEqual(m.bytes,b.length);
+  const pointer = JSON.parse(decode(c.pointerBase64));
+  const badCurrent = ['fallback','same-delivery-different-upstream','cross-delivery'].includes(c.id) && key === pointer.current;
+  const badPrevious = c.id === 'invalid-previous' && key === pointer.previous;
+  if (badCurrent || badPrevious) assert.notStrictEqual(m.bytes,b.length);
+  else assert.strictEqual(m.bytes,b.length);
  }
 }
 for (const c of data.localFallback) {

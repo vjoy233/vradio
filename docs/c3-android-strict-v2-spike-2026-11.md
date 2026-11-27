@@ -6,5 +6,5 @@
 
 - 既有 v1 消费器不被复用或替换；实验解析器拒绝重复键、BOM、无效 UTF-8、非配对代理项、未知字段和不符合协议的数值，整代失败，不执行跳项或强制转换。
 - JSON 数字仅接受可表示为 Long 的整数字面量，不接受 2.0 或指数形式；提案称整数但未明确数字字面量等价口径，实验暂与 Web 统一采用整数字面量，待评审冻结。URL 路径和查询的原样方括号同样保守拒绝，虽然 RFC 3986 将其列为保留字符；百分号编码仍可通过。parser 使用完整 ByteArray 入口，已检查长度但不提供有界流读取，因此不满足未来网络读取时立即中止的要求；实验主动将 JSON 容器嵌套限制为 3 层（合法 schema 最大深度）并测试 3/4/10000 层，该上限是实验护栏而非已冻结提案约定，其他资源消耗未全面验证，不能直接用于不可信生产数据。
-- 修正 P1：delivery revision 属于投递仓库，与 sidecar 的上游 commit 不同，绝不直接等值比较。实验 generation 的可选 expectedUpstreamCommit 仅在显式给出时比较上游声明，缺失或 null 不执行该比较；无论是否指定均返回 provenance=unverified。delivery 仓库/revision/path 的可信获取与绑定、代的存在证明、连接安全、签名、撤销策略和本地缓存均未实现。旧 pointer 样本中的 cross-commit 混淆两个 commit 域，选择模拟跳过该过时期望，不能证明远端 previous 同 delivery revision。SHA 仅证明原始字节一致。
+- 修正 P1：delivery revision 属于投递仓库，与 sidecar 的上游 commit 不同，绝不直接等值比较。实验 generation 的可选 expectedUpstreamCommit 仅在显式给出时比较上游声明，缺失或 null 不执行该比较；无论是否指定均返回 provenance=unverified。delivery 仓库/revision/path 的可信获取与绑定、代的存在证明、连接安全、签名、撤销策略和本地缓存均未实现。旧 pointer 样本中的 cross-commit 混淆两个 commit 域，选择模拟跳过该过时期望，不能证明远端 previous 同 delivery revision；另用测试注入 delivery 标签模拟不同 revision 拒绝、同 revision 不同上游无 pin 回退，成功路径真实调用 generation，但标签并非可信获取证据。SHA 仅证明原始字节一致。
 - 共享样本并不穷尽 URL/UTF-8 对抗；回退选择和撤销模拟写在测试中，并非验证生产回退实现；Web v2 消费器尚无实际运行对比。仅在本机 JVM 运行不代表 Android 设备、跨端一致性、来源/许可或真实试听已验证。C3 继续 No-Go，需独立安全评审与设备验证。

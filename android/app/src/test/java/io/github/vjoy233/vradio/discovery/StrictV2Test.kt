@@ -49,6 +49,24 @@ class StrictV2Test {
     if (expected.has("degraded")) assertEquals(c.getString("id"), expected.getBoolean("degraded"), p?.second != null && previous == null)
     if (expected.has("output")) assertEquals(c.getString("id"), comparable(expected.getJSONObject("output")), current ?: previous)
   }
+  @Test fun simulatedDeliveryIsolation() {
+    val cases = fixture.getJSONArray("pointer")
+    val cross = (0 until cases.length()).map { cases.getJSONObject(it) }.first { it.getString("id") == "cross-commit" }
+    val p = StrictV2.pointer(bytes(cross, "pointerBase64")); val gs = cross.getJSONObject("generations")
+    val previous = gs.getJSONObject(p.second!!)
+    var calls = 0
+    fun select(previousDelivery: String): StrictV2.Generation? {
+      if (previousDelivery != "delivery-A") return null // 测试注入的取得证据，仅模拟而非认证
+      calls++
+      return StrictV2.generation(p.second!!, bytes(previous, "manifestBase64"), bytes(previous, "sidecarBase64"))
+    }
+    // previous 原始字节有效；只有模拟 delivery 不同导致拒绝。
+    assertEquals("b".repeat(40), StrictV2.generation(p.second!!, bytes(previous, "manifestBase64"), bytes(previous, "sidecarBase64")).sidecar["commit"])
+    assertNull(select("delivery-B")); assertEquals(0, calls)
+    val selected = select("delivery-A")!!
+    assertEquals(1, calls); assertEquals("b".repeat(40), selected.sidecar["commit"])
+    assertEquals("unverified", selected.provenance)
+  }
   @Test fun sharedAdversarialBytes() {
     val data = JSONObject(javaClass.classLoader!!.getResourceAsStream("fixtures/c3-strict-v2-adversarial.json")!!.bufferedReader(Charsets.UTF_8).use { it.readText() })
     each(data.getJSONArray("entries")) { e ->

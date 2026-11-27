@@ -26,8 +26,8 @@
   "stabilityRules": {
     "good": "累计成功率 >= 0.8 且平均延迟 < 2500ms 且连续失败 < 3（仅在 lastObservedAt > 0 且距当前 < 30 天时采用）",
     "fair": "累计成功率 >= 0.5（不满足 good；仅在 lastObservedAt > 0 且距当前 < 30 天时采用）",
-    "poor": "成功率 < 0.5 或连续失败 >= 3",
-    "unknown": "样本少于 3 次"
+    "poor": "在未触发 unknown 门时，成功率 < 0.5 或连续失败 >= 3",
+    "unknown": "样本少于 3 次，或 lastObservedAt > 0 且距当前 >= 30 天"
   },
   "opEvent": {
     "id": "string——幂等键（客户端标签页:时间戳:序号 形态；只用于服务端去重，不得暴露到发现页/备份）",

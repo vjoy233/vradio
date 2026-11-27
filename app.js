@@ -2071,7 +2071,7 @@ const App = {
       const current = this.detailStation();
       return session() && current && current.u.length === urls.length && current.u.every((u, i) => u === urls[i]);
     };
-    return valid;
+    valid.session = session; return valid;
   },
   async checkStationSources(s) {
     if ($('detail').hidden || this.detail.stationKey !== keyOf(s)) return;
@@ -2103,7 +2103,7 @@ const App = {
         }
       }
     } catch (e) { if (valid()) this.detail.error = '诊断请求失败：' + (e && e.message || e); }
-    finally { if (valid()) { this.detail.loading = false; this.renderDetail(); } }
+    finally { if (valid.session()) { this.detail.loading = false; this.renderDetail(); } }
   },
   async recheckSource(s, i) {
     if ($('detail').hidden || this.detail.stationKey !== keyOf(s) || !s.u[i] || (s.dis || []).includes(i)) return;
@@ -2121,7 +2121,7 @@ const App = {
       else if (response.status === 400 && j && j.detail === '仅允许公网 http(s) 地址' && valid()) { this.detail.results = this.detail.results.slice(); this.detail.results[i] = { url: (() => { try { return new URL(url).href; } catch (_) { return url; } })(), code: 'INVALID_URL', ok: false }; }
       else if (valid()) this.detail.error = '诊断无结果';
     } catch (e) { if (valid()) this.detail.error = '诊断请求失败：' + (e && e.message || e); }
-    finally { if (valid()) { this.detail.loading = false; this.renderDetail(); } }
+    finally { if (valid.session()) { this.detail.loading = false; this.renderDetail(); } }
   },
   async copyText(text) {
     try { if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(text); return true; } } catch (_) {}

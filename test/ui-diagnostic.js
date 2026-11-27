@@ -18,7 +18,7 @@ const respond = (req, url) => req.resolve({ ok: true, json: async () => ({ resul
   respond(fresh, s.u[0]); await new Promise(setImmediate); assert.equal(records.length, 1);
   const bulk = app.checkStationSources(s), a = pending.shift(); const single = app.recheckSource(s, 1), b = pending.shift();
   respond(a, s.u[0]); await bulk; assert.equal(app.detail.loading, true); respond(b, s.u[1]); await single; assert.equal(app.detail.loading, false); assert.equal(records.length, 2); assert.equal(app.detail.results[1].url, s.u[1]);
-  const changed = app.recheckSource(s, 1), c = pending.shift(); s.u[1] = 'https://example.net/new'; respond(c, 'https://example.org/live'); await changed; assert.equal(records.length, 2); assert.equal(app.detail.loading, true); // URL 已变：旧请求不得改当前状态
+  const changed = app.recheckSource(s, 1), c = pending.shift(); s.u[1] = 'https://example.net/new'; respond(c, 'https://example.org/live'); await changed; assert.equal(records.length, 2); assert.equal(app.detail.loading, false); // URL 已变但无新请求：清理本请求 loading
   const next = app.checkStationSources(s), c2 = pending.shift(); c2.resolve({ status: 400, json: async () => ({ detail: '仅允许公网 http(s) 地址' }) }); await next; assert.equal(app.detail.loading, false);
   const closing = app.recheckSource(s, 1), d = pending.shift(); app.closeDetail(); d.reject(new Error('secret')); await closing; assert.equal(records.length, 2);
   let copied = ''; sb.navigator.clipboard = { writeText: async x => { copied = x; } }; app.detail.results[0] = { code: 'HTTP', why: 'password' };

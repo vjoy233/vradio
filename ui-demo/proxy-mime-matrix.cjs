@@ -11,7 +11,7 @@ function ffmpeg(args) {
 }
 (async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vradio-mime-'));
-  let fixture, app, browser;
+  let fixture, app, browser, primaryError;
   try {
     const input = ['-f', 'lavfi', '-i', 'sine=frequency=440:duration=8'];
     ffmpeg([...input, '-c:a', 'libmp3lame', '-y', path.join(dir, 'test.mp3')]);
@@ -69,10 +69,27 @@ function ffmpeg(args) {
       assert(result.time >= 0.2 && !result.error && !result.errors.length, format + '/' + mode + ' 未播放');
     }
     console.log('15/15 离线代理播放通过');
-  } finally {
-    if (browser) await browser.close();
-    if (app) await app.close();
-    if (fixture && fixture.listening) await new Promise(r => fixture.close(r));
-    fs.rmSync(dir, { recursive: true, force: true });
+  } catch (e) { primaryError = e; }
+  finally {
+    // 每项各自限时并继续，主测试错误保留；仅清理由脚本创建的资源。
+    const failures = [];
+    async function cleanup(name, fn) {
+      let timer;
+      try {
+        await Promise.race([Promise.resolve().then(fn), new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('清理超时（3秒）')), 3000);
+        })]);
+      } catch (e) { failures.push(name + ': ' + (e && e.stack || e)); }
+      finally { clearTimeout(timer); }
+    }
+    if (browser) await cleanup('browser', () => browser.close());
+    if (app) await cleanup('app', () => app.close());
+    if (fixture && fixture.listening) await cleanup('fixture', () => new Promise((resolve, reject) => fixture.close(e => e ? reject(e) : resolve())));
+    await cleanup('fixture 文件', () => fs.rmSync(dir, { recursive: true, force: true }));
+    if (failures.length) {
+      console.error('清理未完全成功：\n' + failures.join('\n'));
+      if (!primaryError) primaryError = new Error('资源清理失败');
+    }
   }
+  if (primaryError) throw primaryError;
 })().catch(e => { console.error(e); process.exitCode = 1; });

@@ -1,0 +1,9 @@
+# C3 v2 共享对抗字节（实验建议）
+
+这些样本基于待评审的 v2 提案，并非已经冻结的协议，也不是解析器通过或发布证据。JSON 中 `entries[].rawBase64` 解码得到原始字节，`bytes` 与 `sha256` 针对这些字节；`proposed` 是实验建议而非规范既定结论。manifest 项还携带 `sidecarBase64`、`sidecarId` 和 `pointerBase64`，三者按原始 sidecar 的真实 SHA-256 绑定。不要将原始数据解析重编码后测试。
+
+- 实验建议 `v` 和 manifest `bytes` 采用 JSON 整数词法，拒绝值相同的 `2.0`、`2e0` 或指数形式长度；原提案只要求整数，尚未确定词法口径。
+- RFC 3986 将 `[`、`]` 列为保留字符；**实验建议额外限制 URL path 与 query 中的字面 `[`、`]`，但允许合法的 `%5B`、`%5D` 等百分号编码**。这不是原 v2 提案已经明确冻结的组件规则，不是网络安全许可。
+- 深度以根对象为第 1 层：合法 sidecar 的 item 对象为第 3 层；第 4 层及深度 4099 的样本均因 `genre` 非字符串而拒绝，不据此宣称协议定义通用容器深度上限或错误优先级。
+- `bindingCases` 的 `expectedUpstreamCommit` 为可选外部上游 pin，缺键和显式 null 均无 pin、状态 unverified；非空值必须是 40 位小写十六进制且等于 sidecar 的上游 S。`deliveryRevision` 的 D1/D2 仅标识场景，不输入纯解析器、不与 S 比较、不代表已认证。输入与 `upstreamStatus` 均为测试约定，并非线上字段或已冻结 API；来源认证、受控 repo/path/commit 和获取流程尚未实现，格式匹配不能证明可信来源。不假定错误优先级。
+- `node test/c3-v2-adversarial.js` 只验证生成结果、字节/摘要及代绑定，不验证任一平台的实际解析器或状态机。

@@ -2,6 +2,9 @@
    播放一律经 Player 接口；同步/体检由 sync.js 编排本文件暴露的方法；台标数据经 Logos 模块获取（本文件只拼渲染片段）。
    身份公理（债务 1）：URL = 持久身份（收藏/最近记录源 URL，名字漂移后按 URL 回绑），名字 = 显示层。 */
 
+// C3 可信发布链未完成安全验收，只有源码发布才能开放。
+const trustedC3Release = false;
+
 /* ---------- 内置精选（地址已实测直连可用；含同一电台的多个备选源。l = 台标，蜻蜓频道页封面实测可直连） ---------- */
 const STARTER = [
   { c:'常听', n:'Love Radio FM103.7 经典金曲', u:['http://lhttp.qingting.fm/live/273/64k.mp3','http://ls.qingting.fm/live/273.m3u8'], l:'http://pic.qtfm.cn/2014/0909/20140909125130474.jpg!200' },
@@ -2176,13 +2179,13 @@ const App = {
     $('discBody').innerHTML = '<div class="empty">正在生成推荐…</div>';
     $('discClose').focus();
     if (!this.metaCache) this.metaCache = await this.loadMeta(); // 懒加载一次（radio-meta.json 静态文件，非 dotfile/data 段天然可 GET）
-    if (FEATURES.discoverySidecar && !this.discoverySidecar && window.DiscoverySidecar) {
+    if (trustedC3Release && FEATURES.discoverySidecar && !this.discoverySidecar && window.DiscoverySidecar) {
       const rows = await DiscoverySidecar.loadSnapshot((u, opts) => fetch(u, opts), 'discovery-snapshots');
       if (rows === null) $('status').textContent = '当前页面缺少安全校验能力，精选候选不可用；请使用 localhost 或 HTTPS';
       else if (rows.length) this.discoverySidecar = rows;
     }
     this.renderDiscovery();
-    if (FEATURES.discoverySidecar && this.discoverySidecar && this.discoverySidecar.length) this.renderDiscoverySidecar();
+    if (trustedC3Release && FEATURES.discoverySidecar && this.discoverySidecar && this.discoverySidecar.length) this.renderDiscoverySidecar();
   },
   async loadMeta() { // file://：meta 无经典 script 包装不可读 → null（「最近新增」为空，其余组不受影响）
     if (!location.protocol.startsWith('http')) return null;

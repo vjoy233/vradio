@@ -2035,7 +2035,7 @@ const App = {
       const current = this.detailStation();
       return session() && current && current.u.length === urls.length && current.u.every((u, i) => u === urls[i]);
     };
-    valid.session = session; return valid;
+    return valid;
   },
   async checkStationSources(s) {
     if ($('detail').hidden || this.detail.stationKey !== keyOf(s)) return;
@@ -2067,7 +2067,7 @@ const App = {
         }
       }
     } catch (e) { if (valid()) this.detail.error = '诊断请求失败：' + (e && e.message || e); }
-    finally { if (valid.session()) { this.detail.loading = false; this.renderDetail(); } }
+    finally { if (valid()) { this.detail.loading = false; this.renderDetail(); } }
   },
   async recheckSource(s, i) {
     if ($('detail').hidden || this.detail.stationKey !== keyOf(s) || !s.u[i] || (s.dis || []).includes(i)) return;
@@ -2085,7 +2085,7 @@ const App = {
       else if (response.status === 400 && j && j.detail === '仅允许公网 http(s) 地址' && valid()) { this.detail.results = this.detail.results.slice(); this.detail.results[i] = { url: (() => { try { return new URL(url).href; } catch (_) { return url; } })(), code: 'INVALID_URL', ok: false }; }
       else if (valid()) this.detail.error = '诊断无结果';
     } catch (e) { if (valid()) this.detail.error = '诊断请求失败：' + (e && e.message || e); }
-    finally { if (valid.session()) { this.detail.loading = false; this.renderDetail(); } }
+    finally { if (valid()) { this.detail.loading = false; this.renderDetail(); } }
   },
   async copyText(text) {
     try { if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(text); return true; } } catch (_) {}
@@ -2161,7 +2161,7 @@ const App = {
       const state = d
         ? '<span class="badge permb">已禁用</span><span class="srcs">该源已被手动禁用，不能诊断</span>'
         : pend ? '<span class="srcs">追加时探活已通过（保存后可诊断/试听）</span>'
-        : r ? `<span class="badge ${refused ? '' : r.ok ? 'okb' : 'badb'}" title="code: ${this.esc(r.code)}">${this.esc(refused && r.code === 'OK' ? '字节检测通过' : CODE_TXT[r.code] || '未知结果')}</span><span class="srcs">${refused ? `HTTP ${r.httpStatus} · ` : ''}${this.esc(ACTION_TXT[diagnosticAction(r.code, r.httpStatus).action])} · 检测于 ${r.checkedAt ? this.fmtAgo(r.checkedAt) : '时间未知'} · ${Number(r.latencyMs) || 0}ms · ${Number(r.bytes) || 0}B · ${this.esc(r.mode || '未知模式')}</span>`
+        : r ? `<span class="badge ${refused ? '' : r.ok ? 'okb' : 'badb'}" title="code: ${this.esc(r.code)}">${this.esc(refused && r.code === 'OK' ? '字节检测通过' : CODE_TXT[r.code] || '未知结果')}</span><span class="srcs">${refused ? `HTTP ${r.httpStatus} · ` : ''}${this.esc(ACTION_TXT[diagnosticAction(r.code, r.httpStatus).action] || ACTION_TXT.retest)} · 检测于 ${r.checkedAt ? this.fmtAgo(r.checkedAt) : '时间未知'} · ${Number(r.latencyMs) || 0}ms · ${Number(r.bytes) || 0}B · ${this.esc(r.mode || '未知模式')}</span>`
         : '<span class="srcs">未诊断</span>';
       const acts = [
         d ? `<button type="button" class="btn mbtn" data-act="dUndis" data-i="${i}" title="取消禁用该源（写进本台源草稿，保存后生效）">启用</button>`

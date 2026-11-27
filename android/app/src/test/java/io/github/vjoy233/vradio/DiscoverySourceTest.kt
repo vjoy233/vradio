@@ -48,6 +48,15 @@ class DiscoverySourceTest {
     assertNotNull(DiscoverySourceParser.parseManifest("""{"v":1,"sha256":"${m.sha256}","bytes":${m.bytes}}"""))
   }
 
+  @Test fun sharedGoldenCases() {
+    val text = javaClass.classLoader!!.getResourceAsStream("fixtures/discovery-c3-golden.json")!!.bufferedReader(Charsets.UTF_8).use { it.readText() }
+    val cases = org.json.JSONObject(text).getJSONArray("cases")
+    for (i in 0 until cases.length()) {
+      val c = cases.getJSONObject(i)
+      assertEquals(c.getString("id"), c.getBoolean("accept"), DiscoverySourceParser.parse(c.getJSONObject("sidecar").toString()) != null)
+    }
+  }
+
   @Test fun timestampValidation() {
     for (bad in listOf("2026-11-26T00:00:00Z", "2026-02-30T00:00:00.000Z", "2026-11-26T00:00:00.123+00:00", "2026-11-26T24:00:00.000Z", "2026-11-26T00:00:00.12Z"))
       assertNull(bad, DiscoverySourceParser.parse(body.replace("2026-11-26T00:00:00.000Z", bad)))

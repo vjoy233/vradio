@@ -1,4 +1,5 @@
 const assert = require('assert');
+require('./harness/web-api').install();
 const S = require('../discovery-sidecar');
 const sha = 'a'.repeat(40), raw = {v:1,source:'recommended-radio-streams',license:'CC0-1.0',commit:sha,items:[{name:'x',url:'https://x'}]};
 assert.equal(S.normalize(raw).length, 1);
@@ -34,7 +35,11 @@ assert.deepStrictEqual(S.normalize({...raw,items:[{name:'x',url:'https://x',comm
   assert.equal((await S.loadSnapshot(observed,'snap',10)).length,1);
   assert(readCancelled && readAborted, 'stalled reader is cancelled and aborted');
   let streamCancelled = false;
-  const realStream = async (u,o) => u.includes(broken) ? {ok:true,headers:{get:k=>k==='content-type'?'application/json':null},body:new ReadableStream({pull(){return new Promise(()=>{});},cancel(){streamCancelled=true; return new Promise(()=>{});}})} : fetcher(u,o);
+  // 新版 Node 保留真实流覆盖；Node14 无 ReadableStream，用 reader 桩覆盖不完成的 cancel。
+  const body = typeof ReadableStream === 'function'
+    ? new ReadableStream({pull(){return new Promise(()=>{});},cancel(){streamCancelled=true; return new Promise(()=>{});}})
+    : {getReader:()=>({read:()=>new Promise(()=>{}),cancel:()=>{streamCancelled=true; return new Promise(()=>{});}})};
+  const realStream = async (u,o) => u.includes(broken) ? {ok:true,headers:{get:k=>k==='content-type'?'application/json':null},body} : fetcher(u,o);
   assert.equal((await S.loadSnapshot(realStream,'snap',10)).length,1, 'real stream cancel never blocks fallback');
   assert(streamCancelled);
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');

@@ -271,11 +271,10 @@ async function run(chromium) {
     await page.click('#dClose');
     const multi = await page.evaluate(() => { const s = App.state.stations.find(x => !x.hidden && x.u.length > 1 && !(x.dis || []).includes(1)); return { key: s.c + '|' + s.n, name: s.n, identity: s.u[0], source: s.u[1] }; });
     await page.fill('#q', multi.name);
-    await page.locator('[data-more]').filter({ has: page.locator('svg') }).first().waitFor();
     const detailButton = page.locator('[data-more]').filter({ has: page.locator('svg') });
-    let match = null;
-    for (let i = 0; i < await detailButton.count(); i++) if (await detailButton.nth(i).getAttribute('data-more') === multi.key) { match = detailButton.nth(i); break; }
-    assert(match, '多源电台详情入口可见'); await match.click();
+    const match = page.locator('[data-more="' + multi.key.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"]');
+    await page.waitForFunction(key => Array.from(document.querySelectorAll('[data-more]')).some(el => el.getAttribute('data-more') === key), multi.key);
+    assert(await match.count(), '多源电台详情入口可见'); await match.click();
     await page.waitForFunction(() => !App.detail.loading && App.detail.results.some(Boolean));
     await page.evaluate(m => {
       Player.srcMem[m.identity] = { i: 1, t: Date.now() }; Store.set('radio.srcmem2', JSON.stringify(Player.srcMem));

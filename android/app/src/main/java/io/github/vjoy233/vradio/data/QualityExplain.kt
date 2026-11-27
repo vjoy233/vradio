@@ -22,8 +22,8 @@ fun qExplain(summary: QualityStore.QualityAggregate?, now: Long): QualityExplana
 }
 
 fun diagnosticAction(code: String?, httpStatus: Int?): QualityExplanation {
-  if (code == "OK") return QualityExplanation("good", "none", "ok")
   if (httpStatus == 401 || httpStatus == 403) return QualityExplanation("unknown", "configure", "service_refused")
+  if (code == "OK") return QualityExplanation("good", "none", "ok")
   val (action, reason) = when (code) {
     "NETWORK" -> "retry" to "network"
     "HTML" -> "check_source" to "html"

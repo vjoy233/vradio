@@ -21,4 +21,14 @@ prev.stations[url].sources[0].verification = 'sync';
 prev.stations[url].sources[0].lastVerifiedAt = 1200;
 assert.strictEqual(get(prev, [], null).lastVerifiedAt, 1200);
 assert.strictEqual(get(prev, [], null).verification, 'sync');
+// 双向来源变更不能继承旧上游 ID；同 URL 的另一候选也不能串入 ID。
+const old = (upstream, upstreamId) => ({stations:{[url]:{sources:[{url, upstream, upstreamId, firstSeenAt:1000}]}}});
+let s = get(old('eu', 'eu-old'), [{url, upstream:'gao'}], {meta:[{url, uuid:'eu-current'}]});
+assert.strictEqual(s.upstream, 'gao'); assert.strictEqual(s.upstreamId, '');
+s = get(old('gao', 'gao-old'), [], {meta:[{url}]});
+assert.strictEqual(s.upstream, 'eu'); assert.strictEqual(s.upstreamId, '');
+assert.strictEqual(get(old('gao', 'gao-old'), [{url, upstream:'gao'}], null).upstreamId, 'gao-old');
+assert.strictEqual(get(old('eu', 'eu-old'), [], {meta:[{url}]}).upstreamId, 'eu-old');
+assert.strictEqual(get(old('eu', 'eu-old'), [{url, upstream:'gao', upstreamId:'gao-new'}], null).upstreamId, 'gao-new');
+assert.strictEqual(get(old('gao', 'gao-old'), [], {meta:[{url, uuid:'eu-new'}]}).upstreamId, 'eu-new');
 console.log('来源元数据契约通过');

@@ -474,8 +474,11 @@ function buildRadioMeta(merged, prevMeta, cnCands, euLines, now, upstreamDefault
       const evidence = e && e.verification;
       const verified = evidence && evidence.ok === true && evidence.url === url && Number.isFinite(evidence.checkedAt) && evidence.checkedAt > 0;
       const previousVerified = p && p.verification === 'sync' && Number.isFinite(p.lastVerifiedAt) && p.lastVerifiedAt > 0;
-      return { url, upstream: (c && c.upstream) || (e ? 'eu' : '') || (p && p.upstream) || upstreamDefault || 'unknown',
-        upstreamId: (c && c.upstreamId) || (e && e.uuid) || (p && p.upstreamId) || '', kind: 'main',
+      const upstream = (c && c.upstream) || (e ? 'eu' : '') || (p && p.upstream) || upstreamDefault || 'unknown';
+      // ID 与来源成对选取：只继承同一上游的旧 ID，不能混用另一个候选的 ID。
+      const currentId = c && c.upstream ? c.upstreamId : e ? e.uuid : '';
+      const upstreamId = currentId || (p && p.upstream === upstream && p.upstreamId) || '';
+      return { url, upstream, upstreamId, kind: 'main',
         firstSeenAt: (p && p.firstSeenAt) || now, lastSeenAt: now,
         lastVerifiedAt: verified ? Math.max(evidence.checkedAt, previousVerified ? p.lastVerifiedAt : 0) : previousVerified ? p.lastVerifiedAt : 0,
         verification: verified || previousVerified ? 'sync' : 'unknown' };

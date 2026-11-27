@@ -112,12 +112,22 @@ ok('稳定直连文案保守，不虚称滚动时间窗口', () => {
   assert(!source.includes('近 30 天稳定性 good 且有直流源'));
 });
 
-ok('稳定直连行为：累计数据良好且近期观察可进，超 30 天不进', () => {
+ok('稳定直连行为：由 qSummary/qStability 生成累计质量，近期可进、超窗不进', () => {
+  const { qSummary } = require('../quality-store');
   const now = 40 * 86400000;
-  const fresh = qa({ stability: 'good', directCount: 1, lastObservedAt: now - 86400000 });
-  const stale = qa({ stability: 'unknown', directCount: 1, lastObservedAt: now - 31 * 86400000 });
-  assert.deepStrictEqual(names(run([row(1)], { q: { 'https://s1/live': fresh }, input: { now } }).groups.stable), ['台1']);
-  assert.deepStrictEqual(names(run([row(1)], { q: { 'https://s1/live': stale }, input: { now } }).groups.stable), []);
+  const source = 'https://s1/live';
+  const station = { cf: 0, sources: { [source]: {
+    okCount: 4, failCount: 0, lastOkAt: now - 86400000, lastFailAt: 0, lastPlaybackAt: 0,
+    latSum: 400, latN: 4, disconnects: 0, modes: ['direct'], lastDiag: null, lastPlayFail: null,
+  } } };
+  const fresh = qSummary({ [source]: station }, source, [source], now);
+  const staleStation = JSON.parse(JSON.stringify(station));
+  staleStation.sources[source].lastOkAt = now - 31 * 86400000;
+  const stale = qSummary({ [source]: staleStation }, source, [source], now);
+  assert.strictEqual(fresh.stability, 'good');
+  assert.deepStrictEqual(names(run([row(1)], { q: { [source]: fresh }, input: { now } }).groups.stable), ['台1']);
+  assert.strictEqual(stale.stability, 'unknown');
+  assert.deepStrictEqual(names(run([row(1)], { q: { [source]: stale }, input: { now } }).groups.stable), []);
 });
 
 ok('验证仅接受关联源的近期同步事实，排除过期、未来和未知证明', () => {

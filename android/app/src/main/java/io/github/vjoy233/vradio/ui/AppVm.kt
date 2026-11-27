@@ -929,38 +929,48 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   val detailDiag = MutableStateFlow<List<DiagnosticResult>>(emptyList()) // 最近一轮逐源诊断（按 URL 归位）
   val detailBusy = MutableStateFlow(false)                      // 诊断进行中（浮层按钮态）
 
-  fun openDetail(s: Station) { detailKey.value = s.key; detailDiag.value = emptyList(); showDetail.value = true }
+  private val detailRequests = DetailRequestGate()
+  fun openDetail(s: Station) { detailRequests.invalidate(); detailBusy.value = false; detailKey.value = s.key; detailDiag.value = emptyList(); showDetail.value = true }
   fun openDetailOf(k: String?) {                               // PlayerBar 台名长按等入口：按 key 反解
     val s = k?.let { runCatching { lib.resolve(it) }.getOrNull() } ?: return
     openDetail(s)
   }
-  fun closeDetail() { showDetail.value = false; detailKey.value = null; detailDiag.value = emptyList() }
+  fun closeDetail() { detailRequests.invalidate(); detailBusy.value = false; showDetail.value = false; detailKey.value = null; detailDiag.value = emptyList() }
   fun detailStation(): Station? = detailKey.value?.let { runCatching { lib.resolve(it) }.getOrNull() }
 
   /** 逐源诊断（B1）：只测启用源——手动禁用的源不发请求（浮层已明示「不能诊断」+「取消禁用」入口）；
    *  Android 无 /api?detail=1，CheckStream 直连；结果按测的 URL 归位，诊断顺序 = 人工有效序。
    *  ≤4/批串行推进（B1 review P1-7，Web checkStationSources 分批口径：单次探活放大面 ≤4，超 4 分批）。 */
   fun checkDetailSources(s: Station) {
-    if (detailBusy.value) return
-    viewModelScope.launch(Dispatchers.IO) {
-      detailBusy.value = true
+    if (detailBusy.value || !showDetail.value || detailKey.value != s.key) return
+    val generation = detailRequests.invalidate()
+    val key = s.key
+    val allUrls = s.u.toList()
+    val urls = runCatching { s.effOrder().map { s.u[it] } }.getOrDefault(emptyList())
+    if (urls.isEmpty()) return
+    val identity = allUrls.first()
+    detailBusy.value = true
+    viewModelScope.launch(Dispatchers.Main) {
+      fun current(): Boolean {
+        val station = detailStation()
+        return detailRequests.valid(generation, showDetail.value, detailKey.value, key, station?.u, allUrls)
+      }
       try {
-        val urls = withContext(Dispatchers.Main) {              // 快照归 Main（审计 P2：与 reapplyCfg 变异并发防 CME）
-          runCatching { s.effOrder().map { s.u[it] } }.getOrDefault(emptyList())
-        }
-        if (urls.isEmpty()) return@launch
-        quality.keepHint = runCatching { qualityKeepSnapshot() }.getOrDefault(quality.keepHint)
-        val out = java.util.concurrent.ConcurrentHashMap<String, DiagnosticResult>()
-        for (b in diagBatches(urls.size))                       // 批间串行、批内并发（放大面恒 ≤4，B1 三轮 P1-7）
-          coroutineScope { for (i in b) launch {
-            runCatching { checker.check(urls[i]) }.getOrNull()?.let {
-              val d = it.toDiagnostic(urls[i])
-              out[urls[i]] = d
-              runCatching { quality.recordDiagnostic(s.u0, d, "manual") }   // B2：手动逐源诊断产 diagnostic 样本
-            }
+        val out = withContext(Dispatchers.IO) {
+          val found = java.util.concurrent.ConcurrentHashMap<String, DiagnosticResult>()
+          for (b in diagBatches(urls.size)) coroutineScope { for (i in b) launch {
+            runCatching { checker.check(urls[i]) }.getOrNull()?.let { found[urls[i]] = it.toDiagnostic(urls[i]) }
           } }
-        withContext(Dispatchers.Main) { detailDiag.value = urls.mapNotNull { out[it] } }
-      } catch (_: Exception) { } finally { detailBusy.value = false }
+          found
+        }
+        if (current()) {
+          quality.keepHint = runCatching { qualityKeepSnapshot() }.getOrDefault(quality.keepHint)
+          detailDiag.value = urls.mapNotNull { out[it] }
+          detailDiag.value.forEach { runCatching { quality.recordDiagnostic(identity, it, "manual") } }
+        }
+      } catch (_: Exception) { } finally {
+        if (detailRequests.owns(generation)) detailBusy.value = false
+      }
     }
   }
 

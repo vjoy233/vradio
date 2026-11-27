@@ -55,16 +55,21 @@ fun AppRoot() {
     val detailBusy by vm.detailBusy.collectAsState()
     val ui by PlayerHolder.ui.collectAsState()
     val gate by vm.netGate.collectAsState()
-    gate?.let { (act, msg) ->
+    val scopeWarning by vm.healthScopeWarning.collectAsState()
+    gate?.takeUnless { scopeWarning }?.let { (act, msg) ->
       ConfirmDialog(when (act) {
         io.github.vjoy233.vradio.network.NetGate.Act.SYNC -> "移动数据同步确认"
         io.github.vjoy233.vradio.network.NetGate.Act.LIGHT_UPDATE -> "移动数据更新确认"
         else -> "移动数据体检确认"
       }, msg, onOk = vm::proceedGate, onDismiss = vm::cancelGate)
     }
+    if (scopeWarning) AlertDialog(onDismissRequest = {},
+      title = { Text("电台体检范围可能不完整") },
+      text = { Text("同步后的新增电台可能未全部体检；若同步曾中断，范围未知。建议手动进行全量体检。确认仅关闭提示，不代表体检已完成。") },
+      confirmButton = { TextButton(onClick = vm::acknowledgeHealthScopeWarning) { Text("知道了") } })
     val freshPrompt by vm.freshnessPrompt.collectAsState()
     val freshAge by vm.freshnessAge.collectAsState()
-    if (freshPrompt) AlertDialog(onDismissRequest = vm::dismissFreshness,
+    if (freshPrompt && !scopeWarning && gate == null) AlertDialog(onDismissRequest = vm::dismissFreshness,
       title = { Text(if (freshAge == "unknown") "电台数据更新时间未知" else "电台数据已有一段时间未同步") }, text = { Text("可手动同步检查最新数据。") },
       confirmButton = { TextButton(onClick = vm::syncFromFreshness) { Text("立即同步") } },
       dismissButton = { TextButton(onClick = vm::dismissFreshness) { Text("稍后") } })

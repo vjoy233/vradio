@@ -17,8 +17,9 @@ const respond = (req, url) => req.resolve({ ok: true, json: async () => ({ resul
   respond(old, s.u[0]); await Promise.resolve(); await Promise.resolve(); assert.equal(records.length, 0);
   respond(fresh, s.u[0]); await new Promise(setImmediate); assert.equal(records.length, 1);
   const bulk = app.checkStationSources(s), a = pending.shift(); const single = app.recheckSource(s, 1), b = pending.shift();
-  respond(a, s.u[0]); respond(b, s.u[1]); await Promise.all([bulk, single]); assert.equal(records.length, 2); assert.equal(app.detail.results[1].url, s.u[1]);
-  const changed = app.recheckSource(s, 1), c = pending.shift(); s.u[1] = 'https://example.net/new'; respond(c, 'https://example.org/live'); await changed; assert.equal(records.length, 2); assert.equal(app.detail.loading, false);
+  respond(a, s.u[0]); await bulk; assert.equal(app.detail.loading, true); respond(b, s.u[1]); await single; assert.equal(app.detail.loading, false); assert.equal(records.length, 2); assert.equal(app.detail.results[1].url, s.u[1]);
+  const changed = app.recheckSource(s, 1), c = pending.shift(); s.u[1] = 'https://example.net/new'; respond(c, 'https://example.org/live'); await changed; assert.equal(records.length, 2); assert.equal(app.detail.loading, false); // URL 已变但无新请求：清理本请求 loading
+  const next = app.checkStationSources(s), c2 = pending.shift(); c2.resolve({ status: 400, json: async () => ({ detail: '仅允许公网 http(s) 地址' }) }); await next; assert.equal(app.detail.loading, false);
   const closing = app.recheckSource(s, 1), d = pending.shift(); app.closeDetail(); d.reject(new Error('secret')); await closing; assert.equal(records.length, 2);
   let copied = ''; sb.navigator.clipboard = { writeText: async x => { copied = x; } }; app.detail.results[0] = { code: 'HTTP', why: 'password' };
   assert.equal(await app.copyDiagnostic(s), true); assert(copied.includes('https://example.com/')); for (const x of ['user', 'pass', 'secret', 'token', 'abc', 'frag', 'password']) assert(!copied.includes(x), x);
@@ -51,10 +52,12 @@ const respond = (req, url) => req.resolve({ ok: true, json: async () => ({ resul
   assert.equal(records[records.length - 1][1].url, canonical.u[0]);
   sb.QualityStore.stations = { [canonical.u[0]]: { sources: { [canonical.u[0]]: { lastOkAt: 30 } } } };
   assert.equal(app.successfulSource(canonical), undefined); // 新记录与旧规范化键不可区分，保守不推荐
-  const fact = { stationUrl: s.u[0], sourceUrl: s.u[1], sourceIndex: 1, mode: 'direct', reason: 'watchdog', attempts: 2, at: 1700000000000 };
+  const fact = { stationUrl: s.u[0], sourceUrl: 'https://user:pass@example.org/private?token=abc#frag', sourceIndex: 1, mode: 'direct', reason: 'watchdog', attempts: 2, at: 1700000000000 };
   const history = app.failureHtml(s, fact);
   assert(history.includes('历史播放失败（非当前状态、非诊断）')); assert(history.includes('发生于'));
-  assert(history.includes(new Date(fact.at).toLocaleString())); assert(history.includes('断流自愈'));
+  assert(history.includes(new Date(fact.at).toLocaleString())); assert(history.includes('断流自愈')); assert(history.includes('https://example.org/（路径已隐藏）'));
+  for (const secret of ['user', 'pass', 'private', 'token', 'abc', 'frag']) assert(!history.includes(secret), secret);
+  assert(app.failureHtml(s, Object.assign({}, fact, { sourceUrl: 'bad URL' })).includes('地址已隐藏'));
   assert.equal(app.failureHtml(canonical, fact), '');
   console.log('诊断并发、脱敏与质量投影通过');
 })().catch(e => { console.error(e); process.exitCode = 1; });

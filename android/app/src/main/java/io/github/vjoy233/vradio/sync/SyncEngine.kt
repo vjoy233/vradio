@@ -109,6 +109,7 @@ class SyncEngine(private val gh: Gh, private val check: CheckStream, private val
     }
     val mergedText = merged.joinToString("\r\n") + "\r\n"
     // 写主库前立持久屏障；中断后轻更新不得用旧 pending 或旧 stamp 覆盖端内数据。
+    HealthScopeWarning.markLocked(filesDir)
     SyncBarrier.begin(filesDir)
     writeTextAtomic(File(filesDir, "radio.txt"), mergedText)
     // stamp 随写（G P2-3）：不写的话 D7 check 会拿仓库既有提交判「有新版」，apply 用仓库数据覆盖刚同步出的

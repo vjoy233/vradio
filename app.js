@@ -2133,13 +2133,13 @@ const App = {
   qualityHtml(s) {
     const qa = QualityStore.summary(s.u[0], s.u);
     if (!qa) return '<div class="srcs" style="padding:2px 0 6px">暂无质量样本（播放与体检后自动累计）</div>';
-    const Q_TXT = { good: '稳定', fair: '一般', poor: '不稳定', unknown: '样本不足' };
+    const Q_TXT = { good: '稳定', fair: '一般', poor: '不稳定', unknown: '暂无稳定性评估' };
     const cls = qa.stability === 'good' ? 'okb' : qa.stability === 'poor' ? 'badb' : '';
     const total = qa.okCount + qa.failCount;
     const rate = total ? Math.round(100 * qa.okCount / total) : 0;
     const icy = { icy: '有曲讯（直流）', none: '无曲讯', mixed: '混合源' }[qa.metadata] || qa.metadata;
     return `<div class="srcs" style="padding:2px 0 6px">
-      <span class="badge ${cls}" title="stability: ${this.esc(qa.stability)}（近 30 天成功率/延迟/连续失败综合）">● ${Q_TXT[qa.stability] || qa.stability}</span>
+      <span class="badge ${cls}" title="stability: ${this.esc(qa.stability)}（累计成功率/延迟/连续失败综合；最近观测用于新鲜度判断）">● ${Q_TXT[qa.stability] || qa.stability}</span>
       成功率 ${rate}%（${qa.okCount}/${total}）· 平均延迟 ${qa.avgLatencyMs}ms · 断流 ${qa.disconnects} 次 · ${icy}
       · 最近播放 ${qa.lastPlaybackAt ? this.fmtAgo(qa.lastPlaybackAt) : '—'}
     </div>`;
@@ -2314,7 +2314,7 @@ const App = {
     });
     const GROUPS = [ // 固定六组（§7.3）；只渲染非空组——发现是「给灵感」，空组不出占位噪音
       ['starter', '精选电台', '内置实测精选层'],
-      ['stable', '稳定直连', '近 30 天稳定性 good 且有直流源'],
+      ['stable', '稳定直连', '累计稳定性 good 且有直流源（最近观测仍有效）'],
       ['fresh', '最近新增', '同步新进电台'],
       ['revived', '最近恢复', '从失效标记复活的电台'],
       ['icy', '有曲讯', '直流 ICY——播放时可显示歌名'],
@@ -2331,7 +2331,7 @@ const App = {
       html += list.map(r => `<button type="button" class="btn mbtn discrow" data-k="${this.esc(r.k)}" title="播放：${this.esc(r.n)}">
         <span class="dn">${this.esc(r.n)}</span><span class="badge">${this.esc(r.c)}</span>
         ${FEATURES.sourceExplain ? r.origins.map(o => `<span class="badge">${this.esc(({gao:'国内上游',eu:'欧美上游',unknown:'来源未知',personal:'个人来源',adjusted:'个人追加'})[o] || '来源未知')}</span>`).join('') : ''}
-        ${FEATURES.sourceExplain ? `<span class="srcs">${({good:'稳定',fair:'一般 · 建议重测',poor:'不稳定 · 建议重测',unknown:'暂无可信质量样本'})[r.explain.level] || '暂无可信质量样本'}</span>` : ''}
+        ${FEATURES.sourceExplain ? `<span class="srcs">${({good:'稳定',fair:'一般 · 建议重测',poor:'不稳定 · 建议重测',unknown:'暂无稳定性评估'})[r.explain.level] || '暂无稳定性评估'}</span>` : ''}
         ${id === 'fresh' || id === 'recentlyVerified' ? `<span class="srcs">${this.fmtAgo(r.at)}</span>` : r.obs ? `<span class="srcs">${this.fmtAgo(r.obs)}</span>` : ''}
       </button>`).join('');
     }

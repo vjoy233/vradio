@@ -207,7 +207,7 @@ async function run(chromium) {
       Player.play = function (...args) { window.__discCalls++; return original.apply(this, args); };
       return {k, u0:s.u[0]};
     });
-    check('D1 发现展示来源与质量摘要', await page.locator('#discBody .discrow .badge').count() > 0 && await page.locator('#discBody .discrow .srcs').count() > 0);
+    check('D1 发现展示来源与质量摘要', await page.locator('#discBody .discrow').count() > 0 && await page.locator('#discBody .discrow .srcs').count() > 0 && await page.locator('#discBody .discrow .srcs').evaluateAll(xs => xs.some(x => /来源未知|暂无可信质量样本|稳定|一般|不稳定/.test(x.textContent))));
     await page.locator('#discBody .discrow').first().click();
     check('D2 卡片仅调用既有播放入口一次且指向选中台', await page.evaluate(d => window.__discCalls === 1 && !!Player.connecting && Player.connecting.u[0] === d.u0, disc));
     check('D3 返回后筛选不变', await page.evaluate(p => App.state.cat === p.cat && App.state.scope === p.scope && App.state.keyword === p.keyword && document.getElementById('discovery').hidden, prior));

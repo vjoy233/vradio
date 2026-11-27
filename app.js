@@ -2,6 +2,9 @@
    播放一律经 Player 接口；同步/体检由 sync.js 编排本文件暴露的方法；台标数据经 Logos 模块获取（本文件只拼渲染片段）。
    身份公理（债务 1）：URL = 持久身份（收藏/最近记录源 URL，名字漂移后按 URL 回绑），名字 = 显示层。 */
 
+// C3 可信发布链未完成安全验收，只有源码发布才能开放。
+const trustedC3Release = false;
+
 /* ---------- 内置精选（地址已实测直连可用；含同一电台的多个备选源。l = 台标，蜻蜓频道页封面实测可直连） ---------- */
 const STARTER = [
   { c:'常听', n:'Love Radio FM103.7 经典金曲', u:['http://lhttp.qingting.fm/live/273/64k.mp3','http://ls.qingting.fm/live/273.m3u8'], l:'http://pic.qtfm.cn/2014/0909/20140909125130474.jpg!200' },
@@ -2240,7 +2243,7 @@ const App = {
     }
     // 本地推荐先展示，第三方候选失败或慢响应不阻塞它。
     this.renderDiscovery();
-    if (FEATURES.discoverySidecar && !this.discoverySidecar && window.DiscoverySidecar) {
+    if (trustedC3Release && FEATURES.discoverySidecar && !this.discoverySidecar && window.DiscoverySidecar) {
       // 指针、当前代、上一代各 5 秒；正常调度下总预算留 1 秒余量供回退。
       const result = await this.discoveryFlight('discoverySideFlight', signal => window.DiscoverySidecar.loadSnapshot((u, opts) => fetch(u, opts), 'discovery-snapshots', 5000, signal), null, 16000);
       const rows = result.value;
@@ -2333,7 +2336,7 @@ const App = {
       </button>`).join('');
     }
     $('discBody').innerHTML = html || '<div class="empty">暂无推荐——收藏/播放/体检后这里会越来越准</div>';
-    if (FEATURES.discoverySidecar && this.discoverySidecar && this.discoverySidecar.length) this.renderDiscoverySidecar();
+    if (trustedC3Release && FEATURES.discoverySidecar && this.discoverySidecar && this.discoverySidecar.length) this.renderDiscoverySidecar();
   },
 
   /* ---------- B3-B 收听统计接线：Player 派生态 → ListenStats 状态机（只读快照推导，不复制播放决策）。

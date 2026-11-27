@@ -3,8 +3,8 @@
 // 报告：docs/test-reports/nightly/<run-id>/drills.json（每轮独立目录，逐断言入列 + 分类，review#41 任务 2/6）。
 // 跑法：node test/nightly/drills.js（编排见 run.js）。
 // 覆盖矩阵：
-//   [1] /proxy 上游故障注入（VR_TEST_GUARD=1 + 回环 fixture，学 test/np-proxy.js 口径）：上游 404 状态/类型透传 /
-//       HTML 页透传 / 假流 336B 透传 / 畸形 Location 403（audit-r2 P2-1 回归）——服务不崩、语义正确
+//   [1] /proxy 上游故障注入（VR_TEST_GUARD=1 + 回环 fixture）：上游 404 状态保留、非媒体类型隔离 /
+//       HTML 内容保留但禁主动解释 / 假流媒体类型保留 / 畸形 Location 403——服务不崩、语义正确
 //   [2] /api/check?detail=1 结构化 code（对照 contracts/source-diagnostic.json 枚举）：真流 OK / 假流 SHORT_BODY /
 //       HTML 大页 HTML / CT 撒谎仍 HTML（内容嗅探）/ 断流 NETWORK / HLS 清单 404 HTTP；
 //       契约字段齐全 + 响应不含上游响应体 + code ⊆ 契约枚举
@@ -99,13 +99,16 @@ const enumCodes = JSON.parse(fs.readFileSync(path.join(ROOT, 'contracts', 'sourc
   try {
     console.log('[1] /proxy 上游故障注入（VR_TEST_GUARD=1 + 回环 fixture）');
     s = await boot({ isolated: true, env: { VR_TEST_GUARD: '1' } });
-    await ok('上游 404 → 状态码与 Content-Type 原样透传（服务不崩不 502 化）', async () => {
+    await ok('上游 404 → 状态码保留、非媒体类型隔离', async () => {
       const r = await s.req('GET', '/proxy?url=' + encodeURIComponent(FIX + '/up404.mp3'));
-      assert.strictEqual(r.status, 404); assert.strictEqual(r.headers['content-type'], 'text/plain');
+      assert.strictEqual(r.status, 404); assert.strictEqual(r.headers['content-type'], 'application/octet-stream');
+      assert.strictEqual(r.body, 'not found'); assert.strictEqual(r.headers['x-content-type-options'], 'nosniff');
     });
-    await ok('上游 HTML 错误页 → 200 text/html 载荷原样透传（代理不嗅探内容）', async () => {
+    await ok('上游 HTML → 二进制隔离、载荷保留并禁止主动文档', async () => {
       const r = await s.req('GET', '/proxy?url=' + encodeURIComponent(FIX + '/uphtml.html'));
-      assert.strictEqual(r.status, 200); assert.strictEqual(r.headers['content-type'], 'text/html; charset=utf-8');
+      assert.strictEqual(r.status, 200); assert.strictEqual(r.headers['content-type'], 'application/octet-stream');
+      assert.strictEqual(r.headers['x-content-type-options'], 'nosniff');
+      assert.strictEqual(r.headers['content-security-policy'], "sandbox; default-src 'none'");
       assert.ok(r.body.startsWith('<html>') && r.body.length >= 9000, '载荷字节保持');
     });
     await ok('上游假流 336B → 200 audio/mpeg 336B（代理不验字节——验收在探活层）', async () => {

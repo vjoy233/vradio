@@ -81,6 +81,14 @@ function crossOrigin(req) {
   try { return new URL(o).host !== (req.headers.host || ''); } catch (_) { return true; }
 }
 
+// 上游类型不可信：只保留明确的媒体/HLS 类型，其余一律二进制；绝不按 URL 扩展名猜类型。
+// nosniff 阻止作为 script/style 引用，sandbox + default-src 防直接导航形成同源活动文档。
+const PROXY_TYPES = new Set(['audio/mpeg', 'audio/aac', 'audio/aacp', 'audio/mp4', 'audio/ogg', 'audio/opus', 'audio/wav', 'audio/webm',
+  'video/mp2t', 'video/mp4', 'video/webm', 'application/vnd.apple.mpegurl', 'application/x-mpegurl', 'audio/mpegurl', 'audio/x-mpegurl']);
+function proxyType(value) {
+  const type = String(value || '').split(';', 1)[0].trim().toLowerCase();
+  return PROXY_TYPES.has(type) ? type : 'application/octet-stream';
+}
 function proxy(target, req, res, depth = 0) {
   if (depth > 5) return res.writeHead(508).end('too many redirects');
   const mod = target.startsWith('https') ? https : http;
@@ -94,7 +102,8 @@ function proxy(target, req, res, depth = 0) {
       if (!next) return res.writeHead(403).end('403 redirect target rejected');
       return proxy(next, req, res, depth + 1);
     }
-    const h = { 'Content-Type': r.headers['content-type'] || 'application/octet-stream' }; // 同源代理，无需 ACAO（P2-4）
+    const h = { 'Content-Type': proxyType(r.headers['content-type']), 'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "sandbox; default-src 'none'" }; // 同源代理，无需 ACAO；上游不可信
     if (r.headers['content-range']) h['Content-Range'] = r.headers['content-range'];
     res.writeHead(r.statusCode, h);
     r.on('error', () => res.destroy()); // 上游中途断流：终止响应，error 不逃逸（Node ≥14 防御性守卫）
@@ -777,7 +786,7 @@ http.createServer((req, res) => {
   if (p !== ROOT && !p.startsWith(ROOT + path.sep)) return res.writeHead(403).end('403');
   fs.readFile(p, (e, buf) => {
     if (e) return res.writeHead(404).end('404');
-    const h = { 'Content-Type': MIME[path.extname(p).toLowerCase()] || 'application/octet-stream', 'X-Content-Type-Options': 'nosniff' }; // audit A6：本地文件类型可信堵嗅探；/proxy 转发上游类型不可信（错标 octet-stream 的流靠嗅探才能播），不加
+    const h = { 'Content-Type': MIME[path.extname(p).toLowerCase()] || 'application/octet-stream', 'X-Content-Type-Options': 'nosniff' }; // audit A6：本地文件禁止嗅探
     // radio-data.js 是同步才变的生成物（~200KB），http 模式每次刷新都会白拉一遍（列表实际走 radio.txt）——
     // 定向给一天缓存（AIbot P3-5）；file:// 读本地文件不经 HTTP 缓存，不受影响。其余文件不缓存：开发改动即刷即生效
     if (p === path.join(ROOT, 'radio-data.js')) h['Cache-Control'] = 'public, max-age=86400';

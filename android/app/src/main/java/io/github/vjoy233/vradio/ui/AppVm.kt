@@ -83,10 +83,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 
 /* AppVm —— 集中 state 对象 + 单一渲染入口精神（app.js App.state 的安卓形态）。
    持有数据层（Library/Logos/MyRadio）并编排：boot 装配、手动/boot 静默/同步后增量体检、
@@ -1100,21 +1098,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   private suspend fun probeAll(list: List<Station>, conc: Int, qTrigger: String, stop: () -> Boolean,
                                onProg: (Int, Int) -> Unit): List<Pair<Station, Probe>> {
-    val q = ConcurrentLinkedQueue(list)
-    val out = ConcurrentLinkedQueue<Pair<Station, Probe>>()
-    val done = AtomicInteger(); val total = list.size
-    coroutineScope {
-      repeat(conc) {
-        launch(Dispatchers.IO) {
-          while (!stop()) {
-            val s = q.poll() ?: return@launch
-            out.add(s to probe(s, qTrigger))
-            onProg(done.incrementAndGet(), total)
-          }
-        }
-      }
-    }
-    return out.toList()
+    return runHealthWorkers(list, conc, stop, onProg) { probe(it, qTrigger) }
   }
 
   /** 主线程统一套用分档生命周期并计数（0=ok 1=疑似 2=停运 3=网络失败跳过——不落标不计数） */

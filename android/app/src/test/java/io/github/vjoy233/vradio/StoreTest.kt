@@ -72,6 +72,22 @@ class StoreTest {
     assertTrue(Store.healthSnapshot()!!.receipts.contains("batch-1/item-1"))
   }
 
+  @Test fun healthReceiptCapacityFailsClosed() {
+    val f = File(dir, "store.json")
+    val receipts = org.json.JSONArray().apply { repeat(4095) { put("r$it") } }
+    f.writeText(org.json.JSONObject().put("_android.addedCheckReceipts", receipts.toString()).toString())
+    Store.init(dir)
+    val first = Store.healthSnapshot()!!
+    assertEquals(Store.HealthCommit.SUCCESS, Store.commitHealthWithReceipt(first.version, "h1", "last"))
+    val full = Store.healthSnapshot()!!
+    assertEquals(4096, full.receipts.size)
+    assertEquals(Store.HealthCommit.CAPACITY, Store.commitHealthWithReceipt(full.version, "h2", "overflow"))
+    assertEquals("h1", Store.get(C.K_HEALTH))
+    Store.init(dir)
+    assertEquals(4096, Store.healthSnapshot()!!.receipts.size)
+    assertEquals("h1", Store.get(C.K_HEALTH))
+  }
+
   @Test fun healthReceiptConflictAndWriteFailure() {
     val s = Store.healthSnapshot()!!
     Store.set(C.K_THEME, "dark")

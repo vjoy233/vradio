@@ -4,6 +4,12 @@ import io.github.vjoy233.vradio.consts.C
 import org.json.JSONObject
 import org.json.JSONArray
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.NoSuchFileException
+
+internal object StoreReadTestHook {
+  var read: ((File) -> String)? = null
+}
 
 /* 存储收敛层（对标 store.js，安卓单进程大幅简化）：无 rev 发号/脏标记/多标签广播——白名单 13 键 +
    tmp+rename 原子落盘即全部。get/set 值恒为 JSON 字符串（与 Web localStorage 镜像 / data/store.json 完全同格式），
@@ -14,6 +20,8 @@ object Store {
   private val mem = HashMap<String, String>()
   private const val RECEIPTS = "_android.addedCheckReceipts"
   private var receiptsValid = true
+  // 只有确认文件不存在或完整读入并解析后才允许覆盖；异常时须重新 init。
+  private var diskWritable = true
   private const val RECEIPT_LIMIT = 4096
   private const val RECEIPT_LENGTH = 256
   enum class HealthCommit { SUCCESS, ALREADY_APPLIED, CONFLICT, WRITE_FAILED, NOT_INITIALIZED, INVALID_RECEIPTS, CAPACITY }
@@ -76,17 +84,29 @@ object Store {
     dir.mkdirs()
     file = File(dir, "store.json")
     mem.clear()
-    receiptsValid = true
+    receiptsValid = false
+    diskWritable = false
     bumpVersion()
     val f = file ?: return
-    if (!f.exists()) return
-    val o = runCatching { JSONObject(f.readText()) }.getOrNull() ?: run { receiptsValid = false; mem[RECEIPTS] = "invalid"; return }
+    val raw = try {
+      StoreReadTestHook.read?.invoke(f) ?: String(Files.readAllBytes(f.toPath()), Charsets.UTF_8)
+    } catch (_: NoSuchFileException) {
+      // 排除父目录不存在和悬空链接；未知状态不能当作新库。
+      if (dir.isDirectory && Files.notExists(f.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+        receiptsValid = true; diskWritable = true
+      }
+      return
+    } catch (_: Exception) { return }
+    val o = try { JSONObject(raw) } catch (_: Exception) { return }
+    receiptsValid = true
+    diskWritable = true
     for (k in o.keys()) {
       if (k !in C.KEYS && k != RECEIPTS) continue
       val v = o.opt(k)
       if (v is String) mem[k] = v else if (k == RECEIPTS) { receiptsValid = false; mem[RECEIPTS] = "invalid" }
     }
     if (parseReceipts(mem[RECEIPTS]) == null) receiptsValid = false
+    if (!receiptsValid) diskWritable = false
   }
 
   @Synchronized
@@ -188,6 +208,7 @@ object Store {
 
   private fun persist(): Boolean { // 全量落盘：tmp+rename 原子写，进程写一半被杀不丢收藏（A3 纪律）。
     val f = file ?: return true // 普通 set 旧语义：未 init 仅内存
+    if (!diskWritable) return false // 不用空内存或合成 sentinel 覆盖不可读/损坏的原件
     return runCatching {        // 单进程低频写，不做 debounce（Web 的 300ms 攒批是音量条连写护栏，安卓侧同场景写入量毫秒级）
       writeTextAtomic(f, JSONObject(mem).toString())          // AIbot P2-6：统一原子写实现（含 rename 拒绝降级）
       true

@@ -47,14 +47,56 @@ class StoreTest {
     assertFalse(s.containsKey("radio.junk"))
   }
 
-  @Test fun badJsonTolerated() { // 坏 store.json 视为空库，随后读写照常
+  @Test fun badJsonTolerated() { // 坏文件保留，普通写只改变内存
     File(dir, "store.json").writeText("{{{not json")
     Store.init(dir)
     assertNull(Store.get(C.K_FAVS))
     Store.set(C.K_FAVS, "[]")
     assertEquals("[]", Store.get(C.K_FAVS))
     Store.init(dir)
-    assertEquals("[]", Store.get(C.K_FAVS)) // 普通数据恢复不变；私有见证保持不可验证
+    assertNull(Store.get(C.K_FAVS))
+    assertEquals("{{{not json", File(dir, "store.json").readText())
+    assertNull(Store.healthSnapshot())
+  }
+
+  @Test fun transientReadFailureNeverOverwritesOriginal() {
+    val f = File(dir, "store.json")
+    val original = org.json.JSONObject().put(C.K_HEALTH, "old-health")
+      .put("_android.addedCheckReceipts", org.json.JSONArray().put("r1").toString()).toString()
+    f.writeText(original)
+    io.github.vjoy233.vradio.data.StoreReadTestHook.read = { throw java.io.IOException("transient") }
+    try {
+      Store.init(dir)
+      assertNull(Store.healthSnapshot())
+      assertEquals(Store.HealthCommit.INVALID_RECEIPTS, Store.commitHealthWithReceipt(0, "new", "r2"))
+      Store.set(C.K_THEME, "dark")
+      Store.remove(C.K_HEALTH)
+      assertFalse(Store.setChecked(C.K_THEME, "light"))
+      assertFalse(Store.removeChecked(C.K_THEME))
+      assertFalse(Store.applyAllChecked(mapOf(C.K_THEME to "light")))
+      val v = Store.snapshotVersioned().version
+      assertEquals(Store.ApplyOutcome.WRITE_FAILED, Store.applyAllCheckedIfVersion(emptyMap(), v).outcome)
+      assertFalse(Store.restoreIfVersion(emptyMap(), Store.snapshotVersioned().version))
+      Store.applyAll(emptyMap())
+      assertEquals(original, f.readText())
+    } finally { io.github.vjoy233.vradio.data.StoreReadTestHook.read = null }
+    Store.init(dir)
+    assertEquals("old-health", Store.healthSnapshot()!!.health)
+    assertTrue(Store.healthSnapshot()!!.receipts.contains("r1"))
+    assertEquals(Store.HealthCommit.SUCCESS, Store.commitHealthWithReceipt(Store.healthSnapshot()!!.version, "new", "r2"))
+    Store.init(dir)
+    assertTrue(Store.healthSnapshot()!!.receipts.containsAll(setOf("r1", "r2")))
+  }
+
+  @Test fun invalidReceiptDoesNotOverwriteOriginal() {
+    val f = File(dir, "store.json")
+    val original = org.json.JSONObject().put("_android.addedCheckReceipts", 42).toString()
+    f.writeText(original); Store.init(dir)
+    assertNull(Store.healthSnapshot())
+    Store.set(C.K_THEME, "dark")
+    assertFalse(Store.applyAllChecked(emptyMap()))
+    assertEquals(original, f.readText())
+    Store.init(dir)
     assertNull(Store.healthSnapshot())
   }
 

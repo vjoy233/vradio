@@ -15,35 +15,52 @@ class MetadataNormalizerTest {
   private fun res(name: String): String =
     javaClass.classLoader!!.getResourceAsStream(name)!!.bufferedReader().readText()
 
+  private fun normalize(c: JSONObject): JSONObject {
+    val raw = c.getJSONObject("in").getJSONObject("raw")
+    val ctx = c.getJSONObject("in").getJSONObject("ctx")
+    val ev = MetadataNormalizer.normalize(
+      MetadataNormalizer.IcyRaw(title = raw.optString("title"), program = raw.optString("program", ""),
+        bitrateKbps = raw.optInt("bitrateKbps", 0), source = raw.optString("source", "icy"),
+        at = raw.optLong("at", 0L)),
+      MetadataNormalizer.IcyCtx(ctx.optString("identityUrl"), ctx.optString("stationName", "")), now = 0L)
+    return JSONObject().put("stationIdentityUrl", ev.stationIdentityUrl).put("title", ev.title)
+      .put("artist", ev.artist).put("track", ev.track).put("program", ev.program)
+      .put("bitrateKbps", ev.bitrateKbps).put("source", ev.source).put("at", ev.at)
+      .put("confidence", ev.confidence)
+  }
+
   @Test fun 黄金样本逐字段对齐() {
     val cases = JSONObject(res("fixtures/metadata-golden.json")).getJSONArray("cases")
     for (i in 0 until cases.length()) {
       val c = cases.getJSONObject(i)
-      val raw = c.getJSONObject("in").getJSONObject("raw")
-      val ctx = c.getJSONObject("in").getJSONObject("ctx")
-      val out = c.getJSONObject("out")
-      val ev = MetadataNormalizer.normalize(
-        MetadataNormalizer.IcyRaw(
-          title = raw.optString("title"),
-          program = raw.optString("program", ""),
-          bitrateKbps = raw.optInt("bitrateKbps", 0),
-          source = raw.optString("source", "icy"),
-          at = raw.optLong("at", 0L)),
-        MetadataNormalizer.IcyCtx(ctx.optString("identityUrl"), ctx.optString("stationName", "")),
-        now = 0L)   // 样本 at 均非 0，now 不参与
-      val name = "case[${i}] ${c.getString("name")}"
-      assertEquals(name, out.getString("stationIdentityUrl"), ev.stationIdentityUrl)
-      assertEquals(name, out.getString("title"), ev.title)
-      assertEquals(name, out.getString("artist"), ev.artist)
-      assertEquals(name, out.getString("track"), ev.track)
-      assertEquals(name, out.getString("program"), ev.program)
-      assertEquals(name, out.optLong("bitrateKbps"), ev.bitrateKbps.toLong())
-      assertEquals(name, out.getString("source"), ev.source)
-      assertEquals(name, out.optLong("at"), ev.at)
-      assertEquals(name, out.getString("confidence"), ev.confidence)
+      GoldenJson.compare(c.getJSONObject("out"), normalize(c), "case[$i] ${c.getString("name")}.out")
     }
   }
 
+  @Test fun 黄金样本真实归一化比较失败报告每个字段路径() {
+    val c = JSONObject(res("fixtures/metadata-golden.json")).getJSONArray("cases").getJSONObject(0)
+    val actual = normalize(c)
+    val out = c.getJSONObject("out")
+    val fields = listOf("stationIdentityUrl", "title", "artist", "track", "program", "bitrateKbps", "source", "at", "confidence")
+    assertEquals(fields.toSet(), out.keys().asSequence().toSet())
+    for (field in fields) {
+      val altered = JSONObject(out.toString())
+      altered.put(field, when (field) { "at" -> -1L; "bitrateKbps" -> -1; else -> "错误值" })
+      var message = ""
+      try { GoldenJson.compare(altered, actual, "case[0] ${c.getString("name")}.out") }
+      catch (e: AssertionError) { message = e.message ?: "" }
+      assertTrue("缺少失败路径: $field: $message", message.contains("case[0] ${c.getString("name")}.out.$field"))
+    }
+    for (missing in listOf(true, false)) {
+      val altered = JSONObject(out.toString())
+      if (missing) altered.remove("title") else altered.put("extra", "x")
+      val field = if (missing) "title" else "extra"
+      var message = ""
+      try { GoldenJson.compare(altered, actual, "case[0].out") }
+      catch (e: AssertionError) { message = e.message ?: "" }
+      assertTrue(message, message.contains("case[0].out.$field"))
+    }
+  }
   /* ---------- parseIcyTitle 边界 ---------- */
 
   @Test fun 首个分隔拆分后续分隔保留在曲名() {

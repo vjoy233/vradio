@@ -619,7 +619,7 @@ const App = {
     const o = { v: 2 };
     for (const k of ['moves', 'names', 'tag']) o[k] = this.normStrMap(c[k]);                      // URL → 字符串
     o.renames = this.normStrMap(c.renames, true);                                                // 分类名 → 分类名（键非 URL，不做 URL 过滤）
-    const urlKeys = m => Object.fromEntries(Object.entries(m).filter(([k]) => /^https?:\/\//.test(k)));
+    const urlKeys = m => Object.fromEntries(Object.entries(m).filter(([k]) => /^https?:\/\//.test(k) && k.length <= 512));
     o.hideS = c.hideS && typeof c.hideS === 'object' ? urlKeys(c.hideS) : {};                   // URL → 1（手藏电台）
     // 追加备选源（P1-a/r2 ⑨）：URL → [追加源 URL…]。条数 6 / 单条 512 封顶对齐 mystation 护栏口径；只追加不动身份
     const urlArrMap = m => { const o = {}; for (const [k, v] of Object.entries(m || {})) if (/^https?:\/\//.test(k) && k.length <= 512 && Array.isArray(v)) { const a = [...new Set(v.map(x => String(x).trim()).filter(x => /^https?:\/\//.test(x) && x.length <= 512))].slice(0, 6); if (a.length) o[k.trim()] = a; } return o; };

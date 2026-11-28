@@ -31,7 +31,7 @@ const file = h => path.join(h.root, 'data', 'store.json');
 const parse = r => JSON.parse(r.body);
 function failed(r) { assert.strictEqual(r.status, 500); const j = parse(r); assert.strictEqual(j.ok, false); assert.strictEqual(j.code, 'store-read-failed'); assert.ok(!('data' in j)); }
 async function main() {
-  for (const raw of ['{broken', 'null', '[]', '{"rev":1,"data":null}', '{"rev":1,"data":[]}', '{"rev":"1","data":{}}', '{"rev":-1,"data":{}}', '{"rev":1.5,"data":{}}', '{"rev":9007199254740992,"data":{}}', '{"rev":1,"data":{"radio.vol":3}}', '{"rev":1,"data":{"radio.future":"x"}}']) {
+  for (const raw of ['{broken', 'null', '[]', '{"rev":1,"data":null}', '{"rev":1,"data":[]}', '{"rev":"1","data":{}}', '{"rev":-1,"data":{}}', '{"rev":1.5,"data":{}}', '{"rev":9007199254740992,"data":{}}', '{"rev":1,"data":{"radio.vol":3}}', '{"rev":1,"data":{"radio.future":"x"}}', '{"rev":1,"data":{},"future":{"value":"preserve"}}']) {
     const h = await boot();
     try {
       fs.mkdirSync(path.dirname(file(h)), { recursive: true }); fs.writeFileSync(file(h), raw);
@@ -56,7 +56,13 @@ async function main() {
     fs.mkdirSync(path.dirname(file(link)), { recursive: true });
     let supported = true;
     try { fs.symlinkSync(path.join(link.root, 'missing-target'), file(link)); } catch (e) { if (['EPERM', 'EACCES', 'ENOSYS'].includes(e.code)) supported = false; else throw e; }
-    if (supported) { failed(await get(link)); failed(await post(link, { 'radio.vol': '0.4' })); assert.ok(fs.lstatSync(file(link)).isSymbolicLink()); }
+    if (supported) {
+      failed(await get(link)); failed(await post(link, { 'radio.vol': '0.4' })); assert.ok(fs.lstatSync(file(link)).isSymbolicLink());
+      const target = path.join(link.root, 'missing-target'), raw = '{"rev":9,"data":{"radio.vol":"0.8"}}';
+      fs.writeFileSync(target, raw); // 将同一链接由悬空变为有效，目标仅是测试自有文件
+      failed(await get(link)); failed(await post(link, { 'radio.vol': '0.4' }));
+      assert.ok(fs.lstatSync(file(link)).isSymbolicLink()); assert.strictEqual(fs.readFileSync(target, 'utf8'), raw);
+    }
     else console.log('SKIP 悬空链接：系统禁止创建符号链接');
   } finally { await link.close(); }
   // 并发到达顺序不保证：空写先入队则两次成功，非空先入队则空写必须 409；终态均非空。

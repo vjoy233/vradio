@@ -154,11 +154,14 @@ const STORE_MAX = 2 * 1024 * 1024, KEY_MAX = 512 * 1024;
 const KEY_MAXS = { 'radio.health': 1536 * 1024 }; // 分键上限（AIbot P2-3）：健康标记 FIFO 2000 条 × 多源 URL 快照最坏 ~0.9MB，512KB 会静默丢键——对账再把镜像一起抹掉，僵尸台问题换个形式回归
 let storeRev = 0, storeCache = null, storeLoadError = null, storeQ = Promise.resolve();
 function storeRead() { // 懒加载：仅 ENOENT 视为空库；坏文件/非 ENOENT 错误必须 fail closed，避免空快照覆盖原文件
+  // 即使已有缓存也拒绝符号链接，避免后续 rename 替换链接；不读取链接目标。
+  try { if (fs.lstatSync(STORE_FILE).isSymbolicLink()) { storeCache = null; storeLoadError = 'symlink'; return null; } }
+  catch (e) { if (!e || e.code !== 'ENOENT') { storeCache = null; storeLoadError = e && e.code || 'read'; return null; } }
   if (!storeCache || storeLoadError) {
     storeLoadError = null;
     try {
       storeCache = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8'));
-      if (!storeCache || typeof storeCache !== 'object' || Array.isArray(storeCache) || !storeCache.data || typeof storeCache.data !== 'object' || Array.isArray(storeCache.data) || !Number.isSafeInteger(storeCache.rev) || storeCache.rev < 0 || Object.keys(storeCache.data).some(k => !STORE_KEYS.has(k) || typeof storeCache.data[k] !== 'string')) {
+      if (!storeCache || typeof storeCache !== 'object' || Array.isArray(storeCache) || Object.keys(storeCache).some(k => k !== 'rev' && k !== 'data') || !storeCache.data || typeof storeCache.data !== 'object' || Array.isArray(storeCache.data) || !Number.isSafeInteger(storeCache.rev) || storeCache.rev < 0 || Object.keys(storeCache.data).some(k => !STORE_KEYS.has(k) || typeof storeCache.data[k] !== 'string')) {
         storeCache = null; storeLoadError = 'invalid';
       }
     } catch (e) {

@@ -2,6 +2,7 @@ package io.github.vjoy233.vradio.data
 
 import io.github.vjoy233.vradio.consts.C
 import org.json.JSONObject
+import org.json.JSONArray
 import java.io.File
 
 /* 存储收敛层（对标 store.js，安卓单进程大幅简化）：无 rev 发号/脏标记/多标签广播——白名单 13 键 +
@@ -11,6 +12,52 @@ import java.io.File
 object Store {
   private var file: File? = null
   private val mem = HashMap<String, String>()
+  private const val RECEIPTS = "_android.addedCheckReceipts"
+  private var receiptsValid = true
+  private const val RECEIPT_LIMIT = 4096
+  private const val RECEIPT_LENGTH = 256
+  enum class HealthCommit { SUCCESS, ALREADY_APPLIED, CONFLICT, WRITE_FAILED, NOT_INITIALIZED, INVALID_RECEIPTS, CAPACITY }
+  data class HealthSnapshot(val health: String?, val receipts: Set<String>, val version: Long)
+
+  private fun parseReceipts(raw: String?): Set<String>? {
+    if (raw == null) return emptySet()
+    return try {
+      val a = JSONArray(raw); val out = LinkedHashSet<String>()
+      if (a.length() > RECEIPT_LIMIT) return null
+      for (i in 0 until a.length()) {
+        val v = a.get(i)
+        if (v !is String || v.isEmpty() || v.length > RECEIPT_LENGTH || !out.add(v)) return null
+      }
+      out
+    } catch (_: Exception) { null }
+  }
+
+  @Synchronized
+  fun healthSnapshot(): HealthSnapshot? {
+    if (file == null || !receiptsValid) return null
+    val receipts = parseReceipts(mem[RECEIPTS]) ?: return null
+    return HealthSnapshot(mem[C.K_HEALTH], receipts, version)
+  }
+
+  /** 未接线事务基础：调用方必须验证身份及 Library 内存状态；不提供 receipt 回收。 */
+  @Synchronized
+  fun commitHealthWithReceipt(expectedVersion: Long, health: String, receipt: String): HealthCommit {
+    if (file == null) return HealthCommit.NOT_INITIALIZED
+    if (!receiptsValid) return HealthCommit.INVALID_RECEIPTS
+    val receipts = parseReceipts(mem[RECEIPTS]) ?: return HealthCommit.INVALID_RECEIPTS
+    if (receipt.isEmpty() || receipt.length > RECEIPT_LENGTH) return HealthCommit.INVALID_RECEIPTS
+    if (receipt in receipts) return HealthCommit.ALREADY_APPLIED
+    if (receipts.size >= RECEIPT_LIMIT) return HealthCommit.CAPACITY
+    if (version != expectedVersion) return HealthCommit.CONFLICT
+    if (!canBump()) return HealthCommit.WRITE_FAILED
+    val old = HashMap(mem)
+    mem[C.K_HEALTH] = health
+    mem[RECEIPTS] = JSONArray(receipts + receipt).toString()
+    bumpVersion()
+    if (persist()) return HealthCommit.SUCCESS
+    mem.clear(); mem.putAll(old)
+    return HealthCommit.WRITE_FAILED
+  }
   // Non-zero random-ish epoch avoids ABA across init()/directory switches; monotonic thereafter.
   private var version = System.nanoTime().let { if (it == Long.MAX_VALUE) 1L else it }
   private fun canBump() = version != Long.MAX_VALUE
@@ -29,30 +76,32 @@ object Store {
     dir.mkdirs()
     file = File(dir, "store.json")
     mem.clear()
+    receiptsValid = true
     bumpVersion()
     val f = file ?: return
     if (!f.exists()) return
-    val o = runCatching { JSONObject(f.readText()) }.getOrNull() ?: return // 坏 JSON 视为空库（Web 同款容错）
+    val o = runCatching { JSONObject(f.readText()) }.getOrNull() ?: run { receiptsValid = false; mem[RECEIPTS] = "invalid"; return }
     for (k in o.keys()) {
-      if (k !in C.KEYS) continue // 白名单外键不载入
+      if (k !in C.KEYS && k != RECEIPTS) continue
       val v = o.opt(k)
-      if (v is String) mem[k] = v
+      if (v is String) mem[k] = v else if (k == RECEIPTS) { receiptsValid = false; mem[RECEIPTS] = "invalid" }
     }
+    if (parseReceipts(mem[RECEIPTS]) == null) receiptsValid = false
   }
 
   @Synchronized
   fun get(k: String): String? = mem[k]
 
   @Synchronized
-  fun set(k: String, v: String) { if (!canBump()) return; mem[k] = v; bumpVersion(); persist() }
+  fun set(k: String, v: String) { if (k == RECEIPTS || !canBump()) return; mem[k] = v; bumpVersion(); persist() }
 
   @Synchronized
-  fun remove(k: String) { if (!canBump()) return; mem.remove(k); bumpVersion(); persist() }
+  fun remove(k: String) { if (k == RECEIPTS || !canBump()) return; mem.remove(k); bumpVersion(); persist() }
 
   /** 单键 copy-on-write：不改变 set/remove 旧语义，调用方可观察真实落盘结果。 */
   @Synchronized
   fun setChecked(k: String, v: String): Boolean {
-    if (file == null || !canBump()) return false
+    if (k == RECEIPTS || file == null || !canBump()) return false
     val had = mem.containsKey(k); val old = mem[k]
     mem[k] = v
     bumpVersion()
@@ -63,7 +112,7 @@ object Store {
 
   @Synchronized
   fun removeChecked(k: String): Boolean {
-    if (file == null || !canBump()) return false
+    if (k == RECEIPTS || file == null || !canBump()) return false
     val had = mem.containsKey(k); val old = mem[k]
     mem.remove(k)
     bumpVersion()

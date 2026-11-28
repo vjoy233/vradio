@@ -11,7 +11,7 @@ const PROFILES = { // contract = L0 契约/资产门；unit = L1 纯函数/状�
   unit: ['backup-v3.js', 'contracts.js', 'assets.js', 'diagnostic.js', 'discovery.js', 'discovery-binding.js', 'freshness.js', 'freshness-wiring.js', 'listen-stats.js', 'logos.js', 'metadata.js',
     'meta-source.js', 'player.js', 'playlist-import.js', 'quality-explain.js', 'quality-store.js', 'source-lifecycle.js', 'sources.js', 'store.js', 'sync.js',
     'ui-data.js', 'ui-diagnostic.js', 'ui-hero.js', 'ui-maintenance.js', 'ui-phase.js', 'ui-scope.js'],
-  api: ['boot-lifecycle.js', 'listen-stats-api.js', 'myradio-api.js', 'np-proxy.js', 'proxy-security.js', 'quality.js', 'smoke.js', 'ssrf-mapped.js', 'station-api.js', 'sync-api.js', 'ui-diagnostic-api.js'], // L2 真服务矩阵（smoke 压轴不变）
+  api: ['boot-lifecycle.js', 'listen-stats-api.js', 'myradio-api.js', 'np-proxy.js', 'proxy-security.js', 'quality.js', 'smoke.js', 'ssrf-mapped.js', 'station-api.js', 'store-failclosed-api.js', 'sync-api.js', 'ui-diagnostic-api.js'], // L2 真服务矩阵（smoke 压轴不变）
 };
 const profile = process.argv[2] && !/^-/.test(process.argv[2]) ? process.argv[2] : '';
 

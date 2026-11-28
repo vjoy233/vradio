@@ -99,8 +99,6 @@ fun SettingsScreen(vm: AppVm, pad: PaddingValues) {
   val metadataUnbound by vm.metadataUnbound.collectAsState()
   val freshness by vm.freshnessPref.collectAsState()
   val confirm by vm.confirmReq.collectAsState()
-  val impHasQ by vm.impHasQuality.collectAsState()     // 备份含质量 sidecar（确认框复选显隐，B4 三轮 P1-3）
-  val impSc by vm.impSidecar.collectAsState()          // 用户勾选「恢复质量 sidecar」
   val expSc by vm.backupWithSidecar.collectAsState()   // 导出「包含本机 sidecar」
   val resume by vm.resumeOnStart.collectAsState()      // N4 启动续播（本地 pref，batch1）
   val offload by vm.audioOffload.collectAsState()      // E5 音频卸载（本地 pref，batch1）
@@ -131,10 +129,10 @@ fun SettingsScreen(vm: AppVm, pad: PaddingValues) {
   val impM3u = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { u -> if (u != null) vm.importFrom(u, AppVm.Imp.M3U) }
   val impCfg = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { u -> if (u != null) vm.importFrom(u, AppVm.Imp.CFG) }
 
-  confirm?.let { msg ->
-    ConfirmDialog("确认导入", msg, onOk = { vm.applyConfirmed() }, onDismiss = { vm.cancelConfirm() },
-      checkLabel = if (impHasQ) "恢复备份内 sidecar（质量/收听统计，将覆盖本机对应数据）" else null,   // 默认不勾 = 保留本机（AIbot 三轮 P1-3；B4 双 sidecar 一勾整体覆盖）
-      checked = impSc, onCheckedChange = { vm.impSidecar.value = it })
+  confirm?.let { request ->
+    ConfirmDialog("确认导入", request.message, onOk = { vm.applyConfirmed(request.id) }, onDismiss = { vm.cancelConfirm(request.id) },
+      checkLabel = if (request.hasSidecar) "恢复备份内 sidecar（质量/收听统计，将覆盖本机对应数据）" else null,
+      checked = request.sidecar, onCheckedChange = { vm.chooseImportSidecar(request.id, it) })
   }
 
   Column(Modifier.fillMaxSize().background(pal.bg).statusBarsPadding()) {

@@ -198,15 +198,23 @@ async function run(chromium) {
       finally { if (original) Object.defineProperty(window, 'crypto', original); else delete window.crypto; }
     });
     check('D0 无 crypto.subtle 的 HTTP 环境仍验证绑定', boundWithoutSubtle);
-    // 两种关闭路径均不改变主列表筛选；焦点归还另有待修问题。
+    // 两种关闭路径均不改变主列表筛选；入口在侧栏时关闭后焦点不得落隐藏节点。
     await page.click('#sideMore'); await page.click('#discBtn');
     await page.waitForSelector('#discBody .discrow');
     check('D-focus1 打开后焦点进入关闭按钮', await page.evaluate(() => document.activeElement === document.getElementById('discClose')));
     await page.click('#discClose');
     check('D-close1 关闭按钮保留筛选', await page.evaluate(p => document.getElementById('discovery').hidden && App.state.cat === p.cat && App.state.scope === p.scope && App.state.keyword === p.keyword, prior));
+    check('D-focus2 关闭后焦点回到可见稳定元素', await page.evaluate(() => {
+      const ae = document.activeElement;
+      return ae !== document.getElementById('discClose') && ae !== document.getElementById('discBtn') && (!ae || ae === document.body || ae.offsetParent !== null);
+    }));
     await page.click('#sideMore'); await page.click('#discBtn'); await page.waitForSelector('#discBody .discrow');
     await page.keyboard.press('Escape');
     check('D-close2 Escape 关闭并保留筛选', await page.evaluate(p => document.getElementById('discovery').hidden && App.state.cat === p.cat && App.state.scope === p.scope && App.state.keyword === p.keyword, prior));
+    check('D-focus3 Escape 后焦点回到可见稳定元素', await page.evaluate(() => {
+      const ae = document.activeElement;
+      return ae !== document.getElementById('discClose') && ae !== document.getElementById('discBtn') && (!ae || ae === document.body || ae.offsetParent !== null);
+    }));
     await page.click('#sideMore'); await page.click('#discBtn'); await page.waitForSelector('#discBody .discrow');
     const disc = await page.evaluate(() => {
       const k = document.querySelector('#discBody .discrow').dataset.k;

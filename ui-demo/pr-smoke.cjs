@@ -84,7 +84,7 @@ function wirePage(page, report, mark) {
   page.on('requestfailed', r => { // 本地失败入资源门；外部失败 = 阻断策略生效仅计数（route.abort 不在此处计数防双计）
     if (st.frozen) return;
     const u = r.url();
-    if (isLocal(u)) return resFail(u, r.request().method(), '(' + ((r.failure() && r.failure().errorText) || 'failed') + ')');
+    if (isLocal(u)) return resFail(u, r.method(), '(' + ((r.failure() && r.failure().errorText) || 'failed') + ')');
     report.blockedN++; if (report.blockedS.length < 20) report.blockedS.push(u.slice(0, 90));
   });
   page.route('**/*', route => { // 公网阻断（P2-2）：本地放行、目标流挂起（受控 connecting）、其余 abort

@@ -1141,7 +1141,9 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     withContext(Dispatchers.Main) { runCatching { lib.applyHealthToStations() }; stamp.value++ }
   }
 
+  @androidx.annotation.MainThread
   fun manualHealth() {                                                    // 手动全量入口（B5：移动数据先过策略门——允许直跑/需确认弹门/禁止明示）
+    check(android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
     if (manualRun.value) return
     when (val n = gate.enter(NetworkPolicy.Op.FULL_CHECK, NetGate.Act.FULL_CHECK, netRules())) {
       is NetGate.Next.Deny -> { healthResult.value = "未开始：${n.why}"; toast(healthResult.value) }
@@ -1150,7 +1152,9 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     }
   }
 
+  @androidx.annotation.MainThread
   private fun runManualHealth() {                                         // 手动全量（并发 5=Web runCheck 口径；反馈走设置页文案 + 完成 toast）
+    check(android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
     if (!healthOwnership.requestManual()) return
     manualRun.value = true
     healthAbort.set(false)
@@ -1188,7 +1192,9 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     }
   }
 
+  @androidx.annotation.MainThread
   fun cancelHealth() {                                                    // B3：取消手动体检（Web「取消体检」同款；在飞探测收尾后停，已确认标记保留）
+    check(android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
     if (!manualRun.value) return
     healthAbort.set(true)
     healthProg.value = "正在取消体检…（等在飞探测收尾）"
@@ -1209,7 +1215,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         if (manualRun.value) return@launch                                // 让位手动：已测结果由手动收尾统一落
         if (res.size >= 5 && res.all { it.second == Probe.NET }) return@launch
         val applied = withContext(Dispatchers.Main) {
-          if (manualRun.value) false else { applyMarks(res); true }
+          healthOwnership.applyBackground(owner) { applyMarks(res); true } ?: false
         }
         if (!applied) return@launch
         persistHealth()
@@ -1231,7 +1237,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         val res = probeAll(list, 2, "sync", { manualRun.value }) { _, _ -> }
         if (manualRun.value) return@launch
         if (res.size >= 5 && res.all { it.second == Probe.NET }) return@launch
-        val c = withContext(Dispatchers.Main) { if (manualRun.value) null else applyMarks(res) } ?: return@launch
+        val c = withContext(Dispatchers.Main) { healthOwnership.applyBackground(owner) { applyMarks(res) } } ?: return@launch
         persistHealth()
         toast("新增 ${list.size} 台体检完成，${c[1] + c[2]} 台无效已隐藏")
       } catch (e: kotlinx.coroutines.CancellationException) { throw e }

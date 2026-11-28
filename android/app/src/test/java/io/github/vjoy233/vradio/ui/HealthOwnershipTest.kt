@@ -36,6 +36,28 @@ class HealthOwnershipTest {
     assertNotNull(gate.tryBackground())
   }
 
+  @Test fun cancelledManualStillInvalidatesPausedBackgroundCommit() {
+    val gate = HealthOwnership()
+    val owner = gate.tryBackground()!!
+    val paused = CountDownLatch(1)
+    val resume = CountDownLatch(1)
+    val pool = Executors.newSingleThreadExecutor()
+    try {
+      val result = pool.submit<Boolean> {
+        paused.countDown(); check(resume.await(5, TimeUnit.SECONDS))
+        gate.applyBackground(owner) { true } ?: false
+      }
+      assertTrue(paused.await(5, TimeUnit.SECONDS))
+      assertTrue(gate.requestManual())
+      gate.finishManual(null)
+      resume.countDown()
+      assertFalse(result.get(5, TimeUnit.SECONDS))
+      assertNull(gate.tryBackground()) // 旧任务尚未释放所有权
+      gate.release(owner)
+      assertNotNull(gate.tryBackground())
+    } finally { resume.countDown(); pool.shutdownNow() }
+  }
+
   @Test fun simultaneousBackgroundClaimsHaveOneWinner() {
     val gate = HealthOwnership()
     val start = CountDownLatch(1)

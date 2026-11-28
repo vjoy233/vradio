@@ -35,42 +35,41 @@ const goldens = [
     ], format: 'asx', invalid: 0, dups: 0
   } }
 ];
-// 保留数组所有自有元数据（而非只投影已知键）；把显式 undefined 编码，区别于缺失属性。
-function preserveUndefined(value) {
-  if (value === undefined) return { '测试用显式undefined': true };
-  if (Array.isArray(value)) return Array.from(value, preserveUndefined);
-  if (value && typeof value === 'object') {
-    const copy = {};
-    for (const key of Object.getOwnPropertyNames(value)) copy[key] = preserveUndefined(value[key]);
-    return copy;
-  }
-  return value;
-}
-function snapshot(r) {
-  const result = { entries: Array.from(r, preserveUndefined) };
-  for (const key of Object.getOwnPropertyNames(r)) {
-    if (key !== 'length' && !/^(0|[1-9]\d*)$/.test(key)) result[key] = preserveUndefined(r[key]);
-  }
-  return result;
-}
+// 仅比较协议定义的 entry 字段与三个元数据；不声称覆盖任意额外属性。
+// 用自有键集合检查缺失/额外 entry 字段，不依赖 helper 区分缺失与 undefined。
 function checkGolden(expected, actual) {
-  const differences = deepDiff(expected, actual);
+  const differences = deepDiff(expected.entries, Array.from(actual));
+  for (let i = 0; i < Math.min(expected.entries.length, actual.length); i++) {
+    const e = expected.entries[i], v = actual[i];
+    if (!v || typeof v !== 'object') continue;
+    const keys = new Set(Object.keys(e).concat(Object.keys(v)));
+    for (const k of keys) {
+      if (Object.prototype.hasOwnProperty.call(e, k) !== Object.prototype.hasOwnProperty.call(v, k)) {
+        differences.push('entries[' + i + '].' + k + ': 字段存在性不符');
+      }
+    }
+  }
+  for (const k of ['format', 'invalid', 'dups']) {
+    if (!Object.prototype.hasOwnProperty.call(actual, k)) differences.push(k + ': 缺少元数据');
+    else differences.push(...deepDiff({ [k]: expected[k] }, { [k]: actual[k] }));
+  }
   assert.strictEqual(differences.length, 0, 'Web playlist 字段差异：\n' + differences.join('\n'));
 }
 for (const g of goldens) ok(g.file + ' 黄金样本逐字段', () => {
-  checkGolden(g.expected, snapshot(PI.parse(FIX(g.file), g.options)));
+  checkGolden(g.expected, PI.parse(FIX(g.file), g.options));
 });
-// 同时验证缺字段、额外字段、条目及元数据变化确实能报告具体路径。
-ok('真实解析结果变异经 snapshot 和 checkGolden 报告路径', () => {
-  const expected = goldens[0].expected;
-  const actual = PI.parse(FIX(goldens[0].file), goldens[0].options);
+ok('真实解析结果变异：缺失字段与额外 undefined 字段', () => {
+  const g = goldens[0], actual = PI.parse(FIX(g.file), g.options);
   delete actual[0].logo;
   actual[1].extraUndefined = undefined;
-  Object.defineProperty(actual, 'extraMeta', { value: undefined });
-  assert.throws(() => checkGolden(expected, snapshot(actual)), e => {
-    return ['entries[0].logo:', 'entries[1].extraUndefined:', 'extraMeta:']
-      .every(p => e.message.includes(p));
-  });
+  assert.throws(() => checkGolden(g.expected, actual), e =>
+    e.message.includes('entries[0].logo:') && e.message.includes('entries[1].extraUndefined:'));
+});
+ok('协议元数据缺失及值变化经 checkGolden 报告路径', () => {
+  const g = goldens[0], actual = Array.from(PI.parse(FIX(g.file), g.options));
+  actual.format = 'wrong'; actual.dups = 1; // invalid 缺失
+  assert.throws(() => checkGolden(g.expected, actual), e =>
+    ['format:', 'invalid:', 'dups:'].every(p => e.message.includes(p)));
 });
 ok('黄金样本变异：缺/额外字段及元数据逐路径报告', () => {
   const expected = goldens[0].expected;

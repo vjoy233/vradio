@@ -1208,7 +1208,10 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         val res = probeAll(scope, 2, "boot", { manualRun.value }) { _, _ -> }
         if (manualRun.value) return@launch                                // 让位手动：已测结果由手动收尾统一落
         if (res.size >= 5 && res.all { it.second == Probe.NET }) return@launch
-        withContext(Dispatchers.Main) { applyMarks(res) }
+        val applied = withContext(Dispatchers.Main) {
+          if (manualRun.value) false else { applyMarks(res); true }
+        }
+        if (!applied) return@launch
         persistHealth()
       } catch (e: kotlinx.coroutines.CancellationException) { throw e }
       catch (_: Exception) { } finally { healthOwnership.release(owner) }
@@ -1228,7 +1231,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         val res = probeAll(list, 2, "sync", { manualRun.value }) { _, _ -> }
         if (manualRun.value) return@launch
         if (res.size >= 5 && res.all { it.second == Probe.NET }) return@launch
-        val c = withContext(Dispatchers.Main) { applyMarks(res) }
+        val c = withContext(Dispatchers.Main) { if (manualRun.value) null else applyMarks(res) } ?: return@launch
         persistHealth()
         toast("新增 ${list.size} 台体检完成，${c[1] + c[2]} 台无效已隐藏")
       } catch (e: kotlinx.coroutines.CancellationException) { throw e }

@@ -13,28 +13,10 @@ const FIX = p => fs.readFileSync(path.join(__dirname, '..', 'contracts', 'fixtur
 let pass = 0, fail = 0;
 const ok = (name, fn) => { try { fn(); pass++; console.log('  ✓', name); } catch (e) { fail++; console.error('  ✗', name, '\n     ', String(e && e.message || e)); } };
 
-// 人工按 fixture 原文核对；不是从解析结果复制或生成的期望。
-const goldens = [
-  { file: 'playlist-pls.txt', options: { format: 'playlist-pls.txt' }, expected: {
-    entries: [
-      { name: '示例电台一', category: '自定义', url: 'https://music.example.test/live1.mp3', logo: '', externalId: '', sourceFormat: 'pls' },
-      { name: 'News Radio', category: '自定义', url: 'https://news.example.test/live2.aac', logo: '', externalId: '', sourceFormat: 'pls' },
-      { name: 'jazz.example.test', category: '自定义', url: 'https://jazz.example.test/stream', logo: '', externalId: '', sourceFormat: 'pls' }
-    ], format: 'pls', invalid: 0, dups: 0
-  } },
-  { file: 'playlist-xspf.xml', options: { baseUrl: 'https://base.example/dir/' }, expected: {
-    entries: [
-      { name: '示例电台一', category: '自定义', url: 'https://music.example.test/live1.mp3', logo: 'https://music.example.test/logo1.png', externalId: '', sourceFormat: 'xspf' },
-      { name: 'News Radio', category: '自定义', url: 'https://base.example/dir/live2.aac', logo: '', externalId: '', sourceFormat: 'xspf' }
-    ], format: 'xspf', invalid: 0, dups: 0
-  } },
-  { file: 'playlist-asx.xml', options: { format: 'list.asx' }, expected: {
-    entries: [
-      { name: '示例电台一', category: '自定义', url: 'https://music.example.test/live1.mp3', logo: '', externalId: '', sourceFormat: 'asx' },
-      { name: 'News Radio', category: '自定义', url: 'https://news.example.test/live2.aac', logo: '', externalId: '', sourceFormat: 'asx' }
-    ], format: 'asx', invalid: 0, dups: 0
-  } }
-];
+// 两端共享人工核对的协议期望与解析选项。
+const goldens = JSON.parse(FIX('playlist-expected.json')).cases.map(c => ({
+  file: c.file, options: { format: c.hint, baseUrl: c.baseUrl }, expected: c.out
+}));
 // 仅比较协议定义的 entry 字段与三个元数据；不声称覆盖任意额外属性。
 // 用自有键集合检查缺失/额外 entry 字段，不依赖 helper 区分缺失与 undefined。
 function checkGolden(expected, actual) {

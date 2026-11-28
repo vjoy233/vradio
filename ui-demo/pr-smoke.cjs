@@ -150,7 +150,11 @@ async function run(chromium) {
     const rc = await browser.newContext();
     const rp = await rc.newPage(); wirePage(rp, report, '[R] ');
     let syncPosts = 0; rp.on('request', r => { if (r.method() === 'POST' && new URL(r.url()).pathname === '/api/sync') syncPosts++; });
+    // 离线 freshness 门：同步拒绝/409 只验证客户端可观察协议，不触发真实上游。
+    await rp.route('**/api/sync', route => route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ ok: false, code: 'quality-gate', error: '离线质量门拒绝' }) }));
     await rp.goto(base); await waitBoot(rp);
+    await rp.evaluate(() => Sync.doSync());
+    check('R0 freshness deny/409 真实触发 POST 且显示拒绝、不宣称同步成功', syncPosts === 1 && await rp.evaluate(() => /质量门|离线|失败|拒绝/.test(document.getElementById('status').textContent) && !/同步完成|成功/.test(document.getElementById('status').textContent)));
     const factBefore = await (await rc.request.get(base + 'api/freshness')).json();
     await rp.waitForFunction(() => !document.getElementById('toast').hidden && document.getElementById('toast').textContent.includes('稍后'));
     const promptAt = await rp.evaluate(() => JSON.parse(Store.get('radio.syncFreshness')).lastPromptAt);

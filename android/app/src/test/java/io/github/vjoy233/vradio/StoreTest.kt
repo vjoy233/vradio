@@ -67,9 +67,14 @@ class StoreTest {
     assertEquals(Store.HealthCommit.ALREADY_APPLIED, Store.commitHealthWithReceipt(s.version, "bad", "batch-1/item-1"))
     assertFalse(Store.snapshot().keys.any { it.contains("Receipt") })
     val imported = Store.snapshotVersioned()
-    assertTrue(Store.applyAllCheckedIfVersion(mapOf(C.K_THEME to "light"), imported.version).ok)
+    assertTrue(Store.applyAllCheckedIfVersion(mapOf(C.K_THEME to "light", C.K_HEALTH to "older-health"), imported.version).ok)
     Store.init(dir)
-    assertTrue(Store.healthSnapshot()!!.receipts.contains("batch-1/item-1"))
+    val afterImport = Store.healthSnapshot()!!
+    assertEquals("older-health", afterImport.health)
+    assertTrue(afterImport.receipts.contains("batch-1/item-1"))
+    // 历史 receipt 只表示曾提交；导入后不能据此断言当前健康值仍含该结果。
+    assertEquals(Store.HealthCommit.ALREADY_APPLIED, Store.commitHealthWithReceipt(afterImport.version, "health-1", "batch-1/item-1"))
+    assertEquals("older-health", Store.get(C.K_HEALTH))
   }
 
   @Test fun healthReceiptCapacityFailsClosed() {

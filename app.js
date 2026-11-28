@@ -638,7 +638,7 @@ const App = {
     if (!c || typeof c !== 'object' || Array.isArray(c)) return {};
     return c.v === undefined ? Object.assign({}, c, { v: 2 }) : c;
   },
-  normStrMap(m, anyKey) { const o = {}; for (const [k, v] of Object.entries(m || {})) if (typeof v === 'string' && v.trim() && (anyKey || /^https?:\/\//.test(k))) o[k.trim()] = v.trim(); return o; },
+  normStrMap(m, anyKey) { const o = {}; for (const [k, v] of Object.entries(m || {})) if (typeof v === 'string' && v.trim() && (anyKey || (/^https?:\/\//.test(k) && k.length <= 512))) o[k.trim()] = v.trim(); return o; },
   saveCfg() { Store.set('radio.cfg', JSON.stringify(this.cfg)); },
 
   /* ---------- 列表解析：radio.txt（"分类,#genre#" 分节 + 名字,地址 行）与 m3u（#EXTINF + URL 行）双格式 ---------- */

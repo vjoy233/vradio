@@ -1434,17 +1434,23 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     }
   }
 
+  private suspend fun failImport(id: Long, message: String) {
+    withContext(Dispatchers.Main) {
+      if (importConfirm.fail(id) { toast(message) }) confirmReq.value = importConfirm.current
+    }
+  }
+
   fun importFrom(uri: Uri, kind: Imp) {
     val id = importConfirm.start()
     confirmReq.value = null
     viewModelScope.launch(Dispatchers.IO) {
-      val text = readUri(uri) ?: run { toast("读取文件失败"); return@launch }
+      val text = readUri(uri) ?: run { failImport(id, "读取文件失败"); return@launch }
       when (kind) {
         Imp.BACKUP -> {
           val p = runCatching { Backup.parseImport(text) }.getOrNull()
-          if (p == null) { toast("导入失败：不是 vradio 完整备份文件"); return@launch }
+          if (p == null) { failImport(id, "导入失败：不是 vradio 完整备份文件"); return@launch }
           val n = C.KEYS.count { p.data[it] != null }
-          if (n == 0) { toast("导入失败：备份中无有效数据"); return@launch }
+          if (n == 0) { failImport(id, "导入失败：备份中无有效数据"); return@launch }
           // sidecar 选择语义与 Web 对齐（AIbot 三轮 P1-3，B4 起双 sidecar 一个复选整体覆盖）：备份含质量/收听
           // 统计数据时确认框出复选（默认不勾=保留本机），勾选才经事务恢复（applyConfirmed 使用绑定的选择）
           val qn = p.quality?.optJSONObject("data")?.length() ?: 0
@@ -1460,7 +1466,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
                                                                           // 纯本地不联网探活）→ 四桶预览（新增/已知/重复/非法）→ 确认后已知台恢复收藏（N2 语义）+ 新台入 my-radio
           val r = runCatching { PlaylistParser.parse(text) }.getOrNull()
           if (r == null || (r.entries.isEmpty() && r.invalid == 0 && r.dups == 0)) {
-            toast("导入失败：未解析到任何电台（识别为 ${r?.format ?: "未知"} 格式）"); return@launch
+            failImport(id, "导入失败：未解析到任何电台（识别为 ${r?.format ?: "未知"} 格式）"); return@launch
           }
           // 分流纯决策不变异（AIbot P1-1：收藏变异必须后置到确认——B4 取消=零副作用；原顺序逐台全量收藏会把
           // 库外 URL 写进 favs，known 随之遮蔽一切、extra 恒空）；库内命中→favHits，库外台→extra 待确认入 my-radio
@@ -1478,7 +1484,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         }
         Imp.CFG -> {
           val j = runCatching { JSONObject(text) }.getOrNull()
-          if (j == null) { toast("导入失败：不是合法 JSON 文件"); return@launch }
+          if (j == null) { failImport(id, "导入失败：不是合法 JSON 文件"); return@launch }
           val c = runCatching { CfgCodec.parse(j.optJSONObject("cfg")?.toString()) }.getOrDefault(Cfg())
           val n = runCatching { CfgCodec.count(c) }.getOrDefault(0)
           publishImport(id, Imp.CFG to c, "导入将覆盖本地全部维护配置（新配置共 $n 项，含 ${c.cats.size} 个自建分类）。继续？")

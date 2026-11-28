@@ -34,6 +34,37 @@ class ImportConfirmTest {
     assertNull(c.current)
   }
 
+  @Test fun staleFailureCannotNotifyOrDisturbNewRequest() {
+    val c = ImportConfirm<String>()
+    val notices = mutableListOf<String>()
+    val a = c.start(); val b = c.start()
+    assertTrue(c.publish(b, "B", "确认B", true))
+    c.choose(b, true)
+    assertFalse(c.fail(a) { notices.add("旧失败") })
+    assertTrue(notices.isEmpty())
+    assertEquals("B", c.current?.payload)
+    assertTrue(c.current!!.sidecar)
+    assertEquals("B", c.consume(b)?.payload)
+    assertFalse(c.fail(b) { notices.add("消费后迟到") })
+    assertTrue(notices.isEmpty())
+  }
+
+  @Test fun currentFailureNotifiesOnceAndInvalidatesLateResults() {
+    val c = ImportConfirm<String>()
+    val notices = mutableListOf<String>()
+    val a = c.start()
+    assertTrue(c.fail(a) { notices.add("读取失败") })
+    assertEquals(listOf("读取失败"), notices)
+    assertFalse(c.fail(a) { notices.add("重复失败") })
+    assertFalse(c.publish(a, "A", "迟到"))
+    assertNull(c.current)
+    val b = c.start()
+    assertTrue(c.publish(b, "B", "确认B"))
+    c.cancel(b)
+    assertFalse(c.fail(b) { notices.add("取消后迟到") })
+    assertEquals(listOf("读取失败"), notices)
+  }
+
   @Test fun failedNewReadDoesNotReviveOldConfirmation() {
     val c = ImportConfirm<String>()
     val a = c.start(); c.publish(a, "A", "A")

@@ -13,6 +13,12 @@ internal class ImportConfirm<T> {
     current = Request(id, payload, message, hasSidecar)
     return true
   }
+  fun fail(id: Long, notify: () -> Unit): Boolean {
+    if (id != generation) return false
+    current = null; generation++
+    notify()
+    return true
+  }
   fun choose(id: Long, checked: Boolean) {
     val r = current ?: return
     if (r.id == id && r.hasSidecar) current = r.copy(sidecar = checked)

@@ -90,7 +90,7 @@ function buildDiscovery(input) {
     if (verified) g.recentlyVerified.push(Object.assign({ at: verified }, row));
     if (qa && explain.level !== 'unknown' && explain.action === 'retest') g.needsAttention.push(row);
     if (r.om) g.starter.push(row);                            // ④ 精选 = originMask（同名但 URL 由主列表提供的精选台也命中）
-    if (qa && qa.stability === 'good' && qa.directCount > 0) g.stable.push(row); // 稳定直连：good 且有直流源（B2 directCount 口径）
+    if (qa && explain.level === 'good' && qa.directCount > 0) g.stable.push(row); // 稳定直连：good 且有直流源（B2 directCount 口径）
     const at = metaSt ? firstSeen(metaSt[r.u0]) : 0;
     if (at) g.fresh.push(Object.assign({ at }, row));         // ⑤ 最近新增：radio-meta firstSeenAt（无 meta 该组为空）
     if (input.revives && input.revives.get(r.u0)) g.revived.push(row);               // ⑥ 最近恢复：只认明确转移记录

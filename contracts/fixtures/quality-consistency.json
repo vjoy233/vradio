@@ -1,0 +1,14 @@
+{
+  "now": 3000000000,
+  "cases": [
+    {"name":"no samples","ok":0,"fail":0,"at":0,"stability":"unknown","reason":"no_samples"},
+    {"name":"missing","ok":3,"fail":0,"at":0,"stability":"good","reason":"missing_observation"},
+    {"name":"future","ok":3,"fail":0,"at":3000000001,"stability":"good","reason":"future_observation"},
+    {"name":"insufficient","ok":2,"fail":0,"at":2999999999,"stability":"unknown","reason":"insufficient_samples"},
+    {"name":"fresh boundary","ok":3,"fail":0,"at":408000001,"stability":"good","reason":"stable"},
+    {"name":"stale boundary","ok":3,"fail":0,"at":408000000,"stability":"unknown","reason":"stale"},
+    {"name":"stale beyond","ok":3,"fail":0,"at":407999999,"stability":"unknown","reason":"stale"},
+    {"name":"fair","ok":2,"fail":1,"at":2999999999,"stability":"fair","reason":"variable"},
+    {"name":"poor","ok":1,"fail":2,"at":2999999999,"stability":"poor","reason":"unstable"}
+  ]
+}

@@ -1,6 +1,8 @@
 package io.github.vjoy233.vradio.discovery
 
 import io.github.vjoy233.vradio.model.Station
+import io.github.vjoy233.vradio.data.QualityStore
+import io.github.vjoy233.vradio.data.qExplain
 
 /* 本地发现页（B3-C，plan-expansion-r4 §7.3，纯 JVM）：本地字段派生视图——不联网、不改主列表排序、
    不创建第二套播放决策（点击统一走 AppVm 既有 play 通道）。分组规则与 Web App.buildDiscovery() 完全一致：
@@ -21,6 +23,9 @@ data class QInfo(
   val metadata: String = "none",
   val lastObservedAt: Long = 0L,
 )
+
+fun qualityInfo(summary: QualityStore.QualityAggregate, now: Long): QInfo =
+  QInfo(qExplain(summary, now).level, summary.directCount, summary.metadata, summary.lastObservedAt)
 
 data class DiscoveryInput(
   val stations: List<Station>,

@@ -15,12 +15,13 @@ const row = (i, extra = {}) => Object.assign({
   hidden: false, dead: false, om: 0,
 }, extra);
 const qa = (extra = {}) => Object.assign({ identityUrl: '', sourceCount: 1, directCount: 1, okCount: 10, failCount: 0,
-  lastOkAt: 0, lastFailAt: 0, lastPlaybackAt: 0, lastObservedAt: 0, avgLatencyMs: 100, disconnects: 0,
+  lastOkAt: 0, lastFailAt: 0, lastPlaybackAt: 0, lastObservedAt: 1000, avgLatencyMs: 100, disconnects: 0,
   metadata: 'icy', stability: 'unknown' }, extra);
 const run = (rows, opt = {}) => buildDiscovery(Object.assign({
   rows, quality: (u0) => opt.q && opt.q[u0] || null, meta: opt.meta || null,
   recents: opt.recents || [], revives: opt.revives || new Map(),
-  playingKey: opt.playingKey || '', connectingKey: opt.connectingKey || '',
+  playingKey: opt.playingKey || '', connectingKey: opt.connectingKey || '', now: 10000,
+  explain: require('../quality-store').qExplain,
 }, opt.input || {}));
 const names = g => g.map(r => r.n);
 

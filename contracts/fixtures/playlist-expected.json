@@ -1,0 +1,18 @@
+{
+  "description": "人工核对三份歌单样本的共同协议期望；XSPF 使用给定 baseUrl。",
+  "cases": [
+    {"name":"pls","file":"playlist-pls.txt","hint":"playlist-pls.txt","baseUrl":null,"out":{"format":"pls","invalid":0,"dups":0,"entries":[
+      {"name":"示例电台一","category":"自定义","url":"https://music.example.test/live1.mp3","logo":"","externalId":"","sourceFormat":"pls"},
+      {"name":"News Radio","category":"自定义","url":"https://news.example.test/live2.aac","logo":"","externalId":"","sourceFormat":"pls"},
+      {"name":"jazz.example.test","category":"自定义","url":"https://jazz.example.test/stream","logo":"","externalId":"","sourceFormat":"pls"}
+    ]}},
+    {"name":"xspf","file":"playlist-xspf.xml","hint":null,"baseUrl":"https://base.example/dir/","out":{"format":"xspf","invalid":0,"dups":0,"entries":[
+      {"name":"示例电台一","category":"自定义","url":"https://music.example.test/live1.mp3","logo":"https://music.example.test/logo1.png","externalId":"","sourceFormat":"xspf"},
+      {"name":"News Radio","category":"自定义","url":"https://base.example/dir/live2.aac","logo":"","externalId":"","sourceFormat":"xspf"}
+    ]}},
+    {"name":"asx","file":"playlist-asx.xml","hint":"list.asx","baseUrl":null,"out":{"format":"asx","invalid":0,"dups":0,"entries":[
+      {"name":"示例电台一","category":"自定义","url":"https://music.example.test/live1.mp3","logo":"","externalId":"","sourceFormat":"asx"},
+      {"name":"News Radio","category":"自定义","url":"https://news.example.test/live2.aac","logo":"","externalId":"","sourceFormat":"asx"}
+    ]}}
+  ]
+}

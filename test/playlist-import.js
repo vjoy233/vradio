@@ -1,25 +1,70 @@
 // 歌单多格式导入解析测试（B4，plan-expansion-r4 §8.4）：contracts/fixtures 三黄金样本 + 自构边界样本。
 // 安全断言（§13.4）：解析全程零网络——全局 fetch stub 成抛错，任何意外请求当场红（模块本就不含任何网络代码，
 // stub 是回归护栏）；XXE 样本断言不抛异常、实体不展开（Node 手写扫描器路径；浏览器 DOMParser 路径天然不取外部实体）。
-// Web↔Android 一致性：本文件与 android PlaylistParserTest.kt 对同批样本断言同款期望（条目集逐字段一致）。
+// 本文件只验证 Web；Android 字段路径报告不在本次范围。
 const assert = require('assert'), fs = require('fs'), path = require('path');
 const PI = require('../playlist-import.js');
+const { deepDiff } = require('./harness/deep-diff.js');
 
 // 零网络护栏：解析路径不该碰任何网络 API（stub 成抛错，意外调用立刻炸）
 global.fetch = () => { throw new Error('解析器发出了网络请求！'); };
 
 const FIX = p => fs.readFileSync(path.join(__dirname, '..', 'contracts', 'fixtures', p), 'utf8');
 let pass = 0, fail = 0;
-const ok = (name, fn) => { try { fn(); pass++; console.log('  ✓', name); } catch (e) { fail++; console.error('  ✗', name, '\n     ', String(e && e.message || e).split('\n')[0]); } };
+const ok = (name, fn) => { try { fn(); pass++; console.log('  ✓', name); } catch (e) { fail++; console.error('  ✗', name, '\n     ', String(e && e.message || e)); } };
 
-ok('PLS 黄金样本：3 条、缺 Title 用 URL host、format=pls', () => {
-  const r = PI.parse(FIX('playlist-pls.txt'), { format: 'playlist-pls.txt' });
-  assert.strictEqual(r.format, 'pls');
-  assert.strictEqual(r.length, 3);
-  assert.deepStrictEqual(r[0], { name: '示例电台一', category: '自定义', url: 'https://music.example.test/live1.mp3', logo: '', externalId: '', sourceFormat: 'pls' });
-  assert.strictEqual(r[1].name, 'News Radio');
-  assert.strictEqual(r[2].name, 'jazz.example.test'); // File3 无 Title3 → host 兜底
-  assert.strictEqual(r.invalid, 0); assert.strictEqual(r.dups, 0);
+// 两端共享人工核对的协议期望与解析选项。
+const goldens = JSON.parse(FIX('playlist-expected.json')).cases.map(c => ({
+  file: c.file, options: { format: c.hint, baseUrl: c.baseUrl }, expected: c.out
+}));
+// 仅比较协议定义的 entry 字段与三个元数据；不声称覆盖任意额外属性。
+// 用自有键集合检查缺失/额外 entry 字段，不依赖 helper 区分缺失与 undefined。
+function checkGolden(expected, actual) {
+  const differences = deepDiff(expected.entries, Array.from(actual));
+  for (let i = 0; i < Math.min(expected.entries.length, actual.length); i++) {
+    const e = expected.entries[i], v = actual[i];
+    if (!v || typeof v !== 'object') continue;
+    const keys = new Set(Object.keys(e).concat(Object.keys(v)));
+    for (const k of keys) {
+      if (Object.prototype.hasOwnProperty.call(e, k) !== Object.prototype.hasOwnProperty.call(v, k)) {
+        differences.push('entries[' + i + '].' + k + ': 字段存在性不符');
+      }
+    }
+  }
+  for (const k of ['format', 'invalid', 'dups']) {
+    if (!Object.prototype.hasOwnProperty.call(actual, k)) differences.push(k + ': 缺少元数据');
+    else differences.push(...deepDiff({ [k]: expected[k] }, { [k]: actual[k] }));
+  }
+  assert.strictEqual(differences.length, 0, 'Web playlist 字段差异：\n' + differences.join('\n'));
+}
+for (const g of goldens) ok(g.file + ' 黄金样本逐字段', () => {
+  checkGolden(g.expected, PI.parse(FIX(g.file), g.options));
+});
+ok('真实解析结果变异：缺失字段与额外 undefined 字段', () => {
+  const g = goldens[0], actual = PI.parse(FIX(g.file), g.options);
+  delete actual[0].logo;
+  actual[1].extraUndefined = undefined;
+  assert.throws(() => checkGolden(g.expected, actual), e =>
+    e.message.includes('entries[0].logo:') && e.message.includes('entries[1].extraUndefined:'));
+});
+ok('协议元数据缺失及值变化经 checkGolden 报告路径', () => {
+  const g = goldens[0], actual = Array.from(PI.parse(FIX(g.file), g.options));
+  actual.format = 'wrong'; actual.dups = 1; // invalid 缺失
+  assert.throws(() => checkGolden(g.expected, actual), e =>
+    ['format:', 'invalid:', 'dups:'].every(p => e.message.includes(p)));
+});
+ok('黄金样本变异：缺/额外字段及元数据逐路径报告', () => {
+  const expected = goldens[0].expected;
+  const mutated = JSON.parse(JSON.stringify(expected));
+  delete mutated.entries[0].logo;
+  mutated.entries[1].unexpected = '额外';
+  mutated.entries[2].url = 'https://wrong.example/';
+  mutated.format = 'wrong'; mutated.invalid = 1; mutated.dups = 1;
+  const differences = deepDiff(expected, mutated);
+  for (const key of ['entries[0].logo', 'entries[1].unexpected', 'entries[2].url', 'format', 'invalid', 'dups']) {
+    assert.ok(differences.some(d => d.startsWith(key + ':')), key + ' 缺少差异路径');
+  }
+  assert.strictEqual(differences.length, 6);
 });
 ok('PLS 键大小写不敏感 + NumberOfEntries 只作提示', () => {
   const r = PI.parse('NumberOfEntries=1\nFILE1=https://a.example/1\ntItLe1=台一\n', { format: 'x.pls' });
@@ -27,14 +72,6 @@ ok('PLS 键大小写不敏感 + NumberOfEntries 只作提示', () => {
   assert.strictEqual(r[0].name, '台一'); // NumberOfEntries=1 恰好一致；再验错标不裁条目
   const r2 = PI.parse('NumberOfEntries=5\nFile1=https://a.example/1\n', { format: 'x.pls' });
   assert.strictEqual(r2.length, 1); // 错标 5 不产出幻影条目
-});
-ok('XSPF 黄金样本：相对 URL 按 baseUrl 解析、image→logo、identifier→externalId', () => {
-  const r = PI.parse(FIX('playlist-xspf.xml'), { baseUrl: 'https://base.example/dir/' });
-  assert.strictEqual(r.format, 'xspf');
-  assert.strictEqual(r.length, 2);
-  assert.strictEqual(r[0].logo, 'https://music.example.test/logo1.png');
-  assert.strictEqual(r[1].url, 'https://base.example/dir/live2.aac'); // 相对 live2.aac
-  assert.strictEqual(r[1].name, 'News Radio');
 });
 ok('XSPF 相对 URL 无 baseUrl → 计入非法桶', () => {
   const r = PI.parse(FIX('playlist-xspf.xml'));
@@ -45,12 +82,7 @@ ok('XSPF 命名空间不敏感（localName 判定）', () => {
   const r = PI.parse(x, { format: 'a.xspf' });
   assert.strictEqual(r.length, 1); assert.strictEqual(r[0].name, '台');
 });
-ok('ASX 黄金样本：ENTRY/TITLE/REF@HREF 大小写兼容、format=asx', () => {
-  const r = PI.parse(FIX('playlist-asx.xml'), { format: 'list.asx' });
-  assert.strictEqual(r.format, 'asx');
-  assert.strictEqual(r.length, 2);
-  assert.strictEqual(r[0].name, '示例电台一');
-  assert.strictEqual(r[0].url, 'https://music.example.test/live1.mp3');
+ok('ASX 小写标签兼容', () => {
   const low = PI.parse('<asx version="3.0"><entry><title>小写台</title><ref href="https://low.example/x" /></entry></asx>');
   assert.strictEqual(low.format, 'asx'); assert.strictEqual(low[0].name, '小写台');
 });

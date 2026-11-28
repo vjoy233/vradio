@@ -70,11 +70,11 @@ const failShot = (page, name) => { // 失败现场截图（page 可能未创建�
    favicon.ico（浏览器默认请求）。核心脚本/样式/业务 API（/api/* 等）失败必 FAIL。返回句柄 st：
    hangOn/hangSet 控制目标流挂起（受控 connecting），hung/hungUrl 记挂起请求，frozen 冻结防收尾期误记 */
 function wirePage(page, report, mark) {
-  const st = { hangOn: false, hangSet: [], hung: 0, hungUrl: '', frozen: false };
+  const st = { hangOn: false, hangSet: [], hung: 0, hungUrl: '', frozen: false, allowResponse: null };
   const resKey = u => { try { const x = new URL(u); return x.pathname + x.search; } catch (_) { return u; } };
   const resAllow = k => k.indexOf('/proxy?url=') === 0 || /^\/my-radio\.txt(\?|$)/.test(k) || /^\/favicon\.ico(\?|$)/.test(k);
   const seen = new Set();
-  const resFail = (url, why) => { if (st.frozen) return; const k = resKey(url); if (resAllow(k)) return;
+  const resFail = (url, why) => { if (st.frozen) return; const k = resKey(url); if (resAllow(k) || (st.allowResponse && st.allowResponse(k, why))) return;
     const key = k + '|' + why; if (seen.has(key)) return; seen.add(key); report.resourceErrors.push(k + ' ' + why); };
   page.on('pageerror', e => { if (!st.frozen) report.errors.push(mark + 'pageerror:' + e.message); });
   page.on('console', m => { if (m.type() !== 'error' || st.frozen) return;
@@ -148,13 +148,16 @@ async function run(chromium) {
     // 独立上下文走真实 Store/服务端；事实接口只读取，不触发实际联网同步。
     console.log('[R] 新鲜度提醒与持久化');
     const rc = await browser.newContext();
-    const rp = await rc.newPage(); wirePage(rp, report, '[R] ');
+    const rp = await rc.newPage();
     let syncPosts = 0; rp.on('request', r => { if (r.method() === 'POST' && new URL(r.url()).pathname === '/api/sync') syncPosts++; });
-    // 离线 freshness 门：同步拒绝/409 只验证客户端可观察协议，不触发真实上游。
+    // 离线 freshness 门：同步拒绝/409 只验证客户端可观察协议，不触发真实上游；预期 409 豁免资源门。
+    const rSt = wirePage(rp, report, '[R] '); rSt.allowResponse = (k, why) => k === '/api/sync' && /→ 409/.test(why);
     await rp.route('**/api/sync', route => route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ ok: false, code: 'quality-gate', error: '离线质量门拒绝' }) }));
     await rp.goto(base); await waitBoot(rp);
     await rp.evaluate(() => Sync.doSync());
     check('R0 freshness deny/409 真实触发 POST 且显示拒绝、不宣称同步成功', syncPosts === 1 && await rp.evaluate(() => /质量门|离线|失败|拒绝/.test(document.getElementById('status').textContent) && !/同步完成|成功/.test(document.getElementById('status').textContent)));
+    // R0 计数仅用于本断言；后续 R2 验证“稍后”不产生新增 POST。
+    syncPosts = 0; report.resourceErrors = report.resourceErrors.filter(x => !x.startsWith('/api/sync '));
     const factBefore = await (await rc.request.get(base + 'api/freshness')).json();
     await rp.waitForFunction(() => !document.getElementById('toast').hidden && document.getElementById('toast').textContent.includes('稍后'));
     const promptAt = await rp.evaluate(() => JSON.parse(Store.get('radio.syncFreshness')).lastPromptAt);

@@ -4,6 +4,12 @@
 // 换歌旧曲入史、切台/刷新 reset 清空。零依赖离线，npm test 随跑。
 const assert = require('assert'), fs = require('fs'), path = require('path');
 const Metadata = require(path.join(__dirname, '..', 'metadata.js'));
+const { deepDiff } = require('./harness/deep-diff');
+
+function assertGolden(name, expected, actual) {
+  const diff = deepDiff(expected, actual);
+  assert.strictEqual(diff.length, 0, `case「${name}」: ${diff.join('; ')}`);
+}
 
 let pass = 0, fail = 0;
 const ok = (name, fn) => { try { fn(); pass++; console.log('  ✓', name); }
@@ -15,8 +21,15 @@ ok('黄金样本：normalizeMetadata 全部 case 逐字段一致', () => {
   assert.ok(Array.isArray(golden.cases) && golden.cases.length >= 6, '样本数量');
   for (const c of golden.cases) {
     const got = Metadata.normalizeMetadata(c.in.raw, c.in.ctx);
-    assert.deepStrictEqual(got, c.out, `case「${c.name}」`);
+    assertGolden(c.name, c.out, got);
   }
+});
+
+ok('黄金样本差异报告：嵌套字段点名样本及完整路径', () => {
+  assert.throws(() => assertGolden('故意差异', { nested: { items: [{ title: '期望' }] } },
+    { nested: { items: [{ title: '实际' }] } }), e =>
+    e.message.includes('故意差异') && e.message.includes('nested.items[0].title') &&
+    e.message.includes('期望') && e.message.includes('实际'));
 });
 
 /* ---------- ② parseIcyTitle 细分口径 ---------- */

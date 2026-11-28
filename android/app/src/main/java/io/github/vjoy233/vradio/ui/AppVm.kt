@@ -1211,7 +1211,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
           }.getOrNull()
         } ?: return@launch
         if (scope.isEmpty()) return@launch
-        val res = probeAll(scope, 2, "boot", { manualRun.value }) { _, _ -> }
+        val res = probeAll(scope, 2, "boot", { !healthOwnership.backgroundIsValid(owner) }) { _, _ -> }
         if (manualRun.value) return@launch                                // 让位手动：已测结果由手动收尾统一落
         if (res.size >= 5 && res.all { it.second == Probe.NET }) return@launch
         val applied = withContext(Dispatchers.Main) {
@@ -1234,7 +1234,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         }
         if (list.isEmpty()) return@launch
         toast("后台体检新增电台 ${list.size} 台…")
-        val res = probeAll(list, 2, "sync", { manualRun.value }) { _, _ -> }
+        val res = probeAll(list, 2, "sync", { !healthOwnership.backgroundIsValid(owner) }) { _, _ -> }
         if (manualRun.value) return@launch
         if (res.size >= 5 && res.all { it.second == Probe.NET }) return@launch
         val c = withContext(Dispatchers.Main) { healthOwnership.applyBackground(owner) { applyMarks(res) } } ?: return@launch

@@ -50,6 +50,7 @@ class HealthOwnershipTest {
       assertTrue(paused.await(5, TimeUnit.SECONDS))
       assertTrue(gate.requestManual())
       gate.finishManual(null)
+      assertFalse(gate.backgroundIsValid(owner)) // stop 在取消后仍停止取新任务
       resume.countDown()
       assertFalse(result.get(5, TimeUnit.SECONDS))
       assertNull(gate.tryBackground()) // 旧任务尚未释放所有权

@@ -17,6 +17,8 @@ internal class HealthOwnership(private val busy: (Boolean) -> Unit = {}) {
     backgroundValid = true
     return Any().also { owner = it; busy(true) }
   }
+  @Synchronized fun backgroundIsValid(token: Any): Boolean = owner === token && backgroundValid
+
   /** 线性化点：检查与内存标记应用不可与手动请求交错。调用者必须在 Main。 */
   @Synchronized fun <T> applyBackground(token: Any, apply: () -> T): T? {
     if (owner !== token || !backgroundValid) return null

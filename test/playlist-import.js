@@ -35,8 +35,24 @@ const goldens = [
     ], format: 'asx', invalid: 0, dups: 0
   } }
 ];
-// parse 返回带元数据属性的数组：显式收集两部分，避免数组比较忽略附加属性。
-function snapshot(r) { return { entries: Array.from(r), format: r.format, invalid: r.invalid, dups: r.dups }; }
+// 保留数组所有自有元数据（而非只投影已知键）；把显式 undefined 编码，区别于缺失属性。
+function preserveUndefined(value) {
+  if (value === undefined) return { '测试用显式undefined': true };
+  if (Array.isArray(value)) return Array.from(value, preserveUndefined);
+  if (value && typeof value === 'object') {
+    const copy = {};
+    for (const key of Object.getOwnPropertyNames(value)) copy[key] = preserveUndefined(value[key]);
+    return copy;
+  }
+  return value;
+}
+function snapshot(r) {
+  const result = { entries: Array.from(r, preserveUndefined) };
+  for (const key of Object.getOwnPropertyNames(r)) {
+    if (key !== 'length' && !/^(0|[1-9]\d*)$/.test(key)) result[key] = preserveUndefined(r[key]);
+  }
+  return result;
+}
 function checkGolden(expected, actual) {
   const differences = deepDiff(expected, actual);
   assert.strictEqual(differences.length, 0, 'Web playlist 字段差异：\n' + differences.join('\n'));
@@ -45,6 +61,17 @@ for (const g of goldens) ok(g.file + ' 黄金样本逐字段', () => {
   checkGolden(g.expected, snapshot(PI.parse(FIX(g.file), g.options)));
 });
 // 同时验证缺字段、额外字段、条目及元数据变化确实能报告具体路径。
+ok('真实解析结果变异经 snapshot 和 checkGolden 报告路径', () => {
+  const expected = goldens[0].expected;
+  const actual = PI.parse(FIX(goldens[0].file), goldens[0].options);
+  delete actual[0].logo;
+  actual[1].extraUndefined = undefined;
+  Object.defineProperty(actual, 'extraMeta', { value: undefined });
+  assert.throws(() => checkGolden(expected, snapshot(actual)), e => {
+    return ['entries[0].logo:', 'entries[1].extraUndefined:', 'extraMeta:']
+      .every(p => e.message.includes(p));
+  });
+});
 ok('黄金样本变异：缺/额外字段及元数据逐路径报告', () => {
   const expected = goldens[0].expected;
   const mutated = JSON.parse(JSON.stringify(expected));

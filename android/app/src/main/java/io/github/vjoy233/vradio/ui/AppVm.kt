@@ -248,13 +248,11 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     }
   }
   val addBusy = MutableStateFlow(false); val addMsg = MutableStateFlow("")
-  val confirmReq = MutableStateFlow<String?>(null)           // 导入覆盖确认门槛
-  val impHasQuality = MutableStateFlow(false)                // 待确认备份含质量 sidecar（确认框显隐复选，AIbot 三轮 P1-3）
-  val impSidecar = MutableStateFlow(false)                   // 用户勾选「恢复质量 sidecar」（默认不勾 = 保留本机，与 Web 同语义）
+  private val importConfirm = ImportConfirm<Pair<Imp, Any?>>()
+  internal val confirmReq = MutableStateFlow<ImportConfirm.Request<Pair<Imp, Any?>>?>(null)
   val backupWithSidecar = MutableStateFlow(false)            // 导出「包含本机 sidecar」复选（默认关，与 Web mSidecar 同口径）
   val manualRun = MutableStateFlow(false)                     // 手动体检在跑（静默版让位标志；StateFlow 供设置页「取消体检」按钮态，B3）
   private val healthAbort = AtomicBoolean(false)              // 手动体检取消（Web sync.js this.abort 同款：已确认的标记保留）
-  private var pendingImp: Pair<Imp, Any?>? = null
   private var assetsStamp = ""
 
   /* —— batch1（2026-10-18 拍板）新增态：N4/E5 本地开关（Prefs，非 radio.* 契约）+ E3/E4 入口 —— */
@@ -1430,7 +1428,15 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     Exp.SONGS -> "vradio-songs.txt"; Exp.CFG -> "vradio-config.json"
   }
 
+  private suspend fun publishImport(id: Long, payload: Pair<Imp, Any?>, message: String, hasSidecar: Boolean = false) {
+    withContext(Dispatchers.Main) {
+      if (importConfirm.publish(id, payload, message, hasSidecar)) confirmReq.value = importConfirm.current
+    }
+  }
+
   fun importFrom(uri: Uri, kind: Imp) {
+    val id = importConfirm.start()
+    confirmReq.value = null
     viewModelScope.launch(Dispatchers.IO) {
       val text = readUri(uri) ?: run { toast("读取文件失败"); return@launch }
       when (kind) {
@@ -1439,19 +1445,16 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
           if (p == null) { toast("导入失败：不是 vradio 完整备份文件"); return@launch }
           val n = C.KEYS.count { p.data[it] != null }
           if (n == 0) { toast("导入失败：备份中无有效数据"); return@launch }
-          pendingImp = Imp.BACKUP to p
           // sidecar 选择语义与 Web 对齐（AIbot 三轮 P1-3，B4 起双 sidecar 一个复选整体覆盖）：备份含质量/收听
-          // 统计数据时确认框出复选（默认不勾=保留本机），勾选才经事务恢复（下方 applyConfirmed 按 impSidecar 传参）
+          // 统计数据时确认框出复选（默认不勾=保留本机），勾选才经事务恢复（applyConfirmed 使用绑定的选择）
           val qn = p.quality?.optJSONObject("data")?.length() ?: 0
           val ln = p.listenStats?.optJSONObject("data")?.length() ?: 0
-          impHasQuality.value = qn > 0 || ln > 0
-          impSidecar.value = false
           val scNote = listOfNotNull(
             if (qn > 0) "$qn 台质量数据" else null,
             if (ln > 0) "$ln 天收听统计" else null,
           ).takeIf { it.isNotEmpty() }?.joinToString("、")
-          confirmReq.value = "导入将覆盖本地全部数据（备份含 $n 个数据项：收藏/维护配置/健康标记/歌曲历史全部替换" +
-            (if (scNote != null) "；备份含 $scNote，勾选下方复选框才会覆盖本机对应数据" else "") + "）。继续？"
+          publishImport(id, Imp.BACKUP to p, "导入将覆盖本地全部数据（备份含 $n 个数据项：收藏/维护配置/健康标记/歌曲历史全部替换" +
+            (if (scNote != null) "；备份含 $scNote，勾选下方复选框才会覆盖本机对应数据" else "") + "）。继续？", qn > 0 || ln > 0)
         }
         Imp.M3U -> {                                                      // B4 歌单导入：m3u/pls/xspf/asx/纯 URL 统一解析（PlaylistParser，
                                                                           // 纯本地不联网探活）→ 四桶预览（新增/已知/重复/非法）→ 确认后已知台恢复收藏（N2 语义）+ 新台入 my-radio
@@ -1467,19 +1470,18 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
               .getOrDefault(emptyList<Station>() to emptyList())
           }
           val known = r.entries.size - extra.size
-          pendingImp = Imp.M3U to PlaylistImp(hits, extra, r.dups, r.invalid, r.format)
-          confirmReq.value = "识别为 ${r.format} 格式，共 ${r.entries.size} 条：新增 ${extra.size}、已知 $known（将恢复收藏）、" +
+          publishImport(id, Imp.M3U to PlaylistImp(hits, extra, r.dups, r.invalid, r.format),
+            "识别为 ${r.format} 格式，共 ${r.entries.size} 条：新增 ${extra.size}、已知 $known（将恢复收藏）、" +
             "文件内重复 ${r.dups}、地址不合法 ${r.invalid}。\n" +
             (if (extra.isEmpty()) "没有新电台需要写入。是否恢复已知电台的收藏？"
-             else "新增电台将写入个人列表 my-radio.txt（自带查重/清洗/封顶），导入后建议跑一次「体检」。继续？")
+             else "新增电台将写入个人列表 my-radio.txt（自带查重/清洗/封顶），导入后建议跑一次「体检」。继续？"))
         }
         Imp.CFG -> {
           val j = runCatching { JSONObject(text) }.getOrNull()
           if (j == null) { toast("导入失败：不是合法 JSON 文件"); return@launch }
           val c = runCatching { CfgCodec.parse(j.optJSONObject("cfg")?.toString()) }.getOrDefault(Cfg())
           val n = runCatching { CfgCodec.count(c) }.getOrDefault(0)
-          pendingImp = Imp.CFG to c
-          confirmReq.value = "导入将覆盖本地全部维护配置（新配置共 $n 项，含 ${c.cats.size} 个自建分类）。继续？"
+          publishImport(id, Imp.CFG to c, "导入将覆盖本地全部维护配置（新配置共 $n 项，含 ${c.cats.size} 个自建分类）。继续？")
         }
       }
     }
@@ -1498,13 +1500,14 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     }
   }.getOrNull()
 
-  fun cancelConfirm() { confirmReq.value = null; pendingImp = null; impHasQuality.value = false; impSidecar.value = false }
+  fun cancelConfirm(id: Long) { importConfirm.cancel(id); confirmReq.value = importConfirm.current }
+  fun chooseImportSidecar(id: Long, checked: Boolean) { importConfirm.choose(id, checked); confirmReq.value = importConfirm.current }
 
-  fun applyConfirmed() {
-    val p = pendingImp ?: return
-    val sidecarChoice = impSidecar.value // 同步捕获（下方立即复位，协程内只用局部值）
-    confirmReq.value = null; pendingImp = null
-    impHasQuality.value = false; impSidecar.value = false
+  fun applyConfirmed(id: Long) {
+    val request = importConfirm.consume(id) ?: return
+    val p = request.payload
+    val sidecarChoice = request.sidecar
+    confirmReq.value = importConfirm.current
     viewModelScope.launch {
       try {
         when (p.first) {

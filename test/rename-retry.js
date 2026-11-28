@@ -90,23 +90,25 @@ async function bootInject(inject) {
   });
 
   console.log('[3] 目录替身真 fs 失败 + 队列前进（②④真盘面）');
-  await ok('目录替身：rename 必败 → ok:false + 无 tmp 残留 + rev 不推进', async () => {
+  await ok('目录替身：读盘失败关闭 + 恢复后队列续发', async () => {
     const h = await boot({ isolated: true }); // api-client isolated：临时应用根，宿主零接触
     try {
       fs.mkdirSync(path.join(h.root, 'data'));
-      fs.mkdirSync(path.join(h.root, 'data', 'store.json')); // 目标换目录 → rename 文件→目录必败（Win EPERM/Linux EISDIR）
+      fs.mkdirSync(path.join(h.root, 'data', 'store.json')); // 目标换目录 → 首次读取失败（Win/Linux）
       const w = JSON.parse((await h.req('POST', '/api/store', POST_HDR, JSON.stringify({ data: { 'radio.vol': '0.5' } }))).body);
       assert.strictEqual(w.ok, false);
+      assert.strictEqual(w.code, 'store-read-failed');
       assert.deepStrictEqual(tmpOrphans(h.root), [], '真 fs 失败路径同样回收 tmp');
-      const g = JSON.parse((await h.req('GET', '/api/store')).body);
-      assert.strictEqual(g.rev, 0); // 目录读不出旧盘 = 空库，失败不推进
-      // ④ 队列继续前进：撤目录写真文件，下一请求正常处理
+      const gr = await h.req('GET', '/api/store');
+      assert.strictEqual(gr.status, 500);
+      const g = JSON.parse(gr.body);
+      assert.strictEqual(g.code, 'store-read-failed');
       fs.rmdirSync(path.join(h.root, 'data', 'store.json'));
       fs.writeFileSync(path.join(h.root, 'data', 'store.json'), OLD_BYTES);
       const w2 = JSON.parse((await h.req('POST', '/api/store', POST_HDR, JSON.stringify({ data: { 'radio.vol': '0.5' } }))).body);
       assert.strictEqual(w2.ok, true);
       const g2 = JSON.parse((await h.req('GET', '/api/store')).body);
-      assert.strictEqual(g2.rev, 1); // 内存 rev 0 + 1（服务端内存态权威；断言点 = 队列没被失败毒死）
+      assert.strictEqual(g2.rev, 8); // 恢复后读取旧 rev 7 并续发
       assert.strictEqual(g2.data['radio.vol'], '0.5');
     } finally { await h.close(); }
   });

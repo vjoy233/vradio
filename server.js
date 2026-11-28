@@ -152,18 +152,39 @@ const STORE_KEYS = new Set(['radio.favs', 'radio.recents', 'radio.health', 'radi
   'radio.vol', 'radio.view', 'radio.showdead', 'radio.theme', 'radio.baseline', 'radio.baselineProg', 'radio.syncFreshness']); // ⚠ 与 store.js KEYS 同步扩
 const STORE_MAX = 2 * 1024 * 1024, KEY_MAX = 512 * 1024;
 const KEY_MAXS = { 'radio.health': 1536 * 1024 }; // 分键上限（AIbot P2-3）：健康标记 FIFO 2000 条 × 多源 URL 快照最坏 ~0.9MB，512KB 会静默丢键——对账再把镜像一起抹掉，僵尸台问题换个形式回归
-let storeRev = 0, storeCache = null, storeQ = Promise.resolve();
-function storeRead() { // 懒加载：首访问读盘；坏文件视为空库（rev=0，前端镜像会重建推送）
-  if (!storeCache) {
-    try { storeCache = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8')); } catch (_) { storeCache = null; }
-    if (!storeCache || typeof storeCache !== 'object' || typeof storeCache.data !== 'object' || !Number.isFinite(storeCache.rev)) storeCache = { rev: 0, data: {} };
-    storeRev = storeCache.rev;
+let storeRev = 0, storeCache = null, storeLoadError = null, storeQ = Promise.resolve();
+function storeRead() { // 懒加载：仅 ENOENT 视为空库；坏文件/非 ENOENT 错误必须 fail closed，避免空快照覆盖原文件
+  // 即使已有缓存也拒绝符号链接，避免后续 rename 替换链接；不读取链接目标。
+  try { if (fs.lstatSync(STORE_FILE).isSymbolicLink()) { storeCache = null; storeLoadError = 'symlink'; return null; } }
+  catch (e) { if (!e || e.code !== 'ENOENT') { storeCache = null; storeLoadError = e && e.code || 'read'; return null; } }
+  if (!storeCache || storeLoadError) {
+    storeLoadError = null;
+    try {
+      storeCache = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8'));
+      if (!storeCache || typeof storeCache !== 'object' || Array.isArray(storeCache) || Object.keys(storeCache).some(k => k !== 'rev' && k !== 'data') || !storeCache.data || typeof storeCache.data !== 'object' || Array.isArray(storeCache.data) || !Number.isSafeInteger(storeCache.rev) || storeCache.rev < 0 || Object.keys(storeCache.data).some(k => !STORE_KEYS.has(k) || typeof storeCache.data[k] !== 'string')) {
+        storeCache = null; storeLoadError = 'invalid';
+      }
+    } catch (e) {
+      storeCache = null;
+      if (!e || e.code !== 'ENOENT') storeLoadError = e && e.code ? e.code : 'read';
+      else { // 只有文件本身不存在才为空：悬空符号链接会让 readFile 报 ENOENT，lstat 可识别并保留
+        try { fs.lstatSync(STORE_FILE); storeLoadError = 'invalid'; }
+        catch (statError) {
+          if (statError && statError.code === 'ENOENT') storeCache = { rev: 0, data: {} };
+          else storeLoadError = statError && statError.code || 'read';
+        }
+      }
+    }
+    if (storeCache) storeRev = storeCache.rev;
   }
   return storeCache;
 }
 function storeWrite(data) {
   return storeQ = storeQ.then(() => new Promise(done => {
-    storeRead(); // 先装载磁盘态（AIbot P2-1）：rev 只在 GET 路径懒装载——重启后首请求若是 POST 会从 0 重发号，旧窗口高 rev 镜像被静默压掉，违反「rev 服务端唯一发号」公理
+    const current = storeRead(); // 在同一队列内装载，避免空覆盖检查与写入之间并发竞态
+    if (!current) return done({ ok: false, status: 500, code: 'store-read-failed', error: '存储读取失败，原文件已保留' });
+    if (storeRev === Number.MAX_SAFE_INTEGER) return done({ ok: false, status: 500, code: 'store-rev-exhausted', error: '存储版本号已达上限，原文件已保留' });
+    if (!Object.keys(data).length && Object.keys(current.data).length) return done({ ok: false, status: 409, code: 'empty-overwrite', error: '拒绝以全空快照覆盖非空存储（合法删除请以空值表达：favs "[]"/cfg "{}"）' });
     const rev = storeRev + 1, out = JSON.stringify({ rev, data });
     fs.mkdir(DATA_DIR, { recursive: true }, e => {
       if (e) return done({ ok: false, error: '写入失败' });
@@ -716,7 +737,7 @@ http.createServer((req, res) => {
   }
   if (req.url.split('?')[0] === '/api/store') { // 前端持久层主源（方案二）：GET 全量 / POST 覆盖写；同 mystation 防跨源
     if (crossOrigin(req)) return json(403, { error: '跨源请求被拒绝' });
-    if (req.method === 'GET') { const s = storeRead(); return json(200, { rev: s.rev, data: s.data }); }
+    if (req.method === 'GET') { const s = storeRead(); return s ? json(200, { rev: s.rev, data: s.data }) : json(500, { ok: false, code: 'store-read-failed', error: '存储读取失败，原文件已保留' }); }
     if (req.method === 'POST') {
       let body = '', big = false;
       req.on('data', c => { body += c; if (body.length > STORE_MAX) { big = true; json(413, { ok: false, error: '请求体过大' }); req.destroy(); } }); // 超限先写响应再断连（与 mystation 同口径）
@@ -732,14 +753,8 @@ http.createServer((req, res) => {
           if (typeof v !== 'string' || v.length > max) return json(413, { ok: false, error: `数据键 ${k} 超限（>${Math.round(max / 1024)}KB），写入被拒绝` }); // AIbot P2-3：白名单键超限显式拒绝——客户端收非 ok 置 dirty 保镜像；静默丢键会让对账把镜像一起抹掉
           clean[k] = v;
         }
-        // 空覆盖防呆（issue #42 B）：全空快照 + **当前库实际非空** = 跨实例空页 unload 的 wipe 面，显式拒绝。
-        // 合法删除语义靠值表达（favs '[]' / cfg '{}'），键全缺不承载任何合法状态。
-        // 判据用 storeRead().data 实际键数而非 rev>0（review#43 P1：rev 是版本号——rev=0 初始空库的一次
-        // 合法空写/白名单滤后空快照也会把 rev 推到 >0，此后「空库+空快照」永久 409，客户端持续 dirty 重试死锁；
-        // data 非空才是「有数据可丢」的本义）。空库（data 空）上空快照放行 = 幂等空写，不产生 wipe 面。
-        // 与客户端空覆盖门（store.js flush）互为双保险
-        if (!Object.keys(clean).length && Object.keys(storeRead().data).length) return json(409, { ok: false, code: 'empty-overwrite', error: '拒绝以全空快照覆盖非空存储（合法删除请以空值表达：favs "[]"/cfg "{}"）' });
-        storeWrite(clean).then(r => json(200, r)); // rev 在写成功后发（响应携带新号）
+        // 空覆盖防呆与读盘检查均在 storeQ 中执行，避免并发请求绕过保护。
+        storeWrite(clean).then(r => json(r.status || (r.ok ? 200 : 500), r)); // 队列内读盘/空覆盖判定；错误响应不含 data
       });
       return;
     }

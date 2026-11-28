@@ -674,8 +674,8 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     val attention = HashMap<String, Long>()
     val now = System.currentTimeMillis()
     for (s in sts) runCatching { quality.summary(s.u0, s.u) }.getOrNull()?.let {
-      q[s.u0] = QInfo(it.stability, it.directCount, it.metadata, it.lastObservedAt)
       val e = io.github.vjoy233.vradio.data.qExplain(it, now)
+      q[s.u0] = io.github.vjoy233.vradio.discovery.qualityInfo(it, now)
       if (e.level != "unknown" && e.action == "retest") attention[s.u0] = it.lastObservedAt
     }
     val meta = radioMeta.value

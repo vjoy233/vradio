@@ -54,7 +54,37 @@ class StoreTest {
     Store.set(C.K_FAVS, "[]")
     assertEquals("[]", Store.get(C.K_FAVS))
     Store.init(dir)
-    assertEquals("[]", Store.get(C.K_FAVS)) // 修复后可正常回读
+    assertEquals("[]", Store.get(C.K_FAVS)) // 普通数据恢复不变；私有见证保持不可验证
+    assertNull(Store.healthSnapshot())
+  }
+
+  @Test fun healthReceiptAtomicRestartAndImport() {
+    val s = Store.healthSnapshot()!!
+    assertEquals(Store.HealthCommit.SUCCESS, Store.commitHealthWithReceipt(s.version, "health-1", "batch-1/item-1"))
+    Store.init(dir)
+    assertEquals("health-1", Store.get(C.K_HEALTH))
+    assertTrue(Store.healthSnapshot()!!.receipts.contains("batch-1/item-1"))
+    assertEquals(Store.HealthCommit.ALREADY_APPLIED, Store.commitHealthWithReceipt(s.version, "bad", "batch-1/item-1"))
+    assertFalse(Store.snapshot().keys.any { it.contains("Receipt") })
+    val imported = Store.snapshotVersioned()
+    assertTrue(Store.applyAllCheckedIfVersion(mapOf(C.K_THEME to "light"), imported.version).ok)
+    Store.init(dir)
+    assertTrue(Store.healthSnapshot()!!.receipts.contains("batch-1/item-1"))
+  }
+
+  @Test fun healthReceiptConflictAndWriteFailure() {
+    val s = Store.healthSnapshot()!!
+    Store.set(C.K_THEME, "dark")
+    assertEquals(Store.HealthCommit.CONFLICT, Store.commitHealthWithReceipt(s.version, "bad", "r1"))
+    val fresh = Store.healthSnapshot()!!
+    io.github.vjoy233.vradio.data.AtomicWriteTestHook.tempWrite = { _, _ -> throw java.io.IOException("injected") }
+    assertEquals(Store.HealthCommit.WRITE_FAILED, Store.commitHealthWithReceipt(fresh.version, "bad", "r1"))
+    assertNull(Store.get(C.K_HEALTH))
+    assertFalse(Store.healthSnapshot()!!.receipts.contains("r1"))
+    io.github.vjoy233.vradio.data.AtomicWriteTestHook.tempWrite = null
+    Store.init(dir)
+    assertNull(Store.get(C.K_HEALTH))
+    assertFalse(Store.healthSnapshot()!!.receipts.contains("r1"))
   }
 
   @Test fun applyAllRemovesMissingKeys() { // 导入语义：白名单键有值写入/缺键 remove；白名单外键忽略

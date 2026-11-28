@@ -218,6 +218,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   /* ---------- 进行态/结果文案 ---------- */
   val healthBusy = MutableStateFlow(false); val healthProg = MutableStateFlow(""); val healthResult = MutableStateFlow("")
+  private val healthOwnership = HealthOwnership { healthBusy.value = it }
   val updateBusy = MutableStateFlow(false); val updateMsg = MutableStateFlow("")
   val syncBusy = MutableStateFlow(false); val syncMsg = MutableStateFlow("")
   val healthScopeWarning = MutableStateFlow(false)
@@ -1086,7 +1087,9 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
     // B1：禁用源不测（体检口径=播放口径）；按人工有效序取前 4（用户优先序先测）。全禁台 us 空 → 无判据 NET
     val us = runCatching { s.effOrder().map { s.u[it] }.take(4) }.getOrNull() ?: return Probe.NET
     for (u in us) {
-      val v = runCatching { checker.check(u, C.CHECK_WINDOW_MS) }.getOrNull() ?: return Probe.NET
+      val v = try { checker.check(u, C.CHECK_WINDOW_MS) }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) { return Probe.NET }
       // B2：体检通道产 diagnostic 样本（trigger=manual|boot|sync；自动体检绝不产 playback）；写失败只丢样本
       runCatching { quality.recordDiagnostic(s.u0, v.toDiagnostic(u), qTrigger) }
       if (v.ok) return Probe.OK
@@ -1148,14 +1151,18 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
   }
 
   private fun runManualHealth() {                                         // 手动全量（并发 5=Web runCheck 口径；反馈走设置页文案 + 完成 toast）
-    viewModelScope.launch {
-      manualRun.value = true
-      healthAbort.set(false)
+    if (!healthOwnership.requestManual()) return
+    manualRun.value = true
+    healthAbort.set(false)
+    viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+      var owner: Any? = null
       try {
-        if (healthBusy.value) healthProg.value = "等待后台体检收尾…（可点「取消体检」中止）"   // G P3：让位等待最坏 30-40s，零反馈观感像卡死
-        while (healthBusy.value && !healthAbort.get()) delay(250)         // 静默版让位收尾（手动优先，B-10 互斥）
+        if (healthBusy.value) healthProg.value = "等待后台体检收尾…（可点「取消体检」中止）"
+        while (!healthAbort.get() && owner == null) {
+          owner = healthOwnership.tryManual()
+          if (owner == null) delay(250)
+        }
         if (healthAbort.get()) { healthResult.value = "体检已取消"; toast(healthResult.value); return@launch }
-        healthBusy.value = true
         healthResult.value = ""
         val list = runCatching { lib.visible(true, playKey(), connKey()) }.getOrDefault(emptyList())   // 连默认隐藏的死台一起复查
         healthProg.value = "体检中 0/${list.size}"
@@ -1175,8 +1182,9 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
         healthResult.value = "体检完成：正常 ${c[0]} · 疑似不可达 ${c[1]} · 已停运 ${c[2]}" +
           (if (c[3] > 0) " · 网络失败跳过 ${c[3]}（不落标记）" else "")
         toast(healthResult.value)
-      } catch (e: Exception) { healthResult.value = "体检异常：${e.message ?: e.toString()}" }
-      finally { manualRun.value = false; healthAbort.set(false); healthBusy.value = false }
+      } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+      catch (e: Exception) { healthResult.value = "体检异常：${e.message ?: e.toString()}" }
+      finally { manualRun.value = false; healthAbort.set(false); healthOwnership.finishManual(owner) }
     }
   }
 
@@ -1188,41 +1196,43 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   private fun silentCheck() {                                             // boot 静默复测（并发 2；不碰状态栏/toast）
     viewModelScope.launch(Dispatchers.IO) {
-      if (manualRun.value || healthBusy.value) return@launch
-      val scope = withContext(Dispatchers.Main) {
-        // AIbot P2-1 + 审计 P2：快照拷贝归 Main——LinkedHashMap(map)/toList 拷贝本身也迭代源集合，与 IO 变异并发同样 CME
-        runCatching {
-          Health.bootScope(LinkedHashMap(lib.healthMarks), lib.favs.toList(), lib.recents.toList(), lib.stations.toList(), System.currentTimeMillis())
-        }.getOrNull()
-      } ?: return@launch
-      if (scope.isEmpty()) return@launch
-      healthBusy.value = true
+      val owner = healthOwnership.tryBackground() ?: return@launch
       try {
+        val scope = withContext(Dispatchers.Main) {
+          // AIbot P2-1 + 审计 P2：快照拷贝归 Main，避免与变异并发迭代
+          runCatching {
+            Health.bootScope(LinkedHashMap(lib.healthMarks), lib.favs.toList(), lib.recents.toList(), lib.stations.toList(), System.currentTimeMillis())
+          }.getOrNull()
+        } ?: return@launch
+        if (scope.isEmpty()) return@launch
         val res = probeAll(scope, 2, "boot", { manualRun.value }) { _, _ -> }
         if (manualRun.value) return@launch                                // 让位手动：已测结果由手动收尾统一落
         if (res.size >= 5 && res.all { it.second == Probe.NET }) return@launch
         withContext(Dispatchers.Main) { applyMarks(res) }
         persistHealth()
-      } catch (_: Exception) { } finally { healthBusy.value = false } // AIbot P1-1：无条件清——条件清会在「静默让位手动」时把三通道锁死到进程重启（手动方已持 manualRun 在等，清标志即接管无竞态）
+      } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+      catch (_: Exception) { } finally { healthOwnership.release(owner) }
     }
   }
 
   private fun incCheck(names: List<String>) {                             // 同步后增量体检（D4）：diff 新增国内台
     viewModelScope.launch(Dispatchers.IO) {
-      if (manualRun.value || healthBusy.value) return@launch
-      val set = names.toHashSet()
-      val list = runCatching { lib.stations.filter { set.contains(it.n) && !it.hidden } }.getOrDefault(emptyList())
-      if (list.isEmpty()) return@launch
-      healthBusy.value = true
-      toast("后台体检新增电台 ${list.size} 台…")
+      val owner = healthOwnership.tryBackground() ?: return@launch
       try {
+        val set = names.toHashSet()
+        val list = withContext(Dispatchers.Main) {
+          runCatching { lib.stations.filter { set.contains(it.n) && !it.hidden } }.getOrDefault(emptyList())
+        }
+        if (list.isEmpty()) return@launch
+        toast("后台体检新增电台 ${list.size} 台…")
         val res = probeAll(list, 2, "sync", { manualRun.value }) { _, _ -> }
         if (manualRun.value) return@launch
         if (res.size >= 5 && res.all { it.second == Probe.NET }) return@launch
         val c = withContext(Dispatchers.Main) { applyMarks(res) }
         persistHealth()
         toast("新增 ${list.size} 台体检完成，${c[1] + c[2]} 台无效已隐藏")
-      } catch (_: Exception) { } finally { healthBusy.value = false } // AIbot P1-1：同上，无条件清
+      } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+      catch (_: Exception) { } finally { healthOwnership.release(owner) }
     }
   }
 

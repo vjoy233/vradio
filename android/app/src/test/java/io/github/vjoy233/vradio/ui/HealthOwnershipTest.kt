@@ -1,0 +1,50 @@
+package io.github.vjoy233.vradio.ui
+
+import org.junit.Assert.*
+import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+
+class HealthOwnershipTest {
+  @Test fun cancellingWaitingManualCannotReleaseBackground() {
+    var busy = false
+    val gate = HealthOwnership { busy = it }
+    val background = gate.tryBackground()!!
+    assertTrue(gate.requestManual())
+    assertNull(gate.tryManual())
+    gate.finishManual(null)
+    assertTrue(busy)
+    assertNull(gate.tryBackground())
+    gate.release(background)
+    assertFalse(busy)
+    assertNotNull(gate.tryBackground())
+  }
+
+  @Test fun manualPendingBlocksNewBackgroundUntilOwnerExits() {
+    val gate = HealthOwnership()
+    val background = gate.tryBackground()!!
+    assertTrue(gate.requestManual())
+    assertNull(gate.tryBackground())
+    assertNull(gate.tryManual())
+    gate.release(background)
+    assertNull(gate.tryBackground())
+    val manual = gate.tryManual()!!
+    gate.release(background) // 陈旧 token 无权释放手动任务
+    assertNull(gate.tryBackground())
+    gate.finishManual(manual)
+    assertNotNull(gate.tryBackground())
+  }
+
+  @Test fun simultaneousBackgroundClaimsHaveOneWinner() {
+    val gate = HealthOwnership()
+    val start = CountDownLatch(1)
+    val pool = Executors.newFixedThreadPool(2)
+    try {
+      val jobs = (1..2).map { pool.submit<Any?> { start.await(); gate.tryBackground() } }
+      start.countDown()
+      val results = jobs.map { it.get(5, TimeUnit.SECONDS) }
+      assertEquals(1, results.count { it != null })
+    } finally { pool.shutdownNow() }
+  }
+}

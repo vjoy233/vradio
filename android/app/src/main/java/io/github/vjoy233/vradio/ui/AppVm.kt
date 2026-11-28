@@ -1236,7 +1236,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   private fun runCheckUpdate() {                                          // 门后执行体（直跑或确认后续跑，唯一调 light.check/apply 的路径）
     viewModelScope.launch {
-      AddedCheckSafety.blockReason().let { updateMsg.value = it; toast(it); return@launch }
+      AddedCheckSafety.blockReason()?.let { updateMsg.value = it; toast(it); return@launch }
       if (updateBusy.value) return@launch
       if (syncBusy.value) { updateMsg.value = "同步进行中，等同步完成后再检查更新（两通道写同一份 filesDir 数据，并发会互相覆盖）"; return@launch }   // 审计 P2：互锁
       updateBusy.value = true; updateMsg.value = "检查更新中…"
@@ -1288,7 +1288,7 @@ class AppVm(private val ctx: Application) : AndroidViewModel(ctx) {
 
   private fun runFullSync() {
     viewModelScope.launch {
-      AddedCheckSafety.blockReason().let { syncMsg.value = it; toast(it); return@launch }
+      AddedCheckSafety.blockReason()?.let { syncMsg.value = it; toast(it); return@launch }
       if (syncBusy.value) return@launch
       if (updateBusy.value) { syncMsg.value = "数据更新进行中，稍后再同步"; return@launch }   // 审计 P2：互锁（与 checkUpdate 对称）
       if (!charging()) {                                                 // E13 电量前置（充电中跳过；<5% 拒 / <20% 警告放行）

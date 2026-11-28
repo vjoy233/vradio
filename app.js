@@ -619,10 +619,10 @@ const App = {
     const o = { v: 2 };
     for (const k of ['moves', 'names', 'tag']) o[k] = this.normStrMap(c[k]);                      // URL → 字符串
     o.renames = this.normStrMap(c.renames, true);                                                // 分类名 → 分类名（键非 URL，不做 URL 过滤）
-    const urlKeys = m => Object.fromEntries(Object.entries(m).filter(([k]) => /^https?:\/\//.test(k)));
+    const urlKeys = m => Object.fromEntries(Object.entries(m).filter(([k]) => /^https?:\/\//.test(k) && k.length <= 512));
     o.hideS = c.hideS && typeof c.hideS === 'object' ? urlKeys(c.hideS) : {};                   // URL → 1（手藏电台）
     // 追加备选源（P1-a/r2 ⑨）：URL → [追加源 URL…]。条数 6 / 单条 512 封顶对齐 mystation 护栏口径；只追加不动身份
-    const urlArrMap = m => { const o = {}; for (const [k, v] of Object.entries(m || {})) if (/^https?:\/\//.test(k) && Array.isArray(v)) { const a = [...new Set(v.map(x => String(x).trim().slice(0, 512)).filter(x => /^https?:\/\//.test(x)))].slice(0, 6); if (a.length) o[k.trim()] = a; } return o; };
+    const urlArrMap = m => { const o = {}; for (const [k, v] of Object.entries(m || {})) if (/^https?:\/\//.test(k) && k.length <= 512 && Array.isArray(v)) { const a = [...new Set(v.map(x => String(x).trim()).filter(x => /^https?:\/\//.test(x) && x.length <= 512))].slice(0, 6); if (a.length) o[k.trim()] = a; } return o; };
     o.srcs = urlArrMap(c.srcs);
     // 源生命周期三字段（B0 契约冻结，B1 接线播放/体检/详情语义）：人工顺序只生成运行时顺序不物理重排 s.u[]；
     // 禁用表结构同款（URL → 被禁源列表）；标签只改展示。键/元素清洗与 srcs 同口径
@@ -638,7 +638,7 @@ const App = {
     if (!c || typeof c !== 'object' || Array.isArray(c)) return {};
     return c.v === undefined ? Object.assign({}, c, { v: 2 }) : c;
   },
-  normStrMap(m, anyKey) { const o = {}; for (const [k, v] of Object.entries(m || {})) if (typeof v === 'string' && v.trim() && (anyKey || /^https?:\/\//.test(k))) o[k.trim()] = v.trim(); return o; },
+  normStrMap(m, anyKey) { const o = {}; for (const [k, v] of Object.entries(m || {})) if (typeof v === 'string' && v.trim() && (anyKey || (/^https?:\/\//.test(k) && k.length <= 512))) o[k.trim()] = v.trim(); return o; },
   saveCfg() { Store.set('radio.cfg', JSON.stringify(this.cfg)); },
 
   /* ---------- 列表解析：radio.txt（"分类,#genre#" 分节 + 名字,地址 行）与 m3u（#EXTINF + URL 行）双格式 ---------- */
@@ -1814,6 +1814,7 @@ const App = {
     const inp = btn.closest('.msrc-add').querySelector('input');
     const u = (inp.value || '').trim().replace(/\s+/g, ''); // URL 内不该有空白/换行，容错顺手清（坑③）
     if (!/^https?:\/\//.test(u)) { $('status').textContent = '追加源需以 http(s):// 开头'; return; }
+    if (u.length > 512) { $('status').textContent = '追加源超过 512 字符上限'; return; }
     if (s.u.includes(u)) { $('status').textContent = '该地址已在源列表中'; return; }
     const d = this.mEditor.getDraft();
     if (d.patch.appends.includes(u)) { $('status').textContent = '该地址已在待保存的追加列表中'; return; }
@@ -3064,6 +3065,7 @@ const App = {
       const u = $('mAUrl').value.trim();
       if (!n) { $('status').textContent = '请填写电台名'; return; }
       if (!/^https?:\/\//.test(u)) { $('status').textContent = '流地址需以 http(s):// 开头'; return; }
+      if (u.length > 512) { $('status').textContent = '流地址超过 512 字符上限'; return; }
       const c = $('mACat').value;
       $('mAddBtn').disabled = true; $('mAddBtn').querySelector('span').textContent = '探活中…';
       try {

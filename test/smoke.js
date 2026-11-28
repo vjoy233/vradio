@@ -128,6 +128,12 @@ const boot = () => new Promise(async (resolve, reject) => { // 起服 + 就绪�
       assert.strictEqual((await req('GET', '/', { Host: 'localhost:' + PORT })).status, 200));
     await ok('/api/store 拒跨源 Origin', async () =>
       assert.strictEqual((await req('GET', '/api/store', { Origin: 'http://evil.com' })).status, 403));
+    await ok('/api/check 超长 URL → 400 且不探活', async () => {
+      const u = 'http://example.com/' + 'x'.repeat(600);
+      const r = await req('GET', '/api/check?url=' + encodeURIComponent(u));
+      assert.strictEqual(r.status, 400);
+      assert.ok(JSON.parse(r.body).detail.includes('超过 512'));
+    });
     await ok('/api/check 拒私网目标', async () =>
       assert.strictEqual((await req('GET', '/api/check?url=' + encodeURIComponent('http://127.0.0.1/'))).status, 400));
     // /api/check?detail=1（B1 结构化探活，契约 contracts/source-diagnostic.json）：安全边界与旧口径一致

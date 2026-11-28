@@ -30,6 +30,7 @@ const { runPipeline, publishResult, bootManifest, forceTokenIssue, forceTokenCon
 const { qApplyOp, qTrim } = require('./quality-store'); // B2：质量聚合应用/裁剪纯函数（与客户端逐字节同语义）
 const { lsDayKeyOk, lsApplyOp } = require('./listen-stats'); // B3：收听统计 op 应用/日期键历法校验（与客户端同语义）
 const ROOT = __dirname, PORT = process.env.PORT || 8137, HOST = process.env.HOST || '127.0.0.1';
+const MAX_URL_LEN = 512;
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.txt': 'text/plain; charset=utf-8' };
 // 写盘 tmp 名唯一化（pid+单调序号）：同目录双实例共用固定 `文件.tmp` 会互踩——A 实例 write 未 rename 时
 // B 实例 write 同名 tmp 覆盖内容，rename 后落盘的是对方的数据（test/quality.js「多标签合流/512 淘汰」
@@ -222,13 +223,13 @@ function qTrimImport(data) {
   const out = {};
   for (const k of Object.keys(data)) {
     if (Object.keys(out).length >= 2000) return null; // 条目封顶（构造面防护，超限整体拒绝）
-    if (!/^https?:\/\//.test(k) || k.length > 512) continue;
+    if (!/^https?:\/\//.test(k) || k.length > MAX_URL_LEN) continue;
     const v = data[k];
     if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
     const e = { cf: Math.min(qImpNum(v.cf) || 0, 1e9), sources: {} };
     const srcs = v.sources && typeof v.sources === 'object' && !Array.isArray(v.sources) ? v.sources : {};
     for (const su of Object.keys(srcs).slice(0, 6)) { // 每台源封顶（caps.sourcesPerStation）
-      if (!/^https?:\/\//.test(su) || su.length > 512) continue;
+      if (!/^https?:\/\//.test(su) || su.length > MAX_URL_LEN) continue;
       const s = srcs[su];
       if (!s || typeof s !== 'object' || Array.isArray(s)) continue;
       const es = {};
@@ -563,6 +564,7 @@ http.createServer((req, res) => {
     try { sp = new URL(req.url, `http://${req.headers.host || 'localhost'}`); urls = [...sp.searchParams.getAll('url')]; }
     catch (_) { return json(400, { ok: false, detail: 'bad request' }); }
     if (urls.length > 4) return json(400, { ok: false, detail: '最多 4 个源' }); // 放大面封顶（P2-9）
+    if (urls.some(u => String(u).length > MAX_URL_LEN)) return json(400, { ok: false, detail: '流地址超过 512 字符上限' });
     const targets = [...new Set(urls.map(TEST_HOOK ? TEST_HOOK.safe : safeTarget).filter(Boolean))];
     if (!targets.length) return json(400, { ok: false, detail: '仅允许公网 http(s) 地址' });
     // 探活窗口可调（AIbot P1-1）：批量体检不传 → checkStream 默认 4.5s（ETA 按最坏校准，不能放慢）；
@@ -591,8 +593,9 @@ http.createServer((req, res) => {
       // 内容护栏：台名/分类去 csv 分隔符与换行（radio.txt 格式硬约束），长度封顶；地址须公网 http(s)
       const n = String(j.n || '').replace(/[,\r\n|]/g, ' ').trim().slice(0, 40);
       const c = String(j.c || '').replace(/[,\r\n|#]/g, ' ').trim().slice(0, 24);
-      const u0 = String(j.u || '').trim().slice(0, 512);
+      const u0 = String(j.u || '').trim();
       if (!n || !c) return json(400, { error: '电台名/分类不能为空' });
+      if (u0.length > 512) return json(400, { error: '流地址超过 512 字符上限' });
       const target = (TEST_HOOK ? TEST_HOOK.safe : safeTarget)(u0);
       if (!target) return json(403, { error: '流地址不合法（仅公网 http(s)）' });
       const probe = { timeout: 12000 }; if (TEST_HOOK) probe.testHook = TEST_HOOK;
@@ -680,10 +683,10 @@ http.createServer((req, res) => {
       let j; try { j = JSON.parse(body); } catch (_) { return json(400, { ok: false, error: 'bad request' }); }
       const lines = j && j.lines;
       if (!Array.isArray(lines)) return json(400, { ok: false, error: 'bad request' });
-      const clean = []; // 只收「分类,#genre#」与「台名,http(s) 地址」；台名去 csv 分隔符（与 mystation 同口径）
+      const clean = []; let overlongUrl = false; // 只收「分类,#genre#」与「台名,http(s) 地址」；台名去 csv 分隔符（与 mystation 同口径）
       for (const l of lines) {
         if (typeof l !== 'string') continue;
-        const t = l.trim().slice(0, 600).replace(/[\r\n]/g, '');
+        const t = l.trim().replace(/[\r\n]/g, '');
         if (!t) continue;
         if (t.endsWith('#genre#')) {
           const c = t.slice(0, -8).replace(/,\s*$/, '').replace(/[,\r\n|]/g, ' ').trim().slice(0, 24);
@@ -693,9 +696,11 @@ http.createServer((req, res) => {
         const i = t.lastIndexOf(',');
         if (i < 0) continue;
         const n = t.slice(0, i).replace(/[,\r\n|]/g, ' ').trim().slice(0, 40), u = t.slice(i + 1).trim();
+        if (u.length > MAX_URL_LEN) { overlongUrl = true; continue; }
         if (n && /^https?:\/\//.test(u)) clean.push(n + ',' + u);
       }
-      if (clean.length > MY_MAX_LINES || clean.join('\r\n').length > MY_MAX_BYTES) return json(413, { ok: false, error: `个人电台列表超上限（${MY_MAX_LINES} 行/64KB）` });
+      if (overlongUrl) return json(400, { ok: false, error: '流地址超过 512 字符上限' });
+       if (clean.length > MY_MAX_LINES || clean.join('\r\n').length > MY_MAX_BYTES) return json(413, { ok: false, error: `个人电台列表超上限（${MY_MAX_LINES} 行/64KB）` });
       myRadioReplace(clean).then(r => json(200, r));
     });
     return;

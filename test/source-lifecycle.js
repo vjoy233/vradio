@@ -124,6 +124,16 @@ ok('键挂 u[0] → 生效：禁用追加源、人工序重排', () => {
 
 console.log('[5] 装配每台 6 条统一封顶 + 批量诊断名单（B1 review P1/P1-3）');
 const mkSt = (n, us) => ({ c: '华语音乐', n, u: us, dCat: '华语音乐', dName: n, dU: us.slice() });
+ok('cfg.srcs 与 hideS 超长 URL 拒绝且不截断', () => {
+  const long = 'http://s/' + 'x'.repeat(600);
+  const clean = App.normCfg({ moves: { [long]: '新闻' }, names: { [long]: '长台' }, tag: { [long]: '标签' }, srcLabels: { [long]: '标签' }, srcs: { 'http://m/live': [long] }, hideS: { [long]: 1 } });
+  assert.strictEqual(Object.keys(clean.moves).length, 0);
+  assert.strictEqual(Object.keys(clean.names).length, 0);
+  assert.strictEqual(Object.keys(clean.tag).length, 0);
+  assert.strictEqual(Object.keys(clean.srcLabels).length, 0);
+  assert.strictEqual(Object.keys(clean.srcs).length, 0);
+  assert.strictEqual(Object.keys(clean.hideS).length, 0);
+});
 ok('追加源超限：装配后每台 6 条、首条=主源（身份键不裁）', () => {
   App.cfg = App.normCfg({ v: 2, srcs: { 'http://m/live': ['http://s/1', 'http://s/2', 'http://s/3', 'http://s/4', 'http://s/5', 'http://s/6', 'http://s/7'] } });
   const s = mkSt('台X', ['http://m/live', 'http://m/live2', 'http://m/live3']);

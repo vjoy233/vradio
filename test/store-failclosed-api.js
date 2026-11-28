@@ -1,7 +1,30 @@
 'use strict';
 // Store 首次读盘故障：独立临时应用根，绝不读取或操作宿主用户数据。
-const assert = require('assert'), fs = require('fs'), path = require('path');
-const { boot } = require('./harness/api-client');
+const assert = require('assert'), fs = require('fs'), path = require('path'), os = require('os');
+const { boot, makeRoot } = require('./harness/api-client');
+const waitFile = async p => { for (let i = 0; i < 500; i++) { if (fs.existsSync(p)) return; await new Promise(r => setTimeout(r, 10)); } throw new Error('超时等待注入标记: ' + p); };
+async function queuedRace(mutant) {
+  const root = makeRoot(), dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vradio-store-gate-'));
+  let h;
+  try {
+    if (mutant) {
+      const p = path.join(root, 'server.js'); let s = fs.readFileSync(p, 'utf8');
+      const guard = "    if (!Object.keys(data).length && Object.keys(current.data).length) return done({ ok: false, status: 409, code: 'empty-overwrite', error: '拒绝以全空快照覆盖非空存储（合法删除请以空值表达：favs \"[]\"/cfg \"{}\"）' });";
+      assert.ok(s.includes(guard)); s = s.replace(guard, '');
+      const route = '        storeWrite(clean).then(r => json(r.status || (r.ok ? 200 : 500), r));';
+      assert.ok(s.includes(route)); s = s.replace(route, "        if (!Object.keys(clean).length && Object.keys(storeRead().data).length) return json(409, { ok: false, code: 'empty-overwrite' });\n" + route);
+      fs.writeFileSync(p, s);
+    }
+    h = await boot({ root, env: { NODE_OPTIONS: '--require="' + path.join(__dirname, 'harness', 'store-queue-inject.js').replace(/\\/g, '/') + '"', VR_TEST_STORE_QUEUE_DIR: dir } });
+    const first = post(h, { 'radio.vol': '0.7' }); await waitFile(path.join(dir, 'held'));
+    const second = post(h, {}); await waitFile(path.join(dir, 'second'));
+    fs.writeFileSync(path.join(dir, 'release'), '1');
+    const a = await first, b = await second;
+    assert.strictEqual(a.status, 200);
+    if (mutant) { assert.strictEqual(b.status, 200); assert.deepStrictEqual(parse(await get(h)).data, {}); }
+    else { assert.strictEqual(b.status, 409); assert.strictEqual(parse(b).code, 'empty-overwrite'); assert.deepStrictEqual(parse(await get(h)).data, { 'radio.vol': '0.7' }); }
+  } finally { if (h) await h.close(); fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(dir, { recursive: true, force: true }); }
+}
 const post = (h, data) => h.req('POST', '/api/store', { 'Content-Type': 'application/json' }, JSON.stringify({ data }));
 const get = h => h.req('GET', '/api/store');
 const file = h => path.join(h.root, 'data', 'store.json');
@@ -33,6 +56,7 @@ async function main() {
     const c = await post(h, {}); assert.strictEqual(c.status, 409); assert.strictEqual(parse(c).code, 'empty-overwrite');
     assert.deepStrictEqual(fs.readFileSync(file(h)), before);
   } finally { await h.close(); }
+  await queuedRace(false); await queuedRace(true); // 真修复阻止覆盖；旧队列外检查变体确定性重现覆盖
   console.log('PASS store-failclosed-api: 坏文件原字节保护、GET/POST 拒绝、修复重试与队列并发');
 }
 main().catch(e => { console.error(e.stack || e); process.exitCode = 1; });

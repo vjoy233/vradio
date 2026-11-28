@@ -2230,7 +2230,11 @@ const App = {
   closeDiscovery() {
     if ($('discovery').hidden) return;
     $('discovery').hidden = true;
-    const b = this.dscOpener && this.dscOpener.isConnected ? this.dscOpener : null;
+    // 入口可能位于会随点击自动收起的 #sideTools；不要把焦点送进隐藏节点。
+    const opener = this.dscOpener && this.dscOpener.isConnected ? this.dscOpener : null;
+    // sideTools 的点击委托会在本方法返回后收起宿主，因此其子节点此刻虽可见也不能作为落点。
+    const visible = el => !!(el && !el.hidden && el.offsetParent !== null && !el.closest('#sideTools'));
+    const b = visible(opener) ? opener : visible($('discBtn')) ? $('discBtn') : $('q');
     if (b && b.focus) b.focus();
   },
   renderDiscovery() {

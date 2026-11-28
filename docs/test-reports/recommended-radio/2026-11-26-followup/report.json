@@ -1,0 +1,6428 @@
+{
+  "startedAt": "2026-11-26T01:06:03.798Z",
+  "endedAt": "2026-11-26T01:08:55.483Z",
+  "sourceCommit": "27dd87329ba9c17248bfaa14467efc27e1ec6cad",
+  "priorReport": "2026-11-26T00-48-28-461Z/report.json",
+  "method": "固定原始候选，补测原轮未测 URL，4 并发，600s 停止发起新请求；沿用 checkDetail。",
+  "remaining": 238,
+  "tested": 238,
+  "untested": 0,
+  "summary": {
+    "raw": 469,
+    "unique": 469,
+    "exactOverlap": 12,
+    "exactOverlapRate": 0.0255863539445629,
+    "normalizedOverlap": 12,
+    "normalizedOverlapRate": 0.0255863539445629,
+    "possibleNameOverlap": 3,
+    "selected": 238,
+    "previouslyTested": 231,
+    "capTruncated": 0,
+    "tested": 238,
+    "untestedSelected": 0,
+    "ok": 160,
+    "survivalRate": 0.6722689075630253,
+    "newOk": 159,
+    "logoCoverage": 0,
+    "genres": {
+      "global-independent-online-communities": {
+        "tested": 71,
+        "ok": 48,
+        "rate": 0.676056338028169
+      },
+      "electronic": {
+        "tested": 27,
+        "ok": 18,
+        "rate": 0.6666666666666666
+      },
+      "world-regional": {
+        "tested": 8,
+        "ok": 8,
+        "rate": 1
+      },
+      "campus-public-radio": {
+        "tested": 13,
+        "ok": 12,
+        "rate": 0.9230769230769231
+      },
+      "video-game-chiptune-soundtracks": {
+        "tested": 14,
+        "ok": 12,
+        "rate": 0.8571428571428571
+      },
+      "reggae-dub": {
+        "tested": 5,
+        "ok": 2,
+        "rate": 0.4
+      },
+      "funk-soul-hip-hop-disco": {
+        "tested": 26,
+        "ok": 15,
+        "rate": 0.5769230769230769
+      },
+      "experimental-nerdy-scanners": {
+        "tested": 9,
+        "ok": 4,
+        "rate": 0.4444444444444444
+      },
+      "jazz-blues": {
+        "tested": 13,
+        "ok": 7,
+        "rate": 0.5384615384615384
+      },
+      "rock-indie-alternative-country-folk": {
+        "tested": 13,
+        "ok": 7,
+        "rate": 0.5384615384615384
+      },
+      "classical-opera": {
+        "tested": 7,
+        "ok": 6,
+        "rate": 0.8571428571428571
+      },
+      "ambient-lo-fi-chill": {
+        "tested": 18,
+        "ok": 11,
+        "rate": 0.6111111111111112
+      },
+      "decades-oldies-nostalgia": {
+        "tested": 8,
+        "ok": 5,
+        "rate": 0.625
+      },
+      "metal-heavy": {
+        "tested": 5,
+        "ok": 5,
+        "rate": 1
+      },
+      "christmas-holiday": {
+        "tested": 1,
+        "ok": 0,
+        "rate": 0
+      }
+    },
+    "codes": {
+      "OK": 160,
+      "NETWORK": 69,
+      "SHORT_BODY": 9
+    },
+    "errno": {
+      "ENOTFOUND": 1,
+      "ECONNRESET": 1
+    },
+    "exceptions": 0,
+    "latencyMs": {
+      "min": 149,
+      "p50": 1828,
+      "p90": 4533,
+      "p95": 6005,
+      "max": 6015
+    }
+  },
+  "combined": {
+    "raw": 469,
+    "unique": 469,
+    "exactOverlap": 12,
+    "exactOverlapRate": 0.0255863539445629,
+    "normalizedOverlap": 12,
+    "normalizedOverlapRate": 0.0255863539445629,
+    "possibleNameOverlap": 3,
+    "selected": 469,
+    "capTruncated": 0,
+    "tested": 469,
+    "untestedSelected": 0,
+    "ok": 353,
+    "survivalRate": 0.7526652452025586,
+    "newOk": 344,
+    "logoCoverage": 0,
+    "genres": {
+      "decades-oldies-nostalgia": {
+        "tested": 24,
+        "ok": 18,
+        "rate": 0.75
+      },
+      "rock-indie-alternative-country-folk": {
+        "tested": 27,
+        "ok": 20,
+        "rate": 0.7407407407407407
+      },
+      "reggae-dub": {
+        "tested": 11,
+        "ok": 7,
+        "rate": 0.6363636363636364
+      },
+      "video-game-chiptune-soundtracks": {
+        "tested": 28,
+        "ok": 24,
+        "rate": 0.8571428571428571
+      },
+      "electronic": {
+        "tested": 53,
+        "ok": 38,
+        "rate": 0.7169811320754716
+      },
+      "funk-soul-hip-hop-disco": {
+        "tested": 35,
+        "ok": 21,
+        "rate": 0.6
+      },
+      "classical-opera": {
+        "tested": 18,
+        "ok": 14,
+        "rate": 0.7777777777777778
+      },
+      "news-spoken-word": {
+        "tested": 8,
+        "ok": 7,
+        "rate": 0.875
+      },
+      "world-regional": {
+        "tested": 17,
+        "ok": 14,
+        "rate": 0.8235294117647058
+      },
+      "global-independent-online-communities": {
+        "tested": 111,
+        "ok": 83,
+        "rate": 0.7477477477477478
+      },
+      "ambient-lo-fi-chill": {
+        "tested": 36,
+        "ok": 27,
+        "rate": 0.75
+      },
+      "jazz-blues": {
+        "tested": 39,
+        "ok": 28,
+        "rate": 0.717948717948718
+      },
+      "metal-heavy": {
+        "tested": 14,
+        "ok": 14,
+        "rate": 1
+      },
+      "campus-public-radio": {
+        "tested": 28,
+        "ok": 26,
+        "rate": 0.9285714285714286
+      },
+      "christmas-holiday": {
+        "tested": 6,
+        "ok": 3,
+        "rate": 0.5
+      },
+      "experimental-nerdy-scanners": {
+        "tested": 14,
+        "ok": 9,
+        "rate": 0.6428571428571429
+      }
+    },
+    "codes": {
+      "OK": 353,
+      "NETWORK": 102,
+      "SHORT_BODY": 14
+    },
+    "errno": {
+      "ENOTFOUND": 2,
+      "ECONNRESET": 1
+    },
+    "exceptions": 0,
+    "latencyMs": {
+      "min": 130,
+      "p50": 1433,
+      "p90": 4520,
+      "p95": 5414,
+      "max": 6015
+    }
+  },
+  "results": [
+    {
+      "url": "https://libretime.stationstation.fr/main",
+      "names": [
+        "Station Station"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://libretime.stationstation.fr/main",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24114,
+        "latencyMs": 4490,
+        "why": "audio/mpeg 24114B",
+        "checkedAt": 1795655168289
+      }
+    },
+    {
+      "url": "https://limbikfreq.com/listen/limbik_frequencies/320.mp3",
+      "names": [
+        "Limbik Frequencies"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://limbikfreq.com/listen/limbik_frequencies/320.mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24390,
+        "latencyMs": 1393,
+        "why": "audio/mpeg 24390B",
+        "checkedAt": 1795655165431
+      }
+    },
+    {
+      "url": "https://listen.ceol.fm/auto",
+      "names": [
+        "CeolFM"
+      ],
+      "slugs": [
+        "world-regional"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen.ceol.fm/auto",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24097,
+        "latencyMs": 1837,
+        "why": "audio/mpeg 24097B",
+        "checkedAt": 1795655165861
+      }
+    },
+    {
+      "url": "https://listen.kusf.org/stream",
+      "names": [
+        "KUSF"
+      ],
+      "slugs": [
+        "campus-public-radio"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen.kusf.org/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24014,
+        "latencyMs": 2760,
+        "why": "audio/mpeg 24014B",
+        "checkedAt": 1795655167253
+      }
+    },
+    {
+      "url": "https://listen.moe/stream",
+      "names": [
+        "listen.moe"
+      ],
+      "slugs": [
+        "world-regional"
+      ],
+      "logo": false,
+      "exactOverlap": true,
+      "normalizedOverlap": true,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen.moe/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/ogg",
+        "bytes": 24953,
+        "latencyMs": 4708,
+        "why": "audio/ogg 24953B",
+        "checkedAt": 1795655170524
+      }
+    },
+    {
+      "url": "https://listen.nolife-radio.com/stream",
+      "names": [
+        "No Life Radio"
+      ],
+      "slugs": [
+        "video-game-chiptune-soundtracks"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen.nolife-radio.com/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 26152,
+        "latencyMs": 1299,
+        "why": "audio/mpeg 26152B",
+        "checkedAt": 1795655167558
+      }
+    },
+    {
+      "url": "https://listen.norrm.com/default",
+      "names": [
+        "Norrm"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen.norrm.com/default",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 6014,
+        "why": "deadline https://listen.norrm.com/default",
+        "checkedAt": 1795655173267
+      }
+    },
+    {
+      "url": "https://listen.radioking.com/radio/105610/stream/144949",
+      "names": [
+        "Badam Radio"
+      ],
+      "slugs": [
+        "reggae-dub"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen.radioking.com/radio/105610/stream/144949",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4515,
+        "why": "timeout https://listen.radioking.com/radio/105610/stream/1",
+        "checkedAt": 1795655172073
+      }
+    },
+    {
+      "url": "https://listen.radioking.com/radio/142627/stream/182797",
+      "names": [
+        "Radio Pinpon"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen.radioking.com/radio/142627/stream/182797",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4512,
+        "why": "timeout https://listen.radioking.com/radio/142627/stream/1",
+        "checkedAt": 1795655172801
+      }
+    },
+    {
+      "url": "https://listen.radioking.com/radio/282820/stream/328621",
+      "names": [
+        "Mutant Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen.radioking.com/radio/282820/stream/328621",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4509,
+        "why": "timeout https://listen.radioking.com/radio/282820/stream/3",
+        "checkedAt": 1795655175033
+      }
+    },
+    {
+      "url": "https://listen.radioking.com/radio/285742/stream/472984",
+      "names": [
+        "La Patate Douce"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen.radioking.com/radio/285742/stream/472984",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4510,
+        "why": "timeout https://listen.radioking.com/radio/285742/stream/4",
+        "checkedAt": 1795655176583
+      }
+    },
+    {
+      "url": "https://listen.radioking.com/radio/314264/stream/361499",
+      "names": [
+        "Groove Cabane"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen.radioking.com/radio/314264/stream/361499",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4512,
+        "why": "timeout https://listen.radioking.com/radio/314264/stream/3",
+        "checkedAt": 1795655177313
+      }
+    },
+    {
+      "url": "https://listen.radioking.com/radio/314507/stream/361754",
+      "names": [
+        "Nebulah Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen.radioking.com/radio/314507/stream/361754",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4510,
+        "why": "timeout https://listen.radioking.com/radio/314507/stream/3",
+        "checkedAt": 1795655177777
+      }
+    },
+    {
+      "url": "https://listen.radioking.com/radio/38120/stream/74519",
+      "names": [
+        "Comala Radio"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen.radioking.com/radio/38120/stream/74519",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4515,
+        "why": "timeout https://listen.radioking.com/radio/38120/stream/74",
+        "checkedAt": 1795655179548
+      }
+    },
+    {
+      "url": "https://listen.radioking.com/radio/477719/stream/534044",
+      "names": [
+        "Le Mellotron"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen.radioking.com/radio/477719/stream/534044",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4507,
+        "why": "timeout https://listen.radioking.com/radio/477719/stream/5",
+        "checkedAt": 1795655181090
+      }
+    },
+    {
+      "url": "https://listen.radioking.com/radio/504205/stream/561655",
+      "names": [
+        "Crystal Radio Receiver Broadcast"
+      ],
+      "slugs": [
+        "experimental-nerdy-scanners"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen.radioking.com/radio/504205/stream/561655",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4507,
+        "why": "timeout https://listen.radioking.com/radio/504205/stream/5",
+        "checkedAt": 1795655181820
+      }
+    },
+    {
+      "url": "https://listen.radioking.com/radio/523747/stream/582004",
+      "names": [
+        "iFusion Radio"
+      ],
+      "slugs": [
+        "jazz-blues"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen.radioking.com/radio/523747/stream/582004",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4506,
+        "why": "timeout https://listen.radioking.com/radio/523747/stream/5",
+        "checkedAt": 1795655182283
+      }
+    },
+    {
+      "url": "https://listen.radioking.com/radio/552908/stream/612230",
+      "names": [
+        "Radio Bar Sardine"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen.radioking.com/radio/552908/stream/612230",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4513,
+        "why": "timeout https://listen.radioking.com/radio/552908/stream/6",
+        "checkedAt": 1795655184061
+      }
+    },
+    {
+      "url": "https://listen.radioking.com/radio/591304/stream/654688",
+      "names": [
+        "Amplitudes Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen.radioking.com/radio/591304/stream/654688",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4501,
+        "why": "timeout https://listen.radioking.com/radio/591304/stream/6",
+        "checkedAt": 1795655185591
+      }
+    },
+    {
+      "url": "https://listen.radioking.com/radio/605/stream/62902",
+      "names": [
+        "New Morning"
+      ],
+      "slugs": [
+        "jazz-blues"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen.radioking.com/radio/605/stream/62902",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4513,
+        "why": "timeout https://listen.radioking.com/radio/605/stream/6290",
+        "checkedAt": 1795655186333
+      }
+    },
+    {
+      "url": "https://listen.radioking.com/radio/69079/stream/106852",
+      "names": [
+        "Ace Cafe Radio"
+      ],
+      "slugs": [
+        "rock-indie-alternative-country-folk"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen.radioking.com/radio/69079/stream/106852",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4514,
+        "why": "timeout https://listen.radioking.com/radio/69079/stream/10",
+        "checkedAt": 1795655186797
+      }
+    },
+    {
+      "url": "https://listen.radioking.com/radio/742276/stream/808768",
+      "names": [
+        "Radio Sam Sam"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen.radioking.com/radio/742276/stream/808768",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4514,
+        "why": "timeout https://listen.radioking.com/radio/742276/stream/8",
+        "checkedAt": 1795655188575
+      }
+    },
+    {
+      "url": "https://listen.radioking.com/radio/96031/stream/134656",
+      "names": [
+        "Piñata Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen.radioking.com/radio/96031/stream/134656",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4513,
+        "why": "timeout https://listen.radioking.com/radio/96031/stream/13",
+        "checkedAt": 1795655190104
+      }
+    },
+    {
+      "url": "https://listen.rpgamers.net/rpgn",
+      "names": [
+        "RPGamers Radio"
+      ],
+      "slugs": [
+        "video-game-chiptune-soundtracks"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen.rpgamers.net/rpgn",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25200,
+        "latencyMs": 2416,
+        "why": "audio/mpeg 25200B",
+        "checkedAt": 1795655188970
+      }
+    },
+    {
+      "url": "https://listen.teknivalradio.com/listen/teknivalradio/radio.mp3",
+      "names": [
+        "TEKnival Radio"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen.teknivalradio.com/listen/teknivalradio/radio.mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 32046,
+        "latencyMs": 1811,
+        "why": "audio/mpeg 32046B",
+        "checkedAt": 1795655188608
+      }
+    },
+    {
+      "url": "https://listen.xray.fm/stream",
+      "names": [
+        "XRAY.fm"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen.xray.fm/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 28197,
+        "latencyMs": 1297,
+        "why": "audio/mpeg 28197B",
+        "checkedAt": 1795655190177
+      }
+    },
+    {
+      "url": "https://listen2.streamaudio.co:8042/stream",
+      "names": [
+        "Space dogs"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen2.streamaudio.co:8042/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/aac",
+        "bytes": 25200,
+        "latencyMs": 1113,
+        "why": "audio/aac 25200B",
+        "checkedAt": 1795655190073
+      }
+    },
+    {
+      "url": "https://listen7.myradio24.com/69366",
+      "names": [
+        "Pyongyang Radio FM"
+      ],
+      "slugs": [
+        "world-regional"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://listen7.myradio24.com/69366",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 32228,
+        "latencyMs": 1520,
+        "why": "audio/mpeg 32228B",
+        "checkedAt": 1795655190682
+      }
+    },
+    {
+      "url": "https://live.wrir.org/",
+      "names": [
+        "WRIR 97.3"
+      ],
+      "slugs": [
+        "campus-public-radio"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://live.wrir.org/",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 27914,
+        "latencyMs": 1220,
+        "why": "audio/mpeg 27914B",
+        "checkedAt": 1795655191880
+      }
+    },
+    {
+      "url": "https://livepeercdn.studio/hls/85c28sa2o8wppm58/index.m3u8",
+      "names": [
+        "The Lot Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://livepeercdn.studio/hls/85c28sa2o8wppm58/index.m3u8",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": true,
+        "mode": "hls",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4706,
+        "why": "timeout https://livepeercdn.studio/hls/85c28sa2o8wppm58/in",
+        "checkedAt": 1795655194810
+      }
+    },
+    {
+      "url": "https://livestream.diaradio.live/main",
+      "names": [
+        "DIA!"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://livestream.diaradio.live/main",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25059,
+        "latencyMs": 1356,
+        "why": "audio/mpeg 25059B",
+        "checkedAt": 1795655191686
+      }
+    },
+    {
+      "url": "https://loosefm.radiocult.fm/stream",
+      "names": [
+        "Loose FM"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://loosefm.radiocult.fm/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24035,
+        "latencyMs": 1195,
+        "why": "audio/mpeg 24035B",
+        "checkedAt": 1795655192022
+      }
+    },
+    {
+      "url": "https://manager8.streamradio.fr:2295/stream",
+      "names": [
+        "COMMODEXPLORER"
+      ],
+      "slugs": [
+        "video-game-chiptune-soundtracks"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://manager8.streamradio.fr:2295/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25200,
+        "latencyMs": 804,
+        "why": "audio/mpeg 25200B",
+        "checkedAt": 1795655192748
+      }
+    },
+    {
+      "url": "https://mediaserv38.live-streams.nl:18030/stream",
+      "names": [
+        "Synthetic FM - New Italo Generation"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://mediaserv38.live-streams.nl:18030/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25200,
+        "latencyMs": 1373,
+        "why": "audio/mpeg 25200B",
+        "checkedAt": 1795655194467
+      }
+    },
+    {
+      "url": "https://mediaserv38.live-streams.nl:18040/live",
+      "names": [
+        "Synthetic FM"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://mediaserv38.live-streams.nl:18040/live",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25200,
+        "latencyMs": 1114,
+        "why": "audio/mpeg 25200B",
+        "checkedAt": 1795655193765
+      }
+    },
+    {
+      "url": "https://mediaserv73.live-streams.nl:18058/stream",
+      "names": [
+        "Ancient FM"
+      ],
+      "slugs": [
+        "classical-opera"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://mediaserv73.live-streams.nl:18058/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24576,
+        "latencyMs": 1076,
+        "why": "audio/mpeg 24576B",
+        "checkedAt": 1795655194173
+      }
+    },
+    {
+      "url": "https://mountain-chill.radiocult.fm/stream",
+      "names": [
+        "Mountain Chill"
+      ],
+      "slugs": [
+        "ambient-lo-fi-chill"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://mountain-chill.radiocult.fm/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 39069,
+        "latencyMs": 1273,
+        "why": "audio/mpeg 39069B",
+        "checkedAt": 1795655195214
+      }
+    },
+    {
+      "url": "https://mouthfull-radio.radiocult.fm/stream",
+      "names": [
+        "Mouthfull"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://mouthfull-radio.radiocult.fm/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24006,
+        "latencyMs": 1392,
+        "why": "audio/mpeg 24006B",
+        "checkedAt": 1795655195724
+      }
+    },
+    {
+      "url": "https://movementathens.out.airtime.pro/movementathens_a",
+      "names": [
+        "STEGI.RADIO"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://movementathens.out.airtime.pro/movementathens_a",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/aac",
+        "bytes": 24323,
+        "latencyMs": 3668,
+        "why": "audio/aac 24323B",
+        "checkedAt": 1795655198587
+      }
+    },
+    {
+      "url": "https://muitoradio.out.airtime.pro/muitoradio_a",
+      "names": [
+        "Muito Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://muitoradio.out.airtime.pro/muitoradio_a",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25078,
+        "latencyMs": 2719,
+        "why": "audio/mpeg 25078B",
+        "checkedAt": 1795655197935
+      }
+    },
+    {
+      "url": "https://n10as.radiocult.fm/stream",
+      "names": [
+        "n10.as"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://n10as.radiocult.fm/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 40298,
+        "latencyMs": 2269,
+        "why": "audio/mpeg 40298B",
+        "checkedAt": 1795655197483
+      }
+    },
+    {
+      "url": "https://nature-rex.radioca.st/stream",
+      "names": [
+        "Ambinature Radio"
+      ],
+      "slugs": [
+        "ambient-lo-fi-chill"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://nature-rex.radioca.st/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24060,
+        "latencyMs": 1587,
+        "why": "audio/mpeg 24060B",
+        "checkedAt": 1795655197312
+      }
+    },
+    {
+      "url": "https://netilradio.out.airtime.pro/netilradio_a",
+      "names": [
+        "Netil Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://netilradio.out.airtime.pro/netilradio_a",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25078,
+        "latencyMs": 2167,
+        "why": "audio/mpeg 25078B",
+        "checkedAt": 1795655199682
+      }
+    },
+    {
+      "url": "https://nonstopcasiopea.radioca.st/;",
+      "names": [
+        "Nonstop Casiopea"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://nonstopcasiopea.radioca.st/;",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24095,
+        "latencyMs": 2294,
+        "why": "audio/mpeg 24095B",
+        "checkedAt": 1795655199823
+      }
+    },
+    {
+      "url": "https://noods-radio.radiocult.fm/stream",
+      "names": [
+        "Noods Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://noods-radio.radiocult.fm/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24059,
+        "latencyMs": 1264,
+        "why": "audio/mpeg 24059B",
+        "checkedAt": 1795655199200
+      }
+    },
+    {
+      "url": "https://nova-odn.ice.infomaniak.ch/nova-odn-256.aac",
+      "names": [
+        "Radio Nova - Hip-Hop"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://nova-odn.ice.infomaniak.ch/nova-odn-256.aac",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/aac",
+        "bytes": 32768,
+        "latencyMs": 1789,
+        "why": "audio/aac 32768B",
+        "checkedAt": 1795655200959
+      }
+    },
+    {
+      "url": "https://novazz.ice.infomaniak.ch/novazz-128.mp3",
+      "names": [
+        "Radio Nova"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://novazz.ice.infomaniak.ch/novazz-128.mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 32768,
+        "latencyMs": 2924,
+        "why": "audio/mpeg 32768B",
+        "checkedAt": 1795655202706
+      }
+    },
+    {
+      "url": "https://octaverecords.out.airtime.pro/octaverecords_a",
+      "names": [
+        "Octave Radio"
+      ],
+      "slugs": [
+        "jazz-blues"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://octaverecords.out.airtime.pro/octaverecords_a",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25077,
+        "latencyMs": 2514,
+        "why": "audio/mpeg 25077B",
+        "checkedAt": 1795655202365
+      }
+    },
+    {
+      "url": "https://ola-radio.radiocult.fm/stream",
+      "names": [
+        "Ola Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://ola-radio.radiocult.fm/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 27033,
+        "latencyMs": 1074,
+        "why": "audio/mpeg 27033B",
+        "checkedAt": 1795655201241
+      }
+    },
+    {
+      "url": "https://origin.streamnerd.nl/operator/operator/icecast.audio",
+      "names": [
+        "Operator Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://origin.streamnerd.nl/operator/operator/icecast.audio",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/aacp",
+        "bytes": 32768,
+        "latencyMs": 1612,
+        "why": "audio/aacp 32768B",
+        "checkedAt": 1795655203084
+      }
+    },
+    {
+      "url": "https://oroko-radio.radiocult.fm/stream",
+      "names": [
+        "Oroko Radio"
+      ],
+      "slugs": [
+        "world-regional"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://oroko-radio.radiocult.fm/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 31341,
+        "latencyMs": 1087,
+        "why": "audio/mpeg 31341B",
+        "checkedAt": 1795655202515
+      }
+    },
+    {
+      "url": "https://pantano.ovh:8444/pantano",
+      "names": [
+        "Fango Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://pantano.ovh:8444/pantano",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 765,
+        "why": "unable to verify the first certificate; if the root CA is in",
+        "checkedAt": 1795655203130
+      }
+    },
+    {
+      "url": "https://paranoisewebcast.radioca.st/stream",
+      "names": [
+        "Paranoise Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://paranoisewebcast.radioca.st/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24137,
+        "latencyMs": 1554,
+        "why": "audio/mpeg 24137B",
+        "checkedAt": 1795655204070
+      }
+    },
+    {
+      "url": "https://parea-radio-b7474105.radiocult.fm/stream",
+      "names": [
+        "Parea Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://parea-radio-b7474105.radiocult.fm/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 36222,
+        "latencyMs": 1137,
+        "why": "audio/mpeg 36222B",
+        "checkedAt": 1795655204078
+      }
+    },
+    {
+      "url": "https://partneraudio.wavefarm.org/radius.mp3",
+      "names": [
+        "The Radius"
+      ],
+      "slugs": [
+        "experimental-nerdy-scanners"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://partneraudio.wavefarm.org/radius.mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25200,
+        "latencyMs": 1152,
+        "why": "audio/mpeg 25200B",
+        "checkedAt": 1795655204614
+      }
+    },
+    {
+      "url": "https://pass.out.airtime.pro/pass_a",
+      "names": [
+        "Pan African Space Station"
+      ],
+      "slugs": [
+        "world-regional"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://pass.out.airtime.pro/pass_a",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25078,
+        "latencyMs": 2461,
+        "why": "audio/mpeg 25078B",
+        "checkedAt": 1795655205784
+      }
+    },
+    {
+      "url": "https://phoebe.streamerr.co:4140/ambient.mp3",
+      "names": [
+        "Ambient.FM"
+      ],
+      "slugs": [
+        "ambient-lo-fi-chill"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://phoebe.streamerr.co:4140/ambient.mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25077,
+        "latencyMs": 1270,
+        "why": "audio/mpeg 25077B",
+        "checkedAt": 1795655205570
+      }
+    },
+    {
+      "url": "https://pianosolo.streamguys1.com/live",
+      "names": [
+        "Whisperings: Solo Piano Radio"
+      ],
+      "slugs": [
+        "classical-opera"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://pianosolo.streamguys1.com/live",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 32768,
+        "latencyMs": 1210,
+        "why": "audio/mpeg 32768B",
+        "checkedAt": 1795655205913
+      }
+    },
+    {
+      "url": "https://play.radioking.io/blt-radio",
+      "names": [
+        "Behind Loud Tracks"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://play.radioking.io/blt-radio",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 5479,
+        "why": "timeout https://listen.radioking.com/radio/721055/stream/7",
+        "checkedAt": 1795655210093
+      }
+    },
+    {
+      "url": "https://play.radiorivendell.com/radio/8000/radio.mp3",
+      "names": [
+        "Radio Rivendell"
+      ],
+      "slugs": [
+        "video-game-chiptune-soundtracks"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://play.radiorivendell.com/radio/8000/radio.mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 27899,
+        "latencyMs": 1803,
+        "why": "audio/mpeg 27899B",
+        "checkedAt": 1795655207624
+      }
+    },
+    {
+      "url": "https://pstnet8.shoutcastnet.com:10064/stream",
+      "names": [
+        "Great Big Radio"
+      ],
+      "slugs": [
+        "decades-oldies-nostalgia"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://pstnet8.shoutcastnet.com:10064/stream",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 149,
+        "why": "getaddrinfo ENOTFOUND pstnet8.shoutcastnet.com",
+        "checkedAt": 1795655205933
+      }
+    },
+    {
+      "url": "https://public.isekoi-radio.com/listen/isekoi/radio.mp3",
+      "names": [
+        "ISEKOI Radio - Main Channel"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://public.isekoi-radio.com/listen/isekoi/radio.mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 27661,
+        "latencyMs": 1433,
+        "why": "audio/mpeg 27661B",
+        "checkedAt": 1795655207567
+      }
+    },
+    {
+      "url": "https://puma.streemlion.com:1785/stream",
+      "names": [
+        "Ultimate Oldies Radio"
+      ],
+      "slugs": [
+        "decades-oldies-nostalgia"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://puma.streemlion.com:1785/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/aacp",
+        "bytes": 24614,
+        "latencyMs": 2602,
+        "why": "audio/aacp 24614B",
+        "checkedAt": 1795655208741
+      }
+    },
+    {
+      "url": "https://radio-brennpunkt.radiocult.fm/stream",
+      "names": [
+        "Radio Brennpunkt"
+      ],
+      "slugs": [
+        "experimental-nerdy-scanners"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radio-brennpunkt.radiocult.fm/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 28493,
+        "latencyMs": 1008,
+        "why": "audio/mpeg 28493B",
+        "checkedAt": 1795655208788
+      }
+    },
+    {
+      "url": "https://radio-tsonami-b24c40dc.radiocult.fm/stream",
+      "names": [
+        "Radio Tsonami"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radio-tsonami-b24c40dc.radiocult.fm/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24056,
+        "latencyMs": 1101,
+        "why": "audio/mpeg 24056B",
+        "checkedAt": 1795655208875
+      }
+    },
+    {
+      "url": "https://radio.eduneu.eu:8020/radio.mp3",
+      "names": [
+        "NEU Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radio.eduneu.eu:8020/radio.mp3",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4843,
+        "why": "timeout https://radio.eduneu.eu:8020/radio.mp3",
+        "checkedAt": 1795655213584
+      }
+    },
+    {
+      "url": "https://radio.ericade.net/sc/stream/1/",
+      "names": [
+        "Ericade Radio"
+      ],
+      "slugs": [
+        "video-game-chiptune-soundtracks"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radio.ericade.net/sc/stream/1/",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25741,
+        "latencyMs": 1152,
+        "why": "audio/mpeg 25741B",
+        "checkedAt": 1795655210400
+      }
+    },
+    {
+      "url": "https://radio.intergalactic.fm/2A",
+      "names": [
+        "Intergalactic FM - Disco Fetish"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radio.intergalactic.fm/2A",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/aac",
+        "bytes": 25200,
+        "latencyMs": 1103,
+        "why": "audio/aac 25200B",
+        "checkedAt": 1795655210375
+      }
+    },
+    {
+      "url": "https://radio.intergalactic.fm/3A",
+      "names": [
+        "Intergalactic FM - The Dream Machine"
+      ],
+      "slugs": [
+        "video-game-chiptune-soundtracks"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radio.intergalactic.fm/3A",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/aac",
+        "bytes": 25200,
+        "latencyMs": 861,
+        "why": "audio/aac 25200B",
+        "checkedAt": 1795655211347
+      }
+    },
+    {
+      "url": "https://radio.lapfoxradio.com/radio/8000/stream-ogg-320.ogg",
+      "names": [
+        "LapFox Radio"
+      ],
+      "slugs": [
+        "video-game-chiptune-soundtracks"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radio.lapfoxradio.com/radio/8000/stream-ogg-320.ogg",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "application/ogg",
+        "bytes": 28063,
+        "latencyMs": 1327,
+        "why": "application/ogg 28063B",
+        "checkedAt": 1795655211899
+      }
+    },
+    {
+      "url": "https://radio.mensajito.mx/nopalA",
+      "names": [
+        "Radio Nopal"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radio.mensajito.mx/nopalA",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24570,
+        "latencyMs": 1211,
+        "why": "audio/mpeg 24570B",
+        "checkedAt": 1795655212049
+      }
+    },
+    {
+      "url": "https://radio.moss.garden/listen/moss_garden/radio.mp3",
+      "names": [
+        "Moss Garden"
+      ],
+      "slugs": [
+        "ambient-lo-fi-chill"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radio.moss.garden/listen/moss_garden/radio.mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24237,
+        "latencyMs": 1619,
+        "why": "audio/mpeg 24237B",
+        "checkedAt": 1795655213426
+      }
+    },
+    {
+      "url": "https://radio.nessradio.net:8212/nessradio-hd",
+      "names": [
+        "Ness Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radio.nessradio.net:8212/nessradio-hd",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25200,
+        "latencyMs": 958,
+        "why": "audio/mpeg 25200B",
+        "checkedAt": 1795655213133
+      }
+    },
+    {
+      "url": "https://radio.nugs.net/nugsnet",
+      "names": [
+        "Nugs Radio"
+      ],
+      "slugs": [
+        "rock-indie-alternative-country-folk"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radio.nugs.net/nugsnet",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24576,
+        "latencyMs": 3686,
+        "why": "audio/mpeg 24576B",
+        "checkedAt": 1795655216030
+      }
+    },
+    {
+      "url": "https://radio.plaza.one/ogg",
+      "names": [
+        "Nightwave Plaza"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radio.plaza.one/ogg",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "application/ogg",
+        "bytes": 24180,
+        "latencyMs": 1231,
+        "why": "application/ogg 24180B",
+        "checkedAt": 1795655214616
+      }
+    },
+    {
+      "url": "https://radio.radio-sofa.com/listen/radio_sofa/radio.mp3",
+      "names": [
+        "Radio Sofa"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radio.radio-sofa.com/listen/radio_sofa/radio.mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24050,
+        "latencyMs": 1801,
+        "why": "audio/mpeg 24050B",
+        "checkedAt": 1795655215247
+      }
+    },
+    {
+      "url": "https://radio.serrebiradio.com/listen/serrebiradio/SerrebiRadio",
+      "names": [
+        "SerrebiRadio"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radio.serrebiradio.com/listen/serrebiradio/SerrebiRadio",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 27710,
+        "latencyMs": 1348,
+        "why": "audio/mpeg 27710B",
+        "checkedAt": 1795655215180
+      }
+    },
+    {
+      "url": "https://radio.streemlion.com:3475/stream",
+      "names": [
+        "Arctic Outpost Radio"
+      ],
+      "slugs": [
+        "decades-oldies-nostalgia"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radio.streemlion.com:3475/stream",
+        "ok": false,
+        "code": "SHORT_BODY",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 404,
+        "contentType": "text/xml; charset=utf-8",
+        "bytes": 405,
+        "latencyMs": 765,
+        "why": "窗内仅 405B（低于阈值，假流常见）",
+        "checkedAt": 1795655215381
+      }
+    },
+    {
+      "url": "https://radio.turbo.net.au/stream-hq",
+      "names": [
+        "The Dump"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radio.turbo.net.au/stream-hq",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 27792,
+        "latencyMs": 1401,
+        "why": "audio/mpeg 27792B",
+        "checkedAt": 1795655217017
+      }
+    },
+    {
+      "url": "https://radio.veneno.live/stream/main",
+      "names": [
+        "Veneno"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radio.veneno.live/stream/main",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 27890,
+        "latencyMs": 1998,
+        "why": "audio/mpeg 27890B",
+        "checkedAt": 1795655217654
+      }
+    },
+    {
+      "url": "https://radio.vintageobscura.net/stream",
+      "names": [
+        "Vintage Obscura Radio"
+      ],
+      "slugs": [
+        "decades-oldies-nostalgia"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radio.vintageobscura.net/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25200,
+        "latencyMs": 1276,
+        "why": "audio/mpeg 25200B",
+        "checkedAt": 1795655217089
+      }
+    },
+    {
+      "url": "https://radio13.pro-fhi.net/flux-nwsimjda2/stream",
+      "names": [
+        "Radio Krimi"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radio13.pro-fhi.net/flux-nwsimjda2/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24192,
+        "latencyMs": 2531,
+        "why": "audio/mpeg 24192B",
+        "checkedAt": 1795655218746
+      }
+    },
+    {
+      "url": "https://radio80k.out.airtime.pro/radio80k_a",
+      "names": [
+        "Radio 80000"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radio80k.out.airtime.pro/radio80k_a",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25078,
+        "latencyMs": 2509,
+        "why": "audio/mpeg 25078B",
+        "checkedAt": 1795655220466
+      }
+    },
+    {
+      "url": "https://radioislanegra.org/listen/up/stream",
+      "names": [
+        "Radio Isla Negra - Upbeat"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radioislanegra.org/listen/up/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/aac",
+        "bytes": 24243,
+        "latencyMs": 1518,
+        "why": "audio/aac 24243B",
+        "checkedAt": 1795655219181
+      }
+    },
+    {
+      "url": "https://radioislanegra.org/radio/8000/basic.aac",
+      "names": [
+        "Radio Isla Negra - Slowbeat"
+      ],
+      "slugs": [
+        "ambient-lo-fi-chill"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radioislanegra.org/radio/8000/basic.aac",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/aac",
+        "bytes": 24233,
+        "latencyMs": 1212,
+        "why": "audio/aac 24233B",
+        "checkedAt": 1795655219335
+      }
+    },
+    {
+      "url": "https://radiokapitalpl.out.airtime.pro/radiokapitalpl_a",
+      "names": [
+        "Radio Kapitał"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radiokapitalpl.out.airtime.pro/radiokapitalpl_a",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25078,
+        "latencyMs": 2451,
+        "why": "audio/mpeg 25078B",
+        "checkedAt": 1795655221588
+      }
+    },
+    {
+      "url": "https://radioraheem.out.airtime.pro/radioraheem_a",
+      "names": [
+        "Radio Raheem"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radioraheem.out.airtime.pro/radioraheem_a",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25077,
+        "latencyMs": 2518,
+        "why": "audio/mpeg 25077B",
+        "checkedAt": 1795655221918
+      }
+    },
+    {
+      "url": "https://radios.poolwebwork.com.br/8010/stream",
+      "names": [
+        "Pool FM"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://radios.poolwebwork.com.br/8010/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24025,
+        "latencyMs": 1361,
+        "why": "audio/mpeg 24025B",
+        "checkedAt": 1795655220729
+      }
+    },
+    {
+      "url": "https://rblmedia-a4a44e62.radiocult.fm/stream",
+      "names": [
+        "Radio Banda Larga"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://rblmedia-a4a44e62.radiocult.fm/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24057,
+        "latencyMs": 1008,
+        "why": "audio/mpeg 24057B",
+        "checkedAt": 1795655221624
+      }
+    },
+    {
+      "url": "https://relay1.swissgroove.ch/;",
+      "names": [
+        "Swiss Groove"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://relay1.swissgroove.ch/;",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25078,
+        "latencyMs": 2059,
+        "why": "audio/mpeg 25078B",
+        "checkedAt": 1795655223005
+      }
+    },
+    {
+      "url": "https://retreatradio.out.airtime.pro/retreatradio_b",
+      "names": [
+        "Retreat Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://retreatradio.out.airtime.pro/retreatradio_b",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25077,
+        "latencyMs": 2469,
+        "why": "audio/mpeg 25077B",
+        "checkedAt": 1795655224226
+      }
+    },
+    {
+      "url": "https://s1.autopo.st/proxy/nqjchago?mp=/stream",
+      "names": [
+        "Hawaiian Rainbow"
+      ],
+      "slugs": [
+        "world-regional"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://s1.autopo.st/proxy/nqjchago?mp=/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24910,
+        "latencyMs": 1648,
+        "why": "audio/mpeg 24910B",
+        "checkedAt": 1795655223930
+      }
+    },
+    {
+      "url": "https://s1.voscast.com:10413/stream",
+      "names": [
+        "Swing Street"
+      ],
+      "slugs": [
+        "jazz-blues"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://s1.voscast.com:10413/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25200,
+        "latencyMs": 1250,
+        "why": "audio/mpeg 25200B",
+        "checkedAt": 1795655223461
+      }
+    },
+    {
+      "url": "https://s131.radiolize.com/radio/8110/radio.mp3",
+      "names": [
+        "International Rare Groove"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://s131.radiolize.com/radio/8110/radio.mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/aac",
+        "bytes": 25722,
+        "latencyMs": 2115,
+        "why": "audio/aac 25722B",
+        "checkedAt": 1795655225617
+      }
+    },
+    {
+      "url": "https://s2.radio.co/s2b2b68744/listen",
+      "names": [
+        "BADRADIO"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://s2.radio.co/s2b2b68744/listen",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4533,
+        "why": "timeout https://s2.radio.co/s2b2b68744/listen",
+        "checkedAt": 1795655227994
+      }
+    },
+    {
+      "url": "https://s2.radio.co/sec5fa6199/listen",
+      "names": [
+        "Shirley & Spinoza"
+      ],
+      "slugs": [
+        "experimental-nerdy-scanners"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://s2.radio.co/sec5fa6199/listen",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4502,
+        "why": "timeout https://s2.radio.co/sec5fa6199/listen",
+        "checkedAt": 1795655228432
+      }
+    },
+    {
+      "url": "https://s2.voscast.com:11123/stream",
+      "names": [
+        "Doomnation Radio"
+      ],
+      "slugs": [
+        "metal-heavy"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://s2.voscast.com:11123/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25200,
+        "latencyMs": 1165,
+        "why": "audio/mpeg 25200B",
+        "checkedAt": 1795655226007
+      }
+    },
+    {
+      "url": "https://s3.citrus3.com:8056/stream",
+      "names": [
+        "TotalRock"
+      ],
+      "slugs": [
+        "metal-heavy"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://s3.citrus3.com:8056/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25020,
+        "latencyMs": 1698,
+        "why": "audio/mpeg 25020B",
+        "checkedAt": 1795655227852
+      }
+    },
+    {
+      "url": "https://s3.radio.co/s216811754/listen",
+      "names": [
+        "Tīrkultūra"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://s3.radio.co/s216811754/listen",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4513,
+        "why": "timeout https://s3.radio.co/s216811754/listen",
+        "checkedAt": 1795655230520
+      }
+    },
+    {
+      "url": "https://s3.radio.co/sc8d895604/listen",
+      "names": [
+        "AshiyaRadio"
+      ],
+      "slugs": [
+        "jazz-blues"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://s3.radio.co/sc8d895604/listen",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4510,
+        "why": "timeout https://s3.radio.co/sc8d895604/listen",
+        "checkedAt": 1795655232362
+      }
+    },
+    {
+      "url": "https://s4.radio.co/s69b281ac0/listen",
+      "names": [
+        "Radio Buena Vida"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://s4.radio.co/s69b281ac0/listen",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4522,
+        "why": "timeout https://s4.radio.co/s69b281ac0/listen",
+        "checkedAt": 1795655232516
+      }
+    },
+    {
+      "url": "https://s5.citrus3.com:8244/stream",
+      "names": [
+        "Wayback Radio"
+      ],
+      "slugs": [
+        "decades-oldies-nostalgia"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://s5.citrus3.com:8244/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/aac",
+        "bytes": 24714,
+        "latencyMs": 2267,
+        "why": "audio/aac 24714B",
+        "checkedAt": 1795655231208
+      }
+    },
+    {
+      "url": "https://s5.radio.co/s20251311a/listen",
+      "names": [
+        "Radio is a Foreign Country"
+      ],
+      "slugs": [
+        "experimental-nerdy-scanners"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://s5.radio.co/s20251311a/listen",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4521,
+        "why": "timeout https://s5.radio.co/s20251311a/listen",
+        "checkedAt": 1795655235041
+      }
+    },
+    {
+      "url": "https://s5.radio.co/s253044a7a/listen",
+      "names": [
+        "Disco Factory FM"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://s5.radio.co/s253044a7a/listen",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4515,
+        "why": "timeout https://s5.radio.co/s253044a7a/listen",
+        "checkedAt": 1795655235723
+      }
+    },
+    {
+      "url": "https://s5.radio.co/sc9cb59935/listen",
+      "names": [
+        "Poolsuite FM"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://s5.radio.co/sc9cb59935/listen",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4508,
+        "why": "timeout https://s5.radio.co/sc9cb59935/listen",
+        "checkedAt": 1795655236870
+      }
+    },
+    {
+      "url": "https://screamcheese.radioca.st/stream",
+      "names": [
+        "Dead Air"
+      ],
+      "slugs": [
+        "christmas-holiday"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://screamcheese.radioca.st/stream",
+        "ok": false,
+        "code": "SHORT_BODY",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 502,
+        "contentType": "text/html",
+        "bytes": 173,
+        "latencyMs": 1399,
+        "why": "窗内仅 173B（低于阈值，假流常见）",
+        "checkedAt": 1795655233916
+      }
+    },
+    {
+      "url": "https://sensihiphop.radioca.st/stream",
+      "names": [
+        "Sensimedia Hip Hop"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://sensihiphop.radioca.st/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24104,
+        "latencyMs": 1665,
+        "why": "audio/mpeg 24104B",
+        "checkedAt": 1795655235582
+      }
+    },
+    {
+      "url": "https://server.laradio.online:59009/live",
+      "names": [
+        "The Kyoto Connection"
+      ],
+      "slugs": [
+        "ambient-lo-fi-chill"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://server.laradio.online:59009/live",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4508,
+        "why": "timeout https://server.laradio.online:59009/live",
+        "checkedAt": 1795655239549
+      }
+    },
+    {
+      "url": "https://server10.reliastream.com/proxy/arcaderadio?mp=/stream2",
+      "names": [
+        "Arcade Radio"
+      ],
+      "slugs": [
+        "video-game-chiptune-soundtracks"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://server10.reliastream.com/proxy/arcaderadio?mp=/stream2",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 26600,
+        "latencyMs": 2098,
+        "why": "audio/mpeg 26600B",
+        "checkedAt": 1795655239166
+      }
+    },
+    {
+      "url": "https://server7.radio-streams.net/proxy/santana/stream",
+      "names": [
+        "Radio Santana Breda"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://server7.radio-streams.net/proxy/santana/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25720,
+        "latencyMs": 1501,
+        "why": "audio/mpeg 25720B",
+        "checkedAt": 1795655237745
+      }
+    },
+    {
+      "url": "https://servidor15-2.brlogic.com:7006/live",
+      "names": [
+        "Depa Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://servidor15-2.brlogic.com:7006/live",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24717,
+        "latencyMs": 3848,
+        "why": "audio/mpeg 24717B",
+        "checkedAt": 1795655240929
+      }
+    },
+    {
+      "url": "https://seyisfjorur-community-radio.radiocult.fm/stream",
+      "names": [
+        "Seyðisfjörður Community Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://seyisfjorur-community-radio.radiocult.fm/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24021,
+        "latencyMs": 1209,
+        "why": "audio/mpeg 24021B",
+        "checkedAt": 1795655238954
+      }
+    },
+    {
+      "url": "https://slacker.cvgm.net/cvgm192",
+      "names": [
+        "CVGM"
+      ],
+      "slugs": [
+        "video-game-chiptune-soundtracks"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://slacker.cvgm.net/cvgm192",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25198,
+        "latencyMs": 2198,
+        "why": "audio/mpeg 25198B",
+        "checkedAt": 1795655241681
+      }
+    },
+    {
+      "url": "https://slackradiolive.com/listen/slack_radio/radio.mp3",
+      "names": [
+        "Slack Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://slackradiolive.com/listen/slack_radio/radio.mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24187,
+        "latencyMs": 2069,
+        "why": "audio/mpeg 24187B",
+        "checkedAt": 1795655241549
+      }
+    },
+    {
+      "url": "https://sohoradiomusic.doughunt.co.uk:8010/320mp3",
+      "names": [
+        "Soho Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://sohoradiomusic.doughunt.co.uk:8010/320mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25200,
+        "latencyMs": 871,
+        "why": "audio/mpeg 25200B",
+        "checkedAt": 1795655241002
+      }
+    },
+    {
+      "url": "https://somafm.com/dronezone256.pls",
+      "names": [
+        "SomaFM - Drone Zone"
+      ],
+      "slugs": [
+        "ambient-lo-fi-chill"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://somafm.com/dronezone256.pls",
+        "ok": false,
+        "code": "SHORT_BODY",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/x-scpls",
+        "bytes": 764,
+        "latencyMs": 841,
+        "why": "窗内仅 764B（低于阈值，假流常见）",
+        "checkedAt": 1795655241770
+      }
+    },
+    {
+      "url": "https://somafm.com/groovesalad256.pls",
+      "names": [
+        "SomaFM - Groove Salad"
+      ],
+      "slugs": [
+        "ambient-lo-fi-chill"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://somafm.com/groovesalad256.pls",
+        "ok": false,
+        "code": "SHORT_BODY",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/x-scpls",
+        "bytes": 672,
+        "latencyMs": 769,
+        "why": "窗内仅 672B（低于阈值，假流常见）",
+        "checkedAt": 1795655241772
+      }
+    },
+    {
+      "url": "https://somafm.com/sonicuniverse256.pls",
+      "names": [
+        "SomaFM - Sonic Universe"
+      ],
+      "slugs": [
+        "jazz-blues"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://somafm.com/sonicuniverse256.pls",
+        "ok": false,
+        "code": "SHORT_BODY",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/x-scpls",
+        "bytes": 748,
+        "latencyMs": 549,
+        "why": "窗内仅 748B（低于阈值，假流常见）",
+        "checkedAt": 1795655242099
+      }
+    },
+    {
+      "url": "https://sounds.threedradio.com/stream",
+      "names": [
+        "Three D Radio 93.7 FM"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://sounds.threedradio.com/stream",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 5368,
+        "why": "timeout https://sounds.threedradio.com/stream",
+        "checkedAt": 1795655247049
+      }
+    },
+    {
+      "url": "https://sp1.autopo.st/8026/stream",
+      "names": [
+        "Ignore Radio Shoegaze"
+      ],
+      "slugs": [
+        "rock-indie-alternative-country-folk"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://sp1.autopo.st/8026/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 28093,
+        "latencyMs": 1409,
+        "why": "audio/mpeg 28093B",
+        "checkedAt": 1795655243216
+      }
+    },
+    {
+      "url": "https://stations.radio-host.com/proxy/livejam/stream",
+      "names": [
+        "Live Jam Radio"
+      ],
+      "slugs": [
+        "rock-indie-alternative-country-folk"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stations.radio-host.com/proxy/livejam/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/aacp",
+        "bytes": 25160,
+        "latencyMs": 1749,
+        "why": "audio/aacp 25160B",
+        "checkedAt": 1795655243748
+      }
+    },
+    {
+      "url": "https://stayfm.com:8443/archive",
+      "names": [
+        "stayfm"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stayfm.com:8443/archive",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24290,
+        "latencyMs": 1538,
+        "why": "audio/mpeg 24290B",
+        "checkedAt": 1795655243858
+      }
+    },
+    {
+      "url": "https://stream-15.aiir.com/kqwcuxfxcwhtv",
+      "names": [
+        "Panacea Radio"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream-15.aiir.com/kqwcuxfxcwhtv",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4675,
+        "why": "timeout https://stream-15.aiir.com/kqwcuxfxcwhtv",
+        "checkedAt": 1795655247891
+      }
+    },
+    {
+      "url": "https://stream-mixtape-geo.ntslive.net/mixtape",
+      "names": [
+        "NTS - Slow Focus"
+      ],
+      "slugs": [
+        "ambient-lo-fi-chill"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream-mixtape-geo.ntslive.net/mixtape",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 6011,
+        "why": "deadline https://stream-mixtape-geo.ntslive.net/mixtape",
+        "checkedAt": 1795655249759
+      }
+    },
+    {
+      "url": "https://stream-mixtape-geo.ntslive.net/mixtape2",
+      "names": [
+        "NTS - Low Key"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream-mixtape-geo.ntslive.net/mixtape2",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 6010,
+        "why": "deadline https://stream-mixtape-geo.ntslive.net/mixtape2",
+        "checkedAt": 1795655249868
+      }
+    },
+    {
+      "url": "https://stream-mixtape-geo.ntslive.net/mixtape21",
+      "names": [
+        "NTS - Island Time"
+      ],
+      "slugs": [
+        "reggae-dub"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream-mixtape-geo.ntslive.net/mixtape21",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 32768,
+        "latencyMs": 2000,
+        "why": "audio/mpeg 32768B",
+        "checkedAt": 1795655251051
+      }
+    },
+    {
+      "url": "https://stream-mixtape-geo.ntslive.net/mixtape22",
+      "names": [
+        "NTS - Rap House"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream-mixtape-geo.ntslive.net/mixtape22",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 6003,
+        "why": "deadline https://stream-mixtape-geo.ntslive.net/mixtape22",
+        "checkedAt": 1795655253894
+      }
+    },
+    {
+      "url": "https://stream-mixtape-geo.ntslive.net/mixtape23",
+      "names": [
+        "NTS - Field Recordings"
+      ],
+      "slugs": [
+        "ambient-lo-fi-chill"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream-mixtape-geo.ntslive.net/mixtape23",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 6004,
+        "why": "deadline https://stream-mixtape-geo.ntslive.net/mixtape23",
+        "checkedAt": 1795655255763
+      }
+    },
+    {
+      "url": "https://stream-mixtape-geo.ntslive.net/mixtape24",
+      "names": [
+        "NTS - Sweat"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream-mixtape-geo.ntslive.net/mixtape24",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 6004,
+        "why": "deadline https://stream-mixtape-geo.ntslive.net/mixtape24",
+        "checkedAt": 1795655255872
+      }
+    },
+    {
+      "url": "https://stream-mixtape-geo.ntslive.net/mixtape26",
+      "names": [
+        "NTS - The Tube"
+      ],
+      "slugs": [
+        "rock-indie-alternative-country-folk"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream-mixtape-geo.ntslive.net/mixtape26",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 6006,
+        "why": "deadline https://stream-mixtape-geo.ntslive.net/mixtape26",
+        "checkedAt": 1795655257057
+      }
+    },
+    {
+      "url": "https://stream-mixtape-geo.ntslive.net/mixtape27",
+      "names": [
+        "NTS - Feelings"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream-mixtape-geo.ntslive.net/mixtape27",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 6015,
+        "why": "deadline https://stream-mixtape-geo.ntslive.net/mixtape27",
+        "checkedAt": 1795655259909
+      }
+    },
+    {
+      "url": "https://stream-mixtape-geo.ntslive.net/mixtape3",
+      "names": [
+        "NTS - Expansions"
+      ],
+      "slugs": [
+        "jazz-blues"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream-mixtape-geo.ntslive.net/mixtape3",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 6011,
+        "why": "deadline https://stream-mixtape-geo.ntslive.net/mixtape3",
+        "checkedAt": 1795655261774
+      }
+    },
+    {
+      "url": "https://stream-mixtape-geo.ntslive.net/mixtape31",
+      "names": [
+        "NTS - Labyrinth"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream-mixtape-geo.ntslive.net/mixtape31",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 6012,
+        "why": "deadline https://stream-mixtape-geo.ntslive.net/mixtape31",
+        "checkedAt": 1795655261884
+      }
+    },
+    {
+      "url": "https://stream-mixtape-geo.ntslive.net/mixtape34",
+      "names": [
+        "NTS - The Pit"
+      ],
+      "slugs": [
+        "metal-heavy"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream-mixtape-geo.ntslive.net/mixtape34",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 32768,
+        "latencyMs": 963,
+        "why": "audio/mpeg 32768B",
+        "checkedAt": 1795655260168
+      }
+    },
+    {
+      "url": "https://stream-mixtape-geo.ntslive.net/mixtape35",
+      "names": [
+        "NTS - Sheet Music"
+      ],
+      "slugs": [
+        "classical-opera"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream-mixtape-geo.ntslive.net/mixtape35",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 6005,
+        "why": "deadline https://stream-mixtape-geo.ntslive.net/mixtape35",
+        "checkedAt": 1795655265914
+      }
+    },
+    {
+      "url": "https://stream-mixtape-geo.ntslive.net/mixtape36",
+      "names": [
+        "NTS - Otaku"
+      ],
+      "slugs": [
+        "video-game-chiptune-soundtracks"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream-mixtape-geo.ntslive.net/mixtape36",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 6012,
+        "why": "deadline https://stream-mixtape-geo.ntslive.net/mixtape36",
+        "checkedAt": 1795655266180
+      }
+    },
+    {
+      "url": "https://stream-mixtape-geo.ntslive.net/mixtape4",
+      "names": [
+        "NTS - Poolside"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream-mixtape-geo.ntslive.net/mixtape4",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 27797,
+        "latencyMs": 968,
+        "why": "audio/mpeg 27797B",
+        "checkedAt": 1795655265657
+      }
+    },
+    {
+      "url": "https://stream-mixtape-geo.ntslive.net/mixtape5",
+      "names": [
+        "NTS - 4 To The Floor"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream-mixtape-geo.ntslive.net/mixtape5",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 6008,
+        "why": "deadline https://stream-mixtape-geo.ntslive.net/mixtape5",
+        "checkedAt": 1795655267892
+      }
+    },
+    {
+      "url": "https://stream-mixtape-geo.ntslive.net/mixtape6",
+      "names": [
+        "NTS - Memory Lane"
+      ],
+      "slugs": [
+        "rock-indie-alternative-country-folk"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream-mixtape-geo.ntslive.net/mixtape6",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 6014,
+        "why": "deadline https://stream-mixtape-geo.ntslive.net/mixtape6",
+        "checkedAt": 1795655271671
+      }
+    },
+    {
+      "url": "https://stream-relay-geo.internetpublicradio.live/stream/main",
+      "names": [
+        "Internet Public Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream-relay-geo.internetpublicradio.live/stream/main",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "application/ogg",
+        "bytes": 24576,
+        "latencyMs": 1516,
+        "why": "application/ogg 24576B",
+        "checkedAt": 1795655268172
+      }
+    },
+    {
+      "url": "https://stream-test.hkcr.live/hls/main.m3u8",
+      "names": [
+        "HKCR"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream-test.hkcr.live/hls/main.m3u8",
+        "ok": true,
+        "code": "OK",
+        "hls": true,
+        "mode": "hls",
+        "httpStatus": 200,
+        "contentType": "video/mp2t",
+        "bytes": 16751,
+        "latencyMs": 411,
+        "why": "hls分片 16751B",
+        "checkedAt": 1795655268600
+      }
+    },
+    {
+      "url": "https://stream.deevaradio.net:10443/italopower",
+      "names": [
+        "Radio ItaloPower!"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.deevaradio.net:10443/italopower",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25200,
+        "latencyMs": 924,
+        "why": "audio/mpeg 25200B",
+        "checkedAt": 1795655269271
+      }
+    },
+    {
+      "url": "https://stream.gensokyoradio.net/GensokyoRadio-enhanced.m3u",
+      "names": [
+        "Gensokyo Radio"
+      ],
+      "slugs": [
+        "video-game-chiptune-soundtracks"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.gensokyoradio.net/GensokyoRadio-enhanced.m3u",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": true,
+        "mode": "hls",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 6002,
+        "why": "deadline https://stream.gensokyoradio.net/GensokyoRadio-enh",
+        "checkedAt": 1795655274174
+      }
+    },
+    {
+      "url": "https://stream.kalx.berkeley.edu:8443/kalx-320.aac",
+      "names": [
+        "KALX 90.7"
+      ],
+      "slugs": [
+        "campus-public-radio"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.kalx.berkeley.edu:8443/kalx-320.aac",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/aacp",
+        "bytes": 25200,
+        "latencyMs": 1229,
+        "why": "audio/aacp 25200B",
+        "checkedAt": 1795655270453
+      }
+    },
+    {
+      "url": "https://stream.kwsx.online/listen/kwsx/radio-med.mp3",
+      "names": [
+        "KWSX Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.kwsx.online/listen/kwsx/radio-med.mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 29190,
+        "latencyMs": 1430,
+        "why": "audio/mpeg 29190B",
+        "checkedAt": 1795655271226
+      }
+    },
+    {
+      "url": "https://stream.laut.fm/gta-classics",
+      "names": [
+        "GTA Radio"
+      ],
+      "slugs": [
+        "video-game-chiptune-soundtracks"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.laut.fm/gta-classics",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 31765,
+        "latencyMs": 2051,
+        "why": "audio/mpeg 31765B",
+        "checkedAt": 1795655274173
+      }
+    },
+    {
+      "url": "https://stream.laut.fm/mojo",
+      "names": [
+        "Mojo Radio"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.laut.fm/mojo",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 31765,
+        "latencyMs": 2009,
+        "why": "audio/mpeg 31765B",
+        "checkedAt": 1795655274337
+      }
+    },
+    {
+      "url": "https://stream.looseantenna.fm/radio/8000/default.mp3",
+      "names": [
+        "Loose Antenna"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.looseantenna.fm/radio/8000/default.mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24202,
+        "latencyMs": 1531,
+        "why": "audio/mpeg 24202B",
+        "checkedAt": 1795655273711
+      }
+    },
+    {
+      "url": "https://stream.montezpress.com/icecast/music",
+      "names": [
+        "Montez Press Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.montezpress.com/icecast/music",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24327,
+        "latencyMs": 2216,
+        "why": "audio/mpeg 24327B",
+        "checkedAt": 1795655276624
+      }
+    },
+    {
+      "url": "https://stream.nightride.fm/nightride.mp3",
+      "names": [
+        "Nightride FM"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.nightride.fm/nightride.mp3",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 6010,
+        "why": "deadline https://stream.nightride.fm/nightride.mp3",
+        "checkedAt": 1795655280183
+      }
+    },
+    {
+      "url": "https://stream.palanga.live:8443/palanga128.mp3",
+      "names": [
+        "Palanga Street Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.palanga.live:8443/palanga128.mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25078,
+        "latencyMs": 2301,
+        "why": "audio/mpeg 25078B",
+        "checkedAt": 1795655276740
+      }
+    },
+    {
+      "url": "https://stream.psychedelicized.com/listen/psychedelicized/radio.mp3",
+      "names": [
+        "Psychedelicized"
+      ],
+      "slugs": [
+        "decades-oldies-nostalgia"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.psychedelicized.com/listen/psychedelicized/radio.mp3",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 5708,
+        "why": "timeout https://stream.psychedelicized.com/listen/psychede",
+        "checkedAt": 1795655280045
+      }
+    },
+    {
+      "url": "https://stream.radioalhara.net/ra",
+      "names": [
+        "Radio Al-Hara"
+      ],
+      "slugs": [
+        "world-regional"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.radioalhara.net/ra",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24576,
+        "latencyMs": 2014,
+        "why": "audio/mpeg 24576B",
+        "checkedAt": 1795655279021
+      }
+    },
+    {
+      "url": "https://stream.radiokrs.me:8443/lq.mp3",
+      "names": [
+        "Radio KRŠ"
+      ],
+      "slugs": [
+        "campus-public-radio"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.radiokrs.me:8443/lq.mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25200,
+        "latencyMs": 1136,
+        "why": "audio/mpeg 25200B",
+        "checkedAt": 1795655278157
+      }
+    },
+    {
+      "url": "https://stream.rekt.network/hls/rekt/aac_hifi.m3u8",
+      "names": [
+        "Rekt Network"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.rekt.network/hls/rekt/aac_hifi.m3u8",
+        "ok": true,
+        "code": "OK",
+        "hls": true,
+        "mode": "hls",
+        "httpStatus": 200,
+        "contentType": "audio/aac",
+        "bytes": 32223,
+        "latencyMs": 292,
+        "why": "hls分片 32223B",
+        "checkedAt": 1795655279988
+      }
+    },
+    {
+      "url": "https://stream.resonance.fm/resonance-extra",
+      "names": [
+        "Resonance Extra"
+      ],
+      "slugs": [
+        "experimental-nerdy-scanners"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.resonance.fm/resonance-extra",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25200,
+        "latencyMs": 1096,
+        "why": "audio/mpeg 25200B",
+        "checkedAt": 1795655280469
+      }
+    },
+    {
+      "url": "https://stream.revma.ihrhls.com/zc7332",
+      "names": [
+        "Radio Woodstock"
+      ],
+      "slugs": [
+        "rock-indie-alternative-country-folk"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.revma.ihrhls.com/zc7332",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/aac",
+        "bytes": 24576,
+        "latencyMs": 971,
+        "why": "audio/aac 24576B",
+        "checkedAt": 1795655282205
+      }
+    },
+    {
+      "url": "https://stream.sanctuaryradio.com/mainchannel_hq",
+      "names": [
+        "Sanctuary Radio"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.sanctuaryradio.com/mainchannel_hq",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24911,
+        "latencyMs": 1504,
+        "why": "audio/mpeg 24911B",
+        "checkedAt": 1795655281746
+      }
+    },
+    {
+      "url": "https://stream.saunaradio.com/live",
+      "names": [
+        "Sauna Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.saunaradio.com/live",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24576,
+        "latencyMs": 1539,
+        "why": "audio/mpeg 24576B",
+        "checkedAt": 1795655282374
+      }
+    },
+    {
+      "url": "https://stream.shmupradio.com/320",
+      "names": [
+        "Shmup Radio"
+      ],
+      "slugs": [
+        "video-game-chiptune-soundtracks"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.shmupradio.com/320",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24576,
+        "latencyMs": 2891,
+        "why": "audio/mpeg 24576B",
+        "checkedAt": 1795655284131
+      }
+    },
+    {
+      "url": "https://stream.skylab-radio.com/live",
+      "names": [
+        "Skylab Radio"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.skylab-radio.com/live",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24576,
+        "latencyMs": 1697,
+        "why": "audio/mpeg 24576B",
+        "checkedAt": 1795655284209
+      }
+    },
+    {
+      "url": "https://stream.srg-ssr.ch/m/rsj/aacp_96",
+      "names": [
+        "Radio Suisse Jazz"
+      ],
+      "slugs": [
+        "jazz-blues"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.srg-ssr.ch/m/rsj/aacp_96",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/aac",
+        "bytes": 24624,
+        "latencyMs": 1283,
+        "why": "audio/aac 24624B",
+        "checkedAt": 1795655285200
+      }
+    },
+    {
+      "url": "https://stream.subcity.org/listen",
+      "names": [
+        "Subcity Radio"
+      ],
+      "slugs": [
+        "campus-public-radio"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.subcity.org/listen",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24576,
+        "latencyMs": 1110,
+        "why": "audio/mpeg 24576B",
+        "checkedAt": 1795655283771
+      }
+    },
+    {
+      "url": "https://stream.tm-radio.com/tribalmixes",
+      "names": [
+        "TM Radio"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.tm-radio.com/tribalmixes",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 28196,
+        "latencyMs": 1792,
+        "why": "audio/mpeg 28196B",
+        "checkedAt": 1795655285802
+      }
+    },
+    {
+      "url": "https://stream.willstare.com:8850/,",
+      "names": [
+        "Sleepscapes - Rain"
+      ],
+      "slugs": [
+        "ambient-lo-fi-chill"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.willstare.com:8850/,",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24768,
+        "latencyMs": 1121,
+        "why": "audio/mpeg 24768B",
+        "checkedAt": 1795655285528
+      }
+    },
+    {
+      "url": "https://stream.willstare.com:8860/,",
+      "names": [
+        "Sleepscapes - Waves"
+      ],
+      "slugs": [
+        "ambient-lo-fi-chill"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.willstare.com:8860/,",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24768,
+        "latencyMs": 1151,
+        "why": "audio/mpeg 24768B",
+        "checkedAt": 1795655285643
+      }
+    },
+    {
+      "url": "https://stream.zeno.fm/9q3ez3k3fchvv",
+      "names": [
+        "Spinning Seal FM"
+      ],
+      "slugs": [
+        "experimental-nerdy-scanners"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.zeno.fm/9q3ez3k3fchvv",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4524,
+        "why": "timeout https://stream.zeno.fm/9q3ez3k3fchvv",
+        "checkedAt": 1795655289724
+      }
+    },
+    {
+      "url": "https://stream.zeno.fm/nftv61u086etv",
+      "names": [
+        "Radio Paisajes"
+      ],
+      "slugs": [
+        "experimental-nerdy-scanners"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream.zeno.fm/nftv61u086etv",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4507,
+        "why": "timeout https://stream.zeno.fm/nftv61u086etv",
+        "checkedAt": 1795655290035
+      }
+    },
+    {
+      "url": "https://stream10.xdevel.com/audio13s976748-2017/stream/icecast.audio",
+      "names": [
+        "Le Bon Mix"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://stream10.xdevel.com/audio13s976748-2017/stream/icecast.audio",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/aacp",
+        "bytes": 32768,
+        "latencyMs": 2294,
+        "why": "audio/aacp 32768B",
+        "checkedAt": 1795655288413
+      }
+    },
+    {
+      "url": "https://streamer.fbiradio.com/stream",
+      "names": [
+        "fbi.radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streamer.fbiradio.com/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25200,
+        "latencyMs": 2616,
+        "why": "audio/mpeg 25200B",
+        "checkedAt": 1795655289916
+      }
+    },
+    {
+      "url": "https://streamer.radio.co/s0628bdd53/listen",
+      "names": [
+        "Foundation FM"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streamer.radio.co/s0628bdd53/listen",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4510,
+        "why": "timeout https://streamer.radio.co/s0628bdd53/listen",
+        "checkedAt": 1795655292923
+      }
+    },
+    {
+      "url": "https://streamer.radio.co/s0635c8b0d/listen",
+      "names": [
+        "Dr. Dick's Dub Shack"
+      ],
+      "slugs": [
+        "reggae-dub"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streamer.radio.co/s0635c8b0d/listen",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4505,
+        "why": "timeout https://streamer.radio.co/s0635c8b0d/listen",
+        "checkedAt": 1795655294229
+      }
+    },
+    {
+      "url": "https://streamer.radio.co/s2c3cc784b/listen",
+      "names": [
+        "Electro Swing Revolution"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streamer.radio.co/s2c3cc784b/listen",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4512,
+        "why": "timeout https://streamer.radio.co/s2c3cc784b/listen",
+        "checkedAt": 1795655294429
+      }
+    },
+    {
+      "url": "https://streamer.radio.co/s3ba633066/listen",
+      "names": [
+        "KEWU 89.5"
+      ],
+      "slugs": [
+        "jazz-blues"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streamer.radio.co/s3ba633066/listen",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4502,
+        "why": "timeout https://streamer.radio.co/s3ba633066/listen",
+        "checkedAt": 1795655294537
+      }
+    },
+    {
+      "url": "https://streamer.radio.co/sd6131729c/listen",
+      "names": [
+        "Radio Relativa"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streamer.radio.co/sd6131729c/listen",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4501,
+        "why": "timeout https://streamer.radio.co/sd6131729c/listen",
+        "checkedAt": 1795655297424
+      }
+    },
+    {
+      "url": "https://streaming.broadcastradio.com:10525/streetsd",
+      "names": [
+        "Street Sounds Radio"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streaming.broadcastradio.com:10525/streetsd",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25077,
+        "latencyMs": 2720,
+        "why": "audio/mpeg 25077B",
+        "checkedAt": 1795655297189
+      }
+    },
+    {
+      "url": "https://streaming.broadcastradio.com:11135/celtic",
+      "names": [
+        "Celtic Music Radio"
+      ],
+      "slugs": [
+        "world-regional"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streaming.broadcastradio.com:11135/celtic",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25077,
+        "latencyMs": 2513,
+        "why": "audio/mpeg 25077B",
+        "checkedAt": 1795655297177
+      }
+    },
+    {
+      "url": "https://streaming.exclusive.radio/er/vanmorrison/icecast.audio",
+      "names": [
+        "Van Morrison Radio"
+      ],
+      "slugs": [
+        "decades-oldies-nostalgia"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streaming.exclusive.radio/er/vanmorrison/icecast.audio",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24242,
+        "latencyMs": 3050,
+        "why": "audio/mpeg 24242B",
+        "checkedAt": 1795655298572
+      }
+    },
+    {
+      "url": "https://streaming.lahmacun.hu/radio/8000/radio.mp3",
+      "names": [
+        "Lahmacun Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streaming.lahmacun.hu/radio/8000/radio.mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24228,
+        "latencyMs": 2138,
+        "why": "audio/mpeg 24228B",
+        "checkedAt": 1795655300781
+      }
+    },
+    {
+      "url": "https://streaming.live365.com/a01484",
+      "names": [
+        "Funk the Planet"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streaming.live365.com/a01484",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 32768,
+        "latencyMs": 983,
+        "why": "audio/mpeg 32768B",
+        "checkedAt": 1795655299821
+      }
+    },
+    {
+      "url": "https://streaming.live365.com/a49833",
+      "names": [
+        "KJazz 88.1"
+      ],
+      "slugs": [
+        "jazz-blues"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streaming.live365.com/a49833",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 32768,
+        "latencyMs": 683,
+        "why": "audio/mpeg 32768B",
+        "checkedAt": 1795655299378
+      }
+    },
+    {
+      "url": "https://streaming.live365.com/a97155",
+      "names": [
+        "Birch Street Radio"
+      ],
+      "slugs": [
+        "rock-indie-alternative-country-folk"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streaming.live365.com/a97155",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 32768,
+        "latencyMs": 1006,
+        "why": "audio/mpeg 32768B",
+        "checkedAt": 1795655300118
+      }
+    },
+    {
+      "url": "https://streaming.radio.co/s0d090ee43/listen",
+      "names": [
+        "Newtown Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streaming.radio.co/s0d090ee43/listen",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4508,
+        "why": "timeout https://streaming.radio.co/s0d090ee43/listen",
+        "checkedAt": 1795655303886
+      }
+    },
+    {
+      "url": "https://streaming.radio.co/s3699c5e49/listen",
+      "names": [
+        "Refuge Worldwide"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streaming.radio.co/s3699c5e49/listen",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4517,
+        "why": "timeout https://streaming.radio.co/s3699c5e49/listen",
+        "checkedAt": 1795655304338
+      }
+    },
+    {
+      "url": "https://streaming.radio.co/s807721f02/listen",
+      "names": [
+        "Radio Dopo"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streaming.radio.co/s807721f02/listen",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4516,
+        "why": "timeout https://streaming.radio.co/s807721f02/listen",
+        "checkedAt": 1795655304634
+      }
+    },
+    {
+      "url": "https://streaming.radio.co/sd71de59b3/listen",
+      "names": [
+        "JEMP Radio"
+      ],
+      "slugs": [
+        "rock-indie-alternative-country-folk"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streaming.radio.co/sd71de59b3/listen",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4504,
+        "why": "timeout https://streaming.radio.co/sd71de59b3/listen",
+        "checkedAt": 1795655305285
+      }
+    },
+    {
+      "url": "https://streaming.radio.co/sfd68ddd77/listen",
+      "names": [
+        "Bondi Radio"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streaming.radio.co/sfd68ddd77/listen",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4512,
+        "why": "timeout https://streaming.radio.co/sfd68ddd77/listen",
+        "checkedAt": 1795655308398
+      }
+    },
+    {
+      "url": "https://streampusher-relay.club/datafruits.mp3",
+      "names": [
+        "Datafruits"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streampusher-relay.club/datafruits.mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 28192,
+        "latencyMs": 2363,
+        "why": "audio/mpeg 28192B",
+        "checkedAt": 1795655306934
+      }
+    },
+    {
+      "url": "https://streams.90s90s.de/hiphop/mp3-192",
+      "names": [
+        "90s90s - HipHop & Rap"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streams.90s90s.de/hiphop/mp3-192",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 3053,
+        "why": "Parse Error: Missing expected CR after response line",
+        "checkedAt": 1795655307687
+      }
+    },
+    {
+      "url": "https://streams.greenhost.nl:8006/jazz",
+      "names": [
+        "Concertzender - World of Jazz"
+      ],
+      "slugs": [
+        "jazz-blues"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streams.greenhost.nl:8006/jazz",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 26600,
+        "latencyMs": 943,
+        "why": "audio/mpeg 26600B",
+        "checkedAt": 1795655306638
+      }
+    },
+    {
+      "url": "https://streams.kcrw.com/e24_mp3",
+      "names": [
+        "KCRW - Eclectic24"
+      ],
+      "slugs": [
+        "campus-public-radio"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streams.kcrw.com/e24_mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 32768,
+        "latencyMs": 1262,
+        "why": "audio/mpeg 32768B",
+        "checkedAt": 1795655308991
+      }
+    },
+    {
+      "url": "https://streams.kut.org/4428_192.mp3",
+      "names": [
+        "KUTX 98.9"
+      ],
+      "slugs": [
+        "campus-public-radio"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streams.kut.org/4428_192.mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 32768,
+        "latencyMs": 2000,
+        "why": "audio/mpeg 32768B",
+        "checkedAt": 1795655309417
+      }
+    },
+    {
+      "url": "https://streams.radio.co/s0aa1e6f4a/listen",
+      "names": [
+        "9128"
+      ],
+      "slugs": [
+        "ambient-lo-fi-chill"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streams.radio.co/s0aa1e6f4a/listen",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4513,
+        "why": "timeout https://streams.radio.co/s0aa1e6f4a/listen",
+        "checkedAt": 1795655312200
+      }
+    },
+    {
+      "url": "https://streams.radio.co/s14193ab17/listen",
+      "names": [
+        "GROOVE RADIO"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streams.radio.co/s14193ab17/listen",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4503,
+        "why": "timeout https://streams.radio.co/s14193ab17/listen",
+        "checkedAt": 1795655312901
+      }
+    },
+    {
+      "url": "https://streams.radio.co/s1df61e0af/listen",
+      "names": [
+        "Real Roots Radio"
+      ],
+      "slugs": [
+        "reggae-dub"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streams.radio.co/s1df61e0af/listen",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4504,
+        "why": "timeout https://streams.radio.co/s1df61e0af/listen",
+        "checkedAt": 1795655313495
+      }
+    },
+    {
+      "url": "https://streams.radio.co/sb88c742f0/listen",
+      "names": [
+        "Boogaloo Radio"
+      ],
+      "slugs": [
+        "rock-indie-alternative-country-folk"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streams.radio.co/sb88c742f0/listen",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4501,
+        "why": "timeout https://streams.radio.co/sb88c742f0/listen",
+        "checkedAt": 1795655313918
+      }
+    },
+    {
+      "url": "https://streams.radio.co/se1a320b47/listen",
+      "names": [
+        "Cafe Del Mar"
+      ],
+      "slugs": [
+        "ambient-lo-fi-chill"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streams.radio.co/se1a320b47/listen",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4513,
+        "why": "timeout https://streams.radio.co/se1a320b47/listen",
+        "checkedAt": 1795655316713
+      }
+    },
+    {
+      "url": "https://streams.scenesat.com/main/hq.mp3",
+      "names": [
+        "SceneSat"
+      ],
+      "slugs": [
+        "video-game-chiptune-soundtracks"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streams.scenesat.com/main/hq.mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24882,
+        "latencyMs": 1850,
+        "why": "audio/mpeg 24882B",
+        "checkedAt": 1795655315069
+      }
+    },
+    {
+      "url": "https://streams.wtju.net/wtju-live.mp3",
+      "names": [
+        "WTJU 91.1"
+      ],
+      "slugs": [
+        "campus-public-radio"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streams.wtju.net/wtju-live.mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25200,
+        "latencyMs": 2050,
+        "why": "audio/mpeg 25200B",
+        "checkedAt": 1795655315767
+      }
+    },
+    {
+      "url": "https://streamssleu.chilltrax.com/stream",
+      "names": [
+        "ChillTraxx"
+      ],
+      "slugs": [
+        "ambient-lo-fi-chill"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://streamssleu.chilltrax.com/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25077,
+        "latencyMs": 2481,
+        "why": "audio/mpeg 25077B",
+        "checkedAt": 1795655316868
+      }
+    },
+    {
+      "url": "https://strm.radionula.com/channel4",
+      "names": [
+        "Radio Nula - Classic"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://strm.radionula.com/channel4",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25104,
+        "latencyMs": 1245,
+        "why": "audio/mpeg 25104B",
+        "checkedAt": 1795655316521
+      }
+    },
+    {
+      "url": "https://studioneau.out.airtime.pro/studioneau_a",
+      "names": [
+        "Studio Néau"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://studioneau.out.airtime.pro/studioneau_a",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 1842,
+        "why": "read ECONNRESET",
+        "checkedAt": 1795655317609
+      }
+    },
+    {
+      "url": "https://subtle-radio-dd2656d9.radiocult.fm/stream",
+      "names": [
+        "Subtle Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://subtle-radio-dd2656d9.radiocult.fm/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 40208,
+        "latencyMs": 1007,
+        "why": "audio/mpeg 40208B",
+        "checkedAt": 1795655317719
+      }
+    },
+    {
+      "url": "https://systrum.net/SSR2",
+      "names": [
+        "Systrum Sistum - SSR2"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://systrum.net/SSR2",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25200,
+        "latencyMs": 907,
+        "why": "audio/mpeg 25200B",
+        "checkedAt": 1795655319291
+      }
+    },
+    {
+      "url": "https://tbfmonli.radioca.st/stream",
+      "names": [
+        "Hard Rock Hell Radio"
+      ],
+      "slugs": [
+        "metal-heavy"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://tbfmonli.radioca.st/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24090,
+        "latencyMs": 1759,
+        "why": "audio/mpeg 24090B",
+        "checkedAt": 1795655318628
+      }
+    },
+    {
+      "url": "https://testform.out.airtime.pro/testform_a",
+      "names": [
+        "Reform Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://testform.out.airtime.pro/testform_a",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25078,
+        "latencyMs": 2439,
+        "why": "audio/mpeg 25078B",
+        "checkedAt": 1795655320469
+      }
+    },
+    {
+      "url": "https://the-face-radio.radiocult.fm/stream",
+      "names": [
+        "The Face Radio"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://the-face-radio.radiocult.fm/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 31321,
+        "latencyMs": 922,
+        "why": "audio/mpeg 31321B",
+        "checkedAt": 1795655318992
+      }
+    },
+    {
+      "url": "https://thf-radio-7ec0e6ee.radiocult.fm/stream",
+      "names": [
+        "THF Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://thf-radio-7ec0e6ee.radiocult.fm/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24099,
+        "latencyMs": 1130,
+        "why": "audio/mpeg 24099B",
+        "checkedAt": 1795655320161
+      }
+    },
+    {
+      "url": "https://totallywired.out.airtime.pro/totallywired_a",
+      "names": [
+        "Totally Wired Radio"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://totallywired.out.airtime.pro/totallywired_a",
+        "ok": false,
+        "code": "SHORT_BODY",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 401,
+        "contentType": "",
+        "bytes": 26,
+        "latencyMs": 2476,
+        "why": "窗内仅 26B（低于阈值，假流常见）",
+        "checkedAt": 1795655321468
+      }
+    },
+    {
+      "url": "https://transliacija.audiomastering.lt/radiovilnius-mp3",
+      "names": [
+        "Radio Vilnius"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://transliacija.audiomastering.lt/radiovilnius-mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24570,
+        "latencyMs": 1614,
+        "why": "audio/mpeg 24570B",
+        "checkedAt": 1795655321154
+      }
+    },
+    {
+      "url": "https://uk2.streamingpulse.com/ssl/bzr",
+      "names": [
+        "Bru Zane"
+      ],
+      "slugs": [
+        "classical-opera"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://uk2.streamingpulse.com/ssl/bzr",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24872,
+        "latencyMs": 1099,
+        "why": "audio/mpeg 24872B",
+        "checkedAt": 1795655321440
+      }
+    },
+    {
+      "url": "https://uk3.internet-radio.com/proxy/majesticjukebox/live",
+      "names": [
+        "Majestic Jukebox"
+      ],
+      "slugs": [
+        "decades-oldies-nostalgia"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://uk3.internet-radio.com/proxy/majesticjukebox/live",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/aacp",
+        "bytes": 25200,
+        "latencyMs": 1931,
+        "why": "audio/aacp 25200B",
+        "checkedAt": 1795655323494
+      }
+    },
+    {
+      "url": "https://usa14.fastcast4u.com/proxy/wmodes?mp=/1",
+      "names": [
+        "DriftConditions"
+      ],
+      "slugs": [
+        "experimental-nerdy-scanners"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://usa14.fastcast4u.com/proxy/wmodes?mp=/1",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24910,
+        "latencyMs": 1529,
+        "why": "audio/mpeg 24910B",
+        "checkedAt": 1795655323445
+      }
+    },
+    {
+      "url": "https://usa15.fastcast4u.com/proxy/tstamate?mp=/1",
+      "names": [
+        "Cathedral 13"
+      ],
+      "slugs": [
+        "rock-indie-alternative-country-folk"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://usa15.fastcast4u.com/proxy/tstamate?mp=/1",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25746,
+        "latencyMs": 1664,
+        "why": "audio/mpeg 25746B",
+        "checkedAt": 1795655323356
+      }
+    },
+    {
+      "url": "https://usa19.fastcast4u.com:7430/,",
+      "names": [
+        "Irie FM"
+      ],
+      "slugs": [
+        "reggae-dub"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://usa19.fastcast4u.com:7430/,",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 29257,
+        "latencyMs": 1828,
+        "why": "audio/mpeg 29257B",
+        "checkedAt": 1795655324233
+      }
+    },
+    {
+      "url": "https://usa20.fastcast4u.com:4100/1753014835",
+      "names": [
+        "Yacht Rock Miami"
+      ],
+      "slugs": [
+        "rock-indie-alternative-country-folk"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://usa20.fastcast4u.com:4100/1753014835",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25495,
+        "latencyMs": 2068,
+        "why": "audio/mpeg 25495B",
+        "checkedAt": 1795655326144
+      }
+    },
+    {
+      "url": "https://wfmt.streamguys1.com/main-source",
+      "names": [
+        "WFMT"
+      ],
+      "slugs": [
+        "classical-opera"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://wfmt.streamguys1.com/main-source",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/aac",
+        "bytes": 32768,
+        "latencyMs": 1668,
+        "why": "audio/aac 32768B",
+        "checkedAt": 1795655326037
+      }
+    },
+    {
+      "url": "https://wfmu.org/wfmu.pls",
+      "names": [
+        "WFMU 91.1"
+      ],
+      "slugs": [
+        "campus-public-radio"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://wfmu.org/wfmu.pls",
+        "ok": false,
+        "code": "SHORT_BODY",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/x-scpls",
+        "bytes": 437,
+        "latencyMs": 1378,
+        "why": "窗内仅 437B（低于阈值，假流常见）",
+        "checkedAt": 1795655324872
+      }
+    },
+    {
+      "url": "https://wgbh-live.streamguys1.com/classical-hi",
+      "names": [
+        "CRB Classical 99.5"
+      ],
+      "slugs": [
+        "classical-opera"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://wgbh-live.streamguys1.com/classical-hi",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/aac",
+        "bytes": 32768,
+        "latencyMs": 2203,
+        "why": "audio/aac 32768B",
+        "checkedAt": 1795655326694
+      }
+    },
+    {
+      "url": "https://wkcr.streamguys1.com:80/live",
+      "names": [
+        "WKCR 89.9"
+      ],
+      "slugs": [
+        "jazz-blues"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://wkcr.streamguys1.com:80/live",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24000,
+        "latencyMs": 1232,
+        "why": "audio/mpeg 24000B",
+        "checkedAt": 1795655326363
+      }
+    },
+    {
+      "url": "https://wmnr.streamguys1.com/live",
+      "names": [
+        "WMNR"
+      ],
+      "slugs": [
+        "classical-opera"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://wmnr.streamguys1.com/live",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24192,
+        "latencyMs": 1091,
+        "why": "audio/mpeg 24192B",
+        "checkedAt": 1795655327354
+      }
+    },
+    {
+      "url": "https://wmse.streamguys1.com/wmselivemp3",
+      "names": [
+        "WMSE 91.7"
+      ],
+      "slugs": [
+        "campus-public-radio"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://wmse.streamguys1.com/wmselivemp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24192,
+        "latencyMs": 1653,
+        "why": "audio/mpeg 24192B",
+        "checkedAt": 1795655328211
+      }
+    },
+    {
+      "url": "https://wncw-live-a.edge.audiocdn.com/6286_56k.aac",
+      "names": [
+        "WNCW 88.7"
+      ],
+      "slugs": [
+        "campus-public-radio"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://wncw-live-a.edge.audiocdn.com/6286_56k.aac",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/aacp",
+        "bytes": 32768,
+        "latencyMs": 1407,
+        "why": "audio/aacp 32768B",
+        "checkedAt": 1795655328386
+      }
+    },
+    {
+      "url": "https://worldwide-fm.radiocult.fm/stream",
+      "names": [
+        "Worldwide FM"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://worldwide-fm.radiocult.fm/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24210,
+        "latencyMs": 1049,
+        "why": "audio/mpeg 24210B",
+        "checkedAt": 1795655328186
+      }
+    },
+    {
+      "url": "https://wvpe-live.streamguys1.com/live",
+      "names": [
+        "WVPE - Blues3"
+      ],
+      "slugs": [
+        "jazz-blues"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://wvpe-live.streamguys1.com/live",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/aac",
+        "bytes": 24719,
+        "latencyMs": 1198,
+        "why": "audio/aac 24719B",
+        "checkedAt": 1795655328806
+      }
+    },
+    {
+      "url": "https://www.bassdrive.com/bassdrive.m3u",
+      "names": [
+        "Bassdrive"
+      ],
+      "slugs": [
+        "electronic"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://www.bassdrive.com/bassdrive.m3u",
+        "ok": true,
+        "code": "OK",
+        "hls": true,
+        "mode": "hls",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 17770,
+        "latencyMs": 867,
+        "why": "hls分片 17770B",
+        "checkedAt": 1795655331016
+      }
+    },
+    {
+      "url": "https://www.dandelionradio.com/DandelionRadio.pls",
+      "names": [
+        "Dandelion Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://www.dandelionradio.com/DandelionRadio.pls",
+        "ok": false,
+        "code": "SHORT_BODY",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/x-scpls",
+        "bytes": 228,
+        "latencyMs": 2312,
+        "why": "窗内仅 228B（低于阈值，假流常见）",
+        "checkedAt": 1795655330523
+      }
+    },
+    {
+      "url": "https://www.morow.com/morow.pls",
+      "names": [
+        "Morow"
+      ],
+      "slugs": [
+        "rock-indie-alternative-country-folk"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://www.morow.com/morow.pls",
+        "ok": false,
+        "code": "SHORT_BODY",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/x-scpls",
+        "bytes": 1054,
+        "latencyMs": 1564,
+        "why": "窗内仅 1054B（低于阈值，假流常见）",
+        "checkedAt": 1795655329950
+      }
+    },
+    {
+      "url": "https://www.prun.net/stream",
+      "names": [
+        "Prun'"
+      ],
+      "slugs": [
+        "campus-public-radio"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://www.prun.net/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 28251,
+        "latencyMs": 754,
+        "why": "audio/mpeg 28251B",
+        "checkedAt": 1795655331247
+      }
+    },
+    {
+      "url": "https://www.radioking.com/play/legrigri/273715",
+      "names": [
+        "Le Grigri"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://www.radioking.com/play/legrigri/273715",
+        "ok": false,
+        "code": "NETWORK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 0,
+        "contentType": "",
+        "bytes": 0,
+        "latencyMs": 4517,
+        "why": "timeout https://www.radioking.com/play/legrigri/273715",
+        "checkedAt": 1795655334467
+      }
+    },
+    {
+      "url": "https://www.subsonicradio.com:8443/longbois.mp3",
+      "names": [
+        "Subsonic Radio - SR Two - Extended Plays"
+      ],
+      "slugs": [
+        "ambient-lo-fi-chill"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://www.subsonicradio.com:8443/longbois.mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25200,
+        "latencyMs": 929,
+        "why": "audio/mpeg 25200B",
+        "checkedAt": 1795655331889
+      }
+    },
+    {
+      "url": "https://www.subsonicradio.com:8443/requests.mp3",
+      "names": [
+        "Subsonic Radio - SR One"
+      ],
+      "slugs": [
+        "ambient-lo-fi-chill"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://www.subsonicradio.com:8443/requests.mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25200,
+        "latencyMs": 621,
+        "why": "audio/mpeg 25200B",
+        "checkedAt": 1795655331896
+      }
+    },
+    {
+      "url": "https://www.subsonicradio.com:8443/wedway.mp3",
+      "names": [
+        "Subsonic Radio - WEDWay PeopleMover"
+      ],
+      "slugs": [
+        "ambient-lo-fi-chill"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://www.subsonicradio.com:8443/wedway.mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 25200,
+        "latencyMs": 598,
+        "why": "audio/mpeg 25200B",
+        "checkedAt": 1795655332280
+      }
+    },
+    {
+      "url": "https://www.tuneintoradio1.com/listen/violent_forces_radio/radio.mp3",
+      "names": [
+        "Violent Forces Radio - General Thrash"
+      ],
+      "slugs": [
+        "metal-heavy"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://www.tuneintoradio1.com/listen/violent_forces_radio/radio.mp3",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24076,
+        "latencyMs": 1357,
+        "why": "audio/mpeg 24076B",
+        "checkedAt": 1795655333437
+      }
+    },
+    {
+      "url": "https://www.wwoz.org/listen/hi",
+      "names": [
+        "WWOZ 90.7"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://www.wwoz.org/listen/hi",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 32768,
+        "latencyMs": 1759,
+        "why": "audio/mpeg 32768B",
+        "checkedAt": 1795655335463
+      }
+    },
+    {
+      "url": "https://wzrd.streamguys1.com/live",
+      "names": [
+        "WZRD 88.3"
+      ],
+      "slugs": [
+        "campus-public-radio"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://wzrd.streamguys1.com/live",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/aac",
+        "bytes": 25015,
+        "latencyMs": 1128,
+        "why": "audio/aac 25015B",
+        "checkedAt": 1795655333641
+      }
+    },
+    {
+      "url": "https://yumicoradio.net:8443/stream",
+      "names": [
+        "Yumi Co. Radio"
+      ],
+      "slugs": [
+        "funk-soul-hip-hop-disco"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://yumicoradio.net:8443/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 24679,
+        "latencyMs": 1097,
+        "why": "audio/mpeg 24679B",
+        "checkedAt": 1795655334554
+      }
+    },
+    {
+      "url": "https://zabrij-radio.radiocult.fm/stream",
+      "names": [
+        "Zabrij Radio"
+      ],
+      "slugs": [
+        "global-independent-online-communities"
+      ],
+      "logo": false,
+      "exactOverlap": false,
+      "normalizedOverlap": false,
+      "possibleNameOverlap": false,
+      "result": {
+        "url": "https://zabrij-radio.radiocult.fm/stream",
+        "ok": true,
+        "code": "OK",
+        "hls": false,
+        "mode": "direct",
+        "httpStatus": 200,
+        "contentType": "audio/mpeg",
+        "bytes": 40177,
+        "latencyMs": 1396,
+        "why": "audio/mpeg 40177B",
+        "checkedAt": 1795655335482
+      }
+    }
+  ]
+}

@@ -203,6 +203,7 @@ async function run(chromium) {
     await page.waitForSelector('#discBody .discrow');
     check('D-focus1 打开后焦点进入关闭按钮', await page.evaluate(() => document.activeElement === document.getElementById('discClose')));
     await page.click('#discClose');
+    console.log('focus debug', await page.evaluate(p => ({active:document.activeElement.id, opener:App.dscOpener && App.dscOpener.id, tools:document.getElementById('sideTools').className, hidden:document.getElementById('discovery').hidden, prior:p, now:{cat:App.state.cat,scope:App.state.scope,keyword:App.state.keyword}}), prior));
     check('D-focus2 关闭按钮恢复入口焦点和筛选', await page.evaluate(p => document.getElementById('discovery').hidden && document.activeElement === document.getElementById('discBtn') && App.state.cat === p.cat && App.state.scope === p.scope && App.state.keyword === p.keyword, prior));
     await page.click('#discBtn'); await page.waitForSelector('#discBody .discrow');
     await page.keyboard.press('Escape');

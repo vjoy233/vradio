@@ -65,6 +65,26 @@ async function main() {
     }
     else console.log('SKIP 悬空链接：系统禁止创建符号链接');
   } finally { await link.close(); }
+  // 已缓存后目标被替换成链接：拒绝；恢复普通文件后重新加载，不沿用失效缓存。
+  const cached = await boot();
+  try {
+    fs.mkdirSync(path.dirname(file(cached)), { recursive: true });
+    const original = '{"rev":3,"data":{"radio.vol":"0.1"}}', restored = '{"rev":8,"data":{"radio.vol":"0.8"}}';
+    fs.writeFileSync(file(cached), original); assert.strictEqual(parse(await get(cached)).rev, 3);
+    const target = path.join(cached.root, 'link-target'); fs.writeFileSync(target, restored);
+    fs.unlinkSync(file(cached));
+    let supported = true;
+    try { fs.symlinkSync(target, file(cached)); } catch (e) { if (['EPERM', 'EACCES', 'ENOSYS'].includes(e.code)) supported = false; else throw e; }
+    if (supported) {
+      failed(await get(cached)); failed(await post(cached, { 'radio.vol': '0.2' }));
+      assert.ok(fs.lstatSync(file(cached)).isSymbolicLink()); assert.strictEqual(fs.readFileSync(target, 'utf8'), restored);
+      fs.unlinkSync(file(cached)); fs.writeFileSync(file(cached), restored);
+      assert.deepStrictEqual(parse(await get(cached)), JSON.parse(restored));
+      assert.strictEqual(parse(await post(cached, { 'radio.vol': '0.9' })).rev, 9);
+      // 成功缓存期间普通文件外部改写不自动重读；单写进程以缓存为准，不保证外部并发修改安全。
+      fs.writeFileSync(file(cached), original); assert.strictEqual(parse(await get(cached)).rev, 9);
+    } else console.log('SKIP 缓存后符号链接：系统禁止创建');
+  } finally { await cached.close(); }
   // 并发到达顺序不保证：空写先入队则两次成功，非空先入队则空写必须 409；终态均非空。
   const h = await boot();
   try {

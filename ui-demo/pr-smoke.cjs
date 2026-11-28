@@ -74,17 +74,17 @@ function wirePage(page, report, mark) {
   const resKey = u => { try { const x = new URL(u); return x.pathname + x.search; } catch (_) { return u; } };
   const resAllow = k => k.indexOf('/proxy?url=') === 0 || /^\/my-radio\.txt(\?|$)/.test(k) || /^\/favicon\.ico(\?|$)/.test(k);
   const seen = new Set();
-  const resFail = (url, why) => { if (st.frozen) return; const k = resKey(url); if (resAllow(k) || (st.expected409 && /^\/api\/sync(?:\?|$)/.test(k) && /→ 409/.test(why))) return;
+  const resFail = (url, method, why) => { if (st.frozen) return; const k = resKey(url); if (resAllow(k) || (st.expected409 && method === 'POST' && k === '/api/sync' && /→ 409/.test(why))) return;
     const key = k + '|' + why; if (seen.has(key)) return; seen.add(key); report.resourceErrors.push(k + ' ' + why); };
   page.on('pageerror', e => { if (!st.frozen) report.errors.push(mark + 'pageerror:' + e.message); });
   page.on('console', m => { if (m.type() !== 'error' || st.frozen) return;
     const t = m.text() || ''; if (/^Failed to load resource/.test(t)) return; // 资源类文本退役：URL+状态双通道覆盖（P2-4）
     report.errors.push(mark + 'console:' + t); });
-  page.on('response', r => { const s = r.status(); if (!st.frozen && s >= 400 && isLocal(r.url())) resFail(r.url(), '→ ' + s); });
+  page.on('response', r => { const s = r.status(); if (!st.frozen && s >= 400 && isLocal(r.url())) resFail(r.url(), r.request().method(), '→ ' + s); });
   page.on('requestfailed', r => { // 本地失败入资源门；外部失败 = 阻断策略生效仅计数（route.abort 不在此处计数防双计）
     if (st.frozen) return;
     const u = r.url();
-    if (isLocal(u)) return resFail(u, '(' + ((r.failure() && r.failure().errorText) || 'failed') + ')');
+    if (isLocal(u)) return resFail(u, r.request().method(), '(' + ((r.failure() && r.failure().errorText) || 'failed') + ')');
     report.blockedN++; if (report.blockedS.length < 20) report.blockedS.push(u.slice(0, 90));
   });
   page.route('**/*', route => { // 公网阻断（P2-2）：本地放行、目标流挂起（受控 connecting）、其余 abort

@@ -31,7 +31,7 @@ const file = h => path.join(h.root, 'data', 'store.json');
 const parse = r => JSON.parse(r.body);
 function failed(r) { assert.strictEqual(r.status, 500); const j = parse(r); assert.strictEqual(j.ok, false); assert.strictEqual(j.code, 'store-read-failed'); assert.ok(!('data' in j)); }
 async function main() {
-  for (const raw of ['{broken', 'null', '[]', '{"rev":1,"data":null}', '{"rev":1,"data":[]}', '{"rev":"1","data":{}}']) {
+  for (const raw of ['{broken', 'null', '[]', '{"rev":1,"data":null}', '{"rev":1,"data":[]}', '{"rev":"1","data":{}}', '{"rev":-1,"data":{}}', '{"rev":1.5,"data":{}}', '{"rev":9007199254740992,"data":{}}', '{"rev":1,"data":{"radio.vol":3}}', '{"rev":1,"data":{"radio.future":"x"}}']) {
     const h = await boot();
     try {
       fs.mkdirSync(path.dirname(file(h)), { recursive: true }); fs.writeFileSync(file(h), raw);
@@ -42,6 +42,23 @@ async function main() {
       const r = await post(h, { 'radio.vol': '0.5' }); assert.strictEqual(r.status, 200); assert.strictEqual(parse(r).rev, 8);
     } finally { await h.close(); }
   }
+  // 发号上限：GET 可读，POST 拒绝且原文件字节不变。
+  const max = await boot();
+  try {
+    fs.mkdirSync(path.dirname(file(max)), { recursive: true });
+    const raw = JSON.stringify({ rev: Number.MAX_SAFE_INTEGER, data: { 'radio.vol': '0.3' } }); fs.writeFileSync(file(max), raw);
+    assert.strictEqual(parse(await get(max)).rev, Number.MAX_SAFE_INTEGER);
+    const r = await post(max, { 'radio.vol': '0.4' }); assert.strictEqual(r.status, 500); assert.strictEqual(parse(r).code, 'store-rev-exhausted'); assert.strictEqual(fs.readFileSync(file(max), 'utf8'), raw);
+  } finally { await max.close(); }
+  // 悬空符号链接：只在系统允许创建时测试；不删除或触碰其目标。
+  const link = await boot();
+  try {
+    fs.mkdirSync(path.dirname(file(link)), { recursive: true });
+    let supported = true;
+    try { fs.symlinkSync(path.join(link.root, 'missing-target'), file(link)); } catch (e) { if (['EPERM', 'EACCES', 'ENOSYS'].includes(e.code)) supported = false; else throw e; }
+    if (supported) { failed(await get(link)); failed(await post(link, { 'radio.vol': '0.4' })); assert.ok(fs.lstatSync(file(link)).isSymbolicLink()); }
+    else console.log('SKIP 悬空链接：系统禁止创建符号链接');
+  } finally { await link.close(); }
   // 并发到达顺序不保证：空写先入队则两次成功，非空先入队则空写必须 409；终态均非空。
   const h = await boot();
   try {

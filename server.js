@@ -158,13 +158,19 @@ function storeRead() { // 懒加载：仅 ENOENT 视为空库；坏文件/非 EN
     storeLoadError = null;
     try {
       storeCache = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8'));
-      if (!storeCache || typeof storeCache !== 'object' || Array.isArray(storeCache) || !storeCache.data || typeof storeCache.data !== 'object' || Array.isArray(storeCache.data) || !Number.isFinite(storeCache.rev)) {
+      if (!storeCache || typeof storeCache !== 'object' || Array.isArray(storeCache) || !storeCache.data || typeof storeCache.data !== 'object' || Array.isArray(storeCache.data) || !Number.isSafeInteger(storeCache.rev) || storeCache.rev < 0 || Object.keys(storeCache.data).some(k => !STORE_KEYS.has(k) || typeof storeCache.data[k] !== 'string')) {
         storeCache = null; storeLoadError = 'invalid';
       }
     } catch (e) {
       storeCache = null;
       if (!e || e.code !== 'ENOENT') storeLoadError = e && e.code ? e.code : 'read';
-      else storeCache = { rev: 0, data: {} };
+      else { // 只有文件本身不存在才为空：悬空符号链接会让 readFile 报 ENOENT，lstat 可识别并保留
+        try { fs.lstatSync(STORE_FILE); storeLoadError = 'invalid'; }
+        catch (statError) {
+          if (statError && statError.code === 'ENOENT') storeCache = { rev: 0, data: {} };
+          else storeLoadError = statError && statError.code || 'read';
+        }
+      }
     }
     if (storeCache) storeRev = storeCache.rev;
   }
@@ -174,6 +180,7 @@ function storeWrite(data) {
   return storeQ = storeQ.then(() => new Promise(done => {
     const current = storeRead(); // 在同一队列内装载，避免空覆盖检查与写入之间并发竞态
     if (!current) return done({ ok: false, status: 500, code: 'store-read-failed', error: '存储读取失败，原文件已保留' });
+    if (storeRev === Number.MAX_SAFE_INTEGER) return done({ ok: false, status: 500, code: 'store-rev-exhausted', error: '存储版本号已达上限，原文件已保留' });
     if (!Object.keys(data).length && Object.keys(current.data).length) return done({ ok: false, status: 409, code: 'empty-overwrite', error: '拒绝以全空快照覆盖非空存储（合法删除请以空值表达：favs "[]"/cfg "{}"）' });
     const rev = storeRev + 1, out = JSON.stringify({ rev, data });
     fs.mkdir(DATA_DIR, { recursive: true }, e => {

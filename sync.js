@@ -5,6 +5,7 @@
 
 const Sync = {
   busy: '',       // '' | 'manual' | 'silent'：体检互斥（B-10）——手动优先，手动启动时静默版让位退出（收尾由手动接管）
+  owner: null, // 每次体检独立身份，迟到的任务不能写入或释放新 owner
   syncInFlight: false,
   freshnessShown: false,
   abort: false,   // 手动体检取消标志
@@ -17,7 +18,7 @@ const Sync = {
   async runCheck(list, opt = {}) {
     const stamp = App.state.stamp, q = list.slice(), conc = opt.conc || 5, cnt = { ok: 0, sus: 0, perm: 0, done: 0 };
     const t0 = Date.now();
-    const stop = () => opt.silent ? this.silentAbort : this.abort;
+    const stop = () => (opt.token && this.owner !== opt.token) || (opt.silent ? this.silentAbort : this.abort);
     const norm = x => { try { return new URL(x).href; } catch (_) { return null; } }; // 结果按 new URL 归一化回绑原源（与详情中心同口径）
     const worker = async () => {
       while (q.length && !stop()) {
@@ -30,10 +31,12 @@ const Sync = {
         try {
           const qs = urls.map(u => 'url=' + encodeURIComponent(u)).join('&');
           const j = await fetch('/api/check?detail=1&' + qs).then(x => x.json());
+          if (opt.token && this.owner !== opt.token) return; // await 后先确认任务仍有写入权
           ok = !!(j && j.ok);
           if (j && Array.isArray(j.results)) for (const r of j.results)
             QualityStore.recordDiagnostic(s.u[0], Object.assign({}, r, { url: urls.find(u => norm(u) === r.url || u === r.url) || r.url }), opt.trigger || 'manual');
         } catch (_) { marked = false; }
+        if (opt.token && this.owner !== opt.token) return;
         if (marked) { const r = App.patchHealth(s, ok, stamp); cnt[r]++; if (opt.onTick) opt.onTick(s, r); }
       }
     };
@@ -137,11 +140,19 @@ const Sync = {
     }
     const b = $('healthBtn'), lab = () => b.querySelector('span');
     if (lab().textContent === '取消体检') { this.abort = true; return; }
-    if (this.busy === 'silent') this.silentAbort = true; // 静默让位（手动优先）
+    if (this.busy === 'silent') {
+      this.silentAbort = true;
+      const old = this.owner; this.owner = null;
+      try {
+        if (old && old.handoff) old.handoff(); // 已确认的健康与基线进度在新任务开始前落盘
+        else App.saveHealth();
+      } catch (_) { App.toast('体检进度保存失败，后续可重新体检', { ms: 6000 }); } // 不阻止手动接管
+    }
+    const token = {}; this.owner = token;
     this.busy = 'manual'; this.abort = false; lab().textContent = '取消体检'; $('prog').hidden = false;
     try {
       const list = App.visible(true); // visible(true)：连默认隐藏的死台一起复查，复活即自动回归列表
-      const cnt = await this.runCheck(list, { conc: 5, trigger: 'manual', onProgress: (c, left, t0) => {
+      const cnt = await this.runCheck(list, { conc: 5, token, trigger: 'manual', onProgress: (c, left, t0) => {
         if (c.done % 10 && left) return; // P3-8：按实测速率外推 ETA（按小时级最坏校准），每 10 台刷一次
         const rate = c.done / Math.max(1, (Date.now() - t0) / 1000);
         const eta = left && rate > 0 ? Math.ceil(left / rate / 60) : 0;
@@ -152,7 +163,7 @@ const Sync = {
       $('status').textContent = this.abort
         ? `体检已取消：完成 ${cnt.done}/${list.length}（已确认的标记已保留）`
         : `体检完成：可用 ${cnt.ok}、疑似失效 ${cnt.sus}、已停运 ${cnt.perm}（✗ 台建议换源或点「同步源」重建）`; // D12 分档统计
-    } finally { lab().textContent = '体检'; this.busy = ''; $('prog').hidden = true; }
+    } finally { if (this.owner === token) { this.owner = null; lab().textContent = '体检'; this.busy = ''; $('prog').hidden = true; } }
   },
 
   /* ---------- 开机后台编排（R3/R4 拍板）：基线优先——未建基线（含已确认过的中断续跑）不跑常规复测（基线是超集） ---------- */
@@ -168,9 +179,9 @@ const Sync = {
     const seen = new Set(), list = [];
     for (const s of [...App.scopeFavRecent(30), ...App.scopeDead()]) { const k = keyOf(s); if (!seen.has(k)) { seen.add(k); list.push(s); } }
     if (!list.length) return;
-    this.busy = 'silent'; this.silentAbort = false;
-    try { await this.runCheck(list, { conc: 2, silent: true, trigger: 'boot' }); if (!this.silentAbort) { App.saveHealth(); App.render(); } } // 被手动接管时跳过：手动跑完自己收尾
-    catch (_) {} finally { if (this.busy === 'silent') this.busy = ''; }
+    const token = {}; this.owner = token; this.busy = 'silent'; this.silentAbort = false;
+    try { await this.runCheck(list, { conc: 2, silent: true, token, trigger: 'boot' }); if (this.owner === token && !this.silentAbort) { App.saveHealth(); App.render(); } } // 被手动接管时跳过：手动跑完自己收尾
+    catch (_) {} finally { if (this.owner === token) { this.owner = null; this.busy = ''; } }
   },
 
   /* ---------- 同步后增量体检（D4/R4）：diff 新增国内台静默探活 + toast 两态；被手动接管即放弃（下次同步再测） ---------- */
@@ -178,14 +189,16 @@ const Sync = {
     if (!location.protocol.startsWith('http') || this.busy) return;
     const set = new Set(names), list = App.state.stations.filter(s => set.has(s.n) && !s.hidden);
     if (!list.length) return;
-    this.busy = 'silent'; this.silentAbort = false;
+    const token = {}; this.owner = token; this.busy = 'silent'; this.silentAbort = false;
+    token.handoff = () => { try { App.saveHealth(); } finally { $('toast').hidden = true; } };
     App.toast(`后台体检新增电台 ${list.length} 台…`, { ms: 0 }); // ms=0 常驻，完成态接管；让位/异常分支显式收起（AIbot P2-2）
     try {
-      const cnt = await this.runCheck(list, { conc: 2, silent: true, trigger: 'sync' });
+      const cnt = await this.runCheck(list, { conc: 2, silent: true, token, trigger: 'sync' });
+      if (this.owner !== token) return;
       if (this.silentAbort) { $('toast').hidden = true; return; } // 让位给手动：已测的标记有效（幂等），未测的下次同步再覆盖
       App.saveHealth(); App.render();
       App.toast(`新增 ${list.length} 台体检完成，${cnt.sus + cnt.perm} 台无效已隐藏`, { ms: 5000 });
-    } catch (_) { $('toast').hidden = true; } finally { if (this.busy === 'silent') this.busy = ''; }
+    } catch (_) { if (this.owner === token) $('toast').hidden = true; } finally { if (this.owner === token) { this.owner = null; this.busy = ''; } }
   },
 
   /* ---------- 首启基线（R3+R4 拍板）：存量老台一次清库。确认门槛 toast（开跑时间用户定）→ 后台全量（并发 2，
@@ -207,22 +220,26 @@ const Sync = {
     let prog; try { prog = new Set(JSON.parse(Store.get('radio.baselineProg') || '[]')); } catch (_) { prog = new Set(); }
     const list = App.baselineList().filter(s => !prog.has(keyOf(s))); // 续跑：跳过已确认的（R4 拍板，幂等探活重跑无副作用只是浪费时间）
     if (!list.length) return this.baselineDone();
-    this.busy = 'silent'; this.silentAbort = false;
+    const token = {}; this.owner = token; this.busy = 'silent'; this.silentAbort = false;
     App.toast(`基线体检进行中：剩余 ${list.length} 台（后台静默，可随时关页中断、下次自动续跑）`, { ms: 6000 });
     let pend = 0;
+    token.handoff = () => { App.saveHealth(); Store.set('radio.baselineProg', JSON.stringify([...prog])); };
     try {
-      const cnt = await this.runCheck(list, { conc: 2, silent: true, trigger: 'boot', onTick: s => {
+      const cnt = await this.runCheck(list, { conc: 2, silent: true, token, trigger: 'boot', onTick: s => {
         prog.add(keyOf(s));
-        if (++pend >= 25) { pend = 0; Store.set('radio.baselineProg', JSON.stringify([...prog])); App.saveHealth(); } // 每 25 台落盘一次：进度与已确认标记必须同批持久化（AIbot P1-1——否则关页中断时 prog 说测过、死标只在内存，续跑跳过 + 基线置 done 后这批台永久无标记且不在任何自动复查通道里）
+        if (++pend >= 25) { token.handoff(); pend = 0; } // 每 25 台落盘一次：进度与已确认标记必须同批持久化（AIbot P1-1——否则关页中断时 prog 说测过、死标只在内存，续跑跳过 + 基线置 done 后这批台永久无标记且不在任何自动复查通道里）
       } });
-      if (this.silentAbort) return; // 让位中断：进度兜底落盘见 finally（防 pend <25 的尾巴丢失）
-      Store.set('radio.baselineProg', JSON.stringify([...prog]));
-      this.baselineDone();
-      App.saveHealth(); App.render();
+      if (this.owner !== token || this.silentAbort) return; // 让位中断：进度兜底落盘见 finally（防 pend <25 的尾巴丢失）
+      token.handoff(); // 先保存健康标记，再推进进度和完成标记
+      pend = 0; this.baselineDone();
+      App.render();
       App.toast(`基线体检完成：可用 ${cnt.ok}、疑似失效 ${cnt.sus}、已停运 ${cnt.perm}`, { ms: 6000 });
-    } catch (_) {} finally {
-      if (this.busy === 'silent') this.busy = '';
-      if (this.silentAbort) { Store.set('radio.baselineProg', JSON.stringify([...prog])); App.saveHealth(); } // 中断兜底（同 P1-1 口径）
+    } catch (_) { if (this.owner === token) App.toast('基线体检进度保存失败，后续可重新体检', { ms: 6000 }); } finally {
+      if (this.owner === token) {
+        try { if (this.silentAbort || pend) token.handoff(); }
+        catch (_) { App.toast('基线体检进度保存失败，后续可重新体检', { ms: 6000 }); }
+        finally { this.owner = null; this.busy = ''; }
+      } // 中断兜底（同 P1-1 口径）
     }
   },
   baselineDone() { Store.set('radio.baseline', 'done'); Store.remove('radio.baselineProg'); },

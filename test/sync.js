@@ -81,7 +81,7 @@ function mkSync(over) {
       calls.patch.push({ n: s.n, ok: okFlag, stamp: stamp });
       return okFlag ? 'ok' : (over.permOf && over.permOf(s) ? 'perm' : 'sus');
     },
-    saveHealth() { calls.save++; },
+    saveHealth() { calls.save++; if (over.saveThrow && (typeof over.saveThrow !== 'function' || over.saveThrow(calls.save))) throw new Error('save 注入异常'); },
     render() { calls.render++; },
     visible(all) { calls.visible.push(all); return over.visible || stations.filter(s => all || !s.health); },
     scopeFavRecent(n) { calls.scopeFR.push(n); return over.favRecent || []; },
@@ -175,6 +175,68 @@ function mkSync(over) {
     assert.strictEqual(t.f.calls.filter(x => x.url === '/api/sync').length, 1);
     assert.ok(t.el('status').textContent.includes('质量门'));
     assert.strictEqual(JSON.parse(t.store.get('radio.syncFreshness')).lastSuccessAt, undefined);
+  });
+  await ok('基线被手动抢占后迟到结果不写入，也不释放后续静默任务', async () => {
+    const A = st('新闻', 'A', ['http://a/1']);
+    const t = mkSync({ baselineList: [A], favRecent: [A], visible: [A], holdCheck: true,
+      checkBody: () => ({ ok: false, results: [{ url: 'http://a/1', code: 'NETWORK' }] }) });
+    const baseline = t.Sync.baseline(); await drain();
+    const old = t.f.checkGates.shift();
+    const manual = t.Sync.health(); await drain();
+    assert.strictEqual(t.store.get('radio.baselineProg'), '[]');
+    assert.strictEqual(t.calls.save, 1, '抢占前持久化已确认标记');
+    t.f.releaseCheck(); await manual;
+    const next = t.Sync.silentHealth(); await drain();
+    old(); await baseline;
+    assert.strictEqual(t.Sync.busy, 'silent', '旧任务不得释放新 owner');
+    assert.strictEqual(t.calls.patch.length, 1, '旧响应不写健康');
+    assert.strictEqual(t.qs.calls.length, 1, '旧响应不写质量');
+    assert.strictEqual(t.store.get('radio.baselineProg'), '[]', '旧响应不写进度');
+    assert.strictEqual(t.store.get('radio.baseline'), null);
+    t.f.releaseCheck(); await next;
+  });
+  await ok('抢占收尾持久化抛错仍允许手动运行并释放互斥', async () => {
+    const A = st('新闻', 'A', ['http://a/1']);
+    const t = mkSync({ baselineList: [A], visible: [], holdCheck: true, saveThrow: true });
+    const old = t.Sync.baseline(); await drain();
+    await assert.rejects(t.Sync.health(), /save 注入异常/);
+    assert.strictEqual(t.Sync.busy, ''); assert.strictEqual(t.Sync.owner, null);
+    assert.strictEqual(t.store.get('radio.baselineProg'), null);
+    assert.ok(t.calls.toast.some(x => x.msg.includes('保存失败')));
+    t.f.releaseCheck(); await old;
+    assert.strictEqual(t.Sync.busy, '');
+  });
+  await ok('基线中断落盘抛错仍释放 owner', async () => {
+    const A = st('新闻', 'A', ['http://a/1']);
+    const t = mkSync({ baselineList: [A], holdCheck: true, saveThrow: true });
+    const p = t.Sync.baseline(); await drain();
+    t.Sync.silentAbort = true; t.f.releaseCheck();
+    await p;
+    assert.strictEqual(t.store.get('radio.baselineProg'), null);
+    assert.ok(t.calls.toast.some(x => x.msg.includes('保存失败')));
+    assert.strictEqual(t.Sync.busy, ''); assert.strictEqual(t.Sync.owner, null);
+  });
+  await ok('基线部分确认后保存失败，不推进已有进度', async () => {
+    const list = Array.from({ length: 27 }, (_, i) => st('新闻', 'N' + i, ['http://n/' + i]));
+    const t = mkSync({ baselineList: list, holdCheck: true, saveThrow: n => n >= 2 });
+    const p = t.Sync.baseline();
+    for (let i = 0; i < 13; i++) { await drain(); t.f.releaseCheck(); }
+    await drain();
+    const saved = JSON.parse(t.store.get('radio.baselineProg'));
+    assert.strictEqual(saved.length, 25);
+    t.f.releaseCheck(); await p;
+    assert.strictEqual(JSON.parse(t.store.get('radio.baselineProg')).length, 25);
+    assert.strictEqual(t.store.get('radio.baseline'), null);
+    assert.ok(t.calls.toast.some(x => x.msg.includes('保存失败')));
+  });
+  await ok('增量抢占保存异常仍收起旧 toast', async () => {
+    const A = st('新闻', 'A', ['http://a/1']);
+    const t = mkSync({ stations: [A], visible: [], holdCheck: true, saveThrow: true });
+    const p = t.Sync.incHealth(['A']); await drain();
+    await assert.rejects(t.Sync.health(), /save 注入异常/);
+    assert.strictEqual(t.el('toast').hidden, true);
+    assert.ok(t.calls.toast.some(x => x.msg.includes('保存失败')));
+    t.f.releaseCheck(); await p;
   });
   console.log('[1] runCheck 执行器：逐台探活/前 4 源/分档计数/网络失败不落标/禁用源/诊断/并发/中止');
   await ok('逐台 fetch /api/check?detail=1，6 源台只测前 4 源（不变量：探活批量封顶 4）', async () => {
@@ -409,7 +471,7 @@ function mkSync(over) {
     assert.strictEqual(t.el('status').textContent, '哨兵', '静默全程不碰状态栏');
     assert.strictEqual(t.calls.toast.length, 0, '静默复测无 toast（与 incHealth 两态区分）');
   });
-  await ok('被手动接管（silentAbort）：跳过 saveHealth/render（手动收尾），已测标记有效', async () => {
+  await ok('被手动接管：迟到结果不写入，旧任务不收尾', async () => {
     const t = mkSync({ favRecent: [st('新闻', 'A', ['http://a/1'])], holdCheck: true, visible: [] });
     const p = t.Sync.silentHealth(); await drain();
     assert.strictEqual(t.Sync.busy, 'silent');
@@ -417,7 +479,7 @@ function mkSync(over) {
     const saveMid = t.calls.save, renderMid = t.calls.render;
     assert.strictEqual(t.Sync.silentAbort, true);
     t.f.releaseCheck(); await p; await drain();
-    assert.strictEqual(t.calls.patch.length, 1, '已测台标记落内存（幂等有效）');
+    assert.strictEqual(t.calls.patch.length, 0, '抢占后迟到结果不得写入');
     assert.strictEqual(t.calls.save, saveMid, '静默被接管不落盘（手动已收尾）');
     assert.strictEqual(t.calls.render, renderMid, '静默被接管不渲染');
     assert.strictEqual(t.Sync.busy, '', 'busy 归手动 finally 所有');
@@ -447,16 +509,16 @@ function mkSync(over) {
     assert.strictEqual(t.calls.save, 1);
     assert.strictEqual(t.calls.render, 1);
   });
-  await ok('被手动接管（silentAbort）：收起常驻 toast 且已测标记有效、无完成态', async () => {
+  await ok('被手动接管：收起常驻 toast，迟到结果不写入', async () => {
     const t = mkSync({ stations: [st('新闻', 'A台', ['http://a/1'])], holdCheck: true, visible: [] });
     const p = t.Sync.incHealth(['A台']); await drain();
     assert.strictEqual(t.calls.toast.length, 1, '开场常驻已出');
     await t.Sync.health(); // 手动接管
     t.f.releaseCheck(); await p; await drain();
     assert.strictEqual(t.el('toast').hidden, true, '让位时显式收起 toast（AIbot P2-2）');
-    assert.strictEqual(t.calls.patch.length, 1, '已测标记有效（幂等）');
+    assert.strictEqual(t.calls.patch.length, 0, '抢占后迟到结果不得写入');
     assert.strictEqual(t.calls.toast.length, 1, '无完成 toast');
-    assert.strictEqual(t.calls.save, 1, '不重复落盘（手动收尾口径）');
+    assert.strictEqual(t.calls.save, 2, '抢占前及手动结束各落盘一次');
   });
   await ok('runCheck 异常 → catch 兜底收 toast、busy 复位（不卡静默互斥）', async () => {
     const t = mkSync({ stations: [st('新闻', 'A台', ['http://a/1'])], patchThrow: () => true });

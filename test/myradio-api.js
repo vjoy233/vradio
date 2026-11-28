@@ -72,6 +72,15 @@ const stream = res => {
       assert.strictEqual(myText().split(/\r\n/).filter(Boolean).length, 500);
     });
 
+    await ok('①c URL >512 → 400 拒绝且旧文件字节不变（不截断）', async () => {
+      const before = myRaw();
+      const u = FIX + '/ok.mp3?pad=' + 'z'.repeat(600);
+      const r = await postReplace(req, ['音乐,#genre#', '超长台,' + u]);
+      assert.strictEqual(r.status, 400);
+      assert.strictEqual(jbody(r).error, '流地址超过 512 字符上限');
+      assert.ok(sameBuf(before, myRaw()));
+    });
+
     await ok('② >500 行（501 条合法行）→ 413 拒绝，旧文件字节不变', async () => {
       const before = myRaw();
       const lines = ['音乐,#genre#'];
@@ -85,7 +94,7 @@ const stream = res => {
     await ok('③ >64KB（120 行 × 600 字符，行数 <500）→ 413 字节上限独立生效，旧文件不变', async () => {
       const before = myRaw();
       const lines = [];
-      for (let i = 0; i < 120; i++) lines.push('长行' + i + ',https://x.example/' + 'u'.repeat(580)); // 行清洗截 600 字符/行
+      for (let i = 0; i < 130; i++) lines.push('长行' + i + ',https://x.example/' + 'u'.repeat(480)); // 每条 URL ≤512，合计超过64KB
       assert.ok(lines.join('\r\n').length > 65536, '前置：提交内容已超 64KB');
       const r = await postReplace(req, lines);
       assert.strictEqual(r.status, 413);

@@ -622,7 +622,7 @@ const App = {
     const urlKeys = m => Object.fromEntries(Object.entries(m).filter(([k]) => /^https?:\/\//.test(k)));
     o.hideS = c.hideS && typeof c.hideS === 'object' ? urlKeys(c.hideS) : {};                   // URL → 1（手藏电台）
     // 追加备选源（P1-a/r2 ⑨）：URL → [追加源 URL…]。条数 6 / 单条 512 封顶对齐 mystation 护栏口径；只追加不动身份
-    const urlArrMap = m => { const o = {}; for (const [k, v] of Object.entries(m || {})) if (/^https?:\/\//.test(k) && Array.isArray(v)) { const a = [...new Set(v.map(x => String(x).trim().slice(0, 512)).filter(x => /^https?:\/\//.test(x)))].slice(0, 6); if (a.length) o[k.trim()] = a; } return o; };
+    const urlArrMap = m => { const o = {}; for (const [k, v] of Object.entries(m || {})) if (/^https?:\/\//.test(k) && k.length <= 512 && Array.isArray(v)) { const a = [...new Set(v.map(x => String(x).trim()).filter(x => /^https?:\/\//.test(x) && x.length <= 512))].slice(0, 6); if (a.length) o[k.trim()] = a; } return o; };
     o.srcs = urlArrMap(c.srcs);
     // 源生命周期三字段（B0 契约冻结，B1 接线播放/体检/详情语义）：人工顺序只生成运行时顺序不物理重排 s.u[]；
     // 禁用表结构同款（URL → 被禁源列表）；标签只改展示。键/元素清洗与 srcs 同口径
@@ -1814,6 +1814,7 @@ const App = {
     const inp = btn.closest('.msrc-add').querySelector('input');
     const u = (inp.value || '').trim().replace(/\s+/g, ''); // URL 内不该有空白/换行，容错顺手清（坑③）
     if (!/^https?:\/\//.test(u)) { $('status').textContent = '追加源需以 http(s):// 开头'; return; }
+    if (u.length > 512) { $('status').textContent = '追加源超过 512 字符上限'; return; }
     if (s.u.includes(u)) { $('status').textContent = '该地址已在源列表中'; return; }
     const d = this.mEditor.getDraft();
     if (d.patch.appends.includes(u)) { $('status').textContent = '该地址已在待保存的追加列表中'; return; }

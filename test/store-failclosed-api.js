@@ -19,13 +19,19 @@ async function main() {
       const r = await post(h, { 'radio.vol': '0.5' }); assert.strictEqual(r.status, 200); assert.strictEqual(parse(r).rev, 8);
     } finally { await h.close(); }
   }
-  // ENOENT 首次写及并发队列空覆盖：首个非空写成功后，尾随空写必须看到已提交状态。
+  // 并发到达顺序不保证：空写先入队则两次成功，非空先入队则空写必须 409；终态均非空。
   const h = await boot();
   try {
     const [a, b] = await Promise.all([post(h, { 'radio.vol': '0.7' }), post(h, {})]);
-    assert.strictEqual(a.status, 200); assert.strictEqual(parse(a).rev, 1);
-    assert.strictEqual(b.status, 409); assert.strictEqual(parse(b).code, 'empty-overwrite');
-    assert.deepStrictEqual(parse(await get(h)), { rev: 1, data: { 'radio.vol': '0.7' } });
+    assert.strictEqual(a.status, 200);
+    const rev = parse(a).rev;
+    if (rev === 1) { assert.strictEqual(b.status, 409); assert.strictEqual(parse(b).code, 'empty-overwrite'); }
+    else { assert.strictEqual(rev, 2); assert.strictEqual(b.status, 200); assert.strictEqual(parse(b).rev, 1); }
+    assert.deepStrictEqual(parse(await get(h)), { rev, data: { 'radio.vol': '0.7' } });
+    // 明确确保非空先写，再验证空快照被拒且未改变落盘字节。
+    const before = fs.readFileSync(file(h));
+    const c = await post(h, {}); assert.strictEqual(c.status, 409); assert.strictEqual(parse(c).code, 'empty-overwrite');
+    assert.deepStrictEqual(fs.readFileSync(file(h)), before);
   } finally { await h.close(); }
   console.log('PASS store-failclosed-api: 坏文件原字节保护、GET/POST 拒绝、修复重试与队列并发');
 }
